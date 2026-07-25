@@ -16,6 +16,12 @@ public class HairCard : MonoBehaviour
     public float twistAngle = 0f;
     public float flattenFactor = 1f;
 
+    [Header("UV Settings")]
+    public float uScale = 1.0f;
+    public float vScale = 1.0f;
+    public float uOffset = 0.0f;
+    public float vOffset = 0.0f;
+
     [Header("Grouping")]
     public int groupId = 0;
 
@@ -46,7 +52,6 @@ public class HairCard : MonoBehaviour
 
     private Material cardMaterial;
 
-    // Public Getters for Relative Mode Lookups
     public float GetEmbedDepth() { return currentEmbedDepth; }
     public float GetOffsetX() { return storedOffsetX; }
     public float GetOffsetY() { return storedOffsetY; }
@@ -95,7 +100,7 @@ public class HairCard : MonoBehaviour
         }
     }
 
-    public void SetParameters(float newLength, float newWidth, int newSegments, float newBend, float newTwist, float offsetX, float offsetY, float offsetZ, float newEmbedDepth, float strengthMultiplier = 1f)
+    public void SetParameters(float newLength, float newWidth, int newSegments, float newBend, float newTwist, float offsetX, float offsetY, float offsetZ, float newEmbedDepth, float strengthMultiplier = 1f, float newUScale = 1.0f, float newVScale = 1.0f, float newUOffset = 0.0f, float newVOffset = 0.0f)
     {
         if (selectionWeight > 0f)
         {
@@ -122,6 +127,11 @@ public class HairCard : MonoBehaviour
             storedOffsetZ = offsetZ;
             currentEmbedDepth = newEmbedDepth;
         }
+
+        uScale = newUScale;
+        vScale = newVScale;
+        uOffset = newUOffset;
+        vOffset = newVOffset;
 
         if (surfaceNormal != Vector3.zero)
         {
@@ -258,18 +268,29 @@ public class HairCard : MonoBehaviour
         for (int i = 0; i <= segments; i++)
         {
             float z = i * segmentHeight;
-            float v = (float)i / segments;
+            float normalizedV = (float)i / segments;
+
+            // Apply scale and offset transformations to UV coordinates
+            float baseULeft = (uScale < 0f) ? 1f : 0f;
+            float baseURight = (uScale < 0f) ? 0f : 1f;
+
+            float finalULeft = (baseULeft * Mathf.Abs(uScale)) + uOffset;
+            float finalURight = (baseURight * Mathf.Abs(uScale)) + uOffset;
+
+            float baseV = normalizedV * Mathf.Abs(vScale);
+            if (vScale < 0f) baseV = Mathf.Abs(vScale) - baseV;
+            float finalV = baseV + vOffset;
 
             int index = i * 2;
 
             float currentWidth = halfWidth * flattenFactor;
-            Quaternion rotationOffset = Quaternion.Euler(bendAngle * (v * v), 0, twistAngle * v);
+            Quaternion rotationOffset = Quaternion.Euler(bendAngle * (normalizedV * normalizedV), 0, twistAngle * normalizedV);
 
             baseVertices[index] = rotationOffset * new Vector3(-currentWidth, 0, z);
-            uvs[index] = new Vector2(0, v);
+            uvs[index] = new Vector2(finalULeft, finalV);
 
             baseVertices[index + 1] = rotationOffset * new Vector3(currentWidth, 0, z);
-            uvs[index + 1] = new Vector2(1, v);
+            uvs[index + 1] = new Vector2(finalURight, finalV);
         }
 
         int triIndex = 0;

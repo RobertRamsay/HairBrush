@@ -47,13 +47,22 @@ public class ModelViewer : MonoBehaviour
     public float currentOffsetX = 0f;
     public float currentOffsetY = 0f;
     public float currentOffsetZ = 0f;
+    public float currentUScale = 1.0f;
+    public float currentVScale = 1.0f;
+    public float currentUOffset = 0.0f;
+    public float currentVOffset = 0.0f;
 
     // Group Management
     public int currentGroupId = 0;
     private HashSet<int> allGroupIds = new HashSet<int>() { 0 };
     private Dictionary<int, string> groupNames = new Dictionary<int, string>() { { 0, "Group 0 (Default)" } };
     private Dictionary<int, bool> groupSoloState = new Dictionary<int, bool>();
-    private List<HairCard> sessionPlacedCards = new List<HairCard>(); // Tracks cards placed during current Shift drag session
+    private Dictionary<int, float> groupUScales = new Dictionary<int, float>() { { 0, 1.0f } };
+    private Dictionary<int, float> groupVScales = new Dictionary<int, float>() { { 0, 1.0f } };
+    private Dictionary<int, float> groupUOffsets = new Dictionary<int, float>() { { 0, 0.0f } };
+    private Dictionary<int, float> groupVOffsets = new Dictionary<int, float>() { { 0, 0.0f } };
+
+    private List<HairCard> sessionPlacedCards = new List<HairCard>();
     private Transform groupListContentTransform;
     private bool wasHoldingShiftDrag = false;
     private Coroutine flashGroupCoroutine;
@@ -83,6 +92,10 @@ public class ModelViewer : MonoBehaviour
     private UnityEngine.UI.Slider offsetXSlider;
     private UnityEngine.UI.Slider offsetYSlider;
     private UnityEngine.UI.Slider offsetZSlider;
+    private UnityEngine.UI.Slider uScaleSlider;
+    private UnityEngine.UI.Slider vScaleSlider;
+    private UnityEngine.UI.Slider uOffsetSlider;
+    private UnityEngine.UI.Slider vOffsetSlider;
 
     private float spawnCooldown = 0.05f;
     private float lastSpawnTime = 0f;
@@ -148,7 +161,7 @@ public class ModelViewer : MonoBehaviour
         float delta = val - currentLength;
         currentLength = val;
         if (hasSelectionHotspot) UpdateActiveCard();
-        else ApplyGroupUpdate(c => c.SetParameters(Mathf.Max(0.001f, isRelativeMode ? c.length + delta : val), c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f));
+        else ApplyGroupUpdate(c => c.SetParameters(Mathf.Max(0.001f, isRelativeMode ? c.length + delta : val), c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset));
     }
 
     public void OnSliderWidthChanged(float val)
@@ -156,7 +169,7 @@ public class ModelViewer : MonoBehaviour
         float delta = val - currentWidth;
         currentWidth = val;
         if (hasSelectionHotspot) UpdateActiveCard();
-        else ApplyGroupUpdate(c => c.SetParameters(c.length, Mathf.Max(0.0005f, isRelativeMode ? c.width + delta : val), c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f));
+        else ApplyGroupUpdate(c => c.SetParameters(c.length, Mathf.Max(0.0005f, isRelativeMode ? c.width + delta : val), c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset));
     }
 
     public void OnSliderSegmentsChanged(float val)
@@ -165,7 +178,7 @@ public class ModelViewer : MonoBehaviour
         int deltaSegs = targetSegs - currentSegments;
         currentSegments = targetSegs;
         if (hasSelectionHotspot) UpdateActiveCard();
-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, Mathf.Clamp(isRelativeMode ? c.segments + deltaSegs : targetSegs, 4, 36), c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f));
+        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, Mathf.Clamp(isRelativeMode ? c.segments + deltaSegs : targetSegs, 4, 36), c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset));
     }
 
     public void OnSliderBendChanged(float val)
@@ -173,7 +186,7 @@ public class ModelViewer : MonoBehaviour
         float delta = val - currentBend;
         currentBend = val;
         if (hasSelectionHotspot) UpdateActiveCard();
-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, isRelativeMode ? c.bendAngle + delta : val, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f));
+        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, isRelativeMode ? c.bendAngle + delta : val, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset));
     }
 
     public void OnSliderTwistChanged(float val)
@@ -181,7 +194,7 @@ public class ModelViewer : MonoBehaviour
         float delta = val - currentTwist;
         currentTwist = val;
         if (hasSelectionHotspot) UpdateActiveCard();
-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, isRelativeMode ? c.twistAngle + delta : val, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f));
+        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, isRelativeMode ? c.twistAngle + delta : val, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset));
     }
 
     public void OnSliderEmbedDepthChanged(float val)
@@ -189,7 +202,7 @@ public class ModelViewer : MonoBehaviour
         float delta = val - currentEmbedDepth;
         currentEmbedDepth = val;
         if (hasSelectionHotspot) UpdateActiveCard();
-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), Mathf.Max(0f, isRelativeMode ? c.GetEmbedDepth() + delta : val), 1f));
+        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), Mathf.Max(0f, isRelativeMode ? c.GetEmbedDepth() + delta : val), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset));
     }
 
     public void OnSliderOffsetXChanged(float val)
@@ -197,7 +210,7 @@ public class ModelViewer : MonoBehaviour
         float delta = val - currentOffsetX;
         currentOffsetX = val;
         if (hasSelectionHotspot) UpdateActiveCard();
-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, isRelativeMode ? c.GetOffsetX() + delta : val, c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f));
+        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, isRelativeMode ? c.GetOffsetX() + delta : val, c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset));
     }
 
     public void OnSliderOffsetYChanged(float val)
@@ -205,7 +218,7 @@ public class ModelViewer : MonoBehaviour
         float delta = val - currentOffsetY;
         currentOffsetY = val;
         if (hasSelectionHotspot) UpdateActiveCard();
-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), isRelativeMode ? c.GetOffsetY() + delta : val, c.GetOffsetZ(), c.GetEmbedDepth(), 1f));
+        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), isRelativeMode ? c.GetOffsetY() + delta : val, c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset));
     }
 
     public void OnSliderOffsetZChanged(float val)
@@ -213,7 +226,35 @@ public class ModelViewer : MonoBehaviour
         float delta = val - currentOffsetZ;
         currentOffsetZ = val;
         if (hasSelectionHotspot) UpdateActiveCard();
-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), isRelativeMode ? c.GetOffsetZ() + delta : val, c.GetEmbedDepth(), 1f));
+        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), isRelativeMode ? c.GetOffsetZ() + delta : val, c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset));
+    }
+
+    public void OnSliderUScaleChanged(float val)
+    {
+        currentUScale = val;
+        groupUScales[currentGroupId] = val;
+        ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, val, c.vScale, c.uOffset, c.vOffset));
+    }
+
+    public void OnSliderVScaleChanged(float val)
+    {
+        currentVScale = val;
+        groupVScales[currentGroupId] = val;
+        ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, val, c.uOffset, c.vOffset));
+    }
+
+    public void OnSliderUOffsetChanged(float val)
+    {
+        currentUOffset = val;
+        groupUOffsets[currentGroupId] = val;
+        ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, val, c.vOffset));
+    }
+
+    public void OnSliderVOffsetChanged(float val)
+    {
+        currentVOffset = val;
+        groupVOffsets[currentGroupId] = val;
+        ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, val));
     }
 
     void ResetAllSliders()
@@ -227,6 +268,15 @@ public class ModelViewer : MonoBehaviour
         currentOffsetX = 0f;
         currentOffsetY = 0f;
         currentOffsetZ = 0f;
+        currentUScale = 1.0f;
+        currentVScale = 1.0f;
+        currentUOffset = 0.0f;
+        currentVOffset = 0.0f;
+
+        groupUScales[currentGroupId] = currentUScale;
+        groupVScales[currentGroupId] = currentVScale;
+        groupUOffsets[currentGroupId] = currentUOffset;
+        groupVOffsets[currentGroupId] = currentVOffset;
 
         if (lengthSlider != null) lengthSlider.value = currentLength;
         if (widthSlider != null) widthSlider.value = currentWidth;
@@ -237,6 +287,10 @@ public class ModelViewer : MonoBehaviour
         if (offsetXSlider != null) offsetXSlider.value = currentOffsetX;
         if (offsetYSlider != null) offsetYSlider.value = currentOffsetY;
         if (offsetZSlider != null) offsetZSlider.value = currentOffsetZ;
+        if (uScaleSlider != null) uScaleSlider.value = currentUScale;
+        if (vScaleSlider != null) vScaleSlider.value = currentVScale;
+        if (uOffsetSlider != null) uOffsetSlider.value = currentUOffset;
+        if (vOffsetSlider != null) vOffsetSlider.value = currentVOffset;
 
         UpdateActiveCard();
     }
@@ -258,10 +312,10 @@ public class ModelViewer : MonoBehaviour
         GameObject containerGO = new GameObject("TopControlsRow", typeof(RectTransform));
         containerGO.transform.SetParent(parent, false);
         RectTransform containerRect = containerGO.GetComponent<RectTransform>();
-        containerRect.sizeDelta = new Vector2(0, 45);
+        containerRect.sizeDelta = new Vector2(0, 40);
 
         HorizontalLayoutGroup hLayout = containerGO.AddComponent<HorizontalLayoutGroup>();
-        hLayout.spacing = 10;
+        hLayout.spacing = 8;
         hLayout.childControlWidth = true;
         hLayout.childControlHeight = true;
 
@@ -275,7 +329,7 @@ public class ModelViewer : MonoBehaviour
         modeTxtGO.transform.SetParent(modeBtnGO.transform, false);
         TMPro.TextMeshProUGUI modeTmp = modeTxtGO.GetComponent<TMPro.TextMeshProUGUI>();
         modeTmp.text = "Mode: ABS";
-        modeTmp.fontSize = 18;
+        modeTmp.fontSize = 16;
         modeTmp.fontStyle = TMPro.FontStyles.Bold;
         modeTmp.alignment = TMPro.TextAlignmentOptions.Center;
         modeTmp.color = Color.white;
@@ -299,7 +353,7 @@ public class ModelViewer : MonoBehaviour
         saveProjTxtGO.transform.SetParent(saveProjBtnGO.transform, false);
         TMPro.TextMeshProUGUI saveProjTmp = saveProjTxtGO.GetComponent<TMPro.TextMeshProUGUI>();
         saveProjTmp.text = "SAVE PROJ";
-        saveProjTmp.fontSize = 16;
+        saveProjTmp.fontSize = 15;
         saveProjTmp.fontStyle = TMPro.FontStyles.Bold;
         saveProjTmp.alignment = TMPro.TextAlignmentOptions.Center;
         saveProjTmp.color = Color.white;
@@ -321,7 +375,7 @@ public class ModelViewer : MonoBehaviour
         resetTxtGO.transform.SetParent(resetBtnGO.transform, false);
         TMPro.TextMeshProUGUI resetTmp = resetTxtGO.GetComponent<TMPro.TextMeshProUGUI>();
         resetTmp.text = "RESET";
-        resetTmp.fontSize = 18;
+        resetTmp.fontSize = 16;
         resetTmp.fontStyle = TMPro.FontStyles.Bold;
         resetTmp.alignment = TMPro.TextAlignmentOptions.Center;
         resetTmp.color = Color.white;
@@ -367,8 +421,8 @@ public class ModelViewer : MonoBehaviour
         activePanelImage.color = new Color(0.15f, 0.15f, 0.15f, 0.85f);
 
         VerticalLayoutGroup layout = panelGO.AddComponent<VerticalLayoutGroup>();
-        layout.padding = new RectOffset(15, 15, 15, 15);
-        layout.spacing = 8;
+        layout.padding = new RectOffset(15, 15, 12, 12);
+        layout.spacing = 4; // Compact spacing to fit all sliders comfortably
         layout.childControlWidth = true;
         layout.childControlHeight = false;
 
@@ -376,15 +430,19 @@ public class ModelViewer : MonoBehaviour
 
         CreateModeToggleButton(panelGO.transform);
 
-        CreateSliderUI(panelGO.transform, "Length", 0.0005f, 1.0f, currentLength, OnActualSliderLengthChanged, out lengthSlider, 50, 20);
-        CreateSliderUI(panelGO.transform, "Width", 0.0005f, 0.05f, currentWidth, OnSliderWidthChanged, out widthSlider, 50, 20);
-        CreateSliderUI(panelGO.transform, "Segments", 4, 36, currentSegments, OnSliderSegmentsChanged, out segmentsSlider, 50, 20);
-        CreateSliderUI(panelGO.transform, "Bend Angle", -360f, 360f, currentBend, OnSliderBendChanged, out bendSlider, 50, 20);
-        CreateSliderUI(panelGO.transform, "Twist Angle", -360f, 360f, currentTwist, OnSliderTwistChanged, out twistSlider, 50, 20);
-        CreateSliderUI(panelGO.transform, "Embed Depth", 0.0f, 0.1f, currentEmbedDepth, OnSliderEmbedDepthChanged, out depthSlider, 50, 20);
-        CreateSliderUI(panelGO.transform, "Offset X", -360f, 360f, currentOffsetX, OnSliderOffsetXChanged, out offsetXSlider, 50, 20);
-        CreateSliderUI(panelGO.transform, "Offset Y", -360f, 360f, currentOffsetY, OnSliderOffsetYChanged, out offsetYSlider, 50, 20);
-        CreateSliderUI(panelGO.transform, "Offset Z", -360f, 360f, currentOffsetZ, OnSliderOffsetZChanged, out offsetZSlider, 50, 20);
+        CreateSliderUI(panelGO.transform, "Length", 0.0005f, 1.0f, currentLength, OnActualSliderLengthChanged, out lengthSlider, 38, 16);
+        CreateSliderUI(panelGO.transform, "Width", 0.0005f, 0.05f, currentWidth, OnSliderWidthChanged, out widthSlider, 38, 16);
+        CreateSliderUI(panelGO.transform, "Segments", 4, 36, currentSegments, OnSliderSegmentsChanged, out segmentsSlider, 38, 16);
+        CreateSliderUI(panelGO.transform, "Bend Angle", -360f, 360f, currentBend, OnSliderBendChanged, out bendSlider, 38, 16);
+        CreateSliderUI(panelGO.transform, "Twist Angle", -360f, 360f, currentTwist, OnSliderTwistChanged, out twistSlider, 38, 16);
+        CreateSliderUI(panelGO.transform, "Embed Depth", 0.0f, 0.1f, currentEmbedDepth, OnSliderEmbedDepthChanged, out depthSlider, 38, 16);
+        CreateSliderUI(panelGO.transform, "Offset X", -360f, 360f, currentOffsetX, OnSliderOffsetXChanged, out offsetXSlider, 38, 16);
+        CreateSliderUI(panelGO.transform, "Offset Y", -360f, 360f, currentOffsetY, OnSliderOffsetYChanged, out offsetYSlider, 38, 16);
+        CreateSliderUI(panelGO.transform, "Offset Z", -360f, 360f, currentOffsetZ, OnSliderOffsetZChanged, out offsetZSlider, 38, 16);
+        CreateSliderUI(panelGO.transform, "U Scale", -1.0f, 1.0f, currentUScale, OnSliderUScaleChanged, out uScaleSlider, 38, 16);
+        CreateSliderUI(panelGO.transform, "V Scale", -1.0f, 1.0f, currentVScale, OnSliderVScaleChanged, out vScaleSlider, 38, 16);
+        CreateSliderUI(panelGO.transform, "U Offset", 0.0f, 1.0f, currentUOffset, OnSliderUOffsetChanged, out uOffsetSlider, 38, 16);
+        CreateSliderUI(panelGO.transform, "V Offset", 0.0f, 1.0f, currentVOffset, OnSliderVOffsetChanged, out vOffsetSlider, 38, 16);
     }
 
     void BuildGroupManagementUI()
@@ -441,6 +499,10 @@ public class ModelViewer : MonoBehaviour
             int newId = GetNextAvailableGroupId();
             allGroupIds.Add(newId);
             groupNames[newId] = "Group " + newId;
+            groupUScales[newId] = 1.0f;
+            groupVScales[newId] = 1.0f;
+            groupUOffsets[newId] = 0.0f;
+            groupVOffsets[newId] = 0.0f;
             SelectGroup(newId);
         });
 
@@ -483,6 +545,24 @@ public class ModelViewer : MonoBehaviour
     void SelectGroup(int id)
     {
         currentGroupId = id;
+        
+        if (groupUScales.ContainsKey(id)) currentUScale = groupUScales[id];
+        else { currentUScale = 1.0f; groupUScales[id] = 1.0f; }
+
+        if (groupVScales.ContainsKey(id)) currentVScale = groupVScales[id];
+        else { currentVScale = 1.0f; groupVScales[id] = 1.0f; }
+
+        if (groupUOffsets.ContainsKey(id)) currentUOffset = groupUOffsets[id];
+        else { currentUOffset = 0.0f; groupUOffsets[id] = 0.0f; }
+
+        if (groupVOffsets.ContainsKey(id)) currentVOffset = groupVOffsets[id];
+        else { currentVOffset = 0.0f; groupVOffsets[id] = 0.0f; }
+
+        if (uScaleSlider != null) uScaleSlider.SetValueWithoutNotify(currentUScale);
+        if (vScaleSlider != null) vScaleSlider.SetValueWithoutNotify(currentVScale);
+        if (uOffsetSlider != null) uOffsetSlider.SetValueWithoutNotify(currentUOffset);
+        if (vOffsetSlider != null) vOffsetSlider.SetValueWithoutNotify(currentVOffset);
+
         RefreshGroupListUI();
 
         if (flashGroupCoroutine != null)
@@ -526,7 +606,6 @@ public class ModelViewer : MonoBehaviour
             Destroy(child.gameObject);
         }
 
-        // Count how many cards belong to each group for display purposes
         HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
         Dictionary<int, int> groupCardCounts = new Dictionary<int, int>();
         foreach (var card in allCards)
@@ -542,7 +621,7 @@ public class ModelViewer : MonoBehaviour
 
             GameObject itemGO = new GameObject("GroupItem_" + gid, typeof(RectTransform), typeof(Image), typeof(HorizontalLayoutGroup));
             itemGO.transform.SetParent(groupListContentTransform, false);
-            itemGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 48); // Slightly taller to accommodate card count text
+            itemGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 48);
 
             Image img = itemGO.GetComponent<Image>();
             img.color = (gid == currentGroupId) ? new Color(0.3f, 0.6f, 0.3f, 1f) : new Color(0.25f, 0.25f, 0.25f, 1f);
@@ -553,7 +632,6 @@ public class ModelViewer : MonoBehaviour
             rowLayout.childControlWidth = false;
             rowLayout.childControlHeight = true;
 
-            // Main clickable area for group selection/renaming
             GameObject labelBtnGO = new GameObject("LabelButton", typeof(RectTransform), typeof(Button), typeof(CustomClickDetector));
             labelBtnGO.transform.SetParent(itemGO.transform, false);
             RectTransform labelRect = labelBtnGO.GetComponent<RectTransform>();
@@ -569,7 +647,6 @@ public class ModelViewer : MonoBehaviour
                 PromptDeleteGroup(gid);
             };
 
-            // Group Name Text
             GameObject txtGO = new GameObject("Label", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
             txtGO.transform.SetParent(labelBtnGO.transform, false);
             TMPro.TextMeshProUGUI tmp = txtGO.GetComponent<TMPro.TextMeshProUGUI>();
@@ -584,7 +661,6 @@ public class ModelViewer : MonoBehaviour
             txtRect.offsetMin = new Vector2(2, 2);
             txtRect.offsetMax = new Vector2(-2, -2);
 
-            // Card Count Subtext under name
             GameObject countTxtGO = new GameObject("CardCountLabel", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
             countTxtGO.transform.SetParent(labelBtnGO.transform, false);
             TMPro.TextMeshProUGUI countTmp = countTxtGO.GetComponent<TMPro.TextMeshProUGUI>();
@@ -598,7 +674,6 @@ public class ModelViewer : MonoBehaviour
             countRect.offsetMin = new Vector2(2, 2);
             countRect.offsetMax = new Vector2(-2, -2);
 
-            // SOLO Button for individual group isolation
             GameObject soloBtnGO = new GameObject("SoloButton", typeof(RectTransform), typeof(Image), typeof(Button));
             soloBtnGO.transform.SetParent(itemGO.transform, false);
             RectTransform soloRect = soloBtnGO.GetComponent<RectTransform>();
@@ -707,10 +782,15 @@ public class ModelViewer : MonoBehaviour
         allGroupIds.Remove(gid);
         if (groupNames.ContainsKey(gid)) groupNames.Remove(gid);
         if (groupSoloState.ContainsKey(gid)) groupSoloState.Remove(gid);
+        if (groupUScales.ContainsKey(gid)) groupUScales.Remove(gid);
+        if (groupVScales.ContainsKey(gid)) groupVScales.Remove(gid);
+        if (groupUOffsets.ContainsKey(gid)) groupUOffsets.Remove(gid);
+        if (groupVOffsets.ContainsKey(gid)) groupVOffsets.Remove(gid);
 
         if (currentGroupId == gid)
         {
             currentGroupId = allGroupIds.FirstOrDefault();
+            SelectGroup(currentGroupId);
         }
         RefreshGroupListUI();
     }
@@ -725,7 +805,7 @@ public class ModelViewer : MonoBehaviour
         return id;
     }
 
-    GameObject CreateSliderUI(Transform parent, string labelText, float min, float max, float defaultValue, UnityEngine.Events.UnityAction<float> onValueChanged, out UnityEngine.UI.Slider createdSlider, float rowHeight = 50f, int fontSize = 20)
+    GameObject CreateSliderUI(Transform parent, string labelText, float min, float max, float defaultValue, UnityEngine.Events.UnityAction<float> onValueChanged, out UnityEngine.UI.Slider createdSlider, float rowHeight = 44f, int fontSize = 16)
     {
         GameObject rowGO = new GameObject(labelText + "_Row", typeof(RectTransform));
         rowGO.transform.SetParent(parent, false);
@@ -733,12 +813,16 @@ public class ModelViewer : MonoBehaviour
         rowRect.sizeDelta = new Vector2(0, rowHeight);
 
         VerticalLayoutGroup rowLayout = rowGO.AddComponent<VerticalLayoutGroup>();
-        rowLayout.spacing = -2;
+        rowLayout.spacing = 2; // Positive spacing so the label sits right on top of its slider
+        rowLayout.padding = new RectOffset(0, 0, 2, 2);
         rowLayout.childControlWidth = true;
         rowLayout.childControlHeight = false;
 
         GameObject textGO = new GameObject(labelText + "_Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
         textGO.transform.SetParent(rowGO.transform, false);
+        RectTransform textRect = textGO.GetComponent<RectTransform>();
+        textRect.sizeDelta = new Vector2(0, 18); // Give text a fixed tight height
+
         TMPro.TextMeshProUGUI tmp = textGO.GetComponent<TMPro.TextMeshProUGUI>();
         tmp.text = labelText + ": " + defaultValue.ToString("F3");
         tmp.fontSize = fontSize;
@@ -747,7 +831,7 @@ public class ModelViewer : MonoBehaviour
         GameObject sliderGO = new GameObject(labelText + "_Slider", typeof(RectTransform), typeof(UnityEngine.UI.Slider));
         sliderGO.transform.SetParent(rowGO.transform, false);
         RectTransform sliderRect = sliderGO.GetComponent<RectTransform>();
-        sliderRect.sizeDelta = new Vector2(0, 26);
+        sliderRect.sizeDelta = new Vector2(0, 18); // Slim down slider height slightly for compactness
 
         Slider slider = sliderGO.GetComponent<Slider>();
         slider.minValue = min;
@@ -758,15 +842,15 @@ public class ModelViewer : MonoBehaviour
         backgroundGO.transform.SetParent(sliderGO.transform, false);
         backgroundGO.GetComponent<Image>().color = new Color(0.3f, 0.3f, 0.3f);
         RectTransform bgRect = backgroundGO.GetComponent<RectTransform>();
-        bgRect.anchorMin = new Vector2(0, 0.25f);
-        bgRect.anchorMax = new Vector2(1, 0.75f);
+        bgRect.anchorMin = new Vector2(0, 0.3f);
+        bgRect.anchorMax = new Vector2(1, 0.7f);
         bgRect.sizeDelta = Vector2.zero;
 
         GameObject fillAreaGO = new GameObject("Fill Area", typeof(RectTransform));
         fillAreaGO.transform.SetParent(sliderGO.transform, false);
         RectTransform fillAreaRect = fillAreaGO.GetComponent<RectTransform>();
-        fillAreaRect.anchorMin = new Vector2(0, 0.25f);
-        fillAreaRect.anchorMax = new Vector2(1, 0.75f);
+        fillAreaRect.anchorMin = new Vector2(0, 0.3f);
+        fillAreaRect.anchorMax = new Vector2(1, 0.7f);
         fillAreaRect.sizeDelta = Vector2.zero;
 
         GameObject fillGO = new GameObject("Fill", typeof(RectTransform), typeof(Image));
@@ -788,7 +872,7 @@ public class ModelViewer : MonoBehaviour
         handleGO.transform.SetParent(handleAreaGO.transform, false);
         handleGO.GetComponent<Image>().color = Color.white;
         slider.handleRect = handleGO.GetComponent<RectTransform>();
-        slider.handleRect.sizeDelta = new Vector2(30, 0);
+        slider.handleRect.sizeDelta = new Vector2(20, 0);
 
         slider.onValueChanged.AddListener((val) => {
             tmp.text = labelText + ": " + val.ToString("F3");
@@ -808,13 +892,13 @@ public class ModelViewer : MonoBehaviour
             {
                 if (card.groupId == currentGroupId && card.selectionWeight > 0f)
                 {
-                    card.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, selectionStrength);
+                    card.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, selectionStrength, currentUScale, currentVScale, currentUOffset, currentVOffset);
                 }
             }
         }
         else if (lastPlacedCard != null)
         {
-            lastPlacedCard.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, 1f);
+            lastPlacedCard.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, 1f, currentUScale, currentVScale, currentUOffset, currentVOffset);
         }
     }
 
@@ -868,24 +952,27 @@ public class ModelViewer : MonoBehaviour
         if (isHoldingShift && !wasHoldingShiftDrag)
         {
             wasHoldingShiftDrag = true;
-            sessionPlacedCards.Clear(); // Reset session tracking for this shift drag
+            sessionPlacedCards.Clear();
         }
 
         if (wasHoldingShiftDrag && !isHoldingShift)
         {
-            // If cards were placed during this shift drag session, prompt to group them into a new group
             if (sessionPlacedCards.Count > 0 && EditorUtility.DisplayDialog("New Group", "Do you want to create a new group for the hair cards placed during this stroke?", "Yes", "No"))
             {
                 int newId = GetNextAvailableGroupId();
                 allGroupIds.Add(newId);
                 groupNames[newId] = "Group " + newId;
+                groupUScales[newId] = currentUScale;
+                groupVScales[newId] = currentVScale;
+                groupUOffsets[newId] = currentUOffset;
+                groupVOffsets[newId] = currentVOffset;
 
-                // Move all cards placed during this stroke into the new group
                 foreach (var card in sessionPlacedCards)
                 {
                     if (card != null)
                     {
                         card.groupId = newId;
+                        card.SetParameters(card.length, card.width, card.segments, card.bendAngle, card.twistAngle, card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ(), card.GetEmbedDepth(), 1f, currentUScale, currentVScale, currentUOffset, currentVOffset);
                     }
                 }
 
@@ -935,7 +1022,7 @@ public class ModelViewer : MonoBehaviour
                 HairCard card = PinHairCard(hit.point, hit.normal);
                 if (isHoldingShift && card != null)
                 {
-                    sessionPlacedCards.Add(card); // Track card placed during shift stroke
+                    sessionPlacedCards.Add(card);
                 }
                 lastSpawnTime = Time.time;
             }
@@ -950,6 +1037,7 @@ public class ModelViewer : MonoBehaviour
         isSelectionMode = true;
         hasSelectionHotspot = true;
         selectionStrength = 0.25f;
+        brushFalloffDistance = 0.25f; // Set default to 0.25
         selectionHitPoint = brushCenter;
         selectionHitNormal = hitNormal;
 
@@ -1001,15 +1089,15 @@ public class ModelViewer : MonoBehaviour
 
         if (activeSliderPanel != null)
         {
-            falloffRowGO = CreateSliderUI(activeSliderPanel.transform, "Falloff Dist", 0.001f, 0.1f, brushFalloffDistance, (val) => {
+            falloffRowGO = CreateSliderUI(activeSliderPanel.transform, "Falloff Dist", 0.001f, 1.0f, brushFalloffDistance, (val) => {
                 brushFalloffDistance = val;
                 RecomputeSelectionWeights(selectionHitPoint);
-            }, out _, 50, 20);
+            }, out _, 38, 16);
 
             strengthRowGO = CreateSliderUI(activeSliderPanel.transform, "Strength", 0.0f, 1.0f, selectionStrength, (val) => {
                 selectionStrength = val;
                 UpdateActiveCard();
-            }, out _, 50, 20);
+            }, out _, 38, 16);
         }
 
         RecomputeSelectionWeights(brushCenter);
@@ -1067,7 +1155,7 @@ public class ModelViewer : MonoBehaviour
         HairCard card = cardGO.GetComponent<HairCard>();
 
         card.SetPlacementData(position, normal, currentEmbedDepth, currentOffsetX, currentOffsetY, currentOffsetZ, currentGroupId);
-        card.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth);
+        card.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, 1f, currentUScale, currentVScale, currentUOffset, currentVOffset);
 
         lastPlacedCard = card;
 
@@ -1077,7 +1165,7 @@ public class ModelViewer : MonoBehaviour
             mr.sharedMaterial = hairCardMaterial;
         }
 
-        RefreshGroupListUI(); // Update card count UI immediately on spawn
+        RefreshGroupListUI();
         return card;
     }
 
@@ -1132,12 +1220,20 @@ public class ModelViewer : MonoBehaviour
         saveData.sliderOffsetX = currentOffsetX;
         saveData.sliderOffsetY = currentOffsetY;
         saveData.sliderOffsetZ = currentOffsetZ;
+        saveData.sliderUScale = currentUScale;
+        saveData.sliderVScale = currentVScale;
+        saveData.sliderUOffset = currentUOffset;
+        saveData.sliderVOffset = currentVOffset;
 
         foreach (int id in allGroupIds)
         {
             GroupSaveData gData = new GroupSaveData();
             gData.groupId = id;
             gData.groupName = groupNames.ContainsKey(id) ? groupNames[id] : ("Group " + id);
+            gData.uScale = groupUScales.ContainsKey(id) ? groupUScales[id] : 1.0f;
+            gData.vScale = groupVScales.ContainsKey(id) ? groupVScales[id] : 1.0f;
+            gData.uOffset = groupUOffsets.ContainsKey(id) ? groupUOffsets[id] : 0.0f;
+            gData.vOffset = groupVOffsets.ContainsKey(id) ? groupVOffsets[id] : 0.0f;
             saveData.groups.Add(gData);
         }
 
@@ -1164,6 +1260,10 @@ public class ModelViewer : MonoBehaviour
             cardData.offsetX = card.GetOffsetX();
             cardData.offsetY = card.GetOffsetY();
             cardData.offsetZ = card.GetOffsetZ();
+            cardData.uScale = card.uScale;
+            cardData.vScale = card.vScale;
+            cardData.uOffset = card.uOffset;
+            cardData.vOffset = card.vOffset;
             cardData.groupId = card.groupId;
 
             saveData.hairCards.Add(cardData);
@@ -1212,13 +1312,26 @@ public class ModelViewer : MonoBehaviour
         currentOffsetX = saveData.sliderOffsetX;
         currentOffsetY = saveData.sliderOffsetY;
         currentOffsetZ = saveData.sliderOffsetZ;
+        currentUScale = saveData.sliderUScale != 0 ? saveData.sliderUScale : 1.0f;
+        currentVScale = saveData.sliderVScale != 0 ? saveData.sliderVScale : 1.0f;
+        currentUOffset = saveData.sliderUOffset;
+        currentVOffset = saveData.sliderVOffset;
 
         allGroupIds.Clear();
         groupNames.Clear();
+        groupUScales.Clear();
+        groupVScales.Clear();
+        groupUOffsets.Clear();
+        groupVOffsets.Clear();
+
         foreach (var g in saveData.groups)
         {
             allGroupIds.Add(g.groupId);
             groupNames[g.groupId] = g.groupName;
+            groupUScales[g.groupId] = g.uScale != 0 ? g.uScale : 1.0f;
+            groupVScales[g.groupId] = g.vScale != 0 ? g.vScale : 1.0f;
+            groupUOffsets[g.groupId] = g.uOffset;
+            groupVOffsets[g.groupId] = g.vOffset;
         }
 
         foreach (var cData in saveData.hairCards)
@@ -1230,7 +1343,9 @@ public class ModelViewer : MonoBehaviour
             card.transform.rotation = new Quaternion(cData.rotX, cData.rotY, cData.rotZ, cData.rotW);
             
             card.groupId = cData.groupId;
-            card.SetParameters(cData.length, cData.width, cData.segments, cData.bendAngle, cData.twistAngle, cData.offsetX, cData.offsetY, cData.offsetZ, cData.embedDepth, 1f);
+            float u = cData.uScale != 0 ? cData.uScale : 1.0f;
+            float v = cData.vScale != 0 ? cData.vScale : 1.0f;
+            card.SetParameters(cData.length, cData.width, cData.segments, cData.bendAngle, cData.twistAngle, cData.offsetX, cData.offsetY, cData.offsetZ, cData.embedDepth, 1f, u, v, cData.uOffset, cData.vOffset);
 
             MeshRenderer mr = cardGO.GetComponent<MeshRenderer>();
             if (hairCardMaterial != null)

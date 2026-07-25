@@ -15,6 +15,10 @@ public class HairCardSaveData
     public float flattenFactor;
     public float embedDepth;
     public float offsetX, offsetY, offsetZ;
+    public float uScale;
+    public float vScale;
+    public float uOffset;
+    public float vOffset;
     public int groupId;
 }
 
@@ -23,15 +27,19 @@ public class GroupSaveData
 {
     public int groupId;
     public string groupName;
+    public float uScale;
+    public float vScale;
+    public float uOffset;
+    public float vOffset;
 }
 
 [Serializable]
 public class HairProjectSaveData
 {
-    public string modelPath; // Tracks the file path of the loaded OBJ mesh model
+    public string modelPath;
     public List<GroupSaveData> groups = new List<GroupSaveData>();
     public List<HairCardSaveData> hairCards = new List<HairCardSaveData>();
-
+    
     public float sliderLength;
     public float sliderWidth;
     public int sliderSegments;
@@ -41,4 +49,8 @@ public class HairProjectSaveData
     public float sliderOffsetX;
     public float sliderOffsetY;
     public float sliderOffsetZ;
+    public float sliderUScale;
+    public float sliderVScale;
+    public float sliderUOffset;
+    public float sliderVOffset;
 }
