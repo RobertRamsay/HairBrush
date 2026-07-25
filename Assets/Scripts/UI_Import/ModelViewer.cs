@@ -31,7 +31,7 @@ public class ModelViewer : MonoBehaviour
     public Material hairCardMaterial;
 
     private GameObject loadedModel;
-    private string currentModelPath = ""; // Track current mesh file path for saving/reloading
+    private string currentModelPath = "";
     private float pitch = 0f;
     private bool isGroomingMode = false;
 
@@ -52,6 +52,8 @@ public class ModelViewer : MonoBehaviour
     public int currentGroupId = 0;
     private HashSet<int> allGroupIds = new HashSet<int>() { 0 };
     private Dictionary<int, string> groupNames = new Dictionary<int, string>() { { 0, "Group 0 (Default)" } };
+    private Dictionary<int, bool> groupSoloState = new Dictionary<int, bool>();
+    private List<HairCard> sessionPlacedCards = new List<HairCard>(); // Tracks cards placed during current Shift drag session
     private Transform groupListContentTransform;
     private bool wasHoldingShiftDrag = false;
     private Coroutine flashGroupCoroutine;
@@ -113,7 +115,7 @@ public class ModelViewer : MonoBehaviour
 #endif
 
         if (string.IsNullOrEmpty(path)) return;
-        currentModelPath = path; // Track model path
+        currentModelPath = path;
         if (loadedModel != null) Destroy(loadedModel);
 
         loadedModel = CustomOBJImporter.Load(path);
@@ -241,7 +243,7 @@ public class ModelViewer : MonoBehaviour
 
     void ApplyGroupUpdate(System.Action<HairCard> updateAction)
     {
-        HairCard[] allCards = FindObjectsOfType<HairCard>();
+        HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
         foreach (HairCard card in allCards)
         {
             if (card.groupId == currentGroupId)
@@ -334,7 +336,7 @@ public class ModelViewer : MonoBehaviour
 
     public void BuildRuntimeGroomingUI()
     {
-        Canvas canvas = FindObjectOfType<Canvas>();
+        Canvas canvas = FindObjectsByType<Canvas>(FindObjectsSortMode.None).FirstOrDefault();
         if (canvas == null)
         {
             GameObject canvasGO = new GameObject("GroomingCanvas", typeof(Canvas), typeof(UnityEngine.UI.CanvasScaler), typeof(UnityEngine.UI.GraphicRaycaster));
@@ -346,7 +348,7 @@ public class ModelViewer : MonoBehaviour
             scaler.referenceResolution = new Vector2(1920, 1080);
         }
 
-        if (FindObjectOfType<EventSystem>() == null)
+        if (FindObjectsByType<EventSystem>(FindObjectsSortMode.None).Length == 0)
         {
             new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule));
         }
@@ -387,7 +389,7 @@ public class ModelViewer : MonoBehaviour
 
     void BuildGroupManagementUI()
     {
-        Transform canvasTransform = activeSliderPanel != null ? activeSliderPanel.transform.parent : FindObjectOfType<Canvas>()?.transform;
+        Transform canvasTransform = activeSliderPanel != null ? activeSliderPanel.transform.parent : FindObjectsByType<Canvas>(FindObjectsSortMode.None).FirstOrDefault()?.transform;
         if (canvasTransform == null) return;
 
         GameObject groupPanelGO = new GameObject("GroupManagerPanel", typeof(RectTransform), typeof(UnityEngine.UI.Image), typeof(UnityEngine.UI.GraphicRaycaster));
@@ -492,7 +494,7 @@ public class ModelViewer : MonoBehaviour
 
     IEnumerator FlashActiveGroupRoutine(int activeId)
     {
-        HairCard[] allCards = FindObjectsOfType<HairCard>();
+        HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
 
         foreach (var card in allCards)
         {
@@ -524,40 +526,133 @@ public class ModelViewer : MonoBehaviour
             Destroy(child.gameObject);
         }
 
+        // Count how many cards belong to each group for display purposes
+        HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
+        Dictionary<int, int> groupCardCounts = new Dictionary<int, int>();
+        foreach (var card in allCards)
+        {
+            if (!groupCardCounts.ContainsKey(card.groupId)) groupCardCounts[card.groupId] = 0;
+            groupCardCounts[card.groupId]++;
+        }
+
         foreach (int id in allGroupIds.OrderBy(g => g))
         {
             int gid = id;
-            GameObject itemGO = new GameObject("GroupItem_" + gid, typeof(RectTransform), typeof(Image), typeof(Button), typeof(CustomClickDetector));
+            int cardCount = groupCardCounts.ContainsKey(gid) ? groupCardCounts[gid] : 0;
+
+            GameObject itemGO = new GameObject("GroupItem_" + gid, typeof(RectTransform), typeof(Image), typeof(HorizontalLayoutGroup));
             itemGO.transform.SetParent(groupListContentTransform, false);
-            itemGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 40);
+            itemGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 48); // Slightly taller to accommodate card count text
 
             Image img = itemGO.GetComponent<Image>();
             img.color = (gid == currentGroupId) ? new Color(0.3f, 0.6f, 0.3f, 1f) : new Color(0.25f, 0.25f, 0.25f, 1f);
 
-            Button itemBtn = itemGO.GetComponent<Button>();
+            HorizontalLayoutGroup rowLayout = itemGO.GetComponent<HorizontalLayoutGroup>();
+            rowLayout.padding = new RectOffset(8, 8, 4, 4);
+            rowLayout.spacing = 8;
+            rowLayout.childControlWidth = false;
+            rowLayout.childControlHeight = true;
+
+            // Main clickable area for group selection/renaming
+            GameObject labelBtnGO = new GameObject("LabelButton", typeof(RectTransform), typeof(Button), typeof(CustomClickDetector));
+            labelBtnGO.transform.SetParent(itemGO.transform, false);
+            RectTransform labelRect = labelBtnGO.GetComponent<RectTransform>();
+            labelRect.sizeDelta = new Vector2(170, 40);
+
+            Button itemBtn = labelBtnGO.GetComponent<Button>();
             itemBtn.onClick.AddListener(() => {
                 HandleGroupItemClick(gid);
             });
 
-            CustomClickDetector detector = itemGO.GetComponent<CustomClickDetector>();
+            CustomClickDetector detector = labelBtnGO.GetComponent<CustomClickDetector>();
             detector.onRightClick = () => {
                 PromptDeleteGroup(gid);
             };
 
+            // Group Name Text
             GameObject txtGO = new GameObject("Label", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
-            txtGO.transform.SetParent(itemGO.transform, false);
+            txtGO.transform.SetParent(labelBtnGO.transform, false);
             TMPro.TextMeshProUGUI tmp = txtGO.GetComponent<TMPro.TextMeshProUGUI>();
             tmp.text = groupNames.ContainsKey(gid) ? groupNames[gid] : ("Group " + gid);
-            tmp.fontSize = 16;
-            tmp.alignment = TMPro.TextAlignmentOptions.Left;
+            tmp.fontSize = 14;
+            tmp.fontStyle = TMPro.FontStyles.Bold;
+            tmp.alignment = TMPro.TextAlignmentOptions.TopLeft;
             tmp.color = Color.white;
-
             RectTransform txtRect = txtGO.GetComponent<RectTransform>();
             txtRect.anchorMin = Vector2.zero;
             txtRect.anchorMax = Vector2.one;
-            txtRect.offsetMin = new Vector2(10, 0);
-            txtRect.offsetMax = new Vector2(-10, 0);
+            txtRect.offsetMin = new Vector2(2, 2);
+            txtRect.offsetMax = new Vector2(-2, -2);
+
+            // Card Count Subtext under name
+            GameObject countTxtGO = new GameObject("CardCountLabel", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
+            countTxtGO.transform.SetParent(labelBtnGO.transform, false);
+            TMPro.TextMeshProUGUI countTmp = countTxtGO.GetComponent<TMPro.TextMeshProUGUI>();
+            countTmp.text = cardCount + (cardCount == 1 ? " card" : " cards");
+            countTmp.fontSize = 11;
+            countTmp.alignment = TMPro.TextAlignmentOptions.BottomLeft;
+            countTmp.color = new Color(0.8f, 0.8f, 0.8f, 0.9f);
+            RectTransform countRect = countTxtGO.GetComponent<RectTransform>();
+            countRect.anchorMin = Vector2.zero;
+            countRect.anchorMax = Vector2.one;
+            countRect.offsetMin = new Vector2(2, 2);
+            countRect.offsetMax = new Vector2(-2, -2);
+
+            // SOLO Button for individual group isolation
+            GameObject soloBtnGO = new GameObject("SoloButton", typeof(RectTransform), typeof(Image), typeof(Button));
+            soloBtnGO.transform.SetParent(itemGO.transform, false);
+            RectTransform soloRect = soloBtnGO.GetComponent<RectTransform>();
+            soloRect.sizeDelta = new Vector2(65, 36);
+
+            Image soloImg = soloBtnGO.GetComponent<Image>();
+            bool isSoloed = groupSoloState.ContainsKey(gid) && groupSoloState[gid];
+            soloImg.color = isSoloed ? new Color(0.9f, 0.5f, 0.1f) : new Color(0.35f, 0.35f, 0.35f);
+
+            Button soloBtn = soloBtnGO.GetComponent<Button>();
+            GameObject soloTxtGO = new GameObject("Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
+            soloTxtGO.transform.SetParent(soloBtnGO.transform, false);
+            TMPro.TextMeshProUGUI soloTmp = soloTxtGO.GetComponent<TMPro.TextMeshProUGUI>();
+            soloTmp.text = "SOLO";
+            soloTmp.fontSize = 13;
+            soloTmp.fontStyle = TMPro.FontStyles.Bold;
+            soloTmp.alignment = TMPro.TextAlignmentOptions.Center;
+            soloTmp.color = Color.white;
+            soloTxtGO.GetComponent<RectTransform>().anchorMin = Vector2.zero;
+            soloTxtGO.GetComponent<RectTransform>().anchorMax = Vector2.one;
+            soloTxtGO.GetComponent<RectTransform>().sizeDelta = Vector2.zero;
+
+            soloBtn.onClick.AddListener(() => {
+                ToggleGroupSolo(gid);
+            });
         }
+    }
+
+    void ToggleGroupSolo(int gid)
+    {
+        bool currentState = groupSoloState.ContainsKey(gid) && groupSoloState[gid];
+        groupSoloState[gid] = !currentState;
+
+        bool anySoloActive = groupSoloState.Values.Any(s => s);
+
+        HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
+        foreach (var card in allCards)
+        {
+            var mr = card.GetComponent<MeshRenderer>();
+            if (mr != null)
+            {
+                if (anySoloActive)
+                {
+                    bool cardSoloed = groupSoloState.ContainsKey(card.groupId) && groupSoloState[card.groupId];
+                    mr.enabled = cardSoloed;
+                }
+                else
+                {
+                    mr.enabled = true;
+                }
+            }
+        }
+
+        RefreshGroupListUI();
     }
 
     void HandleGroupItemClick(int gid)
@@ -600,7 +695,7 @@ public class ModelViewer : MonoBehaviour
 
     void DeleteGroupAndCards(int gid)
     {
-        HairCard[] allCards = FindObjectsOfType<HairCard>();
+        HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
         foreach (var card in allCards)
         {
             if (card.groupId == gid)
@@ -611,6 +706,7 @@ public class ModelViewer : MonoBehaviour
 
         allGroupIds.Remove(gid);
         if (groupNames.ContainsKey(gid)) groupNames.Remove(gid);
+        if (groupSoloState.ContainsKey(gid)) groupSoloState.Remove(gid);
 
         if (currentGroupId == gid)
         {
@@ -707,7 +803,7 @@ public class ModelViewer : MonoBehaviour
     {
         if (hasSelectionHotspot)
         {
-            HairCard[] allCards = FindObjectsOfType<HairCard>();
+            HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
             foreach (HairCard card in allCards)
             {
                 if (card.groupId == currentGroupId && card.selectionWeight > 0f)
@@ -746,19 +842,58 @@ public class ModelViewer : MonoBehaviour
         if (!isGroomingMode || Mouse.current == null) return;
         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
 
+        bool isHoldingAlt = Keyboard.current != null && (Keyboard.current.leftAltKey.isPressed || Keyboard.current.rightAltKey.isPressed);
         bool isHoldingCtrl = Keyboard.current != null && Keyboard.current.ctrlKey.isPressed;
         bool isHoldingShift = Keyboard.current != null && (Keyboard.current.leftShiftKey.isPressed || Keyboard.current.rightShiftKey.isPressed);
 
+        if (isHoldingAlt && Mouse.current.leftButton.wasPressedThisFrame)
+        {
+            Ray altRay = mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
+            if (Physics.Raycast(altRay, out RaycastHit altHit))
+            {
+                HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
+                if (allCards.Length > 0)
+                {
+                    HairCard nearestCard = allCards.OrderBy(c => Vector3.Distance(altHit.point, c.transform.position)).FirstOrDefault();
+                    if (nearestCard != null)
+                    {
+                        SelectGroup(nearestCard.groupId);
+                        Debug.Log("Alt-clicked: Picked group " + nearestCard.groupId);
+                    }
+                }
+            }
+            return;
+        }
+
+        if (isHoldingShift && !wasHoldingShiftDrag)
+        {
+            wasHoldingShiftDrag = true;
+            sessionPlacedCards.Clear(); // Reset session tracking for this shift drag
+        }
+
         if (wasHoldingShiftDrag && !isHoldingShift)
         {
-            if (EditorUtility.DisplayDialog("New Group", "Do you want to create a new group for subsequent hair placements?", "Yes", "No"))
+            // If cards were placed during this shift drag session, prompt to group them into a new group
+            if (sessionPlacedCards.Count > 0 && EditorUtility.DisplayDialog("New Group", "Do you want to create a new group for the hair cards placed during this stroke?", "Yes", "No"))
             {
                 int newId = GetNextAvailableGroupId();
                 allGroupIds.Add(newId);
                 groupNames[newId] = "Group " + newId;
+
+                // Move all cards placed during this stroke into the new group
+                foreach (var card in sessionPlacedCards)
+                {
+                    if (card != null)
+                    {
+                        card.groupId = newId;
+                    }
+                }
+
                 SelectGroup(newId);
             }
             wasHoldingShiftDrag = false;
+            sessionPlacedCards.Clear();
+            RefreshGroupListUI();
         }
 
         if (isHoldingCtrl && Mouse.current.leftButton.wasPressedThisFrame)
@@ -779,7 +914,6 @@ public class ModelViewer : MonoBehaviour
 
         if (isHoldingShift)
         {
-            wasHoldingShiftDrag = true;
             if (Mouse.current.leftButton.isPressed && Time.time >= lastSpawnTime + spawnCooldown)
             {
                 shouldSpawn = true;
@@ -787,7 +921,6 @@ public class ModelViewer : MonoBehaviour
         }
         else
         {
-            wasHoldingShiftDrag = false;
             if (Mouse.current.leftButton.wasPressedThisFrame)
             {
                 shouldSpawn = true;
@@ -799,7 +932,11 @@ public class ModelViewer : MonoBehaviour
             Ray ray = mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
             if (Physics.Raycast(ray, out RaycastHit hit))
             {
-                PinHairCard(hit.point, hit.normal);
+                HairCard card = PinHairCard(hit.point, hit.normal);
+                if (isHoldingShift && card != null)
+                {
+                    sessionPlacedCards.Add(card); // Track card placed during shift stroke
+                }
                 lastSpawnTime = Time.time;
             }
         }
@@ -821,7 +958,7 @@ public class ModelViewer : MonoBehaviour
             activePanelImage.color = new Color(0.35f, 0.32f, 0.1f, 0.9f);
         }
 
-        HairCard[] groupCards = FindObjectsOfType<HairCard>().Where(c => c.groupId == currentGroupId).ToArray();
+        HairCard[] groupCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None).Where(c => c.groupId == currentGroupId).ToArray();
         if (groupCards.Length > 0)
         {
             var nearestCards = groupCards
@@ -891,7 +1028,7 @@ public class ModelViewer : MonoBehaviour
         if (falloffRowGO != null) Destroy(falloffRowGO);
         if (strengthRowGO != null) Destroy(strengthRowGO);
 
-        HairCard[] allCards = FindObjectsOfType<HairCard>();
+        HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
         foreach (HairCard card in allCards)
         {
             card.SetSelectionWeight(0f);
@@ -901,7 +1038,7 @@ public class ModelViewer : MonoBehaviour
 
     void RecomputeSelectionWeights(Vector3 brushCenter)
     {
-        HairCard[] allCards = FindObjectsOfType<HairCard>();
+        HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
         foreach (HairCard card in allCards)
         {
             if (card.groupId != currentGroupId)
@@ -924,7 +1061,7 @@ public class ModelViewer : MonoBehaviour
         }
     }
 
-    void PinHairCard(Vector3 position, Vector3 normal)
+    HairCard PinHairCard(Vector3 position, Vector3 normal)
     {
         GameObject cardGO = new GameObject("HairCard_Strip", typeof(MeshFilter), typeof(MeshRenderer), typeof(HairCard));
         HairCard card = cardGO.GetComponent<HairCard>();
@@ -939,6 +1076,9 @@ public class ModelViewer : MonoBehaviour
         {
             mr.sharedMaterial = hairCardMaterial;
         }
+
+        RefreshGroupListUI(); // Update card count UI immediately on spawn
+        return card;
     }
 
     void HandleCameraControls()
@@ -981,7 +1121,7 @@ public class ModelViewer : MonoBehaviour
         if (string.IsNullOrEmpty(path)) return;
 
         HairProjectSaveData saveData = new HairProjectSaveData();
-        saveData.modelPath = currentModelPath; // Save mesh reference path
+        saveData.modelPath = currentModelPath;
         
         saveData.sliderLength = currentLength;
         saveData.sliderWidth = currentWidth;
@@ -1001,7 +1141,7 @@ public class ModelViewer : MonoBehaviour
             saveData.groups.Add(gData);
         }
 
-        HairCard[] allCards = FindObjectsOfType<HairCard>();
+        HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
         foreach (var card in allCards)
         {
             HairCardSaveData cardData = new HairCardSaveData();
@@ -1044,7 +1184,6 @@ public class ModelViewer : MonoBehaviour
         string json = System.IO.File.ReadAllText(path);
         HairProjectSaveData saveData = JsonUtility.FromJson<HairProjectSaveData>(json);
 
-        // Reload imported 3D model/mesh if path exists
         if (!string.IsNullOrEmpty(saveData.modelPath))
         {
             currentModelPath = saveData.modelPath;
@@ -1058,8 +1197,7 @@ public class ModelViewer : MonoBehaviour
             }
         }
 
-        // Clear existing cards
-        HairCard[] oldCards = FindObjectsOfType<HairCard>();
+        HairCard[] oldCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
         foreach (var card in oldCards)
         {
             Destroy(card.gameObject);
