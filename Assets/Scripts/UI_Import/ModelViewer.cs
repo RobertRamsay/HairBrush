@@ -18,6 +18,10 @@ public class ModelViewer : MonoBehaviour
     public Button loadButton;
     public Button loadProjectButton;
 
+    [Header("Texture Editor Reference")]
+    private TextureEditorManager textureEditorManager;
+    private bool isTextureEditorMode = false;
+
     [Header("Camera Rig")]
     public Transform cameraPivot;
     public Camera mainCamera;
@@ -69,7 +73,6 @@ public class ModelViewer : MonoBehaviour
     private float lastGroupClickTime = 0f;
     private int lastClickedGroupId = -1;
 
-    // Brush & Selection State Tracking
     [Header("Brush Settings")]
     public float brushRadius = 0.2f;
     public float brushFalloffDistance = 0.05f;
@@ -83,19 +86,19 @@ public class ModelViewer : MonoBehaviour
     private GameObject falloffRowGO;
     private GameObject strengthRowGO;
 
-    private UnityEngine.UI.Slider lengthSlider;
-    private UnityEngine.UI.Slider widthSlider;
-    private UnityEngine.UI.Slider segmentsSlider;
-    private UnityEngine.UI.Slider bendSlider;
-    private UnityEngine.UI.Slider twistSlider;
-    private UnityEngine.UI.Slider depthSlider;
-    private UnityEngine.UI.Slider offsetXSlider;
-    private UnityEngine.UI.Slider offsetYSlider;
-    private UnityEngine.UI.Slider offsetZSlider;
-    private UnityEngine.UI.Slider uScaleSlider;
-    private UnityEngine.UI.Slider vScaleSlider;
-    private UnityEngine.UI.Slider uOffsetSlider;
-    private UnityEngine.UI.Slider vOffsetSlider;
+    private Slider lengthSlider;
+    private Slider widthSlider;
+    private Slider segmentsSlider;
+    private Slider bendSlider;
+    private Slider twistSlider;
+    private Slider depthSlider;
+    private Slider offsetXSlider;
+    private Slider offsetYSlider;
+    private Slider offsetZSlider;
+    private Slider uScaleSlider;
+    private Slider vScaleSlider;
+    private Slider uOffsetSlider;
+    private Slider vOffsetSlider;
 
     private float spawnCooldown = 0.05f;
     private float lastSpawnTime = 0f;
@@ -116,9 +119,16 @@ public class ModelViewer : MonoBehaviour
             loadProjectButton.onClick.AddListener(LoadProject);
 
         pitch = cameraPivot.eulerAngles.x;
+
+        textureEditorManager = GetComponent<TextureEditorManager>();
+        if (textureEditorManager == null)
+        {
+            textureEditorManager = gameObject.AddComponent<TextureEditorManager>();
+        }
+        textureEditorManager.Init(hairCardMaterial);
     }
 
-    void LoadModel()
+void LoadModel()
     {
         string path = "";
 #if UNITY_EDITOR
@@ -137,6 +147,23 @@ public class ModelViewer : MonoBehaviour
         {
             loadedModel.transform.position = Vector3.zero;
             loadedModel.transform.eulerAngles = new Vector3(0f, 180f, 0f);
+
+            // Compute true bounds center of the loaded mesh model
+            MeshRenderer[] renderers = loadedModel.GetComponentsInChildren<MeshRenderer>();
+            if (renderers.Length > 0)
+            {
+                Bounds combinedBounds = renderers[0].bounds;
+                for (int i = 1; i < renderers.Length; i++)
+                {
+                    combinedBounds.Encapsulate(renderers[i].bounds);
+                }
+
+                // Snap the camera pivot to the exact center of the mesh bounds
+                if (cameraPivot != null)
+                {
+                    cameraPivot.position = combinedBounds.center;
+                }
+            }
 
             if (uiContainer != null)
             {
@@ -388,17 +415,93 @@ public class ModelViewer : MonoBehaviour
         });
     }
 
+    void CreatePanelTabSwitcher(Transform parent)
+    {
+        GameObject tabRowGO = new GameObject("PanelTabRow", typeof(RectTransform));
+        tabRowGO.transform.SetParent(parent, false);
+        RectTransform tabRect = tabRowGO.GetComponent<RectTransform>();
+        tabRect.sizeDelta = new Vector2(0, 45);
+
+        HorizontalLayoutGroup hLayout = tabRowGO.AddComponent<HorizontalLayoutGroup>();
+        hLayout.spacing = 8;
+        hLayout.childControlWidth = true;
+        hLayout.childControlHeight = true;
+
+        GameObject groomTabGO = new GameObject("GroomTabButton", typeof(RectTransform), typeof(Image), typeof(Button));
+        groomTabGO.transform.SetParent(tabRowGO.transform, false);
+        groomTabGO.GetComponent<Image>().color = new Color(0.2f, 0.5f, 0.8f);
+        Button groomBtn = groomTabGO.GetComponent<Button>();
+
+        GameObject groomTxtGO = new GameObject("Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
+        groomTxtGO.transform.SetParent(groomTabGO.transform, false);
+        TMPro.TextMeshProUGUI groomTmp = groomTxtGO.GetComponent<TMPro.TextMeshProUGUI>();
+        groomTmp.text = "Groom Mode";
+        groomTmp.fontSize = 16;
+        groomTmp.fontStyle = TMPro.FontStyles.Bold;
+        groomTmp.alignment = TMPro.TextAlignmentOptions.Center;
+        groomTmp.color = Color.white;
+        groomTxtGO.GetComponent<RectTransform>().anchorMin = Vector2.zero;
+        groomTxtGO.GetComponent<RectTransform>().anchorMax = Vector2.one;
+        groomTxtGO.GetComponent<RectTransform>().sizeDelta = Vector2.zero;
+
+        GameObject texTabGO = new GameObject("TexTabButton", typeof(RectTransform), typeof(Image), typeof(Button));
+        texTabGO.transform.SetParent(tabRowGO.transform, false);
+        texTabGO.GetComponent<Image>().color = new Color(0.25f, 0.25f, 0.25f);
+        Button texBtn = texTabGO.GetComponent<Button>();
+
+        GameObject texTxtGO = new GameObject("Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
+        texTxtGO.transform.SetParent(texTabGO.transform, false);
+        TMPro.TextMeshProUGUI texTmp = texTxtGO.GetComponent<TMPro.TextMeshProUGUI>();
+        texTmp.text = "Texture Editor";
+        texTmp.fontSize = 16;
+        texTmp.fontStyle = TMPro.FontStyles.Bold;
+        texTmp.alignment = TMPro.TextAlignmentOptions.Center;
+        texTmp.color = Color.white;
+        texTxtGO.GetComponent<RectTransform>().anchorMin = Vector2.zero;
+        texTxtGO.GetComponent<RectTransform>().anchorMax = Vector2.one;
+        texTxtGO.GetComponent<RectTransform>().sizeDelta = Vector2.zero;
+
+        groomBtn.onClick.AddListener(() => SwitchEditorMode(false));
+        texBtn.onClick.AddListener(() => SwitchEditorMode(true));
+    }
+
+    public void SwitchEditorMode(bool textureMode)
+    {
+        isTextureEditorMode = textureMode;
+
+        if (groomingSliderPanelGO != null)
+            groomingSliderPanelGO.SetActive(!textureMode);
+
+        Transform canvasTransform = groomingSliderPanelGO != null ? groomingSliderPanelGO.transform.parent : FindObjectsByType<Canvas>(FindObjectsSortMode.None).FirstOrDefault()?.transform;
+        if (canvasTransform != null)
+        {
+            textureEditorManager.SetPanelActive(textureMode, canvasTransform, () => SwitchEditorMode(false));
+        }
+
+        if (loadedModel != null)
+        {
+            loadedModel.SetActive(!textureMode);
+        }
+
+        HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
+        foreach (var card in allCards)
+        {
+            var mr = card.GetComponent<MeshRenderer>();
+            if (mr != null) mr.enabled = !textureMode;
+        }
+    }
+
     public void BuildRuntimeGroomingUI()
     {
         Canvas canvas = FindObjectsByType<Canvas>(FindObjectsSortMode.None).FirstOrDefault();
         if (canvas == null)
         {
-            GameObject canvasGO = new GameObject("GroomingCanvas", typeof(Canvas), typeof(UnityEngine.UI.CanvasScaler), typeof(UnityEngine.UI.GraphicRaycaster));
+            GameObject canvasGO = new GameObject("GroomingCanvas", typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
             canvas = canvasGO.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
 
-            UnityEngine.UI.CanvasScaler scaler = canvasGO.GetComponent<UnityEngine.UI.CanvasScaler>();
-            scaler.uiScaleMode = UnityEngine.UI.CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            CanvasScaler scaler = canvasGO.GetComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = new Vector2(1920, 1080);
         }
 
@@ -407,7 +510,7 @@ public class ModelViewer : MonoBehaviour
             new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule));
         }
 
-        GameObject panelGO = new GameObject("GroomingPanel", typeof(RectTransform), typeof(UnityEngine.UI.Image), typeof(UnityEngine.UI.GraphicRaycaster));
+        GameObject panelGO = new GameObject("GroomingPanel", typeof(RectTransform), typeof(Image), typeof(GraphicRaycaster));
         panelGO.transform.SetParent(canvas.transform, false);
 
         RectTransform panelRect = panelGO.GetComponent<RectTransform>();
@@ -417,17 +520,19 @@ public class ModelViewer : MonoBehaviour
         panelRect.sizeDelta = new Vector2(560, 0);
         panelRect.anchoredPosition = new Vector2(-10, 0);
 
-        activePanelImage = panelGO.GetComponent<UnityEngine.UI.Image>();
+        activePanelImage = panelGO.GetComponent<Image>();
         activePanelImage.color = new Color(0.15f, 0.15f, 0.15f, 0.85f);
 
         VerticalLayoutGroup layout = panelGO.AddComponent<VerticalLayoutGroup>();
         layout.padding = new RectOffset(15, 15, 12, 12);
-        layout.spacing = 4; // Compact spacing to fit all sliders comfortably
+        layout.spacing = 4;
         layout.childControlWidth = true;
         layout.childControlHeight = false;
 
+        groomingSliderPanelGO = panelGO;
         activeSliderPanel = panelGO;
 
+        CreatePanelTabSwitcher(panelGO.transform);
         CreateModeToggleButton(panelGO.transform);
 
         CreateSliderUI(panelGO.transform, "Length", 0.0005f, 1.0f, currentLength, OnActualSliderLengthChanged, out lengthSlider, 38, 16);
@@ -450,7 +555,7 @@ public class ModelViewer : MonoBehaviour
         Transform canvasTransform = activeSliderPanel != null ? activeSliderPanel.transform.parent : FindObjectsByType<Canvas>(FindObjectsSortMode.None).FirstOrDefault()?.transform;
         if (canvasTransform == null) return;
 
-        GameObject groupPanelGO = new GameObject("GroupManagerPanel", typeof(RectTransform), typeof(UnityEngine.UI.Image), typeof(UnityEngine.UI.GraphicRaycaster));
+        GameObject groupPanelGO = new GameObject("GroupManagerPanel", typeof(RectTransform), typeof(Image), typeof(GraphicRaycaster));
         groupPanelGO.transform.SetParent(canvasTransform, false);
 
         RectTransform panelRect = groupPanelGO.GetComponent<RectTransform>();
@@ -805,7 +910,7 @@ public class ModelViewer : MonoBehaviour
         return id;
     }
 
-    GameObject CreateSliderUI(Transform parent, string labelText, float min, float max, float defaultValue, UnityEngine.Events.UnityAction<float> onValueChanged, out UnityEngine.UI.Slider createdSlider, float rowHeight = 44f, int fontSize = 16)
+    GameObject CreateSliderUI(Transform parent, string labelText, float min, float max, float defaultValue, UnityEngine.Events.UnityAction<float> onValueChanged, out Slider createdSlider, float rowHeight = 44f, int fontSize = 16)
     {
         GameObject rowGO = new GameObject(labelText + "_Row", typeof(RectTransform));
         rowGO.transform.SetParent(parent, false);
@@ -813,25 +918,23 @@ public class ModelViewer : MonoBehaviour
         rowRect.sizeDelta = new Vector2(0, rowHeight);
 
         VerticalLayoutGroup rowLayout = rowGO.AddComponent<VerticalLayoutGroup>();
-        rowLayout.spacing = 2; // Positive spacing so the label sits right on top of its slider
+        rowLayout.spacing = 2;
         rowLayout.padding = new RectOffset(0, 0, 2, 2);
         rowLayout.childControlWidth = true;
         rowLayout.childControlHeight = false;
 
         GameObject textGO = new GameObject(labelText + "_Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
         textGO.transform.SetParent(rowGO.transform, false);
-        RectTransform textRect = textGO.GetComponent<RectTransform>();
-        textRect.sizeDelta = new Vector2(0, 18); // Give text a fixed tight height
+        textGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 18);
 
         TMPro.TextMeshProUGUI tmp = textGO.GetComponent<TMPro.TextMeshProUGUI>();
         tmp.text = labelText + ": " + defaultValue.ToString("F3");
         tmp.fontSize = fontSize;
         tmp.color = Color.white;
 
-        GameObject sliderGO = new GameObject(labelText + "_Slider", typeof(RectTransform), typeof(UnityEngine.UI.Slider));
+        GameObject sliderGO = new GameObject(labelText + "_Slider", typeof(RectTransform), typeof(Slider));
         sliderGO.transform.SetParent(rowGO.transform, false);
-        RectTransform sliderRect = sliderGO.GetComponent<RectTransform>();
-        sliderRect.sizeDelta = new Vector2(0, 18); // Slim down slider height slightly for compactness
+        sliderGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 18);
 
         Slider slider = sliderGO.GetComponent<Slider>();
         slider.minValue = min;
@@ -924,6 +1027,7 @@ public class ModelViewer : MonoBehaviour
     void HandleGrooming()
     {
         if (!isGroomingMode || Mouse.current == null) return;
+        if (isTextureEditorMode) return;
         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
 
         bool isHoldingAlt = Keyboard.current != null && (Keyboard.current.leftAltKey.isPressed || Keyboard.current.rightAltKey.isPressed);
@@ -942,7 +1046,6 @@ public class ModelViewer : MonoBehaviour
                     if (nearestCard != null)
                     {
                         SelectGroup(nearestCard.groupId);
-                        Debug.Log("Alt-clicked: Picked group " + nearestCard.groupId);
                     }
                 }
             }
@@ -1037,7 +1140,7 @@ public class ModelViewer : MonoBehaviour
         isSelectionMode = true;
         hasSelectionHotspot = true;
         selectionStrength = 0.25f;
-        brushFalloffDistance = 0.25f; // Set default to 0.25
+        brushFalloffDistance = 0.25f;
         selectionHitPoint = brushCenter;
         selectionHitNormal = hitNormal;
 
@@ -1294,6 +1397,21 @@ public class ModelViewer : MonoBehaviour
             {
                 loadedModel.transform.position = Vector3.zero;
                 loadedModel.transform.eulerAngles = new Vector3(0f, 180f, 0f);
+
+                MeshRenderer[] renderers = loadedModel.GetComponentsInChildren<MeshRenderer>();
+                if (renderers.Length > 0)
+                {
+                    Bounds combinedBounds = renderers[0].bounds;
+                    for (int i = 1; i < renderers.Length; i++)
+                    {
+                        combinedBounds.Encapsulate(renderers[i].bounds);
+                    }
+
+                    if (cameraPivot != null)
+                    {
+                        cameraPivot.position = combinedBounds.center;
+                    }
+                }
             }
         }
 
