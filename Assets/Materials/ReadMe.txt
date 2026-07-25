@@ -1,0 +1,1 @@
+Alpha to be combined with colour.
