@@ -128,7 +128,7 @@ public class ModelViewer : MonoBehaviour
         textureEditorManager.Init(hairCardMaterial);
     }
 
-void LoadModel()
+    void LoadModel()
     {
         string path = "";
 #if UNITY_EDITOR
@@ -148,7 +148,7 @@ void LoadModel()
             loadedModel.transform.position = Vector3.zero;
             loadedModel.transform.eulerAngles = new Vector3(0f, 180f, 0f);
 
-            // Compute true bounds center of the loaded mesh model
+            // Compute true bounds center of the loaded mesh model and center camera pivot
             MeshRenderer[] renderers = loadedModel.GetComponentsInChildren<MeshRenderer>();
             if (renderers.Length > 0)
             {
@@ -158,7 +158,6 @@ void LoadModel()
                     combinedBounds.Encapsulate(renderers[i].bounds);
                 }
 
-                // Snap the camera pivot to the exact center of the mesh bounds
                 if (cameraPivot != null)
                 {
                     cameraPivot.position = combinedBounds.center;
@@ -624,24 +623,29 @@ void LoadModel()
         viewportRect.anchorMax = Vector2.one;
         viewportRect.sizeDelta = Vector2.zero;
 
-        GameObject contentGO = new GameObject("Content", typeof(RectTransform), typeof(VerticalLayoutGroup));
+        GameObject contentGO = new GameObject("Content", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
         contentGO.transform.SetParent(viewportGO.transform, false);
         RectTransform contentRect = contentGO.GetComponent<RectTransform>();
         contentRect.anchorMin = new Vector2(0, 1);
         contentRect.anchorMax = new Vector2(1, 1);
         contentRect.pivot = new Vector2(0.5f, 1f);
-        contentRect.sizeDelta = new Vector2(0, 300);
+        contentRect.sizeDelta = new Vector2(0, 0);
 
         VerticalLayoutGroup contentLayout = contentGO.GetComponent<VerticalLayoutGroup>();
-        contentLayout.spacing = 8;
+        contentLayout.spacing = 6;
         contentLayout.padding = new RectOffset(5, 5, 5, 5);
         contentLayout.childControlWidth = true;
         contentLayout.childControlHeight = false;
+        contentLayout.childForceExpandHeight = false;
+
+        ContentSizeFitter sizeFitter = contentGO.GetComponent<ContentSizeFitter>();
+        sizeFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
         ScrollRect scrollRect = scrollGO.GetComponent<ScrollRect>();
         scrollRect.content = contentRect;
         scrollRect.viewport = viewportRect;
         scrollRect.horizontal = false;
+        scrollRect.vertical = true;
 
         groupListContentTransform = contentGO.transform;
         RefreshGroupListUI();
@@ -1301,6 +1305,11 @@ void LoadModel()
         float scroll = Mouse.current.scroll.y.ReadValue();
         if (scroll != 0.0f)
         {
+            if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
+            {
+                return;
+            }
+
             mainCamera.transform.Translate(Vector3.forward * (scroll * 0.001f) * zoomSpeed, Space.Self);
         }
     }

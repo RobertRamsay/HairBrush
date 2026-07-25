@@ -43,6 +43,21 @@ public class TextureEditorManager : MonoBehaviour
                 texturePreviewPlane.transform.position = new Vector3(0f, 0f, 1.5f);
                 texturePreviewPlane.transform.localScale = new Vector3(0.6f, 1.2f, 1.0f);
 
+                // Enforce exact 0-1 UV mapping on the preview plane mesh
+                MeshFilter meshFilter = texturePreviewPlane.GetComponent<MeshFilter>();
+                if (meshFilter != null && meshFilter.sharedMesh != null)
+                {
+                    Mesh mesh = meshFilter.sharedMesh;
+                    Vector2[] uvs = new Vector2[]
+                    {
+                        new Vector2(0, 0),
+                        new Vector2(1, 0),
+                        new Vector2(0, 1),
+                        new Vector2(1, 1)
+                    };
+                    mesh.uv = uvs;
+                }
+
                 MeshRenderer mr = texturePreviewPlane.GetComponent<MeshRenderer>();
                 if (hairCardMaterial != null)
                 {
