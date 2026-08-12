@@ -1,5 +1,4 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -7,17 +6,14 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
-// Structural modifiers lock the whole groom editing surface for the active group.
-// That includes variance controls and modifier actions. The inline CLUMP ON/OFF
-// control is deliberately exempt so the user can always release a clump lock.
+// POST affectors are downstream structural modifiers, so the group root is read-only
+// while one exists. Variance remains part of the groom UI but is locked at the same time.
 [DefaultExecutionOrder(5000)]
 public class ModifierCoreLock : MonoBehaviour
 {
     private ModelViewer viewer;
     private PostAffectorManager postManager;
-    private ClumpLayerManager clumpManager;
     private FieldInfo hasSelectionField;
-    private FieldInfo clumpLayersField;
     private GameObject boundPanel;
     private GameObject lockNotice;
     private float nextScan;
@@ -49,12 +45,10 @@ public class ModifierCoreLock : MonoBehaviour
         int groupId = viewer.currentGroupId;
         bool editingPost = IsLocalizedPostEditing();
         bool post = GroupHasPost(groupId);
-        bool clump = GroupHasEnabledClump(groupId);
-        bool locked = (post || clump) && !editingPost;
+        bool locked = post && !editingPost;
 
-        // Always re-apply the state. Runtime modifier rows are destroyed/rebuilt dynamically,
-        // so relying on a cached lock result can leave newly rebuilt controls stuck disabled.
-        ApplyLock(locked, post, clump);
+        // Runtime rows can be rebuilt, so always re-apply instead of caching interactable state.
+        ApplyLock(locked, post);
     }
 
     void ResolveReferences()
@@ -67,13 +61,6 @@ public class ModifierCoreLock : MonoBehaviour
         }
 
         if (postManager == null) postManager = FindFirstObjectByType<PostAffectorManager>();
-
-        if (clumpManager == null)
-        {
-            clumpManager = FindFirstObjectByType<ClumpLayerManager>();
-            if (clumpManager != null)
-                clumpLayersField = typeof(ClumpLayerManager).GetField("layers", BindingFlags.Instance | BindingFlags.NonPublic);
-        }
     }
 
     bool IsLocalizedPostEditing()
@@ -86,12 +73,11 @@ public class ModifierCoreLock : MonoBehaviour
         if (postManager == null) return false;
         try
         {
-            // Internal POST data and visible runtime rows must agree. The manager can retain
-            // stale/persistence state briefly after deletion; that must never keep the groom
-            // locked once the user has removed the final visible POST modifier.
             List<PostAffectorSaveData> items = postManager.ExportGroup(groupId);
             if (items == null || items.Count == 0) return false;
 
+            // Require a live row as well as manager state. This prevents a removed final POST
+            // from leaving a stale internal entry that keeps the group locked.
             RectTransform[] rows = FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             return rows.Any(r => r != null && r.name.StartsWith("PostAffector_" + groupId + "_", StringComparison.Ordinal));
         }
@@ -101,42 +87,22 @@ public class ModifierCoreLock : MonoBehaviour
         }
     }
 
-    bool GroupHasEnabledClump(int groupId)
-    {
-        if (clumpManager == null || clumpLayersField == null) return false;
-        try
-        {
-            object raw = clumpLayersField.GetValue(clumpManager);
-            if (raw is IDictionary dictionary && dictionary.Contains(groupId))
-            {
-                object layer = dictionary[groupId];
-                if (layer == null) return false;
-                FieldInfo enabledField = layer.GetType().GetField("enabled", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                return enabledField != null && enabledField.GetValue(layer) is bool enabled && enabled;
-            }
-        }
-        catch { }
-        return false;
-    }
-
-    void ApplyLock(bool locked, bool post, bool clump)
+    void ApplyLock(bool locked, bool post)
     {
         if (boundPanel == null) return;
 
-        // Lock every slider in the groom panel, including all VAR ± and CLUMP controls.
+        // A locked group means no groom parameter can be changed, including all variance rows.
         foreach (Slider slider in boundPanel.GetComponentsInChildren<Slider>(true))
             if (slider != null) slider.interactable = !locked;
 
-        // Seed fields are variation controls too.
         foreach (TMP_InputField input in boundPanel.GetComponentsInChildren<TMP_InputField>(true))
             if (input != null) input.interactable = !locked;
 
-        // Block buttons that mutate groom/modifier state (variance randomize, clump REGEN/R).
-        // Keep the explicit CLUMP ON/OFF control alive so the lock always has an escape hatch.
+        // Variance randomize buttons mutate the groom too, so lock them with the sliders.
         foreach (Button button in boundPanel.GetComponentsInChildren<Button>(true))
         {
-            if (button == null || !IsModifierEditButton(button)) continue;
-            button.interactable = button.gameObject.name == "ClumpToggleButton" || !locked;
+            if (button == null || !IsVarianceButton(button)) continue;
+            button.interactable = !locked;
         }
 
         foreach (Transform child in boundPanel.transform)
@@ -147,8 +113,7 @@ public class ModifierCoreLock : MonoBehaviour
             if (!editableRow) continue;
             CanvasGroup cg = child.GetComponent<CanvasGroup>();
             if (cg == null) cg = child.gameObject.AddComponent<CanvasGroup>();
-            if (!locked) cg.alpha = 1f;
-            else cg.alpha = child.name == "ClumpPoints_Row" ? 0.72f : 0.48f;
+            cg.alpha = locked ? 0.48f : 1f;
         }
 
         EnsureNotice();
@@ -157,23 +122,16 @@ public class ModifierCoreLock : MonoBehaviour
         if (!locked) return;
 
         TextMeshProUGUI text = lockNotice.GetComponent<TextMeshProUGUI>();
-        if (text == null) return;
-        List<string> sources = new();
-        if (post) sources.Add("POST");
-        if (clump) sources.Add("CLUMP");
-        text.text = "GROOM LOCKED — active: " + string.Join(" + ", sources) +
-                    (clump ? "  •  turn CLUMP OFF to edit root" : "");
+        if (text != null)
+            text.text = post ? "GROOM LOCKED — active: POST" : "GROOM LOCKED";
     }
 
-    bool IsModifierEditButton(Button button)
+    bool IsVarianceButton(Button button)
     {
         Transform t = button.transform;
         while (t != null && t != boundPanel.transform)
         {
-            string n = t.name;
-            if (n.EndsWith("_VarianceRow", StringComparison.Ordinal) ||
-                n == "ClumpPoints_Row" || n == "Clump_Row")
-                return true;
+            if (t.name.EndsWith("_VarianceRow", StringComparison.Ordinal)) return true;
             t = t.parent;
         }
         return false;
