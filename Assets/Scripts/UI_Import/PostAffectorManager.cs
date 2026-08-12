@@ -1,0 +1,494 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+using TMPro;
+using UnityEngine;
+using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
+using UnityEngine.UI;
+
+// Ctrl+Click creates a persistent localized post-affector for the active group.
+// Evaluation order is intentionally: authored/group groom -> variance -> POST affectors -> clump.
+// HairCard.GenerateMesh evaluates its clump modifier after SetParameters, so applying POST here
+// in LateUpdate keeps the stack order visible in the group UI and in the resulting mesh.
+[DefaultExecutionOrder(3300)]
+public class PostAffectorManager : MonoBehaviour
+{
+    [Serializable]
+    public class PostAffector
+    {
+        public int id;
+        public int groupId;
+        public Vector3 center;
+        public Vector3 normal;
+        public float radius = .02f;
+        public float falloff = .03f;
+        [Range(0f, 1f)] public float weight = 1f;
+
+        // Main-control values when this affector was created.
+        public ControlState baseline;
+        // Local edit stored as an offset from that creation basis.
+        public ControlState delta;
+    }
+
+    [Serializable]
+    public struct ControlState
+    {
+        public float length, width, bend, twist, depth;
+        public float segments;
+        public float x, y, z;
+        public float uScale, vScale, uOffset, vOffset;
+    }
+
+    private class CardState
+    {
+        public ControlState baseState;
+        public ControlState lastFinal;
+        public bool hasFinal;
+    }
+
+    private readonly Dictionary<int, List<PostAffector>> groups = new();
+    private readonly Dictionary<HairCard, CardState> cardStates = new();
+    private readonly HashSet<string> builtRows = new();
+
+    private ModelViewer viewer;
+    private FieldInfo hasSelectionField;
+    private FieldInfo hitPointField;
+    private FieldInfo hitNormalField;
+    private FieldInfo strengthRowField;
+    private FieldInfo relativeModeField;
+    private int nextId = 1;
+    private int activeId = -1;
+    private int activeGroup = -1;
+    private float nextUIScan;
+    private Vector3 lastCreatedPoint;
+    private int lastCreatedFrame = -1;
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+    static void Spawn()
+    {
+        if (FindFirstObjectByType<PostAffectorManager>() != null) return;
+        GameObject go = new GameObject("PostAffectorManager");
+        DontDestroyOnLoad(go);
+        go.AddComponent<PostAffectorManager>();
+    }
+
+    void Update()
+    {
+        EnsureViewer();
+        if (viewer == null) return;
+
+        DetectCtrlClick();
+        MaintainActiveAuthoring();
+
+        if (Time.unscaledTime >= nextUIScan)
+        {
+            nextUIScan = Time.unscaledTime + .12f;
+            EnsureRowsAndOrder();
+            RenameLegacyStrengthToWeight();
+        }
+    }
+
+    void LateUpdate()
+    {
+        EnsureViewer();
+        if (viewer == null) return;
+        UpdateUpstreamBases();
+        ApplyAll();
+    }
+
+    void EnsureViewer()
+    {
+        if (viewer != null) return;
+        viewer = FindFirstObjectByType<ModelViewer>();
+        if (viewer == null) return;
+        BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        Type t = typeof(ModelViewer);
+        hasSelectionField = t.GetField("hasSelectionHotspot", flags);
+        hitPointField = t.GetField("selectionHitPoint", flags);
+        hitNormalField = t.GetField("selectionHitNormal", flags);
+        strengthRowField = t.GetField("strengthRowGO", flags);
+        relativeModeField = t.GetField("isRelativeMode", flags);
+    }
+
+    void DetectCtrlClick()
+    {
+        if (Mouse.current == null || Keyboard.current == null) return;
+        if (!Keyboard.current.ctrlKey.isPressed || !Mouse.current.leftButton.wasPressedThisFrame) return;
+        if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
+        if (!HasSelection()) return;
+
+        Vector3 p = GetVector(hitPointField);
+        if (lastCreatedFrame == Time.frameCount) return;
+        lastCreatedFrame = Time.frameCount;
+
+        // A click on empty space clears the legacy hotspot and therefore never reaches here.
+        CreateAffector(viewer.currentGroupId, p, GetVector(hitNormalField));
+    }
+
+    void CreateAffector(int groupId, Vector3 center, Vector3 normal)
+    {
+        if (!groups.TryGetValue(groupId, out List<PostAffector> list))
+        {
+            list = new List<PostAffector>();
+            groups[groupId] = list;
+        }
+
+        PostAffector a = new PostAffector
+        {
+            id = nextId++,
+            groupId = groupId,
+            center = center,
+            normal = normal.sqrMagnitude > .000001f ? normal.normalized : Vector3.up,
+            radius = Mathf.Clamp(viewer.brushRadius, .001f, .25f),
+            falloff = Mathf.Clamp(viewer.brushFalloffDistance, 0f, .25f),
+            weight = 1f,
+            baseline = ReadControls(),
+            delta = new ControlState()
+        };
+        list.Add(a);
+        activeId = a.id;
+        activeGroup = groupId;
+        viewer.selectionStrength = 1f;
+        lastCreatedPoint = center;
+
+        // Capture the upstream state before any slider edit is authored into this POST.
+        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None).Where(c => c.groupId == groupId))
+        {
+            if (!cardStates.TryGetValue(card, out CardState state))
+            {
+                ControlState current = ReadCard(card);
+                cardStates[card] = new CardState { baseState = current, lastFinal = current, hasFinal = false };
+            }
+        }
+
+        RebuildGroupRows(groupId);
+    }
+
+    void MaintainActiveAuthoring()
+    {
+        PostAffector active = GetActive();
+        if (active == null) return;
+        if (!HasSelection() || viewer.currentGroupId != active.groupId)
+        {
+            activeId = -1;
+            activeGroup = -1;
+            return;
+        }
+
+        active.center = GetVector(hitPointField);
+        active.normal = GetVector(hitNormalField);
+        active.radius = Mathf.Clamp(viewer.brushRadius, .001f, .25f);
+        active.falloff = Mathf.Clamp(viewer.brushFalloffDistance, 0f, .25f);
+
+        // The generated Strength control is now an alias for this POST's WEIGHT.
+        if (!Mathf.Approximately(viewer.selectionStrength, active.weight))
+        {
+            active.weight = Mathf.Clamp01(viewer.selectionStrength);
+            RebuildGroupRows(active.groupId);
+        }
+
+        ControlState now = ReadControls();
+        active.delta = Subtract(now, active.baseline);
+    }
+
+    void UpdateUpstreamBases()
+    {
+        bool editingPost = GetActive() != null && HasSelection();
+        bool relative = relativeModeField != null && relativeModeField.GetValue(viewer) is bool b && b;
+
+        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
+        {
+            ControlState current = ReadCard(card);
+            if (!cardStates.TryGetValue(card, out CardState state))
+            {
+                state = new CardState { baseState = current, lastFinal = current, hasFinal = false };
+                cardStates[card] = state;
+                continue;
+            }
+
+            if (!state.hasFinal) continue;
+
+            // While authoring a POST, the legacy Ctrl-selection callbacks temporarily touch cards.
+            // Ignore those writes: the POST is the authority. Outside POST authoring, changes are
+            // upstream groom/variance edits and become the new base under the modifier stack.
+            if (!editingPost && !Approximately(current, state.lastFinal))
+            {
+                if (relative)
+                    state.baseState = Add(state.baseState, Subtract(current, state.lastFinal));
+                else
+                    state.baseState = current;
+            }
+        }
+
+        foreach (HairCard dead in cardStates.Keys.Where(c => c == null).ToArray()) cardStates.Remove(dead);
+    }
+
+    void ApplyAll()
+    {
+        HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
+        foreach (HairCard card in cards)
+        {
+            if (!cardStates.TryGetValue(card, out CardState state))
+            {
+                ControlState current = ReadCard(card);
+                state = new CardState { baseState = current, lastFinal = current };
+                cardStates[card] = state;
+            }
+
+            ControlState result = state.baseState;
+            if (groups.TryGetValue(card.groupId, out List<PostAffector> list))
+            {
+                foreach (PostAffector a in list)
+                {
+                    float spatial = SpatialWeight(card, a);
+                    float w = spatial * Mathf.Clamp01(a.weight);
+                    if (w <= .000001f) continue;
+                    result = Add(result, Scale(a.delta, w));
+                }
+            }
+
+            WriteCard(card, result);
+            state.lastFinal = result;
+            state.hasFinal = true;
+        }
+    }
+
+    float SpatialWeight(HairCard card, PostAffector a)
+    {
+        Vector3 p = card.GetSpawnHitPoint();
+        if (p == Vector3.zero) p = card.transform.position;
+        float d = Vector3.Distance(p, a.center);
+        float radius = Mathf.Max(.001f, a.radius);
+        float outer = radius + Mathf.Max(0f, a.falloff);
+        if (d <= radius) return 1f;
+        if (a.falloff <= .000001f || d >= outer) return 0f;
+        float t = Mathf.InverseLerp(outer, radius, d);
+        return Mathf.SmoothStep(0f, 1f, t);
+    }
+
+    void WriteCard(HairCard card, ControlState s)
+    {
+        float oldWeight = card.selectionWeight;
+        card.SetSelectionWeight(0f);
+        card.SetParameters(
+            Mathf.Max(.0005f, s.length),
+            Mathf.Max(.0005f, s.width),
+            Mathf.Clamp(Mathf.RoundToInt(s.segments), 4, 36),
+            s.bend, s.twist, s.x, s.y, s.z,
+            Mathf.Max(0f, s.depth), 1f,
+            s.uScale, s.vScale, s.uOffset, s.vOffset);
+        card.SetSelectionWeight(oldWeight);
+    }
+
+    void EnsureRowsAndOrder()
+    {
+        RectTransform[] all = FindObjectsByType<RectTransform>(FindObjectsSortMode.None);
+        foreach (RectTransform groupItem in all.Where(r => r.name.StartsWith("GroupItem_")))
+        {
+            if (!int.TryParse(groupItem.name.Substring("GroupItem_".Length), out int gid)) continue;
+            Transform parent = groupItem.parent;
+            if (parent == null) continue;
+
+            List<PostAffector> list = groups.TryGetValue(gid, out List<PostAffector> found) ? found : null;
+            int insert = groupItem.GetSiblingIndex() + 1;
+            if (list != null)
+            {
+                int number = 1;
+                foreach (PostAffector a in list)
+                {
+                    string rowName = RowName(gid, a.id);
+                    Transform row = parent.Find(rowName);
+                    if (row == null) row = BuildRow(parent, a, number).transform;
+                    row.SetSiblingIndex(insert++);
+                    number++;
+                }
+            }
+
+            Transform clump = parent.Find("ClumpModifier_" + gid);
+            if (clump != null) clump.SetSiblingIndex(insert);
+        }
+    }
+
+    GameObject BuildRow(Transform parent, PostAffector a, int number)
+    {
+        GameObject row = new GameObject(RowName(a.groupId, a.id), typeof(RectTransform), typeof(Image), typeof(HorizontalLayoutGroup));
+        row.transform.SetParent(parent, false);
+        row.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 34f);
+        row.GetComponent<Image>().color = a.id == activeId ? new Color(.18f, .24f, .34f, .98f) : new Color(.12f, .14f, .18f, .98f);
+        HorizontalLayoutGroup layout = row.GetComponent<HorizontalLayoutGroup>();
+        layout.padding = new RectOffset(6, 6, 4, 4);
+        layout.spacing = 5f;
+        layout.childControlWidth = false;
+        layout.childControlHeight = true;
+
+        GameObject select = AddButton(row.transform, "POST " + number, 72f);
+        select.GetComponent<Button>().onClick.AddListener(() => SelectAffector(a));
+
+        TextMeshProUGUI wt = AddText(row.transform, "WEIGHT", 10, 45f);
+        wt.alignment = TextAlignmentOptions.Center;
+        Slider slider = AddWeightSlider(row.transform, a.weight, 128f);
+        slider.onValueChanged.AddListener(v =>
+        {
+            a.weight = Mathf.Clamp01(v);
+            if (a.id == activeId)
+            {
+                viewer.selectionStrength = a.weight;
+                RenameLegacyStrengthToWeight();
+            }
+        });
+
+        TextMeshProUGUI value = AddText(row.transform, a.weight.ToString("F2"), 10, 30f);
+        value.alignment = TextAlignmentOptions.Center;
+        slider.onValueChanged.AddListener(v => value.text = v.ToString("F2"));
+
+        GameObject remove = AddButton(row.transform, "[-]", 34f);
+        remove.GetComponent<Button>().onClick.AddListener(() => RemoveAffector(a));
+        return row;
+    }
+
+    void SelectAffector(PostAffector a)
+    {
+        activeId = a.id;
+        activeGroup = a.groupId;
+        viewer.currentGroupId = a.groupId;
+        SetField(hasSelectionField, true);
+        SetField(hitPointField, a.center);
+        SetField(hitNormalField, a.normal);
+        viewer.brushRadius = a.radius;
+        viewer.brushFalloffDistance = a.falloff;
+        viewer.selectionStrength = a.weight;
+        ApplyControls(Add(a.baseline, a.delta));
+        RebuildGroupRows(a.groupId);
+    }
+
+    void RemoveAffector(PostAffector a)
+    {
+        if (groups.TryGetValue(a.groupId, out List<PostAffector> list))
+        {
+            list.RemoveAll(x => x.id == a.id);
+            if (list.Count == 0) groups.Remove(a.groupId);
+        }
+        if (activeId == a.id)
+        {
+            activeId = -1;
+            activeGroup = -1;
+            SetField(hasSelectionField, false);
+        }
+        RebuildGroupRows(a.groupId);
+        ApplyAll();
+    }
+
+    void RebuildGroupRows(int gid)
+    {
+        foreach (RectTransform r in FindObjectsByType<RectTransform>(FindObjectsSortMode.None)
+            .Where(r => r.name.StartsWith("PostAffector_" + gid + "_")))
+            Destroy(r.gameObject);
+        nextUIScan = 0f;
+    }
+
+    void RenameLegacyStrengthToWeight()
+    {
+        GameObject row = strengthRowField?.GetValue(viewer) as GameObject;
+        if (row == null) return;
+        TextMeshProUGUI label = row.GetComponentInChildren<TextMeshProUGUI>(true);
+        if (label != null) label.text = "WEIGHT: " + viewer.selectionStrength.ToString("F3");
+    }
+
+    GameObject AddButton(Transform parent, string text, float width)
+    {
+        GameObject go = new GameObject(text, typeof(RectTransform), typeof(Image), typeof(Button));
+        go.transform.SetParent(parent, false);
+        go.GetComponent<RectTransform>().sizeDelta = new Vector2(width, 25f);
+        go.GetComponent<Image>().color = new Color(.20f, .25f, .32f);
+        TextMeshProUGUI t = AddText(go.transform, text, 10, width);
+        RectTransform tr = t.rectTransform;
+        tr.anchorMin = Vector2.zero; tr.anchorMax = Vector2.one; tr.offsetMin = Vector2.zero; tr.offsetMax = Vector2.zero;
+        t.raycastTarget = false;
+        return go;
+    }
+
+    TextMeshProUGUI AddText(Transform parent, string text, int size, float width)
+    {
+        GameObject go = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
+        go.transform.SetParent(parent, false);
+        go.GetComponent<RectTransform>().sizeDelta = new Vector2(width, 25f);
+        TextMeshProUGUI t = go.GetComponent<TextMeshProUGUI>();
+        t.text = text; t.fontSize = size; t.color = Color.white; t.alignment = TextAlignmentOptions.Center;
+        return t;
+    }
+
+    Slider AddWeightSlider(Transform parent, float value, float width)
+    {
+        GameObject go = new GameObject("WeightSlider", typeof(RectTransform), typeof(Slider));
+        go.transform.SetParent(parent, false); go.GetComponent<RectTransform>().sizeDelta = new Vector2(width, 24f);
+        Slider s = go.GetComponent<Slider>(); s.minValue = 0f; s.maxValue = 1f; s.value = value;
+        GameObject bg = new GameObject("Background", typeof(RectTransform), typeof(Image)); bg.transform.SetParent(go.transform, false);
+        RectTransform br = bg.GetComponent<RectTransform>(); br.anchorMin = new Vector2(0,.42f); br.anchorMax = new Vector2(1,.58f); br.offsetMin = br.offsetMax = Vector2.zero; bg.GetComponent<Image>().color = new Color(.24f,.24f,.24f);
+        GameObject fillArea = new GameObject("Fill Area", typeof(RectTransform)); fillArea.transform.SetParent(go.transform,false); RectTransform far=fillArea.GetComponent<RectTransform>(); far.anchorMin=new Vector2(0,.35f);far.anchorMax=new Vector2(1,.65f);far.offsetMin=new Vector2(4,0);far.offsetMax=new Vector2(-4,0);
+        GameObject fill = new GameObject("Fill", typeof(RectTransform), typeof(Image)); fill.transform.SetParent(fillArea.transform,false); RectTransform fr=fill.GetComponent<RectTransform>();fr.anchorMin=Vector2.zero;fr.anchorMax=Vector2.one;fr.offsetMin=fr.offsetMax=Vector2.zero;fill.GetComponent<Image>().color=new Color(.28f,.58f,.95f);s.fillRect=fr;
+        GameObject ha=new GameObject("Handle Slide Area",typeof(RectTransform));ha.transform.SetParent(go.transform,false);RectTransform har=ha.GetComponent<RectTransform>();har.anchorMin=Vector2.zero;har.anchorMax=Vector2.one;har.offsetMin=new Vector2(5,0);har.offsetMax=new Vector2(-5,0);
+        GameObject h=new GameObject("Handle",typeof(RectTransform),typeof(Image));h.transform.SetParent(ha.transform,false);RectTransform hr=h.GetComponent<RectTransform>();hr.sizeDelta=new Vector2(9,16);h.GetComponent<Image>().color=Color.white;s.handleRect=hr;
+        return s;
+    }
+
+    string RowName(int gid, int id) => "PostAffector_" + gid + "_" + id;
+    PostAffector GetActive() => groups.TryGetValue(activeGroup, out List<PostAffector> list) ? list.FirstOrDefault(a => a.id == activeId) : null;
+    bool HasSelection() => hasSelectionField != null && hasSelectionField.GetValue(viewer) is bool b && b;
+    Vector3 GetVector(FieldInfo f) => f != null && f.GetValue(viewer) is Vector3 v ? v : Vector3.zero;
+    void SetField(FieldInfo f, object value) { if (f != null) f.SetValue(viewer, value); }
+
+    ControlState ReadControls() => new ControlState
+    {
+        length=viewer.currentLength,width=viewer.currentWidth,segments=viewer.currentSegments,bend=viewer.currentBend,twist=viewer.currentTwist,depth=viewer.currentEmbedDepth,
+        x=viewer.currentOffsetX,y=viewer.currentOffsetY,z=viewer.currentOffsetZ,uScale=viewer.currentUScale,vScale=viewer.currentVScale,uOffset=viewer.currentUOffset,vOffset=viewer.currentVOffset
+    };
+
+    ControlState ReadCard(HairCard c) => new ControlState
+    {
+        length=c.length,width=c.width,segments=c.segments,bend=c.bendAngle,twist=c.twistAngle,depth=c.GetEmbedDepth(),x=c.GetOffsetX(),y=c.GetOffsetY(),z=c.GetOffsetZ(),uScale=c.uScale,vScale=c.vScale,uOffset=c.uOffset,vOffset=c.vOffset
+    };
+
+    void ApplyControls(ControlState s)
+    {
+        viewer.currentLength=s.length;viewer.currentWidth=s.width;viewer.currentSegments=Mathf.RoundToInt(s.segments);viewer.currentBend=s.bend;viewer.currentTwist=s.twist;viewer.currentEmbedDepth=s.depth;
+        viewer.currentOffsetX=s.x;viewer.currentOffsetY=s.y;viewer.currentOffsetZ=s.z;viewer.currentUScale=s.uScale;viewer.currentVScale=s.vScale;viewer.currentUOffset=s.uOffset;viewer.currentVOffset=s.vOffset;
+    }
+
+    static ControlState Add(ControlState a, ControlState b) => new ControlState{length=a.length+b.length,width=a.width+b.width,segments=a.segments+b.segments,bend=a.bend+b.bend,twist=a.twist+b.twist,depth=a.depth+b.depth,x=a.x+b.x,y=a.y+b.y,z=a.z+b.z,uScale=a.uScale+b.uScale,vScale=a.vScale+b.vScale,uOffset=a.uOffset+b.uOffset,vOffset=a.vOffset+b.vOffset};
+    static ControlState Subtract(ControlState a, ControlState b) => new ControlState{length=a.length-b.length,width=a.width-b.width,segments=a.segments-b.segments,bend=a.bend-b.bend,twist=a.twist-b.twist,depth=a.depth-b.depth,x=a.x-b.x,y=a.y-b.y,z=a.z-b.z,uScale=a.uScale-b.uScale,vScale=a.vScale-b.vScale,uOffset=a.uOffset-b.uOffset,vOffset=a.vOffset-b.vOffset};
+    static ControlState Scale(ControlState a,float s)=>new ControlState{length=a.length*s,width=a.width*s,segments=a.segments*s,bend=a.bend*s,twist=a.twist*s,depth=a.depth*s,x=a.x*s,y=a.y*s,z=a.z*s,uScale=a.uScale*s,vScale=a.vScale*s,uOffset=a.uOffset*s,vOffset=a.vOffset*s};
+    static bool Approximately(ControlState a, ControlState b)=>Mathf.Approximately(a.length,b.length)&&Mathf.Approximately(a.width,b.width)&&Mathf.Approximately(a.segments,b.segments)&&Mathf.Approximately(a.bend,b.bend)&&Mathf.Approximately(a.twist,b.twist)&&Mathf.Approximately(a.depth,b.depth)&&Mathf.Approximately(a.x,b.x)&&Mathf.Approximately(a.y,b.y)&&Mathf.Approximately(a.z,b.z)&&Mathf.Approximately(a.uScale,b.uScale)&&Mathf.Approximately(a.vScale,b.vScale)&&Mathf.Approximately(a.uOffset,b.uOffset)&&Mathf.Approximately(a.vOffset,b.vOffset);
+
+    public List<PostAffectorSaveData> ExportGroup(int groupId)
+    {
+        List<PostAffectorSaveData> result = new List<PostAffectorSaveData>();
+        if (!groups.TryGetValue(groupId, out List<PostAffector> list)) return result;
+        foreach (PostAffector a in list)
+        {
+            result.Add(new PostAffectorSaveData
+            {
+                id=a.id,centerX=a.center.x,centerY=a.center.y,centerZ=a.center.z,normalX=a.normal.x,normalY=a.normal.y,normalZ=a.normal.z,radius=a.radius,falloff=a.falloff,weight=a.weight,
+                baseline=ToSave(a.baseline),delta=ToSave(a.delta)
+            });
+        }
+        return result;
+    }
+
+    public void ImportGroup(int groupId, List<PostAffectorSaveData> data)
+    {
+        if (data == null || data.Count == 0) return;
+        List<PostAffector> list = new List<PostAffector>();
+        foreach (PostAffectorSaveData d in data)
+        {
+            PostAffector a=new PostAffector{id=d.id,groupId=groupId,center=new Vector3(d.centerX,d.centerY,d.centerZ),normal=new Vector3(d.normalX,d.normalY,d.normalZ),radius=d.radius,falloff=d.falloff,weight=d.weight,baseline=FromSave(d.baseline),delta=FromSave(d.delta)};
+            list.Add(a); nextId=Mathf.Max(nextId,a.id+1);
+        }
+        groups[groupId]=list;
+        RebuildGroupRows(groupId);
+    }
+
+    static PostAffectorControlSaveData ToSave(ControlState s)=>new PostAffectorControlSaveData{length=s.length,width=s.width,segments=s.segments,bend=s.bend,twist=s.twist,depth=s.depth,x=s.x,y=s.y,z=s.z,uScale=s.uScale,vScale=s.vScale,uOffset=s.uOffset,vOffset=s.vOffset};
+    static ControlState FromSave(PostAffectorControlSaveData s)=>s==null?new ControlState():new ControlState{length=s.length,width=s.width,segments=s.segments,bend=s.bend,twist=s.twist,depth=s.depth,x=s.x,y=s.y,z=s.z,uScale=s.uScale,vScale=s.vScale,uOffset=s.uOffset,vOffset=s.vOffset};
+}
