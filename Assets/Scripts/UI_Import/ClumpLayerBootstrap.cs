@@ -1,7 +1,8 @@
 using UnityEngine;
 
-// Runtime bootstrap only: the ClumpLayerManager now injects its modifier controls
+// Runtime bootstrap only: the ClumpLayerManager injects its modifier controls
 // directly beneath each runtime group entry, so no floating window/button is needed.
+[DefaultExecutionOrder(-1000)]
 public class ClumpLayerBootstrap : MonoBehaviour
 {
     private bool installed;
@@ -27,7 +28,19 @@ public class ClumpLayerBootstrap : MonoBehaviour
             installed = true;
         }
 
+        MaintainCurvePreviewRenderers();
         MaintainModifierLayout();
+    }
+
+    void MaintainCurvePreviewRenderers()
+    {
+        RectTransform[] rects = FindObjectsByType<RectTransform>(FindObjectsSortMode.None);
+        foreach (RectTransform rect in rects)
+        {
+            if (rect.name != "CurvePreview") continue;
+            if (rect.GetComponent<CanvasRenderer>() == null)
+                rect.gameObject.AddComponent<CanvasRenderer>();
+        }
     }
 
     void MaintainModifierLayout()
