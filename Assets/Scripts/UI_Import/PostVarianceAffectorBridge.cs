@@ -13,8 +13,8 @@ using UnityEngine.UI;
 [DefaultExecutionOrder(3500)]
 public class PostVarianceAffectorBridge : MonoBehaviour
 {
-    private static readonly string[] Channels = { "Length", "Bend", "Twist", "AngleX", "AngleY", "AngleZ" };
-    private static readonly string[] RowNames = { "Length_VarianceRow", "Bend_VarianceRow", "Twist_VarianceRow", "Angle X_VarianceRow", "Angle Y_VarianceRow", "Angle Z_VarianceRow" };
+    private static readonly string[] Channels = { "Length", "Width", "Bend", "Twist", "AngleX", "AngleY", "AngleZ" };
+    private static readonly string[] RowNames = { "Length_VarianceRow", "Width_VarianceRow", "Bend_VarianceRow", "Twist_VarianceRow", "Angle X_VarianceRow", "Angle Y_VarianceRow", "Angle Z_VarianceRow" };
 
     private readonly Dictionary<int, List<VarianceChannelSaveData>> localByPost = new();
     private readonly Dictionary<int, List<VarianceChannelSaveData>> groupBase = new();
@@ -54,8 +54,6 @@ public class PostVarianceAffectorBridge : MonoBehaviour
         {
             if (active != null)
             {
-                // Capture the real group variance before replacing the visible rows
-                // with this POST's localized variance values.
                 groupBase[active.groupId] = Clone(variance.ExportGroupSettings(active.groupId));
                 if (!localByPost.ContainsKey(active.id)) localByPost[active.id] = ZeroLocal();
                 WriteRows(localByPost[active.id]);
@@ -72,7 +70,6 @@ public class PostVarianceAffectorBridge : MonoBehaviour
 
         if (active == null)
         {
-            // Keep the latest normal group state ready for the next POST selection.
             groupBase[viewer.currentGroupId] = Clone(variance.ExportGroupSettings(viewer.currentGroupId));
             return;
         }
@@ -86,9 +83,8 @@ public class PostVarianceAffectorBridge : MonoBehaviour
         List<VarianceChannelSaveData> localUI = ReadRows();
         localByPost[active.id] = localUI;
 
-        // The normal variance listeners fire first and temporarily write a POST UI
-        // edit into the whole group's variance state. Put the group settings back,
-        // then restore the localized values to the visible controls without notify.
+        // Normal variance listeners fire before this bridge. Restore the real group variance,
+        // then put the localized POST variance values back into the visible controls.
         List<VarianceChannelSaveData> currentGroup = variance.ExportGroupSettings(active.groupId);
         if (!Equivalent(currentGroup, groupSettings))
         {
@@ -109,7 +105,7 @@ public class PostVarianceAffectorBridge : MonoBehaviour
         {
             if (!groups.TryGetValue(card.groupId, out List<PostAffectorManager.PostAffector> list)) continue;
 
-            float dLength = 0f, dBend = 0f, dTwist = 0f, dX = 0f, dY = 0f, dZ = 0f;
+            float dLength = 0f, dWidth = 0f, dBend = 0f, dTwist = 0f, dX = 0f, dY = 0f, dZ = 0f;
             foreach (PostAffectorManager.PostAffector a in list)
             {
                 if (!localByPost.TryGetValue(a.id, out List<VarianceChannelSaveData> local)) continue;
@@ -117,6 +113,7 @@ public class PostVarianceAffectorBridge : MonoBehaviour
                 if (spatial <= .000001f) continue;
 
                 dLength += RandomDelta(card, a, local, "Length") * spatial;
+                dWidth += RandomDelta(card, a, local, "Width") * spatial;
                 dBend += RandomDelta(card, a, local, "Bend") * spatial;
                 dTwist += RandomDelta(card, a, local, "Twist") * spatial;
                 dX += RandomDelta(card, a, local, "AngleX") * spatial;
@@ -124,13 +121,13 @@ public class PostVarianceAffectorBridge : MonoBehaviour
                 dZ += RandomDelta(card, a, local, "AngleZ") * spatial;
             }
 
-            if (Mathf.Abs(dLength) + Mathf.Abs(dBend) + Mathf.Abs(dTwist) + Mathf.Abs(dX) + Mathf.Abs(dY) + Mathf.Abs(dZ) <= .000001f)
+            if (Mathf.Abs(dLength) + Mathf.Abs(dWidth) + Mathf.Abs(dBend) + Mathf.Abs(dTwist) + Mathf.Abs(dX) + Mathf.Abs(dY) + Mathf.Abs(dZ) <= .000001f)
                 continue;
 
             float oldSelection = card.selectionWeight;
             card.SetSelectionWeight(0f);
             card.SetParameters(
-                Mathf.Max(.0005f, card.length + dLength), card.width, card.segments,
+                Mathf.Max(.0005f, card.length + dLength), Mathf.Max(.0005f, card.width + dWidth), card.segments,
                 card.bendAngle + dBend, card.twistAngle + dTwist,
                 NormalizeAngle(card.GetOffsetX() + dX), NormalizeAngle(card.GetOffsetY() + dY), NormalizeAngle(card.GetOffsetZ() + dZ),
                 card.GetEmbedDepth(), 1f, card.uScale, card.vScale, card.uOffset, card.vOffset);
@@ -162,7 +159,7 @@ public class PostVarianceAffectorBridge : MonoBehaviour
         {
             if (g.postAffectors == null) continue;
             foreach (PostAffectorSaveData p in g.postAffectors)
-                localByPost[p.id] = p.localVariances != null && p.localVariances.Count > 0 ? Clone(p.localVariances) : ZeroLocal();
+                localByPost[p.id] = p.localVariances != null && p.localVariances.Count > 0 ? NormalizeChannels(Clone(p.localVariances)) : ZeroLocal();
         }
     }
 
@@ -248,13 +245,32 @@ public class PostVarianceAffectorBridge : MonoBehaviour
             TextMeshProUGUI label = row.GetComponentsInChildren<TextMeshProUGUI>(true).FirstOrDefault(t => t.gameObject.name == "Text" || t.text.StartsWith("VAR"));
             if (slider != null) slider.SetValueWithoutNotify(v.amount);
             if (seed != null) seed.SetTextWithoutNotify(v.seed.ToString());
-            if (label != null) label.text = "VAR ± " + (Channels[i] == "Length" ? v.amount.ToString("F3") : v.amount.ToString("F1") + "°");
+            if (label != null)
+            {
+                bool linear = Channels[i] == "Length" || Channels[i] == "Width";
+                label.text = "VAR ± " + (linear ? v.amount.ToString("F3") : v.amount.ToString("F1") + "°");
+            }
         }
     }
 
     static List<VarianceChannelSaveData> ZeroLocal()
     {
         return Channels.Select(c => new VarianceChannelSaveData { channel = c, amount = 0f, seed = 0 }).ToList();
+    }
+
+    static List<VarianceChannelSaveData> NormalizeChannels(List<VarianceChannelSaveData> src)
+    {
+        List<VarianceChannelSaveData> result = ZeroLocal();
+        if (src == null) return result;
+        foreach (VarianceChannelSaveData item in src)
+        {
+            if (item == null) continue;
+            VarianceChannelSaveData target = result.FirstOrDefault(x => x.channel == item.channel);
+            if (target == null) continue;
+            target.amount = item.amount;
+            target.seed = item.seed;
+        }
+        return result;
     }
 
     static List<VarianceChannelSaveData> Clone(List<VarianceChannelSaveData> src)
@@ -265,7 +281,7 @@ public class PostVarianceAffectorBridge : MonoBehaviour
 
     static bool Equivalent(List<VarianceChannelSaveData> a, List<VarianceChannelSaveData> b)
     {
-        if (a == null || b == null || a.Count != b.Count) return false;
+        if (a == null || b == null) return false;
         foreach (string c in Channels)
         {
             VarianceChannelSaveData x = a.FirstOrDefault(v => v.channel == c);
@@ -295,6 +311,6 @@ public class PostVarianceAffectorBridge : MonoBehaviour
     {
         if (data == null) return;
         foreach (PostAffectorSaveData p in data)
-            p.localVariances = localByPost.TryGetValue(p.id, out List<VarianceChannelSaveData> local) ? Clone(local) : ZeroLocal();
+            p.localVariances = localByPost.TryGetValue(p.id, out List<VarianceChannelSaveData> local) ? NormalizeChannels(Clone(local)) : ZeroLocal();
     }
 }
