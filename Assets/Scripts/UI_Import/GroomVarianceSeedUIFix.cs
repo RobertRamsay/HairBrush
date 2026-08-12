@@ -105,7 +105,7 @@ public class GroomVarianceSeedUIFix : MonoBehaviour
             textRect.offsetMin = Vector2.zero;
             textRect.offsetMax = Vector2.zero;
             text.alignment = TextAlignmentOptions.Center;
-            text.enableWordWrapping = false;
+            text.textWrappingMode = TextWrappingModes.NoWrap;
             text.raycastTarget = false;
         }
 
