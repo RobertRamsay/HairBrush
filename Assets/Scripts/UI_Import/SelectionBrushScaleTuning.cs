@@ -13,7 +13,7 @@ using UnityEngine.UI;
 public class SelectionBrushScaleTuning : MonoBehaviour
 {
     private const float DefaultRadius = .02f;
-    private const float DefaultFalloff = .03f;
+    private const float DefaultFalloff = .05f;
     private const float MaxRadius = .25f;
     private const float MaxFalloff = .25f;
 
@@ -52,25 +52,24 @@ public class SelectionBrushScaleTuning : MonoBehaviour
 
         if (!initializedDefaults)
         {
-            // Small first-use brush; after this, user values persist between hotspots.
-            if (viewer.brushRadius <= 0f || viewer.brushRadius > MaxRadius) viewer.brushRadius = DefaultRadius;
-            if (viewer.brushFalloffDistance <= 0f || viewer.brushFalloffDistance > MaxFalloff) viewer.brushFalloffDistance = DefaultFalloff;
+            // First-use values only. From then on, Radius/Falloff persist between hotspots.
+            viewer.brushRadius = DefaultRadius;
+            viewer.brushFalloffDistance = DefaultFalloff;
+            lastRadius = viewer.brushRadius;
+            lastFalloff = viewer.brushFalloffDistance;
             initializedDefaults = true;
         }
 
         bool selected = IsSelected();
         if (selected && !wasSelected)
         {
-            // IMPORTANT: do not reset Radius/Falloff on each Ctrl+Click.
-            // ModelViewer still writes its legacy 0.25 falloff in EnterSelectionMode,
-            // so only translate that exact legacy value back to the user's previous/default value.
+            // EnterSelectionMode still writes its legacy .25 falloff. Replace only that
+            // legacy reset with the last user value (or .05 on first use).
             if (Mathf.Approximately(viewer.brushFalloffDistance, .25f))
                 viewer.brushFalloffDistance = lastFalloff > 0f ? lastFalloff : DefaultFalloff;
             if (viewer.brushRadius <= 0f || viewer.brushRadius > MaxRadius)
                 viewer.brushRadius = lastRadius > 0f ? lastRadius : DefaultRadius;
 
-            lastRadius = -1f;
-            lastFalloff = -1f;
             lastGroup = int.MinValue;
             nextScan = 0f;
         }
