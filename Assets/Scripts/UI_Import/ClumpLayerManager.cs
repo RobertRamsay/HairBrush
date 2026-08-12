@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
-using TMPro;
 
 public class ClumpLayerManager : MonoBehaviour
 {
@@ -23,8 +23,7 @@ public class ClumpLayerManager : MonoBehaviour
     public class ClumpLayer
     {
         public int groupId;
-        public bool attached;
-        public bool enabled = true;
+        public bool enabled = false;
         public int pointCount = 100;
         [Range(0f, 1f)] public float globalStrength = 1f;
         public float brushRadius = 0.08f;
@@ -42,12 +41,11 @@ public class ClumpLayerManager : MonoBehaviour
     }
 
     private readonly Dictionary<int, ClumpLayer> layers = new Dictionary<int, ClumpLayer>();
+    private readonly Dictionary<int, bool> expandedGroups = new Dictionary<int, bool>();
     private readonly List<LineRenderer> guideLines = new List<LineRenderer>();
 
     private ModelViewer viewer;
     private Camera mainCamera;
-    private GameObject panel;
-    private GameObject curvePanel;
     private GameObject guideRoot;
     private Material guideMaterial;
 
@@ -56,69 +54,40 @@ public class ClumpLayerManager : MonoBehaviour
     private LineRenderer brushFalloffRing;
     private Material brushMaterial;
 
-    private TextMeshProUGUI titleText;
-    private TextMeshProUGUI debugText;
-    private TextMeshProUGUI paintText;
-    private TextMeshProUGUI attachText;
-    private TextMeshProUGUI enabledText;
-
-    private Slider pointCountSlider;
-    private Slider strengthSlider;
-    private Slider brushSizeSlider;
-    private Slider brushStrengthSlider;
-    private Slider brushFalloffSlider;
-    private Slider brushValueSlider;
-    private Slider curveEarlySlider;
-    private Slider curveMidSlider;
-    private Slider curveTipSlider;
-
     private bool paintMode;
-    private int editingGroupId = -1;
+    private int paintGroupId = -1;
+    private int visualGroupId = -1;
+    private float nextUIScanTime;
 
     public void Init(ModelViewer owner)
     {
-        if (panel != null) return;
         viewer = owner;
         mainCamera = owner.mainCamera != null ? owner.mainCamera : Camera.main;
-        BuildUI();
-        panel.SetActive(false);
-        if (curvePanel != null) curvePanel.SetActive(false);
         EnsureBrushVisuals();
         SetBrushVisible(false);
     }
 
-    public void ToggleForCurrentGroup()
-    {
-        if (viewer == null || panel == null) return;
-        if (panel.activeSelf)
-        {
-            ClosePanel();
-            return;
-        }
-
-        editingGroupId = viewer.currentGroupId;
-        ClumpLayer layer = GetOrCreateLayer(editingGroupId);
-        if (layer.points.Count == 0 && layer.pointCount > 0) Regenerate(layer);
-
-        panel.SetActive(true);
-        titleText.text = "CLUMP LAYER — GROUP " + editingGroupId;
-        SyncUI(layer);
-        ApplyLayer(layer, true);
-        RefreshGuideVisuals(layer);
-    }
-
     void Update()
     {
-        if (panel == null || !panel.activeSelf || viewer == null || editingGroupId < 0)
+        if (viewer == null) return;
+
+        if (Time.unscaledTime >= nextUIScanTime)
         {
-            SetBrushVisible(false);
-            return;
+            nextUIScanTime = Time.unscaledTime + 0.25f;
+            EnsureGroupModifierUI();
         }
 
-        ClumpLayer layer = GetOrCreateLayer(editingGroupId);
-        RefreshGuideVisuals(layer);
+        if (visualGroupId >= 0 && expandedGroups.TryGetValue(visualGroupId, out bool expanded) && expanded)
+            RefreshGuideVisuals(GetOrCreateLayer(visualGroupId));
+        else
+            ClearGuides();
 
-        if (!paintMode || Mouse.current == null || mainCamera == null)
+        HandlePainting();
+    }
+
+    void HandlePainting()
+    {
+        if (!paintMode || paintGroupId < 0 || Mouse.current == null || mainCamera == null)
         {
             SetBrushVisible(false);
             return;
@@ -130,6 +99,7 @@ public class ClumpLayerManager : MonoBehaviour
             return;
         }
 
+        ClumpLayer layer = GetOrCreateLayer(paintGroupId);
         Ray ray = mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
         RaycastHit[] hits = Physics.RaycastAll(ray, 1000f);
         RaycastHit? modelHit = hits
@@ -146,7 +116,6 @@ public class ClumpLayerManager : MonoBehaviour
 
         RaycastHit hit = modelHit.Value;
         UpdateBrushVisuals(layer, hit.point, hit.normal);
-
         if (Mouse.current.leftButton.isPressed)
             Paint(layer, hit.point);
     }
@@ -161,6 +130,60 @@ public class ClumpLayerManager : MonoBehaviour
         return layer;
     }
 
+    void ToggleLayer(int groupId)
+    {
+        ClumpLayer layer = GetOrCreateLayer(groupId);
+        layer.enabled = !layer.enabled;
+        if (layer.enabled && layer.points.Count == 0 && layer.pointCount > 0)
+            Regenerate(layer);
+        ApplyLayer(layer);
+        RebuildModifierUI(groupId);
+    }
+
+    void ToggleExpanded(int groupId)
+    {
+        bool expanded = expandedGroups.TryGetValue(groupId, out bool current) && current;
+        expandedGroups[groupId] = !expanded;
+        visualGroupId = !expanded ? groupId : (visualGroupId == groupId ? -1 : visualGroupId);
+        if (expanded) StopPainting(groupId);
+        RebuildModifierUI(groupId);
+    }
+
+    void TogglePaint(int groupId)
+    {
+        if (paintMode && paintGroupId == groupId)
+        {
+            StopPainting(groupId);
+            RebuildModifierUI(groupId);
+            return;
+        }
+
+        if (paintMode) StopPainting(paintGroupId);
+
+        ClumpLayer layer = GetOrCreateLayer(groupId);
+        layer.enabled = true;
+        if (layer.points.Count == 0 && layer.pointCount > 0)
+            Regenerate(layer);
+
+        paintMode = true;
+        paintGroupId = groupId;
+        visualGroupId = groupId;
+        viewer.ToggleGroomingMode(false);
+        ApplyLayer(layer);
+        RebuildAllModifierUI();
+    }
+
+    void StopPainting(int groupId)
+    {
+        if (!paintMode) return;
+        if (groupId >= 0 && paintGroupId != groupId) return;
+
+        paintMode = false;
+        paintGroupId = -1;
+        SetBrushVisible(false);
+        if (viewer != null) viewer.ToggleGroomingMode(true);
+    }
+
     void Regenerate(ClumpLayer layer)
     {
         HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None)
@@ -172,7 +195,7 @@ public class ClumpLayerManager : MonoBehaviour
 
         if (cards.Length == 0 || layer.pointCount == 0)
         {
-            ApplyLayer(layer, true);
+            ApplyLayer(layer);
             ClearGuides();
             return;
         }
@@ -206,7 +229,7 @@ public class ClumpLayerManager : MonoBehaviour
             layer.points.Add(new ClumpPoint { position = p, normal = n, strength = 0f });
         }
 
-        ApplyLayer(layer, true);
+        ApplyLayer(layer);
         RefreshGuideVisuals(layer);
     }
 
@@ -217,9 +240,6 @@ public class ClumpLayerManager : MonoBehaviour
         float innerRadius = radius * (1f - falloffAmount);
         float targetValue = Mathf.Clamp01(layer.brushValue);
         float strength = Mathf.Clamp01(layer.brushStrength);
-
-        // Frame-rate independent response. At strength 1 the point converges quickly,
-        // while low strength gives a buildable airbrush-like stroke.
         float temporalBlend = 1f - Mathf.Exp(-12f * strength * Time.deltaTime);
 
         foreach (ClumpPoint point in layer.points)
@@ -237,18 +257,17 @@ public class ClumpLayerManager : MonoBehaviour
             point.strength = Mathf.Lerp(point.strength, targetValue, temporalBlend * spatialWeight);
         }
 
-        ApplyLayer(layer, true);
+        ApplyLayer(layer);
         RefreshGuideVisuals(layer);
     }
 
-    void ApplyLayer(ClumpLayer layer, bool preview)
+    void ApplyLayer(ClumpLayer layer)
     {
         HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None)
             .Where(c => c.groupId == layer.groupId)
             .ToArray();
 
-        bool shouldApply = layer.enabled && layer.points.Count > 0 && (layer.attached || preview);
-        if (!shouldApply)
+        if (!layer.enabled || layer.points.Count == 0)
         {
             foreach (HairCard card in cards) card.ClearClumpModifier();
             return;
@@ -267,48 +286,237 @@ public class ClumpLayerManager : MonoBehaviour
         }
     }
 
-    void AttachCurrentLayer()
+    void CycleDebug(int groupId)
     {
-        if (editingGroupId < 0) return;
-        ClumpLayer layer = GetOrCreateLayer(editingGroupId);
-        layer.attached = true;
-        layer.enabled = true;
-        ApplyLayer(layer, false);
-        SyncUI(layer);
+        ClumpLayer layer = GetOrCreateLayer(groupId);
+        layer.debugMode = layer.debugMode == DebugMode.Tone
+            ? DebugMode.Length
+            : layer.debugMode == DebugMode.Length ? DebugMode.Off : DebugMode.Tone;
+        visualGroupId = groupId;
+        RefreshGuideVisuals(layer);
+        RebuildModifierUI(groupId);
     }
 
-    void RemoveCurrentLayer()
+    void EnsureGroupModifierUI()
     {
-        if (editingGroupId < 0) return;
-        ClumpLayer layer = GetOrCreateLayer(editingGroupId);
-        layer.attached = false;
-        layer.enabled = false;
-        ApplyLayer(layer, false);
-        SyncUI(layer);
+        RectTransform[] rects = FindObjectsByType<RectTransform>(FindObjectsSortMode.None);
+        List<RectTransform> groupItems = rects
+            .Where(r => r.name.StartsWith("GroupItem_"))
+            .OrderBy(r => r.GetSiblingIndex())
+            .ToList();
+
+        foreach (RectTransform groupItem in groupItems)
+        {
+            if (!int.TryParse(groupItem.name.Substring("GroupItem_".Length), out int groupId)) continue;
+            Transform parent = groupItem.parent;
+            if (parent == null) continue;
+            if (parent.Find("ClumpModifier_" + groupId) != null) continue;
+            BuildModifierUI(parent, groupItem, groupId);
+        }
     }
 
-    void ToggleEnabled()
+    void RebuildAllModifierUI()
     {
-        if (editingGroupId < 0) return;
-        ClumpLayer layer = GetOrCreateLayer(editingGroupId);
-        layer.enabled = !layer.enabled;
-        ApplyLayer(layer, true);
-        SyncUI(layer);
+        RectTransform[] modifiers = FindObjectsByType<RectTransform>(FindObjectsSortMode.None)
+            .Where(r => r.name.StartsWith("ClumpModifier_"))
+            .ToArray();
+        foreach (RectTransform modifier in modifiers)
+            Destroy(modifier.gameObject);
+        nextUIScanTime = 0f;
     }
 
-    void ClosePanel()
+    void RebuildModifierUI(int groupId)
     {
-        paintMode = false;
-        SetBrushVisible(false);
-        if (paintText != null) paintText.text = "PAINT: OFF";
-        if (curvePanel != null) curvePanel.SetActive(false);
+        RectTransform existing = FindObjectsByType<RectTransform>(FindObjectsSortMode.None)
+            .FirstOrDefault(r => r.name == "ClumpModifier_" + groupId);
+        if (existing != null) Destroy(existing.gameObject);
+        nextUIScanTime = 0f;
+    }
 
-        if (editingGroupId >= 0)
-            ApplyLayer(GetOrCreateLayer(editingGroupId), false);
+    void BuildModifierUI(Transform parent, RectTransform groupItem, int groupId)
+    {
+        ClumpLayer layer = GetOrCreateLayer(groupId);
+        bool expanded = expandedGroups.TryGetValue(groupId, out bool state) && state;
 
-        ClearGuides();
-        panel.SetActive(false);
-        editingGroupId = -1;
+        GameObject root = new GameObject("ClumpModifier_" + groupId, typeof(RectTransform), typeof(Image), typeof(VerticalLayoutGroup));
+        root.transform.SetParent(parent, false);
+        root.transform.SetSiblingIndex(groupItem.GetSiblingIndex() + 1);
+        RectTransform rootRect = root.GetComponent<RectTransform>();
+        rootRect.sizeDelta = new Vector2(0f, expanded ? 515f : 34f);
+        root.GetComponent<Image>().color = new Color(0.11f, 0.13f, 0.11f, 0.98f);
+
+        VerticalLayoutGroup layout = root.GetComponent<VerticalLayoutGroup>();
+        layout.padding = new RectOffset(10, 10, 4, 6);
+        layout.spacing = 4f;
+        layout.childControlWidth = true;
+        layout.childControlHeight = false;
+        layout.childForceExpandHeight = false;
+
+        GameObject header = new GameObject("ClumpHeader", typeof(RectTransform), typeof(HorizontalLayoutGroup));
+        header.transform.SetParent(root.transform, false);
+        header.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 26f);
+        HorizontalLayoutGroup headerLayout = header.GetComponent<HorizontalLayoutGroup>();
+        headerLayout.spacing = 6f;
+        headerLayout.childControlWidth = false;
+        headerLayout.childControlHeight = true;
+
+        GameObject expandButton = AddButton(header.transform, expanded ? "[-] CLUMP" : "[+] CLUMP", () => ToggleExpanded(groupId), 205f, 26f);
+        expandButton.GetComponent<Image>().color = new Color(0.14f, 0.20f, 0.15f);
+
+        GameObject toggleButton = AddButton(header.transform, layer.enabled ? "ON" : "OFF", () => ToggleLayer(groupId), 72f, 26f);
+        toggleButton.GetComponent<Image>().color = layer.enabled
+            ? new Color(0.18f, 0.48f, 0.22f)
+            : new Color(0.28f, 0.28f, 0.28f);
+
+        if (!expanded) return;
+
+        AddSlider(root.transform, "POINT COUNT", 0f, 100f, layer.pointCount, v => layer.pointCount = Mathf.RoundToInt(v), true);
+        AddButton(root.transform, "REGENERATE POINTS", () => { Regenerate(layer); RebuildModifierUI(groupId); }, -1f, 28f);
+
+        AddButton(root.transform, paintMode && paintGroupId == groupId ? "PAINT: ON" : "PAINT: OFF", () => TogglePaint(groupId), -1f, 28f);
+        AddSlider(root.transform, "BRUSH SIZE", 0.01f, 0.4f, layer.brushRadius, v => layer.brushRadius = v);
+        AddSlider(root.transform, "BRUSH STRENGTH", 0f, 1f, layer.brushStrength, v => layer.brushStrength = v);
+        AddSlider(root.transform, "BRUSH FALLOFF", 0f, 1f, layer.brushFalloff, v => layer.brushFalloff = v);
+        AddSlider(root.transform, "PAINT VALUE", 0f, 1f, layer.brushValue, v => layer.brushValue = v);
+
+        AddButton(root.transform, "VIS: " + layer.debugMode.ToString().ToUpperInvariant(), () => CycleDebug(groupId), -1f, 28f);
+        AddSlider(root.transform, "GLOBAL CLUMP", 0f, 1f, layer.globalStrength, v => { layer.globalStrength = v; ApplyLayer(layer); });
+
+        AddText(root.transform, "CLUMP CURVE  root -> tip", 12, 18f).alignment = TextAlignmentOptions.Left;
+        GameObject previewGO = new GameObject("CurvePreview", typeof(RectTransform), typeof(ClumpCurvePreviewGraphic));
+        previewGO.transform.SetParent(root.transform, false);
+        previewGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 75f);
+        ClumpCurvePreviewGraphic preview = previewGO.GetComponent<ClumpCurvePreviewGraphic>();
+        preview.curveProvider = () => layer.curve;
+        preview.color = new Color(0.2f, 1f, 0.35f, 1f);
+
+        AddSlider(root.transform, "CURVE EARLY 25%", 0f, 1f, layer.curve.Evaluate(0.25f), v => RebuildCurve(layer, 0, v, groupId));
+        AddSlider(root.transform, "CURVE MID 65%", 0f, 1f, layer.curve.Evaluate(0.65f), v => RebuildCurve(layer, 1, v, groupId));
+        AddSlider(root.transform, "CURVE TIP 100%", 0f, 1f, layer.curve.Evaluate(1f), v => RebuildCurve(layer, 2, v, groupId));
+    }
+
+    void RebuildCurve(ClumpLayer layer, int controlIndex, float value, int groupId)
+    {
+        float early = layer.curve.Evaluate(0.25f);
+        float mid = layer.curve.Evaluate(0.65f);
+        float tip = layer.curve.Evaluate(1f);
+        if (controlIndex == 0) early = value;
+        else if (controlIndex == 1) mid = value;
+        else tip = value;
+
+        layer.curve = new AnimationCurve(
+            new Keyframe(0f, 0f),
+            new Keyframe(0.25f, early),
+            new Keyframe(0.65f, mid),
+            new Keyframe(1f, tip));
+        ApplyLayer(layer);
+
+        ClumpCurvePreviewGraphic preview = FindObjectsByType<ClumpCurvePreviewGraphic>(FindObjectsSortMode.None)
+            .FirstOrDefault(p => p.transform.parent != null && p.transform.parent.name == "ClumpModifier_" + groupId);
+        if (preview != null) preview.SetVerticesDirty();
+    }
+
+    TextMeshProUGUI AddText(Transform parent, string text, int size, float height)
+    {
+        GameObject go = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
+        go.transform.SetParent(parent, false);
+        go.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, height);
+        TextMeshProUGUI t = go.GetComponent<TextMeshProUGUI>();
+        t.text = text;
+        t.fontSize = size;
+        t.color = Color.white;
+        t.alignment = TextAlignmentOptions.Center;
+        return t;
+    }
+
+    GameObject AddButton(Transform parent, string label, Action action, float width = -1f, float height = 28f)
+    {
+        GameObject go = new GameObject(label, typeof(RectTransform), typeof(Image), typeof(Button));
+        go.transform.SetParent(parent, false);
+        go.GetComponent<RectTransform>().sizeDelta = new Vector2(width > 0f ? width : 0f, height);
+        go.GetComponent<Image>().color = new Color(0.16f, 0.25f, 0.17f);
+        go.GetComponent<Button>().onClick.AddListener(() => action());
+        TextMeshProUGUI t = AddText(go.transform, label, 12, 0f);
+        RectTransform tr = t.rectTransform;
+        tr.anchorMin = Vector2.zero;
+        tr.anchorMax = Vector2.one;
+        tr.offsetMin = Vector2.zero;
+        tr.offsetMax = Vector2.zero;
+        return go;
+    }
+
+    Slider AddSlider(Transform parent, string label, float min, float max, float value, Action<float> changed, bool wholeNumbers = false)
+    {
+        GameObject row = new GameObject(label, typeof(RectTransform));
+        row.transform.SetParent(parent, false);
+        row.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 38f);
+
+        VerticalLayoutGroup v = row.AddComponent<VerticalLayoutGroup>();
+        v.spacing = 1f;
+        v.childControlWidth = true;
+        v.childControlHeight = false;
+
+        string FormatValue(float x) => wholeNumbers ? Mathf.RoundToInt(x).ToString() : x.ToString("F2");
+        TextMeshProUGUI txt = AddText(row.transform, label + ": " + FormatValue(value), 11, 16f);
+        txt.alignment = TextAlignmentOptions.Left;
+
+        GameObject sgo = new GameObject("Slider", typeof(RectTransform), typeof(Slider));
+        sgo.transform.SetParent(row.transform, false);
+        sgo.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 17f);
+        Slider s = sgo.GetComponent<Slider>();
+        s.minValue = min;
+        s.maxValue = max;
+        s.wholeNumbers = wholeNumbers;
+        s.value = value;
+
+        GameObject bg = new GameObject("Background", typeof(RectTransform), typeof(Image));
+        bg.transform.SetParent(sgo.transform, false);
+        RectTransform br = bg.GetComponent<RectTransform>();
+        br.anchorMin = new Vector2(0f, 0.40f);
+        br.anchorMax = new Vector2(1f, 0.60f);
+        br.offsetMin = Vector2.zero;
+        br.offsetMax = Vector2.zero;
+        bg.GetComponent<Image>().color = new Color(0.2f, 0.2f, 0.2f);
+
+        GameObject fillArea = new GameObject("Fill Area", typeof(RectTransform));
+        fillArea.transform.SetParent(sgo.transform, false);
+        RectTransform far = fillArea.GetComponent<RectTransform>();
+        far.anchorMin = new Vector2(0f, 0.30f);
+        far.anchorMax = new Vector2(1f, 0.70f);
+        far.offsetMin = new Vector2(5f, 0f);
+        far.offsetMax = new Vector2(-5f, 0f);
+
+        GameObject fill = new GameObject("Fill", typeof(RectTransform), typeof(Image));
+        fill.transform.SetParent(fillArea.transform, false);
+        RectTransform fr = fill.GetComponent<RectTransform>();
+        fr.anchorMin = Vector2.zero;
+        fr.anchorMax = Vector2.one;
+        fr.offsetMin = Vector2.zero;
+        fr.offsetMax = Vector2.zero;
+        fill.GetComponent<Image>().color = new Color(0.2f, 0.7f, 0.3f);
+        s.fillRect = fr;
+
+        GameObject handleArea = new GameObject("Handle Slide Area", typeof(RectTransform));
+        handleArea.transform.SetParent(sgo.transform, false);
+        RectTransform har = handleArea.GetComponent<RectTransform>();
+        har.anchorMin = Vector2.zero;
+        har.anchorMax = Vector2.one;
+        har.offsetMin = new Vector2(7f, 0f);
+        har.offsetMax = new Vector2(-7f, 0f);
+
+        GameObject handle = new GameObject("Handle", typeof(RectTransform), typeof(Image));
+        handle.transform.SetParent(handleArea.transform, false);
+        handle.GetComponent<Image>().color = Color.white;
+        RectTransform hr = handle.GetComponent<RectTransform>();
+        hr.sizeDelta = new Vector2(11f, 15f);
+        s.handleRect = hr;
+
+        s.onValueChanged.AddListener(x =>
+        {
+            txt.text = label + ": " + FormatValue(x);
+            changed(x);
+        });
+        return s;
     }
 
     void EnsureGuidePool(int count)
@@ -388,7 +596,6 @@ public class ClumpLayerManager : MonoBehaviour
     void EnsureBrushVisuals()
     {
         if (brushRoot != null) return;
-
         brushRoot = new GameObject("ClumpPaintBrushVisual");
         brushRoot.transform.SetParent(transform, false);
 
@@ -463,260 +670,85 @@ public class ClumpLayerManager : MonoBehaviour
         if (brushRoot != null) brushRoot.SetActive(visible);
     }
 
-    void BuildUI()
+    void OnDisable()
     {
-        Canvas canvas = FindObjectsByType<Canvas>(FindObjectsSortMode.None).FirstOrDefault();
-        if (canvas == null) return;
-
-        panel = new GameObject("ClumpLayerModal", typeof(RectTransform), typeof(Image));
-        panel.transform.SetParent(canvas.transform, false);
-        RectTransform r = panel.GetComponent<RectTransform>();
-        r.anchorMin = r.anchorMax = new Vector2(0.5f, 0.5f);
-        r.pivot = new Vector2(0.5f, 0.5f);
-        r.sizeDelta = new Vector2(390f, 690f);
-        panel.GetComponent<Image>().color = new Color(0.08f, 0.09f, 0.08f, 0.96f);
-
-        VerticalLayoutGroup layout = panel.AddComponent<VerticalLayoutGroup>();
-        layout.padding = new RectOffset(18, 18, 14, 14);
-        layout.spacing = 5f;
-        layout.childControlWidth = true;
-        layout.childControlHeight = false;
-
-        titleText = AddText(panel.transform, "CLUMP LAYER", 22, 32);
-        AddText(panel.transform, "Preview active group, then add when ready", 13, 20)
-            .color = new Color(0.65f, 0.75f, 0.65f);
-
-        attachText = AddButton(panel.transform, "ADD TO GROUP", AttachCurrentLayer).GetComponentInChildren<TextMeshProUGUI>();
-        enabledText = AddButton(panel.transform, "ENABLED", ToggleEnabled).GetComponentInChildren<TextMeshProUGUI>();
-        AddButton(panel.transform, "REMOVE FROM GROUP", RemoveCurrentLayer);
-
-        pointCountSlider = AddSlider(panel.transform, "POINT COUNT", 0f, 100f, 100f, v =>
-        {
-            if (editingGroupId >= 0) GetOrCreateLayer(editingGroupId).pointCount = Mathf.RoundToInt(v);
-        }, true);
-
-        AddButton(panel.transform, "REGENERATE POINTS", () =>
-        {
-            if (editingGroupId >= 0) Regenerate(GetOrCreateLayer(editingGroupId));
-        });
-
-        paintText = AddButton(panel.transform, "PAINT: OFF", () =>
-        {
-            paintMode = !paintMode;
-            paintText.text = paintMode ? "PAINT: ON" : "PAINT: OFF";
-            if (!paintMode) SetBrushVisible(false);
-        }).GetComponentInChildren<TextMeshProUGUI>();
-
-        brushSizeSlider = AddSlider(panel.transform, "BRUSH SIZE", 0.01f, 0.4f, 0.08f, v =>
-        {
-            if (editingGroupId >= 0) GetOrCreateLayer(editingGroupId).brushRadius = v;
-        });
-
-        brushStrengthSlider = AddSlider(panel.transform, "BRUSH STRENGTH", 0f, 1f, 0.5f, v =>
-        {
-            if (editingGroupId >= 0) GetOrCreateLayer(editingGroupId).brushStrength = v;
-        });
-
-        brushFalloffSlider = AddSlider(panel.transform, "BRUSH FALLOFF", 0f, 1f, 0.5f, v =>
-        {
-            if (editingGroupId >= 0) GetOrCreateLayer(editingGroupId).brushFalloff = v;
-        });
-
-        brushValueSlider = AddSlider(panel.transform, "PAINT VALUE", 0f, 1f, 1f, v =>
-        {
-            if (editingGroupId >= 0) GetOrCreateLayer(editingGroupId).brushValue = v;
-        });
-
-        debugText = AddButton(panel.transform, "VIS: TONE", CycleDebug).GetComponentInChildren<TextMeshProUGUI>();
-
-        strengthSlider = AddSlider(panel.transform, "GLOBAL CLUMP", 0f, 1f, 1f, v =>
-        {
-            if (editingGroupId < 0) return;
-            ClumpLayer l = GetOrCreateLayer(editingGroupId);
-            l.globalStrength = v;
-            ApplyLayer(l, true);
-        });
-
-        AddButton(panel.transform, "EDIT CLUMP CURVE", OpenCurveModal);
-        AddButton(panel.transform, "CLOSE", ClosePanel);
-        BuildCurveModal(canvas.transform);
-    }
-
-    void BuildCurveModal(Transform canvas)
-    {
-        curvePanel = new GameObject("ClumpCurveModal", typeof(RectTransform), typeof(Image));
-        curvePanel.transform.SetParent(canvas, false);
-        RectTransform r = curvePanel.GetComponent<RectTransform>();
-        r.anchorMin = r.anchorMax = new Vector2(0.5f, 0.5f);
-        r.pivot = new Vector2(0.5f, 0.5f);
-        r.anchoredPosition = new Vector2(-410f, 0f);
-        r.sizeDelta = new Vector2(330f, 300f);
-        curvePanel.GetComponent<Image>().color = new Color(0.07f, 0.075f, 0.07f, 0.98f);
-
-        VerticalLayoutGroup layout = curvePanel.AddComponent<VerticalLayoutGroup>();
-        layout.padding = new RectOffset(16, 16, 14, 14);
-        layout.spacing = 8f;
-        layout.childControlWidth = true;
-        layout.childControlHeight = false;
-
-        AddText(curvePanel.transform, "CLUMP CURVE", 20, 32);
-        AddText(curvePanel.transform, "Influence from root -> tip", 13, 22).color = new Color(0.65f, 0.75f, 0.65f);
-        curveEarlySlider = AddSlider(curvePanel.transform, "EARLY (25%)", 0f, 1f, 0.08f, v => RebuildCurve());
-        curveMidSlider = AddSlider(curvePanel.transform, "MID (65%)", 0f, 1f, 0.65f, v => RebuildCurve());
-        curveTipSlider = AddSlider(curvePanel.transform, "TIP (100%)", 0f, 1f, 1f, v => RebuildCurve());
-        AddButton(curvePanel.transform, "DONE", () => curvePanel.SetActive(false));
-        curvePanel.SetActive(false);
-    }
-
-    void OpenCurveModal()
-    {
-        if (editingGroupId < 0 || curvePanel == null) return;
-        ClumpLayer l = GetOrCreateLayer(editingGroupId);
-        curveEarlySlider.SetValueWithoutNotify(l.curve.Evaluate(0.25f));
-        curveMidSlider.SetValueWithoutNotify(l.curve.Evaluate(0.65f));
-        curveTipSlider.SetValueWithoutNotify(l.curve.Evaluate(1f));
-        curvePanel.SetActive(true);
-    }
-
-    void RebuildCurve()
-    {
-        if (editingGroupId < 0) return;
-        ClumpLayer l = GetOrCreateLayer(editingGroupId);
-        l.curve = new AnimationCurve(
-            new Keyframe(0f, 0f),
-            new Keyframe(0.25f, curveEarlySlider.value),
-            new Keyframe(0.65f, curveMidSlider.value),
-            new Keyframe(1f, curveTipSlider.value));
-        ApplyLayer(l, true);
-    }
-
-    void CycleDebug()
-    {
-        if (editingGroupId < 0) return;
-        ClumpLayer l = GetOrCreateLayer(editingGroupId);
-        l.debugMode = l.debugMode == DebugMode.Tone ? DebugMode.Length : l.debugMode == DebugMode.Length ? DebugMode.Off : DebugMode.Tone;
-        debugText.text = "VIS: " + l.debugMode.ToString().ToUpperInvariant();
-        RefreshGuideVisuals(l);
-    }
-
-    void SyncUI(ClumpLayer l)
-    {
-        pointCountSlider.SetValueWithoutNotify(l.pointCount);
-        strengthSlider.SetValueWithoutNotify(l.globalStrength);
-        brushSizeSlider.SetValueWithoutNotify(l.brushRadius);
-        brushStrengthSlider.SetValueWithoutNotify(l.brushStrength);
-        brushFalloffSlider.SetValueWithoutNotify(l.brushFalloff);
-        brushValueSlider.SetValueWithoutNotify(l.brushValue);
-        debugText.text = "VIS: " + l.debugMode.ToString().ToUpperInvariant();
-        attachText.text = l.attached ? "UPDATE GROUP CLUMP" : "ADD TO GROUP";
-        enabledText.text = l.enabled ? "ENABLED" : "DISABLED";
-    }
-
-    TextMeshProUGUI AddText(Transform parent, string text, int size, float height)
-    {
-        GameObject go = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
-        go.transform.SetParent(parent, false);
-        go.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, height);
-        TextMeshProUGUI t = go.GetComponent<TextMeshProUGUI>();
-        t.text = text;
-        t.fontSize = size;
-        t.color = Color.white;
-        t.alignment = TextAlignmentOptions.Center;
-        return t;
-    }
-
-    GameObject AddButton(Transform parent, string label, Action action)
-    {
-        GameObject go = new GameObject(label, typeof(RectTransform), typeof(Image), typeof(Button));
-        go.transform.SetParent(parent, false);
-        go.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 30f);
-        go.GetComponent<Image>().color = new Color(0.16f, 0.25f, 0.17f);
-        go.GetComponent<Button>().onClick.AddListener(() => action());
-        TextMeshProUGUI t = AddText(go.transform, label, 13, 0f);
-        RectTransform tr = t.rectTransform;
-        tr.anchorMin = Vector2.zero;
-        tr.anchorMax = Vector2.one;
-        tr.offsetMin = Vector2.zero;
-        tr.offsetMax = Vector2.zero;
-        return go;
-    }
-
-    Slider AddSlider(Transform parent, string label, float min, float max, float value, Action<float> changed, bool wholeNumbers = false)
-    {
-        GameObject row = new GameObject(label, typeof(RectTransform));
-        row.transform.SetParent(parent, false);
-        row.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 42f);
-
-        VerticalLayoutGroup v = row.AddComponent<VerticalLayoutGroup>();
-        v.spacing = 2f;
-        v.childControlWidth = true;
-        v.childControlHeight = false;
-
-        string FormatValue(float x) => wholeNumbers ? Mathf.RoundToInt(x).ToString() : x.ToString("F2");
-        TextMeshProUGUI txt = AddText(row.transform, label + ": " + FormatValue(value), 13, 17f);
-
-        GameObject sgo = new GameObject("Slider", typeof(RectTransform), typeof(Slider));
-        sgo.transform.SetParent(row.transform, false);
-        sgo.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 19f);
-        Slider s = sgo.GetComponent<Slider>();
-        s.minValue = min;
-        s.maxValue = max;
-        s.wholeNumbers = wholeNumbers;
-        s.value = value;
-
-        GameObject bg = new GameObject("Background", typeof(RectTransform), typeof(Image));
-        bg.transform.SetParent(sgo.transform, false);
-        RectTransform br = bg.GetComponent<RectTransform>();
-        br.anchorMin = new Vector2(0f, 0.40f);
-        br.anchorMax = new Vector2(1f, 0.60f);
-        br.offsetMin = Vector2.zero;
-        br.offsetMax = Vector2.zero;
-        bg.GetComponent<Image>().color = new Color(0.2f, 0.2f, 0.2f);
-
-        GameObject fillArea = new GameObject("Fill Area", typeof(RectTransform));
-        fillArea.transform.SetParent(sgo.transform, false);
-        RectTransform far = fillArea.GetComponent<RectTransform>();
-        far.anchorMin = new Vector2(0f, 0.30f);
-        far.anchorMax = new Vector2(1f, 0.70f);
-        far.offsetMin = new Vector2(5f, 0f);
-        far.offsetMax = new Vector2(-5f, 0f);
-
-        GameObject fill = new GameObject("Fill", typeof(RectTransform), typeof(Image));
-        fill.transform.SetParent(fillArea.transform, false);
-        RectTransform fr = fill.GetComponent<RectTransform>();
-        fr.anchorMin = Vector2.zero;
-        fr.anchorMax = Vector2.one;
-        fr.offsetMin = Vector2.zero;
-        fr.offsetMax = Vector2.zero;
-        fill.GetComponent<Image>().color = new Color(0.2f, 0.7f, 0.3f);
-        s.fillRect = fr;
-
-        GameObject handleArea = new GameObject("Handle Slide Area", typeof(RectTransform));
-        handleArea.transform.SetParent(sgo.transform, false);
-        RectTransform har = handleArea.GetComponent<RectTransform>();
-        har.anchorMin = Vector2.zero;
-        har.anchorMax = Vector2.one;
-        har.offsetMin = new Vector2(7f, 0f);
-        har.offsetMax = new Vector2(-7f, 0f);
-
-        GameObject handle = new GameObject("Handle", typeof(RectTransform), typeof(Image));
-        handle.transform.SetParent(handleArea.transform, false);
-        handle.GetComponent<Image>().color = Color.white;
-        RectTransform hr = handle.GetComponent<RectTransform>();
-        hr.sizeDelta = new Vector2(12f, 17f);
-        s.handleRect = hr;
-
-        s.onValueChanged.AddListener(x =>
-        {
-            txt.text = label + ": " + FormatValue(x);
-            changed(x);
-        });
-        return s;
+        StopPainting(-1);
     }
 
     void OnDestroy()
     {
         if (guideMaterial != null) Destroy(guideMaterial);
         if (brushMaterial != null) Destroy(brushMaterial);
+    }
+}
+
+public class ClumpCurvePreviewGraphic : MaskableGraphic
+{
+    public Func<AnimationCurve> curveProvider;
+    private const int Samples = 48;
+    private const float StrokeWidth = 2.5f;
+
+    void Update()
+    {
+        SetVerticesDirty();
+    }
+
+    protected override void OnPopulateMesh(VertexHelper vh)
+    {
+        vh.Clear();
+        AnimationCurve curve = curveProvider != null ? curveProvider() : null;
+        if (curve == null) return;
+
+        Rect r = rectTransform.rect;
+        float pad = 7f;
+        Rect plot = new Rect(r.xMin + pad, r.yMin + pad, Mathf.Max(1f, r.width - pad * 2f), Mathf.Max(1f, r.height - pad * 2f));
+        DrawGrid(vh, plot);
+
+        Vector2 previous = CurvePoint(plot, 0f, Mathf.Clamp01(curve.Evaluate(0f)));
+        for (int i = 1; i <= Samples; i++)
+        {
+            float t = i / (float)Samples;
+            Vector2 current = CurvePoint(plot, t, Mathf.Clamp01(curve.Evaluate(t)));
+            AddLine(vh, previous, current, StrokeWidth, color);
+            previous = current;
+        }
+    }
+
+    Vector2 CurvePoint(Rect plot, float x, float y)
+    {
+        return new Vector2(Mathf.Lerp(plot.xMin, plot.xMax, x), Mathf.Lerp(plot.yMin, plot.yMax, y));
+    }
+
+    void DrawGrid(VertexHelper vh, Rect plot)
+    {
+        Color grid = new Color(1f, 1f, 1f, 0.13f);
+        AddLine(vh, new Vector2(plot.xMin, plot.yMin), new Vector2(plot.xMax, plot.yMin), 1f, grid);
+        AddLine(vh, new Vector2(plot.xMin, plot.yMin), new Vector2(plot.xMin, plot.yMax), 1f, grid);
+        AddLine(vh, new Vector2(plot.xMin, plot.yMax), new Vector2(plot.xMax, plot.yMax), 1f, grid);
+        AddLine(vh, new Vector2(plot.xMax, plot.yMin), new Vector2(plot.xMax, plot.yMax), 1f, grid);
+        for (int i = 1; i < 4; i++)
+        {
+            float x = Mathf.Lerp(plot.xMin, plot.xMax, i / 4f);
+            float y = Mathf.Lerp(plot.yMin, plot.yMax, i / 4f);
+            AddLine(vh, new Vector2(x, plot.yMin), new Vector2(x, plot.yMax), 1f, grid);
+            AddLine(vh, new Vector2(plot.xMin, y), new Vector2(plot.xMax, y), 1f, grid);
+        }
+    }
+
+    void AddLine(VertexHelper vh, Vector2 a, Vector2 b, float width, Color c)
+    {
+        Vector2 dir = (b - a).normalized;
+        if (dir.sqrMagnitude < 0.0001f) return;
+        Vector2 n = new Vector2(-dir.y, dir.x) * width * 0.5f;
+        int start = vh.currentVertCount;
+
+        UIVertex v = UIVertex.simpleVert;
+        v.color = c;
+        v.position = a - n; vh.AddVert(v);
+        v.position = a + n; vh.AddVert(v);
+        v.position = b + n; vh.AddVert(v);
+        v.position = b - n; vh.AddVert(v);
+        vh.AddTriangle(start, start + 1, start + 2);
+        vh.AddTriangle(start, start + 2, start + 3);
     }
 }
