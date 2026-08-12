@@ -13,6 +13,7 @@ public class ClumpInlineGroomController : MonoBehaviour
     private ModelViewer viewer;
     private ClumpLayerManager manager;
     private ModifierPersistenceBridge persistence;
+    private PostClumpAffectorBridge postClump;
     private GameObject installedPanel;
     private GameObject clumpRow;
     private GameObject pointsRow;
@@ -40,10 +41,9 @@ public class ClumpInlineGroomController : MonoBehaviour
         if (viewer == null) viewer = FindFirstObjectByType<ModelViewer>();
         if (manager == null) manager = FindFirstObjectByType<ClumpLayerManager>();
         if (persistence == null) persistence = FindFirstObjectByType<ModifierPersistenceBridge>();
+        if (postClump == null) postClump = FindFirstObjectByType<PostClumpAffectorBridge>();
         if (viewer == null || manager == null) return;
 
-        // The old manager Update only maintained the large left-panel editor and guide refresh.
-        // Disable that UI lifecycle; direct methods still work for save/load and regeneration.
         if (manager.enabled) manager.enabled = false;
         RemoveLegacyClumpPanels();
 
@@ -55,6 +55,11 @@ public class ClumpInlineGroomController : MonoBehaviour
         if (shownGroup != viewer.currentGroupId)
         {
             shownGroup = viewer.currentGroupId;
+            SyncFromGroup();
+            ApplyGroup(shownGroup);
+        }
+        else if (postClump != null && postClump.ConsumeDisplayDirty())
+        {
             SyncFromGroup();
             ApplyGroup(shownGroup);
         }
@@ -75,61 +80,91 @@ public class ClumpInlineGroomController : MonoBehaviour
         if (pointsRow != null) Destroy(pointsRow);
 
         Transform panel = panelGO.transform;
+        Transform widthRow = panel.Find("Width_Row");
         Transform lengthVariance = panel.Cast<Transform>().FirstOrDefault(t => t.name == "Length_VarianceRow");
         Transform lengthMain = panel.Find("Length_Row");
         Transform anchor = lengthVariance != null ? lengthVariance : lengthMain;
-        int sibling = anchor != null ? anchor.GetSiblingIndex() + 1 : 0;
+        int sibling = anchor != null ? anchor.GetSiblingIndex() + 1 : (widthRow != null ? widthRow.GetSiblingIndex() : 0);
 
-        clumpRow = BuildSliderRow(panel, "Clump_Row", "CLUMP", 0f, 1f, .0f, out clumpSlider, out clumpLabel);
+        clumpRow = BuildNativeSliderRow(panel, widthRow, out clumpSlider, out clumpLabel);
         clumpRow.transform.SetSiblingIndex(sibling++);
         clumpSlider.onValueChanged.AddListener(v =>
         {
+            float value = Mathf.Clamp01(v);
+            if (postClump != null && postClump.TryAuthorActive(value))
+            {
+                clumpLabel.text = "CLUMP: " + value.ToString("F3");
+                ApplyGroup(viewer.currentGroupId);
+                return;
+            }
+
             ClumpLayerManager.ClumpLayer layer = GetLayer(viewer.currentGroupId);
             if (layer == null) return;
-            layer.globalStrength = Mathf.Clamp01(v);
-            layer.enabled = v > .0001f;
+            layer.globalStrength = value;
+            layer.enabled = value > .0001f;
             if (layer.enabled && layer.points.Count == 0 && layer.pointCount > 0)
                 RegenerateCurrent(false);
             ApplyGroup(viewer.currentGroupId);
-            clumpLabel.text = "CLUMP: " + v.ToString("F2");
+            clumpLabel.text = "CLUMP: " + value.ToString("F3");
         });
 
         pointsRow = BuildPointsRow(panel);
         pointsRow.transform.SetSiblingIndex(sibling);
+        LayoutRebuilder.ForceRebuildLayoutImmediate(panel as RectTransform);
         SyncFromGroup();
     }
 
-    GameObject BuildSliderRow(Transform parent, string name, string label, float min, float max, float value, out Slider slider, out TextMeshProUGUI text)
+    GameObject BuildNativeSliderRow(Transform parent, Transform templateRow, out Slider slider, out TextMeshProUGUI label)
     {
-        GameObject row = new GameObject(name, typeof(RectTransform), typeof(VerticalLayoutGroup));
-        row.transform.SetParent(parent, false);
-        row.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 38f);
-        VerticalLayoutGroup layout = row.GetComponent<VerticalLayoutGroup>();
-        layout.spacing = 1f;
-        layout.childControlWidth = true;
-        layout.childControlHeight = false;
-        layout.childForceExpandHeight = false;
+        GameObject row;
+        if (templateRow != null)
+        {
+            row = Instantiate(templateRow.gameObject, parent, false);
+            row.name = "Clump_Row";
+            slider = row.GetComponentInChildren<Slider>(true);
+            label = row.GetComponentInChildren<TextMeshProUGUI>(true);
+            if (slider != null)
+            {
+                slider.onValueChanged.RemoveAllListeners();
+                slider.minValue = 0f;
+                slider.maxValue = 1f;
+                slider.wholeNumbers = false;
+                slider.SetValueWithoutNotify(0f);
+                if (slider.handleRect != null)
+                {
+                    // Match the compact native groom handle rather than the old oversized custom one.
+                    RectTransform templateHandle = templateRow.GetComponentInChildren<Slider>(true)?.handleRect;
+                    if (templateHandle != null) slider.handleRect.sizeDelta = templateHandle.sizeDelta;
+                }
+            }
+            if (label != null) label.text = "CLUMP: 0.000";
+            return row;
+        }
 
-        text = MakeText(row.transform, label + ": " + value.ToString("F2"), 11, 16f, TextAlignmentOptions.Left);
-        slider = MakeSlider(row.transform, min, max, value, 17f);
+        row = new GameObject("Clump_Row", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
+        row.transform.SetParent(parent, false);
+        row.GetComponent<LayoutElement>().preferredHeight = 42f;
+        VerticalLayoutGroup layout = row.GetComponent<VerticalLayoutGroup>();
+        layout.spacing = 1f; layout.childControlWidth = true; layout.childControlHeight = false;
+        label = MakeText(row.transform, "CLUMP: 0.000", 11, 16f, TextAlignmentOptions.Left);
+        slider = MakeSlider(row.transform, 0f, 1f, 0f, 16f);
+        if (slider.handleRect != null) slider.handleRect.sizeDelta = new Vector2(6f, 10f);
         return row;
     }
 
     GameObject BuildPointsRow(Transform parent)
     {
-        GameObject row = new GameObject("ClumpPoints_Row", typeof(RectTransform), typeof(HorizontalLayoutGroup));
+        GameObject row = new GameObject("ClumpPoints_Row", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
         row.transform.SetParent(parent, false);
         row.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 27f);
+        row.GetComponent<LayoutElement>().preferredHeight = 27f;
         HorizontalLayoutGroup h = row.GetComponent<HorizontalLayoutGroup>();
-        h.spacing = 5f;
-        h.padding = new RectOffset(2, 2, 1, 1);
-        h.childControlWidth = false;
-        h.childControlHeight = true;
-        h.childForceExpandWidth = false;
+        h.spacing = 5f; h.padding = new RectOffset(2, 2, 1, 1); h.childControlWidth = false; h.childControlHeight = true; h.childForceExpandWidth = false;
 
         pointsLabel = MakeText(row.transform, "POINTS 20", 10, 62f, TextAlignmentOptions.MidlineLeft);
         pointsSlider = MakeSlider(row.transform, 1f, 100f, 20f, 22f, 175f);
         pointsSlider.wholeNumbers = true;
+        if (pointsSlider.handleRect != null) pointsSlider.handleRect.sizeDelta = new Vector2(6f, 10f);
         pointsSlider.onValueChanged.AddListener(v =>
         {
             ClumpLayerManager.ClumpLayer layer = GetLayer(viewer.currentGroupId);
@@ -148,12 +183,8 @@ public class ClumpInlineGroomController : MonoBehaviour
         int groupId = viewer.currentGroupId;
         ClumpLayerManager.ClumpLayer layer = GetLayer(groupId);
         if (layer == null) return;
-
-        if (randomSeed && persistence != null)
-            persistence.SetClumpSeed(groupId, Random.Range(0, 1000000));
-
-        if (persistence != null)
-            persistence.RegenerateSeeded(groupId);
+        if (randomSeed && persistence != null) persistence.SetClumpSeed(groupId, Random.Range(0, 1000000));
+        if (persistence != null) persistence.RegenerateSeeded(groupId);
         else
         {
             MethodInfo regen = typeof(ClumpLayerManager).GetMethod("Regenerate", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -167,10 +198,11 @@ public class ClumpInlineGroomController : MonoBehaviour
         if (viewer == null || clumpSlider == null || pointsSlider == null) return;
         ClumpLayerManager.ClumpLayer layer = GetLayer(viewer.currentGroupId);
         if (layer == null) return;
-        float weight = layer.enabled ? Mathf.Clamp01(layer.globalStrength) : 0f;
-        clumpSlider.SetValueWithoutNotify(weight);
+        float baseWeight = layer.enabled ? Mathf.Clamp01(layer.globalStrength) : 0f;
+        float displayWeight = postClump != null ? postClump.GetDisplayedWeight(viewer.currentGroupId, baseWeight) : baseWeight;
+        clumpSlider.SetValueWithoutNotify(displayWeight);
         pointsSlider.SetValueWithoutNotify(Mathf.Clamp(layer.pointCount, 1, 100));
-        clumpLabel.text = "CLUMP: " + weight.ToString("F2");
+        clumpLabel.text = "CLUMP: " + displayWeight.ToString("F3");
         pointsLabel.text = "POINTS " + Mathf.Clamp(layer.pointCount, 1, 100);
     }
 
@@ -181,14 +213,20 @@ public class ClumpInlineGroomController : MonoBehaviour
         return get?.Invoke(manager, new object[] { groupId }) as ClumpLayerManager.ClumpLayer;
     }
 
+    public float GetBaseGroupWeight(int groupId)
+    {
+        ClumpLayerManager.ClumpLayer layer = GetLayer(groupId);
+        return layer != null && layer.enabled ? Mathf.Clamp01(layer.globalStrength) : 0f;
+    }
+
     public void ApplyGroup(int groupId)
     {
         ClumpLayerManager.ClumpLayer layer = GetLayer(groupId);
         if (layer == null) return;
         HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None).Where(c => c.groupId == groupId).ToArray();
-        float weight = layer.enabled ? Mathf.Clamp01(layer.globalStrength) : 0f;
+        float baseWeight = layer.enabled ? Mathf.Clamp01(layer.globalStrength) : 0f;
 
-        if (weight <= .0001f || layer.points.Count == 0)
+        if (layer.points.Count == 0)
         {
             foreach (HairCard card in cards) card.ClearClumpModifier();
             return;
@@ -196,10 +234,10 @@ public class ClumpInlineGroomController : MonoBehaviour
 
         foreach (HairCard card in cards)
         {
+            float weight = postClump != null ? postClump.EvaluateWeight(card, baseWeight) : baseWeight;
+            if (weight <= .0001f) { card.ClearClumpModifier(); continue; }
             Vector3 root = card.GetSpawnHitPoint();
-            ClumpLayerManager.ClumpPoint nearest = layer.points
-                .OrderBy(p => Vector3.SqrMagnitude(root - p.position))
-                .First();
+            ClumpLayerManager.ClumpPoint nearest = layer.points.OrderBy(p => Vector3.SqrMagnitude(root - p.position)).First();
             card.SetClumpModifier(nearest.position, nearest.normal, weight, layer.curve);
         }
     }
@@ -208,11 +246,8 @@ public class ClumpInlineGroomController : MonoBehaviour
     {
         GameObject go = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI), typeof(LayoutElement));
         go.transform.SetParent(parent, false);
-        LayoutElement le = go.GetComponent<LayoutElement>();
-        le.preferredWidth = heightOrWidth;
-        le.preferredHeight = 16f;
-        TextMeshProUGUI t = go.GetComponent<TextMeshProUGUI>();
-        t.text = value; t.fontSize = size; t.color = Color.white; t.alignment = alignment; t.raycastTarget = false;
+        LayoutElement le = go.GetComponent<LayoutElement>(); le.preferredWidth = heightOrWidth; le.preferredHeight = 16f;
+        TextMeshProUGUI t = go.GetComponent<TextMeshProUGUI>(); t.text = value; t.fontSize = size; t.color = Color.white; t.alignment = alignment; t.raycastTarget = false;
         return t;
     }
 
@@ -220,11 +255,8 @@ public class ClumpInlineGroomController : MonoBehaviour
     {
         GameObject go = new GameObject("Slider", typeof(RectTransform), typeof(Slider), typeof(LayoutElement));
         go.transform.SetParent(parent, false);
-        LayoutElement le = go.GetComponent<LayoutElement>();
-        le.preferredHeight = height;
-        if (width > 0f) le.preferredWidth = width; else le.flexibleWidth = 1f;
+        LayoutElement le = go.GetComponent<LayoutElement>(); le.preferredHeight = height; if (width > 0f) le.preferredWidth = width; else le.flexibleWidth = 1f;
         Slider s = go.GetComponent<Slider>(); s.minValue = min; s.maxValue = max; s.value = value;
-
         GameObject bg = new GameObject("Background", typeof(RectTransform), typeof(Image)); bg.transform.SetParent(go.transform, false);
         RectTransform br = bg.GetComponent<RectTransform>(); br.anchorMin = new Vector2(0f,.43f); br.anchorMax = new Vector2(1f,.57f); br.offsetMin = Vector2.zero; br.offsetMax = Vector2.zero; bg.GetComponent<Image>().color = new Color(.28f,.28f,.28f);
         GameObject fa = new GameObject("Fill Area", typeof(RectTransform)); fa.transform.SetParent(go.transform, false);
@@ -234,7 +266,7 @@ public class ClumpInlineGroomController : MonoBehaviour
         GameObject ha = new GameObject("Handle Slide Area", typeof(RectTransform)); ha.transform.SetParent(go.transform, false);
         RectTransform har = ha.GetComponent<RectTransform>(); har.anchorMin = Vector2.zero; har.anchorMax = Vector2.one; har.offsetMin = new Vector2(5f,0f); har.offsetMax = new Vector2(-5f,0f);
         GameObject hg = new GameObject("Handle", typeof(RectTransform), typeof(Image)); hg.transform.SetParent(ha.transform, false);
-        RectTransform hr = hg.GetComponent<RectTransform>(); hr.sizeDelta = new Vector2(7f,11f); hg.GetComponent<Image>().color = Color.white; s.handleRect = hr;
+        RectTransform hr = hg.GetComponent<RectTransform>(); hr.sizeDelta = new Vector2(6f,10f); hg.GetComponent<Image>().color = Color.white; s.handleRect = hr;
         return s;
     }
 
@@ -243,8 +275,7 @@ public class ClumpInlineGroomController : MonoBehaviour
         GameObject go = new GameObject(label, typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
         go.transform.SetParent(parent, false);
         LayoutElement le = go.GetComponent<LayoutElement>(); le.preferredWidth = width; le.preferredHeight = 24f;
-        go.GetComponent<Image>().color = new Color(.18f,.30f,.20f);
-        go.GetComponent<Button>().onClick.AddListener(action);
+        go.GetComponent<Image>().color = new Color(.18f,.30f,.20f); go.GetComponent<Button>().onClick.AddListener(action);
         TextMeshProUGUI t = MakeText(go.transform, label, 10, width, TextAlignmentOptions.Center);
         RectTransform tr = t.rectTransform; tr.anchorMin = Vector2.zero; tr.anchorMax = Vector2.one; tr.offsetMin = Vector2.zero; tr.offsetMax = Vector2.zero;
     }
