@@ -49,10 +49,6 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         if (currentLoaded != null && currentLoaded != lastKnownLoadedModel)
         {
             lastKnownLoadedModel = currentLoaded;
-
-            // LoadProject() replaces loadedModel synchronously and restores cards/groups/modifiers.
-            // Its Button listener runs before ours (ModelViewer binds in Start), so by this Update
-            // projectLoadJustCompleted is true and we must preserve the restored project state.
             if (!projectLoadJustCompleted)
                 ResetEntireSessionForNewModel();
         }
@@ -61,8 +57,7 @@ public class GroomSessionResetCoordinator : MonoBehaviour
             lastKnownLoadedModel = null;
         }
 
-        // One-shot marker only. If the project dialog was cancelled there was no model change,
-        // and the marker is cleared here so the next real OBJ import still gets a fresh reset.
+        // One-shot marker only. A cancelled project dialog must not suppress the next OBJ reset.
         projectLoadJustCompleted = false;
     }
 
@@ -70,16 +65,12 @@ public class GroomSessionResetCoordinator : MonoBehaviour
     {
         if (viewer.loadButton == null || boundLoadButton == viewer.loadButton) return;
         boundLoadButton = viewer.loadButton;
-        // No reset listener is required here: actual loaded-model instance change is authoritative.
-        // This means cancelling the native file dialog leaves the current session untouched.
     }
 
     void BindLoadProjectButton()
     {
         if (viewer.loadProjectButton == null || boundLoadProjectButton == viewer.loadProjectButton) return;
         boundLoadProjectButton = viewer.loadProjectButton;
-        // ModelViewer registers LoadProject() in Start before this coordinator binds, so this
-        // callback runs after the synchronous file dialog/read/restore has finished.
         boundLoadProjectButton.onClick.AddListener(() => projectLoadJustCompleted = true);
     }
 
@@ -138,26 +129,17 @@ public class GroomSessionResetCoordinator : MonoBehaviour
             SetField(post, "nextUIScan", 0f);
         }
 
-        ClumpLayerManager clump = FindFirstObjectByType<ClumpLayerManager>();
-        if (clump != null)
-        {
-            ClearDictionaryField(clump, "layers");
-            ClearDictionaryField(clump, "expandedGroups");
-            SetField(clump, "visualGroupId", -1);
-            SetField(clump, "nextUIScanTime", 0f);
-        }
-
         HairProjectSaveData.PendingModifierRestore = null;
         CanonicalProjectStateBridge.PendingCanonicalRestore = null;
 
         foreach (RectTransform row in FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
         {
-            if (row == null) continue;
-            if (row.name.StartsWith("PostAffector_", StringComparison.Ordinal) ||
-                row.name.StartsWith("ClumpModifier_", StringComparison.Ordinal))
+            if (row != null && row.name.StartsWith("PostAffector_", StringComparison.Ordinal))
                 Destroy(row.gameObject);
         }
 
+        // HairCard still knows how to clear the old deformation flag so a hot-reloaded
+        // editor session cannot retain a stale clump result from an earlier build.
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
             if (card != null) card.ClearClumpModifier();
     }
@@ -258,8 +240,7 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         GameObject keepGroom = viewer.groomingSliderPanelGO;
         foreach (RectTransform r in FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
         {
-            if (r == null) continue;
-            if (r.name == "GroomingPanel" && r.gameObject != keepGroom)
+            if (r != null && r.name == "GroomingPanel" && r.gameObject != keepGroom)
                 Destroy(r.gameObject);
         }
 
@@ -284,8 +265,6 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         InvokePrivate(viewer, "RefreshGroupListUI");
         PostAffectorManager post = FindFirstObjectByType<PostAffectorManager>();
         if (post != null) SetField(post, "nextUIScan", 0f);
-        ClumpLayerManager clump = FindFirstObjectByType<ClumpLayerManager>();
-        if (clump != null) SetField(clump, "nextUIScanTime", 0f);
     }
 
     static void ClearDictionaryField(object owner, string fieldName)
