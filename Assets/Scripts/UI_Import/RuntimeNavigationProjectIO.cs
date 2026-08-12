@@ -187,7 +187,9 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
         GameObject tg=new GameObject("Text",typeof(RectTransform),typeof(TextMeshProUGUI));tg.transform.SetParent(go.transform,false);RectTransform tr=tg.GetComponent<RectTransform>();tr.anchorMin=Vector2.zero;tr.anchorMax=Vector2.one;tr.offsetMin=Vector2.zero;tr.offsetMax=Vector2.zero;TextMeshProUGUI t=tg.GetComponent<TextMeshProUGUI>();t.text=label;t.fontSize=16;t.fontStyle=FontStyles.Bold;t.alignment=TextAlignmentOptions.Center;t.color=Color.white;t.raycastTarget=false;return go;
     }
 
-    void QuitApplication(){#if UNITY_EDITOR
+    void QuitApplication()
+    {
+#if UNITY_EDITOR
         EditorApplication.isPlaying=false;
 #else
         Application.Quit();
