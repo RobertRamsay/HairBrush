@@ -23,6 +23,40 @@ public class HairCardSaveData
 }
 
 [Serializable]
+public class VarianceChannelSaveData
+{
+    public string channel;
+    public float amount;
+    public int seed;
+}
+
+[Serializable]
+public class ClumpPointSaveData
+{
+    public float posX, posY, posZ;
+    public float normalX, normalY, normalZ;
+    public float strength;
+}
+
+[Serializable]
+public class ClumpLayerSaveData
+{
+    public bool enabled;
+    public int pointCount = 20;
+    public int generationSeed;
+    public float globalStrength = 1f;
+    public float brushRadius = 0.08f;
+    public float brushStrength = 0.5f;
+    public float brushFalloff = 0.5f;
+    public float brushValue = 1f;
+    public int debugMode;
+    public float curveEarly = 0.08f;
+    public float curveMid = 0.65f;
+    public float curveTip = 1f;
+    public List<ClumpPointSaveData> points = new List<ClumpPointSaveData>();
+}
+
+[Serializable]
 public class GroupSaveData
 {
     public int groupId;
@@ -31,6 +65,8 @@ public class GroupSaveData
     public float vScale;
     public float uOffset;
     public float vOffset;
+    public List<VarianceChannelSaveData> variances = new List<VarianceChannelSaveData>();
+    public ClumpLayerSaveData clump;
 }
 
 [Serializable]
