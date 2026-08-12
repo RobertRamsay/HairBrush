@@ -10,7 +10,7 @@ using UnityEngine.UI;
 
 // Runtime interaction polish for dynamically-created tool controls.
 // The compact seed row is created entirely in code, so this explicitly handles
-// pointer focus/clicks instead of relying on a fragile generated raycast hierarchy.
+// pointer focus/clicks without relying on the generated UI raycast hierarchy.
 [DefaultExecutionOrder(1500)]
 public class RuntimeToolInteractionFixes : MonoBehaviour
 {
@@ -52,15 +52,17 @@ public class RuntimeToolInteractionFixes : MonoBehaviour
             RectTransform rect = field.transform as RectTransform;
             if (rect == null) continue;
 
-            bool hover = RectTransformUtility.RectangleContainsScreenPoint(rect, mouse, EventCamera(rect));
+            bool hover = ScreenRectContains(rect, mouse);
             Image image = field.GetComponent<Image>();
             if (image != null)
                 image.color = field.isFocused
                     ? new Color(0.20f, 0.38f, 0.24f, 1f)
-                    : hover ? new Color(0.24f, 0.30f, 0.22f, 1f) : new Color(0.12f, 0.12f, 0.12f, 1f);
+                    : hover ? new Color(0.36f, 0.46f, 0.30f, 1f) : new Color(0.12f, 0.12f, 0.12f, 1f);
 
             if (pressed && hover)
             {
+                field.interactable = true;
+                field.enabled = true;
                 if (EventSystem.current != null)
                     EventSystem.current.SetSelectedGameObject(field.gameObject);
                 field.Select();
@@ -78,10 +80,10 @@ public class RuntimeToolInteractionFixes : MonoBehaviour
             RectTransform rect = button.transform as RectTransform;
             if (rect == null) continue;
 
-            bool hover = RectTransformUtility.RectangleContainsScreenPoint(rect, mouse, EventCamera(rect));
+            bool hover = ScreenRectContains(rect, mouse);
             Image image = button.GetComponent<Image>();
             if (image != null)
-                image.color = hover ? new Color(0.42f, 0.62f, 0.28f, 1f) : new Color(0.27f, 0.34f, 0.20f, 1f);
+                image.color = hover ? new Color(0.52f, 0.72f, 0.34f, 1f) : new Color(0.27f, 0.34f, 0.20f, 1f);
 
             if (pressed && hover)
             {
@@ -92,11 +94,30 @@ public class RuntimeToolInteractionFixes : MonoBehaviour
         }
     }
 
-    Camera EventCamera(RectTransform rect)
+    bool ScreenRectContains(RectTransform rect, Vector2 screenPoint)
     {
         Canvas canvas = rect.GetComponentInParent<Canvas>();
-        if (canvas == null || canvas.renderMode == RenderMode.ScreenSpaceOverlay) return null;
-        return canvas.worldCamera;
+        Camera cam = null;
+        if (canvas != null && canvas.renderMode != RenderMode.ScreenSpaceOverlay)
+            cam = canvas.worldCamera != null ? canvas.worldCamera : Camera.main;
+
+        Vector3[] corners = new Vector3[4];
+        rect.GetWorldCorners(corners);
+
+        Vector2 p0 = RectTransformUtility.WorldToScreenPoint(cam, corners[0]);
+        Vector2 p1 = RectTransformUtility.WorldToScreenPoint(cam, corners[1]);
+        Vector2 p2 = RectTransformUtility.WorldToScreenPoint(cam, corners[2]);
+        Vector2 p3 = RectTransformUtility.WorldToScreenPoint(cam, corners[3]);
+
+        float minX = Mathf.Min(p0.x, p1.x, p2.x, p3.x);
+        float maxX = Mathf.Max(p0.x, p1.x, p2.x, p3.x);
+        float minY = Mathf.Min(p0.y, p1.y, p2.y, p3.y);
+        float maxY = Mathf.Max(p0.y, p1.y, p2.y, p3.y);
+
+        // A few pixels of padding makes the compact controls easier to hit.
+        const float pad = 2f;
+        return screenPoint.x >= minX - pad && screenPoint.x <= maxX + pad
+            && screenPoint.y >= minY - pad && screenPoint.y <= maxY + pad;
     }
 
     void InstallClumpFillButtons()
