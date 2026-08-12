@@ -9,7 +9,7 @@ using UnityEngine.UI;
 // Owns its own runtime UI lifecycle: one panel instance, one variance row per channel.
 public class GroomVarianceController : MonoBehaviour
 {
-    private enum Channel { Length, Bend, Twist, AngleX, AngleY, AngleZ }
+    private enum Channel { Length, Width, Bend, Twist, AngleX, AngleY, AngleZ }
 
     [Serializable] private class VarianceSetting { public float amount; public int seed; }
     private class VarianceRow { public Slider slider; public TextMeshProUGUI valueText; public TMP_InputField seedInput; }
@@ -116,12 +116,13 @@ public class GroomVarianceController : MonoBehaviour
 
         var definitions = new[]
         {
-            (Channel.Length,  "Length_Row",      "Length_Row",      "Length",     0.5f),
-            (Channel.Bend,    "Bend Angle_Row",  "Bend Angle_Row",  "Bend Angle", 360f),
-            (Channel.Twist,   "Twist Angle_Row", "Twist Angle_Row", "Twist Angle",360f),
-            (Channel.AngleX,  "Angle X_Row",     "Offset X_Row",    "Angle X",    360f),
-            (Channel.AngleY,  "Angle Y_Row",     "Offset Y_Row",    "Angle Y",    360f),
-            (Channel.AngleZ,  "Angle Z_Row",     "Offset Z_Row",    "Angle Z",    360f)
+            (Channel.Length,  "Length_Row",      "Length_Row",      "Length",      0.5f),
+            (Channel.Width,   "Width_Row",       "Width_Row",       "Width",       0.05f),
+            (Channel.Bend,    "Bend Angle_Row",  "Bend Angle_Row",  "Bend Angle",  360f),
+            (Channel.Twist,   "Twist Angle_Row", "Twist Angle_Row", "Twist Angle", 360f),
+            (Channel.AngleX,  "Angle X_Row",     "Offset X_Row",    "Angle X",     360f),
+            (Channel.AngleY,  "Angle Y_Row",     "Offset Y_Row",    "Angle Y",     360f),
+            (Channel.AngleZ,  "Angle Z_Row",     "Offset Z_Row",    "Angle Z",     360f)
         };
 
         Dictionary<Channel, Transform> mainRows = new();
@@ -132,7 +133,7 @@ public class GroomVarianceController : MonoBehaviour
             mainRows[d.Item1] = row;
         }
 
-        // Clean up any generated rows left by an older buggy install before creating one canonical set.
+        // Clean up any generated rows left by an older install before creating one canonical set.
         foreach (Transform child in panel.Cast<Transform>().ToArray())
         {
             if (child != null && child.name.EndsWith("_VarianceRow", StringComparison.Ordinal))
@@ -294,12 +295,13 @@ public class GroomVarianceController : MonoBehaviour
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None).Where(x => x.groupId == groupId))
         {
             float varied = baseValue + SignedRandom(card, c, s.seed, groupId) * s.amount;
-            float l = card.length, bend = card.bendAngle, twist = card.twistAngle;
+            float l = card.length, w = card.width, bend = card.bendAngle, twist = card.twistAngle;
             float x = card.GetOffsetX(), y = card.GetOffsetY(), z = card.GetOffsetZ();
 
             switch (c)
             {
                 case Channel.Length: l = Mathf.Max(.0005f, varied); break;
+                case Channel.Width: w = Mathf.Max(.0005f, varied); break;
                 case Channel.Bend: bend = varied; break;
                 case Channel.Twist: twist = varied; break;
                 case Channel.AngleX: x = varied; break;
@@ -307,13 +309,14 @@ public class GroomVarianceController : MonoBehaviour
                 case Channel.AngleZ: z = varied; break;
             }
 
-            card.SetParameters(l, card.width, card.segments, bend, twist, x, y, z, card.GetEmbedDepth(), 1f, card.uScale, card.vScale, card.uOffset, card.vOffset);
+            card.SetParameters(l, w, card.segments, bend, twist, x, y, z, card.GetEmbedDepth(), 1f, card.uScale, card.vScale, card.uOffset, card.vOffset);
         }
     }
 
     float MainValue(Channel c) => c switch
     {
         Channel.Length => viewer.currentLength,
+        Channel.Width => viewer.currentWidth,
         Channel.Bend => viewer.currentBend,
         Channel.Twist => viewer.currentTwist,
         Channel.AngleX => viewer.currentOffsetX,
@@ -341,8 +344,8 @@ public class GroomVarianceController : MonoBehaviour
 
     static void Mix(ref uint h, int v) { unchecked { h ^= (uint)v; h *= 16777619u; } }
     int CountCards(int id) => FindObjectsByType<HairCard>(FindObjectsSortMode.None).Count(c => c.groupId == id);
-    string ChannelLabel(Channel c) => c switch { Channel.Length => "Length", Channel.Bend => "Bend", Channel.Twist => "Twist", Channel.AngleX => "Angle X", Channel.AngleY => "Angle Y", Channel.AngleZ => "Angle Z", _ => c.ToString() };
-    string FormatVariance(Channel c, float v) => c == Channel.Length ? v.ToString("F3") : v.ToString("F1") + "°";
+    string ChannelLabel(Channel c) => c switch { Channel.Length => "Length", Channel.Width => "Width", Channel.Bend => "Bend", Channel.Twist => "Twist", Channel.AngleX => "Angle X", Channel.AngleY => "Angle Y", Channel.AngleZ => "Angle Z", _ => c.ToString() };
+    string FormatVariance(Channel c, float v) => c == Channel.Length || c == Channel.Width ? v.ToString("F3") : v.ToString("F1") + "°";
 
     TextMeshProUGUI AddText(Transform p, string text, int size, float width)
     {
