@@ -39,8 +39,8 @@ public class HairCard : MonoBehaviour
     private float baseOffsetX, baseOffsetY, baseOffsetZ;
     private Material cardMaterial;
 
-    // Clumping is deliberately evaluated after the authored bend/twist shape.
-    // These values never overwrite the groom parameters above.
+    // Clump is an upstream groom deformation: straight/length shape -> clump -> bend/twist -> card angle transform.
+    // It never overwrites the authored groom parameters above.
     private bool clumpActive;
     private Vector3 clumpSurfacePoint;
     private Vector3 clumpSurfaceNormal;
@@ -200,21 +200,29 @@ public class HairCard : MonoBehaviour
             float finalV = baseV + vOffset;
             int index = i * 2;
             float currentWidth = halfWidth * flattenFactor;
-            Quaternion authoredRotation = Quaternion.Euler(bendAngle * (t * t), 0f, twistAngle * t);
-            Vector3 left = authoredRotation * new Vector3(-currentWidth, 0f, z);
-            Vector3 right = authoredRotation * new Vector3(currentWidth, 0f, z);
 
+            // 1) Build the straight length/width shape.
+            Vector3 left = new Vector3(-currentWidth, 0f, z);
+            Vector3 right = new Vector3(currentWidth, 0f, z);
+
+            // 2) Converge that straight shape toward the generated clump attractor.
             if (clumpActive && t > 0f)
             {
                 float influence = Mathf.Clamp01(clumpStrength * clumpCurve.Evaluate(t));
-                Vector3 authoredCenter = (left + right) * 0.5f;
+                Vector3 straightCenter = (left + right) * 0.5f;
                 Vector3 worldAxisPoint = clumpSurfacePoint + clumpSurfaceNormal * (length * t);
                 Vector3 targetCenter = transform.InverseTransformPoint(worldAxisPoint);
-                Vector3 center = Vector3.Lerp(authoredCenter, targetCenter, influence);
+                Vector3 center = Vector3.Lerp(straightCenter, targetCenter, influence);
                 Vector3 halfSpan = (right - left) * 0.5f;
                 left = center - halfSpan;
                 right = center + halfSpan;
             }
+
+            // 3) Bend/twist the already-clumped shape. Angle X/Y/Z is the card transform,
+            // so it naturally remains downstream of all local mesh deformation.
+            Quaternion authoredRotation = Quaternion.Euler(bendAngle * (t * t), 0f, twistAngle * t);
+            left = authoredRotation * left;
+            right = authoredRotation * right;
 
             baseVertices[index] = left; baseVertices[index + 1] = right;
             uvs[index] = new Vector2(finalULeft, finalV); uvs[index + 1] = new Vector2(finalURight, finalV);
