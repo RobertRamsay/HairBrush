@@ -12,7 +12,7 @@ using UnityEngine.UI;
 [DefaultExecutionOrder(2100)]
 public class SelectionBrushScaleTuning : MonoBehaviour
 {
-    private const float DefaultRadius = .035f;
+    private const float DefaultRadius = .02f;
     private const float DefaultFalloff = .03f;
     private const float MaxRadius = .25f;
     private const float MaxFalloff = .25f;
@@ -52,19 +52,23 @@ public class SelectionBrushScaleTuning : MonoBehaviour
 
         if (!initializedDefaults)
         {
-            // Keep the hover preview useful before the first Ctrl+Click too.
-            viewer.brushRadius = DefaultRadius;
-            viewer.brushFalloffDistance = DefaultFalloff;
+            // Small first-use brush; after this, user values persist between hotspots.
+            if (viewer.brushRadius <= 0f || viewer.brushRadius > MaxRadius) viewer.brushRadius = DefaultRadius;
+            if (viewer.brushFalloffDistance <= 0f || viewer.brushFalloffDistance > MaxFalloff) viewer.brushFalloffDistance = DefaultFalloff;
             initializedDefaults = true;
         }
 
         bool selected = IsSelected();
         if (selected && !wasSelected)
         {
-            // ModelViewer seeds its legacy single-radius value on entry. Replace it
-            // with the canonical two-zone defaults for each fresh selection.
-            viewer.brushRadius = DefaultRadius;
-            viewer.brushFalloffDistance = DefaultFalloff;
+            // IMPORTANT: do not reset Radius/Falloff on each Ctrl+Click.
+            // ModelViewer still writes its legacy 0.25 falloff in EnterSelectionMode,
+            // so only translate that exact legacy value back to the user's previous/default value.
+            if (Mathf.Approximately(viewer.brushFalloffDistance, .25f))
+                viewer.brushFalloffDistance = lastFalloff > 0f ? lastFalloff : DefaultFalloff;
+            if (viewer.brushRadius <= 0f || viewer.brushRadius > MaxRadius)
+                viewer.brushRadius = lastRadius > 0f ? lastRadius : DefaultRadius;
+
             lastRadius = -1f;
             lastFalloff = -1f;
             lastGroup = int.MinValue;
@@ -132,8 +136,6 @@ public class SelectionBrushScaleTuning : MonoBehaviour
                 falloffSlider.SetValueWithoutNotify(viewer.brushFalloffDistance);
         }
 
-        // Rename the legacy generated control from "Falloff Dist" to the simpler
-        // "Falloff" now that Radius is its own concept.
         TextMeshProUGUI falloffLabel = falloffRow.GetComponentInChildren<TextMeshProUGUI>(true);
         if (falloffLabel != null)
             falloffLabel.text = "Falloff: " + viewer.brushFalloffDistance.ToString("F3");
@@ -164,8 +166,6 @@ public class SelectionBrushScaleTuning : MonoBehaviour
                 radiusSlider.SetValueWithoutNotify(viewer.brushRadius);
         }
 
-        // ModelViewer's original Falloff callback still runs, so add our two-zone
-        // recompute after it. Mark the slider so this listener is attached once.
         if (falloffSlider != null && falloffSlider.GetComponent<SelectionFalloffBindingMarker>() == null)
         {
             falloffSlider.gameObject.AddComponent<SelectionFalloffBindingMarker>();
@@ -181,7 +181,7 @@ public class SelectionBrushScaleTuning : MonoBehaviour
         }
     }
 
-    void RecomputeWeights(Vector3 center, float radius, float falloff)
+    public void RecomputeWeights(Vector3 center, float radius, float falloff)
     {
         float outerRadius = radius + falloff;
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
@@ -196,18 +196,9 @@ public class SelectionBrushScaleTuning : MonoBehaviour
             float distance = Vector3.Distance(center, card.transform.position);
             float weight;
 
-            if (distance <= radius)
-            {
-                weight = 1f;
-            }
-            else if (falloff > .000001f && distance <= outerRadius)
-            {
-                weight = 1f - ((distance - radius) / falloff);
-            }
-            else
-            {
-                weight = 0f;
-            }
+            if (distance <= radius) weight = 1f;
+            else if (falloff > .000001f && distance <= outerRadius) weight = 1f - ((distance - radius) / falloff);
+            else weight = 0f;
 
             weight = Mathf.Clamp01(weight);
             if (previousWeight <= 0f && weight > 0f)
