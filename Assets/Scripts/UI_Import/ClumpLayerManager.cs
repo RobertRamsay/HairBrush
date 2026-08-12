@@ -383,7 +383,7 @@ public class ClumpLayerManager : MonoBehaviour
         AddSlider(root.transform, "GLOBAL CLUMP", 0f, 1f, layer.globalStrength, v => { layer.globalStrength = v; ApplyLayer(layer); });
 
         AddText(root.transform, "CLUMP CURVE  root -> tip", 12, 18f).alignment = TextAlignmentOptions.Left;
-        GameObject previewGO = new GameObject("CurvePreview", typeof(RectTransform), typeof(ClumpCurvePreviewGraphic));
+        GameObject previewGO = new GameObject("CurvePreview", typeof(RectTransform), typeof(CanvasRenderer), typeof(ClumpCurvePreviewGraphic));
         previewGO.transform.SetParent(root.transform, false);
         previewGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 75f);
         ClumpCurvePreviewGraphic preview = previewGO.GetComponent<ClumpCurvePreviewGraphic>();
@@ -682,6 +682,7 @@ public class ClumpLayerManager : MonoBehaviour
     }
 }
 
+[RequireComponent(typeof(CanvasRenderer))]
 public class ClumpCurvePreviewGraphic : MaskableGraphic
 {
     public Func<AnimationCurve> curveProvider;
