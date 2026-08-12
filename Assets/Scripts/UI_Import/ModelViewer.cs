@@ -606,10 +606,66 @@ public class ModelViewer : MonoBehaviour
     void RefreshGroupListUI()
     {
         if (groupListContentTransform == null) return;
-        foreach (Transform child in groupListContentTransform) Destroy(child.gameObject);
+
         HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
         Dictionary<int, int> groupCardCounts = new Dictionary<int, int>();
-        foreach (var card in allCards) { if (!groupCardCounts.ContainsKey(card.groupId)) groupCardCounts[card.groupId] = 0; groupCardCounts[card.groupId]++; }
+        foreach (var card in allCards)
+        {
+            if (!groupCardCounts.ContainsKey(card.groupId)) groupCardCounts[card.groupId] = 0;
+            groupCardCounts[card.groupId]++;
+        }
+
+        // Most refreshes only change presentation (card count, active color, name, solo state).
+        // Updating those rows in place preserves POST/modifier children and keeps the ScrollRect
+        // from collapsing/re-expanding every time a hair card is placed.
+        Dictionary<int, Transform> existingGroups = new Dictionary<int, Transform>();
+        foreach (Transform child in groupListContentTransform)
+        {
+            if (child == null || !child.name.StartsWith("GroupItem_")) continue;
+            if (int.TryParse(child.name.Substring("GroupItem_".Length), out int gid))
+                existingGroups[gid] = child;
+        }
+
+        bool structureMatches = existingGroups.Count == allGroupIds.Count && allGroupIds.All(id => existingGroups.ContainsKey(id));
+        if (structureMatches)
+        {
+            foreach (int id in allGroupIds)
+            {
+                Transform item = existingGroups[id];
+                Image bg = item.GetComponent<Image>();
+                if (bg != null)
+                    bg.color = id == currentGroupId ? new Color(0.3f, 0.6f, 0.3f, 1f) : new Color(0.25f, 0.25f, 0.25f, 1f);
+
+                Transform labelButton = item.Find("LabelButton");
+                if (labelButton != null)
+                {
+                    Transform nameLabel = labelButton.Find("Label");
+                    TMPro.TextMeshProUGUI nameTmp = nameLabel != null ? nameLabel.GetComponent<TMPro.TextMeshProUGUI>() : null;
+                    if (nameTmp != null)
+                        nameTmp.text = groupNames.ContainsKey(id) ? groupNames[id] : ("Group " + id);
+
+                    Transform countLabel = labelButton.Find("CardCountLabel");
+                    TMPro.TextMeshProUGUI countTmp = countLabel != null ? countLabel.GetComponent<TMPro.TextMeshProUGUI>() : null;
+                    if (countTmp != null)
+                    {
+                        int count = groupCardCounts.ContainsKey(id) ? groupCardCounts[id] : 0;
+                        countTmp.text = count + (count == 1 ? " card" : " cards");
+                    }
+                }
+
+                Transform solo = item.Find("SoloButton");
+                Image soloImage = solo != null ? solo.GetComponent<Image>() : null;
+                if (soloImage != null)
+                {
+                    bool isSoloed = groupSoloState.ContainsKey(id) && groupSoloState[id];
+                    soloImage.color = isSoloed ? new Color(0.9f, 0.5f, 0.1f) : new Color(0.35f, 0.35f, 0.35f);
+                }
+            }
+            return;
+        }
+
+        // Group structure really changed (add/delete/load/reset), so a full rebuild is warranted.
+        foreach (Transform child in groupListContentTransform) Destroy(child.gameObject);
         foreach (int id in allGroupIds.OrderBy(g => g))
         {
             int gid = id;
