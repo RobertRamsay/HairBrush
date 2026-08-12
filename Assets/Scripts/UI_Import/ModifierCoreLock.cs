@@ -7,10 +7,10 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
-// The authored group core is deliberately immutable once downstream modifiers exist.
-// Trying to preserve arbitrary modifier deltas across core edits is ambiguous and causes drift.
-// Modifier-specific controls remain editable; POST affectors temporarily reuse the main sliders
-// while a localized selection is active, so that case is intentionally exempt from the lock.
+// Core editing policy:
+// - A group with live modifiers starts locked.
+// - FORCE UNLOCK freezes modifier evaluation, restores the group's canonical groom and unlocks core controls.
+// - UNFREEZE / REAPPLY turns the modifier systems back on and evaluates their stored settings against the new core.
 [DefaultExecutionOrder(5000)]
 public class ModifierCoreLock : MonoBehaviour
 {
@@ -30,9 +30,15 @@ public class ModifierCoreLock : MonoBehaviour
     private FieldInfo clumpLayersField;
     private GameObject boundPanel;
     private GameObject lockNotice;
+    private Button actionButton;
+    private TextMeshProUGUI noticeText;
+    private TextMeshProUGUI actionText;
     private bool? lastLocked;
     private int lastGroup = int.MinValue;
     private float nextScan;
+
+    private bool frozen;
+    private int frozenGroup = -1;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
@@ -59,9 +65,15 @@ public class ModifierCoreLock : MonoBehaviour
         }
 
         int groupId = viewer.currentGroupId;
+
+        // Freeze belongs to one group's core-edit session. If the user moves away, safely
+        // re-enable the stack so other groups are never left with globally paused managers.
+        if (frozen && groupId != frozenGroup)
+            UnfreezeAndReapply();
+
         bool editingPost = IsLocalizedPostEditing();
         bool hasModifiers = GroupHasPost(groupId) || GroupHasVariance(groupId) || GroupHasEnabledClump(groupId);
-        bool locked = hasModifiers && !editingPost;
+        bool locked = hasModifiers && !editingPost && !frozen;
 
         if (lastLocked != locked || lastGroup != groupId)
         {
@@ -69,6 +81,8 @@ public class ModifierCoreLock : MonoBehaviour
             lastLocked = locked;
             lastGroup = groupId;
         }
+
+        UpdateNotice(hasModifiers, locked);
     }
 
     void ResolveReferences()
@@ -134,6 +148,74 @@ public class ModifierCoreLock : MonoBehaviour
         return false;
     }
 
+    void ForceUnlockAndFreeze()
+    {
+        if (viewer == null || frozen) return;
+
+        frozen = true;
+        frozenGroup = viewer.currentGroupId;
+
+        // Stop all three modifier evaluators while the core is being authored. They retain
+        // their own settings/state; disabling them only pauses evaluation.
+        if (postManager != null) postManager.enabled = false;
+        if (varianceManager != null) varianceManager.enabled = false;
+        if (clumpManager != null) clumpManager.enabled = false;
+
+        if (hasSelectionField != null) hasSelectionField.SetValue(viewer, false);
+
+        // Show the untouched canonical groom while modifiers are frozen.
+        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None).Where(c => c.groupId == frozenGroup))
+        {
+            card.ClearClumpModifier();
+            card.ApplyEvaluatedState(card.GetCanonicalState());
+        }
+
+        ApplyLock(false);
+        lastLocked = false;
+        UpdateNotice(true, false);
+    }
+
+    void UnfreezeAndReapply()
+    {
+        if (!frozen) return;
+        int groupId = frozenGroup;
+
+        frozen = false;
+        frozenGroup = -1;
+
+        if (postManager != null) postManager.enabled = true;
+        if (varianceManager != null) varianceManager.enabled = true;
+        if (clumpManager != null) clumpManager.enabled = true;
+
+        // Variance normally reapplies on UI/card lifecycle changes; force one fresh evaluation now.
+        if (varianceManager != null)
+        {
+            MethodInfo applyVariance = typeof(GroomVarianceController).GetMethod("ApplyAllVarianceForGroup", BindingFlags.Instance | BindingFlags.NonPublic);
+            try { applyVariance?.Invoke(varianceManager, new object[] { groupId }); } catch { }
+        }
+
+        // Clump also retains its generated points/settings while frozen. Invoke its private
+        // ApplyLayer once so the stored layer immediately comes back against the new core.
+        if (clumpManager != null && clumpLayersField != null)
+        {
+            try
+            {
+                object raw = clumpLayersField.GetValue(clumpManager);
+                if (raw is IDictionary dictionary && dictionary.Contains(groupId))
+                {
+                    object layer = dictionary[groupId];
+                    MethodInfo applyLayer = typeof(ClumpLayerManager).GetMethod("ApplyLayer", BindingFlags.Instance | BindingFlags.NonPublic);
+                    if (layer != null) applyLayer?.Invoke(clumpManager, new object[] { layer });
+                }
+            }
+            catch { }
+        }
+
+        // POST evaluates in LateUpdate once re-enabled.
+        lastLocked = null;
+        nextScan = 0f;
+    }
+
     void ApplyLock(bool locked)
     {
         if (boundPanel == null) return;
@@ -149,9 +231,36 @@ public class ModifierCoreLock : MonoBehaviour
             if (cg == null) cg = row.gameObject.AddComponent<CanvasGroup>();
             cg.alpha = locked ? 0.48f : 1f;
         }
+    }
 
+    void UpdateNotice(bool hasModifiers, bool locked)
+    {
         EnsureNotice();
-        if (lockNotice != null) lockNotice.SetActive(locked);
+        if (lockNotice == null) return;
+
+        if (frozen)
+        {
+            lockNotice.SetActive(true);
+            if (noticeText != null) noticeText.text = "MODIFIERS FROZEN — editing core groom";
+            if (actionText != null) actionText.text = "UNFREEZE / REAPPLY";
+            if (actionButton != null)
+            {
+                actionButton.onClick.RemoveAllListeners();
+                actionButton.onClick.AddListener(UnfreezeAndReapply);
+            }
+            return;
+        }
+
+        lockNotice.SetActive(locked);
+        if (!locked) return;
+
+        if (noticeText != null) noticeText.text = "CORE LOCKED — modifiers depend on this base groom";
+        if (actionText != null) actionText.text = "FORCE UNLOCK (FREEZE MODIFIERS)";
+        if (actionButton != null)
+        {
+            actionButton.onClick.RemoveAllListeners();
+            actionButton.onClick.AddListener(ForceUnlockAndFreeze);
+        }
     }
 
     void EnsureNotice()
@@ -163,28 +272,62 @@ public class ModifierCoreLock : MonoBehaviour
         if (existing != null)
         {
             lockNotice = existing.gameObject;
+            noticeText = lockNotice.GetComponentInChildren<TextMeshProUGUI>(true);
+            actionButton = lockNotice.GetComponentInChildren<Button>(true);
+            if (actionButton != null) actionText = actionButton.GetComponentInChildren<TextMeshProUGUI>(true);
             return;
         }
 
-        lockNotice = new GameObject("CoreLockedNotice", typeof(RectTransform), typeof(LayoutElement), typeof(TextMeshProUGUI));
+        lockNotice = new GameObject("CoreLockedNotice", typeof(RectTransform), typeof(LayoutElement), typeof(VerticalLayoutGroup));
         lockNotice.transform.SetParent(boundPanel.transform, false);
         RectTransform rt = lockNotice.GetComponent<RectTransform>();
-        rt.sizeDelta = new Vector2(0f, 34f);
+        rt.sizeDelta = new Vector2(0f, 62f);
         LayoutElement le = lockNotice.GetComponent<LayoutElement>();
-        le.preferredHeight = 34f;
-        le.minHeight = 34f;
+        le.preferredHeight = 62f;
+        le.minHeight = 62f;
+        VerticalLayoutGroup layout = lockNotice.GetComponent<VerticalLayoutGroup>();
+        layout.spacing = 3f;
+        layout.childControlHeight = false;
+        layout.childControlWidth = true;
+        layout.childForceExpandHeight = false;
 
-        TextMeshProUGUI text = lockNotice.GetComponent<TextMeshProUGUI>();
-        text.text = "CORE LOCKED — remove modifiers to edit base groom";
-        text.fontSize = 13f;
-        text.fontStyle = FontStyles.Bold;
-        text.alignment = TextAlignmentOptions.Center;
-        text.color = new Color(1f, 0.72f, 0.28f, 1f);
-        text.raycastTarget = false;
+        GameObject textGO = new GameObject("Message", typeof(RectTransform), typeof(LayoutElement), typeof(TextMeshProUGUI));
+        textGO.transform.SetParent(lockNotice.transform, false);
+        textGO.GetComponent<LayoutElement>().preferredHeight = 25f;
+        noticeText = textGO.GetComponent<TextMeshProUGUI>();
+        noticeText.fontSize = 12f;
+        noticeText.fontStyle = FontStyles.Bold;
+        noticeText.alignment = TextAlignmentOptions.Center;
+        noticeText.color = new Color(1f, 0.72f, 0.28f, 1f);
+        noticeText.raycastTarget = false;
 
-        // Put the warning directly below the top control rows, before the groom sliders.
+        GameObject buttonGO = new GameObject("CoreLockAction", typeof(RectTransform), typeof(LayoutElement), typeof(Image), typeof(Button));
+        buttonGO.transform.SetParent(lockNotice.transform, false);
+        buttonGO.GetComponent<LayoutElement>().preferredHeight = 30f;
+        buttonGO.GetComponent<Image>().color = new Color(0.48f, 0.28f, 0.10f, 1f);
+        actionButton = buttonGO.GetComponent<Button>();
+
+        GameObject buttonTextGO = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
+        buttonTextGO.transform.SetParent(buttonGO.transform, false);
+        RectTransform btr = buttonTextGO.GetComponent<RectTransform>();
+        btr.anchorMin = Vector2.zero; btr.anchorMax = Vector2.one; btr.offsetMin = Vector2.zero; btr.offsetMax = Vector2.zero;
+        actionText = buttonTextGO.GetComponent<TextMeshProUGUI>();
+        actionText.fontSize = 11f;
+        actionText.fontStyle = FontStyles.Bold;
+        actionText.alignment = TextAlignmentOptions.Center;
+        actionText.color = Color.white;
+        actionText.raycastTarget = false;
+
         int targetIndex = Mathf.Min(2, boundPanel.transform.childCount - 1);
         lockNotice.transform.SetSiblingIndex(targetIndex);
         lockNotice.SetActive(false);
+    }
+
+    void OnDestroy()
+    {
+        // Never leave evaluator components disabled if this helper is destroyed/reloaded.
+        if (postManager != null) postManager.enabled = true;
+        if (varianceManager != null) varianceManager.enabled = true;
+        if (clumpManager != null) clumpManager.enabled = true;
     }
 }
