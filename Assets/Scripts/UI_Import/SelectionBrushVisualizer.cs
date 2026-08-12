@@ -4,23 +4,20 @@ using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 
 // Runtime visual helper for Ctrl+Click localized grooming selection.
-// Shows the prospective surface brush while Ctrl is held and keeps the
-// selected hotspot visible after clicking. Radius follows Falloff Dist;
-// colour follows localized edit Strength.
+// Inner ring = full Radius. Outer ring = Radius + Falloff. Colour = Strength.
 [DefaultExecutionOrder(2000)]
 public class SelectionBrushVisualizer : MonoBehaviour
 {
     private const int Segments = 64;
     private ModelViewer viewer;
-    private LineRenderer ring;
+    private LineRenderer innerRing;
+    private LineRenderer outerRing;
     private LineRenderer normalLine;
     private Material lineMaterial;
 
     private FieldInfo hasSelectionField;
     private FieldInfo hitPointField;
     private FieldInfo hitNormalField;
-    private FieldInfo falloffField;
-    private FieldInfo strengthField;
     private FieldInfo groomingField;
     private FieldInfo textureModeField;
 
@@ -50,23 +47,23 @@ public class SelectionBrushVisualizer : MonoBehaviour
 
         bool ctrl = Keyboard.current != null && Keyboard.current.ctrlKey.isPressed;
         bool pointerOverUI = EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
-        float strength = Mathf.Clamp01(GetFloat(strengthField, .25f));
+        float radius = Mathf.Max(.001f, viewer.brushRadius);
+        float falloff = Mathf.Max(0f, viewer.brushFalloffDistance);
+        float strength = Mathf.Clamp01(viewer.selectionStrength);
 
         if (ctrl && !pointerOverUI)
         {
             Ray ray = viewer.mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
             if (Physics.Raycast(ray, out RaycastHit hit))
             {
-                Draw(hit.point, hit.normal, GetFloat(falloffField, .125f), strength);
+                Draw(hit.point, hit.normal, radius, falloff, strength);
                 return;
             }
         }
 
         if (GetBool(hasSelectionField))
         {
-            Vector3 point = GetVector(hitPointField);
-            Vector3 normal = GetVector(hitNormalField);
-            Draw(point, normal, GetFloat(falloffField, .125f), strength);
+            Draw(GetVector(hitPointField), GetVector(hitNormalField), radius, falloff, strength);
             return;
         }
 
@@ -80,20 +77,19 @@ public class SelectionBrushVisualizer : MonoBehaviour
         hasSelectionField = type.GetField("hasSelectionHotspot", flags);
         hitPointField = type.GetField("selectionHitPoint", flags);
         hitNormalField = type.GetField("selectionHitNormal", flags);
-        falloffField = type.GetField("brushFalloffDistance", flags);
-        strengthField = type.GetField("selectionStrength", flags);
         groomingField = type.GetField("isGroomingMode", flags);
         textureModeField = type.GetField("isTextureEditorMode", flags);
     }
 
     void EnsureLines()
     {
-        if (ring != null) return;
+        if (innerRing != null) return;
 
         Shader shader = Shader.Find("Sprites/Default") ?? Shader.Find("Unlit/Color");
         if (shader != null) lineMaterial = new Material(shader);
 
-        ring = CreateLine("CtrlSelectionRadius", Segments + 1, .0022f);
+        innerRing = CreateLine("CtrlSelectionRadiusInner", Segments + 1, .0024f);
+        outerRing = CreateLine("CtrlSelectionFalloffOuter", Segments + 1, .0018f);
         normalLine = CreateLine("CtrlSelectionNormal", 2, .0016f);
     }
 
@@ -115,32 +111,45 @@ public class SelectionBrushVisualizer : MonoBehaviour
         return lr;
     }
 
-    void Draw(Vector3 center, Vector3 normal, float radius, float strength)
+    void Draw(Vector3 center, Vector3 normal, float radius, float falloff, float strength)
     {
         EnsureLines();
-        if (ring == null || normalLine == null) return;
+        if (innerRing == null || outerRing == null || normalLine == null) return;
 
         normal = normal.sqrMagnitude > .000001f ? normal.normalized : Vector3.up;
         radius = Mathf.Max(.002f, radius);
+        float outerRadius = Mathf.Max(radius, radius + falloff);
 
         Vector3 tangent = Vector3.Cross(normal, Mathf.Abs(Vector3.Dot(normal, Vector3.up)) > .95f ? Vector3.right : Vector3.up).normalized;
         Vector3 bitangent = Vector3.Cross(normal, tangent).normalized;
         Vector3 liftedCenter = center + normal * .0015f;
 
+        SetRing(innerRing, liftedCenter, tangent, bitangent, radius);
+        SetRing(outerRing, liftedCenter, tangent, bitangent, outerRadius);
+
+        Color color = StrengthColor(strength);
+        Color outerColor = color;
+        outerColor.a *= .72f;
+
+        innerRing.startColor = innerRing.endColor = color;
+        outerRing.startColor = outerRing.endColor = outerColor;
+        normalLine.startColor = normalLine.endColor = color;
+        normalLine.SetPosition(0, liftedCenter);
+        normalLine.SetPosition(1, liftedCenter + normal * Mathf.Min(outerRadius * .30f, .04f));
+
+        innerRing.enabled = true;
+        outerRing.enabled = falloff > .0001f;
+        normalLine.enabled = true;
+    }
+
+    void SetRing(LineRenderer ring, Vector3 center, Vector3 tangent, Vector3 bitangent, float radius)
+    {
         for (int i = 0; i <= Segments; i++)
         {
             float a = ((float)i / Segments) * Mathf.PI * 2f;
-            Vector3 p = liftedCenter + (tangent * Mathf.Cos(a) + bitangent * Mathf.Sin(a)) * radius;
+            Vector3 p = center + (tangent * Mathf.Cos(a) + bitangent * Mathf.Sin(a)) * radius;
             ring.SetPosition(i, p);
         }
-
-        Color color = StrengthColor(strength);
-        ring.startColor = ring.endColor = color;
-        normalLine.startColor = normalLine.endColor = color;
-        normalLine.SetPosition(0, liftedCenter);
-        normalLine.SetPosition(1, liftedCenter + normal * Mathf.Min(radius * .35f, .04f));
-        ring.enabled = true;
-        normalLine.enabled = true;
     }
 
     Color StrengthColor(float value)
@@ -160,11 +169,11 @@ public class SelectionBrushVisualizer : MonoBehaviour
 
     void Hide()
     {
-        if (ring != null) ring.enabled = false;
+        if (innerRing != null) innerRing.enabled = false;
+        if (outerRing != null) outerRing.enabled = false;
         if (normalLine != null) normalLine.enabled = false;
     }
 
     bool GetBool(FieldInfo field) => field != null && viewer != null && field.GetValue(viewer) is bool b && b;
-    float GetFloat(FieldInfo field, float fallback) => field != null && viewer != null && field.GetValue(viewer) is float f ? f : fallback;
     Vector3 GetVector(FieldInfo field) => field != null && viewer != null && field.GetValue(viewer) is Vector3 v ? v : Vector3.zero;
 }
