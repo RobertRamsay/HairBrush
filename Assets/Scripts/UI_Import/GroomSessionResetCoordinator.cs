@@ -14,7 +14,7 @@ public class GroomSessionResetCoordinator : MonoBehaviour
     private ModelViewer viewer;
     private Button boundLoadButton;
     private Button boundResetButton;
-    private bool newModelRequested;
+    private GameObject lastKnownLoadedModel;
     private float nextScan;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -31,16 +31,25 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         if (Time.unscaledTime < nextScan) return;
         nextScan = Time.unscaledTime + 0.08f;
 
-        if (viewer == null) viewer = FindFirstObjectByType<ModelViewer>();
+        if (viewer == null)
+        {
+            viewer = FindFirstObjectByType<ModelViewer>();
+            lastKnownLoadedModel = GetLoadedModel();
+        }
         if (viewer == null) return;
 
         BindLoadButton();
         BindResetButton();
 
-        if (newModelRequested && HasLoadedModel())
+        GameObject currentLoaded = GetLoadedModel();
+        if (currentLoaded != null && currentLoaded != lastKnownLoadedModel)
         {
-            newModelRequested = false;
+            lastKnownLoadedModel = currentLoaded;
             ResetEntireSessionForNewModel();
+        }
+        else if (currentLoaded == null)
+        {
+            lastKnownLoadedModel = null;
         }
     }
 
@@ -48,23 +57,23 @@ public class GroomSessionResetCoordinator : MonoBehaviour
     {
         if (viewer.loadButton == null || boundLoadButton == viewer.loadButton) return;
         boundLoadButton = viewer.loadButton;
-        // Listener is intentionally additive: ModelViewer still owns the actual file dialog/import.
-        boundLoadButton.onClick.AddListener(() => newModelRequested = true);
+        // No reset listener is required here: actual loaded-model instance change is authoritative.
+        // This means cancelling the native file dialog leaves the current session untouched.
     }
 
     void BindResetButton()
     {
         Button reset = FindObjectsByType<Button>(FindObjectsInactive.Include, FindObjectsSortMode.None)
-            .FirstOrDefault(b => b != null && b.gameObject.name == "ResetButton");
+            .LastOrDefault(b => b != null && b.gameObject.name == "ResetButton");
         if (reset == null || reset == boundResetButton) return;
         boundResetButton = reset;
         boundResetButton.onClick.AddListener(ResetCurrentGroomSession);
     }
 
-    bool HasLoadedModel()
+    GameObject GetLoadedModel()
     {
         FieldInfo field = typeof(ModelViewer).GetField("loadedModel", BindingFlags.Instance | BindingFlags.NonPublic);
-        return field != null && field.GetValue(viewer) is GameObject go && go != null;
+        return field?.GetValue(viewer) as GameObject;
     }
 
     public void ResetCurrentGroomSession()
@@ -87,7 +96,7 @@ public class GroomSessionResetCoordinator : MonoBehaviour
 
         ResetViewerGroupsToDefault();
         ResetViewerControlsToDefaults();
-        DestroyOldGroupAndModifierUI();
+        CleanupDuplicateRuntimePanels();
         RefreshRuntimeUI();
     }
 
@@ -104,6 +113,7 @@ public class GroomSessionResetCoordinator : MonoBehaviour
             SetField(post, "activeId", -1);
             SetField(post, "activeGroup", -1);
             SetField(post, "nextId", 1);
+            SetField(post, "nextUIScan", 0f);
         }
 
         ClumpLayerManager clump = FindFirstObjectByType<ClumpLayerManager>();
@@ -112,6 +122,7 @@ public class GroomSessionResetCoordinator : MonoBehaviour
             ClearDictionaryField(clump, "layers");
             ClearDictionaryField(clump, "expandedGroups");
             SetField(clump, "visualGroupId", -1);
+            SetField(clump, "nextUIScanTime", 0f);
         }
 
         HairProjectSaveData.PendingModifierRestore = null;
@@ -133,6 +144,7 @@ public class GroomSessionResetCoordinator : MonoBehaviour
     {
         SetField(viewer, "hasSelectionHotspot", false);
         SetField(viewer, "isSelectionMode", false);
+        SetField(viewer, "lastPlacedCard", null);
         viewer.selectionStrength = 0.25f;
         viewer.brushRadius = 0.2f;
         viewer.brushFalloffDistance = 0.05f;
@@ -180,24 +192,31 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         viewer.currentUOffset = 0f;
         viewer.currentVOffset = 0f;
 
-        if (viewer.groomingSliderPanelGO != null)
+        if (viewer.groomingSliderPanelGO == null) return;
+
+        foreach (Slider slider in viewer.groomingSliderPanelGO.GetComponentsInChildren<Slider>(true))
         {
-            foreach (Slider slider in viewer.groomingSliderPanelGO.GetComponentsInChildren<Slider>(true))
-            {
-                if (slider == null) continue;
-                string n = slider.gameObject.name;
-                if (n == "Length_Slider") slider.SetValueWithoutNotify(.2f);
-                else if (n == "Width_Slider") slider.SetValueWithoutNotify(.01f);
-                else if (n == "Segments_Slider") slider.SetValueWithoutNotify(12f);
-                else if (n == "Bend Angle_Slider") slider.SetValueWithoutNotify(0f);
-                else if (n == "Twist Angle_Slider") slider.SetValueWithoutNotify(0f);
-                else if (n == "Embed Depth_Slider") slider.SetValueWithoutNotify(.002f);
-                else if (n == "Offset X_Slider" || n == "Offset Y_Slider" || n == "Offset Z_Slider" ||
-                         n == "Angle X_Slider" || n == "Angle Y_Slider" || n == "Angle Z_Slider") slider.SetValueWithoutNotify(0f);
-                else if (n == "U Scale_Slider" || n == "V Scale_Slider") slider.SetValueWithoutNotify(1f);
-                else if (n == "U Offset_Slider" || n == "V Offset_Slider") slider.SetValueWithoutNotify(0f);
-                else if (n == "VarianceSlider") slider.SetValueWithoutNotify(0f);
-            }
+            if (slider == null) continue;
+            string n = slider.gameObject.name;
+            if (n == "Length_Slider") slider.SetValueWithoutNotify(.2f);
+            else if (n == "Width_Slider") slider.SetValueWithoutNotify(.01f);
+            else if (n == "Segments_Slider") slider.SetValueWithoutNotify(12f);
+            else if (n == "Bend Angle_Slider") slider.SetValueWithoutNotify(0f);
+            else if (n == "Twist Angle_Slider") slider.SetValueWithoutNotify(0f);
+            else if (n == "Embed Depth_Slider") slider.SetValueWithoutNotify(.002f);
+            else if (n == "Offset X_Slider" || n == "Offset Y_Slider" || n == "Offset Z_Slider" ||
+                     n == "Angle X_Slider" || n == "Angle Y_Slider" || n == "Angle Z_Slider") slider.SetValueWithoutNotify(0f);
+            else if (n == "U Scale_Slider" || n == "V Scale_Slider") slider.SetValueWithoutNotify(1f);
+            else if (n == "U Offset_Slider" || n == "V Offset_Slider") slider.SetValueWithoutNotify(0f);
+            else if (n == "VarianceSlider") slider.SetValueWithoutNotify(0f);
+            slider.interactable = true;
+        }
+
+        foreach (TMPro.TMP_InputField input in viewer.groomingSliderPanelGO.GetComponentsInChildren<TMPro.TMP_InputField>(true))
+        {
+            if (input == null) continue;
+            if (input.gameObject.name == "SeedInput") input.SetTextWithoutNotify("0");
+            input.interactable = true;
         }
     }
 
@@ -212,12 +231,28 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         }
     }
 
-    void DestroyOldGroupAndModifierUI()
+    void CleanupDuplicateRuntimePanels()
     {
+        GameObject keepGroom = viewer.groomingSliderPanelGO;
         foreach (RectTransform r in FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
         {
             if (r == null) continue;
-            if (r.name == "GroupManagerPanel" || r.name.StartsWith("PostAffector_", StringComparison.Ordinal) || r.name.StartsWith("ClumpModifier_", StringComparison.Ordinal))
+            if (r.name == "GroomingPanel" && r.gameObject != keepGroom)
+                Destroy(r.gameObject);
+        }
+
+        Transform liveContent = GetField<Transform>(viewer, "groupListContentTransform");
+        GameObject keepGroupPanel = null;
+        if (liveContent != null)
+        {
+            Transform p = liveContent;
+            while (p != null && p.name != "GroupManagerPanel") p = p.parent;
+            if (p != null) keepGroupPanel = p.gameObject;
+        }
+
+        foreach (RectTransform r in FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            if (r != null && r.name == "GroupManagerPanel" && r.gameObject != keepGroupPanel)
                 Destroy(r.gameObject);
         }
     }
@@ -225,7 +260,6 @@ public class GroomSessionResetCoordinator : MonoBehaviour
     void RefreshRuntimeUI()
     {
         InvokePrivate(viewer, "RefreshGroupListUI");
-        // Managers lazily rebuild their runtime UI on the next update; force their scan timers open.
         PostAffectorManager post = FindFirstObjectByType<PostAffectorManager>();
         if (post != null) SetField(post, "nextUIScan", 0f);
         ClumpLayerManager clump = FindFirstObjectByType<ClumpLayerManager>();
