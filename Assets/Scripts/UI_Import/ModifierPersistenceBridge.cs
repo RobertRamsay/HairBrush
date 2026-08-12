@@ -39,6 +39,16 @@ public class ModifierPersistenceBridge : MonoBehaviour
         int expected = data.hairCards != null ? data.hairCards.Count : 0;
         if (FindObjectsByType<HairCard>(FindObjectsSortMode.None).Length < expected) return;
 
+        // Pre-v2 files stored already-modified visible cards and also stored the recipe
+        // that produced them. Replaying that recipe double-applies variance/POST and can
+        // make cards spin or expand. We intentionally dropped compatibility: legacy files
+        // keep their saved visible card geometry, but their modifiers are not replayed.
+        if (data.formatVersion < CanonicalProjectStateBridge.CurrentFormatVersion)
+        {
+            HairProjectSaveData.PendingModifierRestore = null;
+            return;
+        }
+
         HairProjectSaveData.PendingModifierRestore = null;
         variance.ClearSavedSettings();
         postAffectors.ClearAll();
