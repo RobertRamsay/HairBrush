@@ -8,9 +8,7 @@ using UnityEngine;
 using UnityEngine.UI;
 
 // The authored group core is deliberately immutable once downstream modifiers exist.
-// Trying to preserve arbitrary modifier deltas across core edits is ambiguous and causes drift.
-// Modifier-specific controls remain editable; POST affectors temporarily reuse the main sliders
-// while a localized selection is active, so that case is intentionally exempt from the lock.
+// Lock state is derived from live modifier activity and the UI explains the active source.
 [DefaultExecutionOrder(5000)]
 public class ModifierCoreLock : MonoBehaviour
 {
@@ -30,7 +28,6 @@ public class ModifierCoreLock : MonoBehaviour
     private FieldInfo clumpLayersField;
     private GameObject boundPanel;
     private GameObject lockNotice;
-    private int lastGroup = int.MinValue;
     private float nextScan;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -58,14 +55,12 @@ public class ModifierCoreLock : MonoBehaviour
 
         int groupId = viewer.currentGroupId;
         bool editingPost = IsLocalizedPostEditing();
-        bool hasModifiers = GroupHasPost(groupId) || GroupHasVariance(groupId) || GroupHasEnabledClump(groupId);
-        bool locked = hasModifiers && !editingPost;
+        bool post = GroupHasPost(groupId);
+        bool variance = GroupHasVariance(groupId);
+        bool clump = GroupHasEnabledClump(groupId);
+        bool locked = (post || variance || clump) && !editingPost;
 
-        // Do not cache the applied UI state. Runtime rows are rebuilt/destroyed by several
-        // modifier managers, so a slider that was locked can otherwise survive a modifier
-        // removal/rebuild without ever receiving the unlock state.
-        ApplyLock(locked);
-        lastGroup = groupId;
+        ApplyLock(locked, post, variance, clump);
     }
 
     void ResolveReferences()
@@ -98,10 +93,6 @@ public class ModifierCoreLock : MonoBehaviour
         {
             List<PostAffectorSaveData> items = postManager.ExportGroup(groupId);
             if (items == null || items.Count == 0) return false;
-
-            // The runtime UI row is the authoritative signal that the POST still exists.
-            // This prevents stale manager data from keeping the core locked after the user
-            // has removed the visible modifier.
             RectTransform[] rows = FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             return rows.Any(r => r != null && r.name.StartsWith("PostAffector_" + groupId + "_", StringComparison.Ordinal));
         }
@@ -113,6 +104,17 @@ public class ModifierCoreLock : MonoBehaviour
         if (varianceManager == null) return false;
         try
         {
+            // For the currently visible group, trust the live variance sliders first. This
+            // avoids stale stored amounts keeping the core locked after UI-side reset/removal.
+            if (viewer != null && viewer.currentGroupId == groupId && boundPanel != null)
+            {
+                Slider[] live = boundPanel.GetComponentsInChildren<Slider>(true)
+                    .Where(s => s != null && s.gameObject.name == "VarianceSlider")
+                    .ToArray();
+                if (live.Length > 0)
+                    return live.Any(s => Mathf.Abs(s.value) > 0.000001f);
+            }
+
             List<VarianceChannelSaveData> settings = varianceManager.ExportGroupSettings(groupId);
             return settings != null && settings.Any(s => s != null && Mathf.Abs(s.amount) > 0.000001f);
         }
@@ -137,7 +139,7 @@ public class ModifierCoreLock : MonoBehaviour
         return false;
     }
 
-    void ApplyLock(bool locked)
+    void ApplyLock(bool locked, bool post, bool variance, bool clump)
     {
         if (boundPanel == null) return;
 
@@ -154,7 +156,17 @@ public class ModifierCoreLock : MonoBehaviour
         }
 
         EnsureNotice();
-        if (lockNotice != null) lockNotice.SetActive(locked);
+        if (lockNotice == null) return;
+        lockNotice.SetActive(locked);
+        if (!locked) return;
+
+        TextMeshProUGUI text = lockNotice.GetComponent<TextMeshProUGUI>();
+        if (text == null) return;
+        List<string> sources = new();
+        if (post) sources.Add("POST");
+        if (variance) sources.Add("VARIANCE");
+        if (clump) sources.Add("CLUMP");
+        text.text = "CORE LOCKED — active: " + string.Join(" + ", sources);
     }
 
     void EnsureNotice()
@@ -178,7 +190,7 @@ public class ModifierCoreLock : MonoBehaviour
         le.minHeight = 34f;
 
         TextMeshProUGUI text = lockNotice.GetComponent<TextMeshProUGUI>();
-        text.text = "CORE LOCKED — disable/remove modifiers to edit base groom";
+        text.text = "CORE LOCKED";
         text.fontSize = 13f;
         text.fontStyle = FontStyles.Bold;
         text.alignment = TextAlignmentOptions.Center;
