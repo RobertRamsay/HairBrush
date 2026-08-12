@@ -5,6 +5,15 @@ using UnityEngine.InputSystem;
 [RequireComponent(typeof(MeshFilter), typeof(MeshRenderer))]
 public class HairCard : MonoBehaviour
 {
+    [System.Serializable]
+    public struct GroomState
+    {
+        public float length, width, bend, twist, depth;
+        public int segments;
+        public float x, y, z;
+        public float uScale, vScale, uOffset, vOffset;
+    }
+
     [Header("Grooming Parameters")]
     public float width = 0.01f;
     public float length = 0.2f;
@@ -39,6 +48,11 @@ public class HairCard : MonoBehaviour
     private float baseOffsetX, baseOffsetY, baseOffsetZ;
     private Material cardMaterial;
 
+    // Canonical state is the authored/root value. Modifier evaluation may change the
+    // public/rendered fields, but must never feed those evaluated values back into this state.
+    private GroomState canonicalState;
+    private bool hasCanonicalState;
+
     // Clump is an upstream groom deformation: straight/length shape -> clump -> bend/twist -> card angle transform.
     // It never overwrites the authored groom parameters above.
     private bool clumpActive;
@@ -53,6 +67,78 @@ public class HairCard : MonoBehaviour
     public float GetOffsetZ() { return storedOffsetZ; }
     public Vector3 GetSpawnHitPoint() { return spawnHitPoint; }
     public Vector3 GetSurfaceNormal() { return surfaceNormal; }
+
+    public GroomState GetCanonicalState()
+    {
+        if (!hasCanonicalState)
+        {
+            canonicalState = ReadRenderedState();
+            hasCanonicalState = true;
+        }
+        return canonicalState;
+    }
+
+    public void SetCanonicalState(GroomState state, bool applyToRendered = false)
+    {
+        canonicalState = SanitizeState(state);
+        hasCanonicalState = true;
+        if (applyToRendered) ApplyEvaluatedState(canonicalState);
+    }
+
+    public void ApplyEvaluatedState(GroomState state)
+    {
+        state = SanitizeState(state);
+        length = state.length;
+        width = state.width;
+        segments = state.segments;
+        bendAngle = state.bend;
+        twistAngle = state.twist;
+        storedOffsetX = state.x;
+        storedOffsetY = state.y;
+        storedOffsetZ = state.z;
+        currentEmbedDepth = state.depth;
+        uScale = state.uScale;
+        vScale = state.vScale;
+        uOffset = state.uOffset;
+        vOffset = state.vOffset;
+        if (surfaceNormal != Vector3.zero) UpdateTransformOrientation(currentEmbedDepth);
+        GenerateMesh();
+    }
+
+    GroomState ReadRenderedState()
+    {
+        return new GroomState
+        {
+            length = length,
+            width = width,
+            segments = segments,
+            bend = bendAngle,
+            twist = twistAngle,
+            depth = currentEmbedDepth,
+            x = storedOffsetX,
+            y = storedOffsetY,
+            z = storedOffsetZ,
+            uScale = uScale,
+            vScale = vScale,
+            uOffset = uOffset,
+            vOffset = vOffset
+        };
+    }
+
+    GroomState SanitizeState(GroomState state)
+    {
+        state.length = Mathf.Max(0.001f, state.length);
+        state.width = Mathf.Max(0.0005f, state.width);
+        state.segments = Mathf.Clamp(state.segments, 4, 36);
+        state.depth = Mathf.Max(0f, state.depth);
+        return state;
+    }
+
+    void CaptureCanonicalFromRendered()
+    {
+        canonicalState = SanitizeState(ReadRenderedState());
+        hasCanonicalState = true;
+    }
 
     public void SetClumpModifier(Vector3 surfacePoint, Vector3 normal, float strength, AnimationCurve curve)
     {
@@ -81,9 +167,15 @@ public class HairCard : MonoBehaviour
         storedOffsetZ = offsetZ;
         groupId = assignedGroupId;
         UpdateTransformOrientation(currentEmbedDepth);
+        CaptureCanonicalFromRendered();
     }
 
-    public void UpdateDepth(float embedDepth) { currentEmbedDepth = embedDepth; UpdateTransformOrientation(currentEmbedDepth); }
+    public void UpdateDepth(float embedDepth)
+    {
+        currentEmbedDepth = embedDepth;
+        UpdateTransformOrientation(currentEmbedDepth);
+        CaptureCanonicalFromRendered();
+    }
 
     private void UpdateTransformOrientation(float embedDepth)
     {
@@ -99,6 +191,8 @@ public class HairCard : MonoBehaviour
         if (cardMaterial.HasProperty("_Color")) cardMaterial.SetColor("_Color", finalColor);
     }
 
+    // Authored/root write path. This always updates canonical state after resolving any
+    // selection weighting. Modifier managers must use ApplyEvaluatedState instead.
     public void SetParameters(float newLength, float newWidth, int newSegments, float newBend, float newTwist, float offsetX, float offsetY, float offsetZ, float newEmbedDepth, float strengthMultiplier = 1f, float newUScale = 1f, float newVScale = 1f, float newUOffset = 0f, float newVOffset = 0f)
     {
         if (selectionWeight > 0f)
@@ -116,19 +210,36 @@ public class HairCard : MonoBehaviour
         }
         else
         {
-            length = Mathf.Max(0.001f, newLength); width = newWidth; segments = newSegments;
-            bendAngle = newBend; twistAngle = newTwist;
-            storedOffsetX = offsetX; storedOffsetY = offsetY; storedOffsetZ = offsetZ; currentEmbedDepth = newEmbedDepth;
+            length = Mathf.Max(0.001f, newLength);
+            width = newWidth;
+            segments = newSegments;
+            bendAngle = newBend;
+            twistAngle = newTwist;
+            storedOffsetX = offsetX;
+            storedOffsetY = offsetY;
+            storedOffsetZ = offsetZ;
+            currentEmbedDepth = newEmbedDepth;
         }
-        uScale = newUScale; vScale = newVScale; uOffset = newUOffset; vOffset = newVOffset;
+        uScale = newUScale;
+        vScale = newVScale;
+        uOffset = newUOffset;
+        vOffset = newVOffset;
         if (surfaceNormal != Vector3.zero) UpdateTransformOrientation(currentEmbedDepth);
+        CaptureCanonicalFromRendered();
         GenerateMesh();
     }
 
     public void CaptureBaseState(float activeLength, float activeWidth, int activeSegments, float activeBend, float activeTwist, float activeDepth, float ox, float oy, float oz)
     {
-        baseLength = activeLength; baseWidth = activeWidth; baseSegments = activeSegments; baseBend = activeBend; baseTwist = activeTwist;
-        baseEmbedDepth = activeDepth; baseOffsetX = ox; baseOffsetY = oy; baseOffsetZ = oz;
+        baseLength = activeLength;
+        baseWidth = activeWidth;
+        baseSegments = activeSegments;
+        baseBend = activeBend;
+        baseTwist = activeTwist;
+        baseEmbedDepth = activeDepth;
+        baseOffsetX = ox;
+        baseOffsetY = oy;
+        baseOffsetZ = oz;
     }
 
     public void SetSelectionWeight(float weight) { selectionWeight = Mathf.Clamp01(weight); UpdateVisualHighlight(); }
@@ -138,7 +249,10 @@ public class HairCard : MonoBehaviour
         meshFilter = GetComponent<MeshFilter>();
         mesh = new Mesh { name = "ProceduralHairCard" };
         meshFilter.mesh = mesh;
-        SetupMaterial(); GenerateMesh(); UpdateVisualHighlight();
+        SetupMaterial();
+        GenerateMesh();
+        UpdateVisualHighlight();
+        CaptureCanonicalFromRendered();
     }
 
     void OnValidate() { if (mesh != null) GenerateMesh(); }
@@ -175,7 +289,12 @@ public class HairCard : MonoBehaviour
         if (cardMaterial != null && cardMaterial.HasProperty("_Cull")) cardMaterial.SetFloat("_Cull", enabled ? 0f : 2f);
     }
 
-    public void SetSegments(int newSegments) { segments = Mathf.Clamp(newSegments, 4, 36); GenerateMesh(); }
+    public void SetSegments(int newSegments)
+    {
+        segments = Mathf.Clamp(newSegments, 4, 36);
+        CaptureCanonicalFromRendered();
+        GenerateMesh();
+    }
 
     public void GenerateMesh()
     {
@@ -201,11 +320,9 @@ public class HairCard : MonoBehaviour
             int index = i * 2;
             float currentWidth = halfWidth * flattenFactor;
 
-            // 1) Build the straight length/width shape.
             Vector3 left = new Vector3(-currentWidth, 0f, z);
             Vector3 right = new Vector3(currentWidth, 0f, z);
 
-            // 2) Converge that straight shape toward the generated clump attractor.
             if (clumpActive && t > 0f)
             {
                 float influence = Mathf.Clamp01(clumpStrength * clumpCurve.Evaluate(t));
@@ -218,24 +335,32 @@ public class HairCard : MonoBehaviour
                 right = center + halfSpan;
             }
 
-            // 3) Bend/twist the already-clumped shape. Angle X/Y/Z is the card transform,
-            // so it naturally remains downstream of all local mesh deformation.
             Quaternion authoredRotation = Quaternion.Euler(bendAngle * (t * t), 0f, twistAngle * t);
             left = authoredRotation * left;
             right = authoredRotation * right;
 
-            baseVertices[index] = left; baseVertices[index + 1] = right;
-            uvs[index] = new Vector2(finalULeft, finalV); uvs[index + 1] = new Vector2(finalURight, finalV);
+            baseVertices[index] = left;
+            baseVertices[index + 1] = right;
+            uvs[index] = new Vector2(finalULeft, finalV);
+            uvs[index + 1] = new Vector2(finalURight, finalV);
         }
 
         int triIndex = 0;
         for (int i = 0; i < segments; i++)
         {
             int r = i * 2;
-            triangles[triIndex++] = r; triangles[triIndex++] = r + 2; triangles[triIndex++] = r + 1;
-            triangles[triIndex++] = r + 1; triangles[triIndex++] = r + 2; triangles[triIndex++] = r + 3;
+            triangles[triIndex++] = r;
+            triangles[triIndex++] = r + 2;
+            triangles[triIndex++] = r + 1;
+            triangles[triIndex++] = r + 1;
+            triangles[triIndex++] = r + 2;
+            triangles[triIndex++] = r + 3;
         }
-        mesh.Clear(); mesh.vertices = baseVertices; mesh.uv = uvs; mesh.triangles = triangles;
-        mesh.RecalculateNormals(); mesh.RecalculateBounds();
+        mesh.Clear();
+        mesh.vertices = baseVertices;
+        mesh.uv = uvs;
+        mesh.triangles = triangles;
+        mesh.RecalculateNormals();
+        mesh.RecalculateBounds();
     }
 }
