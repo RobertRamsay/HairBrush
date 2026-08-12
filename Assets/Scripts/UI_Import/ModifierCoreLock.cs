@@ -7,8 +7,9 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
-// The authored group core is deliberately immutable once downstream modifiers exist.
-// Lock state is derived from live modifier activity and the UI explains the active source.
+// The authored group core is deliberately immutable while structural downstream modifiers exist.
+// Variance is intentionally excluded from the core lock: it is a live deterministic variation
+// layer around the root controls and should recalculate as those root values change.
 [DefaultExecutionOrder(5000)]
 public class ModifierCoreLock : MonoBehaviour
 {
@@ -22,7 +23,6 @@ public class ModifierCoreLock : MonoBehaviour
 
     private ModelViewer viewer;
     private PostAffectorManager postManager;
-    private GroomVarianceController varianceManager;
     private ClumpLayerManager clumpManager;
     private FieldInfo hasSelectionField;
     private FieldInfo clumpLayersField;
@@ -56,11 +56,13 @@ public class ModifierCoreLock : MonoBehaviour
         int groupId = viewer.currentGroupId;
         bool editingPost = IsLocalizedPostEditing();
         bool post = GroupHasPost(groupId);
-        bool variance = GroupHasVariance(groupId);
         bool clump = GroupHasEnabledClump(groupId);
-        bool locked = (post || variance || clump) && !editingPost;
 
-        ApplyLock(locked, post, variance, clump);
+        // Variance deliberately does not lock the core. It remains editable and is expected
+        // to re-evaluate from the current root value when the root groom changes.
+        bool locked = (post || clump) && !editingPost;
+
+        ApplyLock(locked, post, clump);
     }
 
     void ResolveReferences()
@@ -72,7 +74,6 @@ public class ModifierCoreLock : MonoBehaviour
                 hasSelectionField = typeof(ModelViewer).GetField("hasSelectionHotspot", BindingFlags.Instance | BindingFlags.NonPublic);
         }
         if (postManager == null) postManager = FindFirstObjectByType<PostAffectorManager>();
-        if (varianceManager == null) varianceManager = FindFirstObjectByType<GroomVarianceController>();
         if (clumpManager == null)
         {
             clumpManager = FindFirstObjectByType<ClumpLayerManager>();
@@ -93,30 +94,9 @@ public class ModifierCoreLock : MonoBehaviour
         {
             List<PostAffectorSaveData> items = postManager.ExportGroup(groupId);
             if (items == null || items.Count == 0) return false;
+
             RectTransform[] rows = FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             return rows.Any(r => r != null && r.name.StartsWith("PostAffector_" + groupId + "_", StringComparison.Ordinal));
-        }
-        catch { return false; }
-    }
-
-    bool GroupHasVariance(int groupId)
-    {
-        if (varianceManager == null) return false;
-        try
-        {
-            // For the currently visible group, trust the live variance sliders first. This
-            // avoids stale stored amounts keeping the core locked after UI-side reset/removal.
-            if (viewer != null && viewer.currentGroupId == groupId && boundPanel != null)
-            {
-                Slider[] live = boundPanel.GetComponentsInChildren<Slider>(true)
-                    .Where(s => s != null && s.gameObject.name == "VarianceSlider")
-                    .ToArray();
-                if (live.Length > 0)
-                    return live.Any(s => Mathf.Abs(s.value) > 0.000001f);
-            }
-
-            List<VarianceChannelSaveData> settings = varianceManager.ExportGroupSettings(groupId);
-            return settings != null && settings.Any(s => s != null && Mathf.Abs(s.amount) > 0.000001f);
         }
         catch { return false; }
     }
@@ -139,7 +119,7 @@ public class ModifierCoreLock : MonoBehaviour
         return false;
     }
 
-    void ApplyLock(bool locked, bool post, bool variance, bool clump)
+    void ApplyLock(bool locked, bool post, bool clump)
     {
         if (boundPanel == null) return;
 
@@ -164,7 +144,6 @@ public class ModifierCoreLock : MonoBehaviour
         if (text == null) return;
         List<string> sources = new();
         if (post) sources.Add("POST");
-        if (variance) sources.Add("VARIANCE");
         if (clump) sources.Add("CLUMP");
         text.text = "CORE LOCKED — active: " + string.Join(" + ", sources);
     }
