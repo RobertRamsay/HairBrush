@@ -8,13 +8,16 @@ using UnityEngine.UI;
 
 // Central lifecycle reset for runtime-created groom/modifier state.
 // New OBJ import = brand-new session. RESET = clear all groom/modifier settings for current model.
+// Loading a saved project is explicitly NOT a new session reset: its restored state must survive.
 [DefaultExecutionOrder(4900)]
 public class GroomSessionResetCoordinator : MonoBehaviour
 {
     private ModelViewer viewer;
     private Button boundLoadButton;
+    private Button boundLoadProjectButton;
     private Button boundResetButton;
     private GameObject lastKnownLoadedModel;
+    private bool projectLoadJustCompleted;
     private float nextScan;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -39,18 +42,28 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         if (viewer == null) return;
 
         BindLoadButton();
+        BindLoadProjectButton();
         BindResetButton();
 
         GameObject currentLoaded = GetLoadedModel();
         if (currentLoaded != null && currentLoaded != lastKnownLoadedModel)
         {
             lastKnownLoadedModel = currentLoaded;
-            ResetEntireSessionForNewModel();
+
+            // LoadProject() replaces loadedModel synchronously and restores cards/groups/modifiers.
+            // Its Button listener runs before ours (ModelViewer binds in Start), so by this Update
+            // projectLoadJustCompleted is true and we must preserve the restored project state.
+            if (!projectLoadJustCompleted)
+                ResetEntireSessionForNewModel();
         }
         else if (currentLoaded == null)
         {
             lastKnownLoadedModel = null;
         }
+
+        // One-shot marker only. If the project dialog was cancelled there was no model change,
+        // and the marker is cleared here so the next real OBJ import still gets a fresh reset.
+        projectLoadJustCompleted = false;
     }
 
     void BindLoadButton()
@@ -59,6 +72,15 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         boundLoadButton = viewer.loadButton;
         // No reset listener is required here: actual loaded-model instance change is authoritative.
         // This means cancelling the native file dialog leaves the current session untouched.
+    }
+
+    void BindLoadProjectButton()
+    {
+        if (viewer.loadProjectButton == null || boundLoadProjectButton == viewer.loadProjectButton) return;
+        boundLoadProjectButton = viewer.loadProjectButton;
+        // ModelViewer registers LoadProject() in Start before this coordinator binds, so this
+        // callback runs after the synchronous file dialog/read/restore has finished.
+        boundLoadProjectButton.onClick.AddListener(() => projectLoadJustCompleted = true);
     }
 
     void BindResetButton()
