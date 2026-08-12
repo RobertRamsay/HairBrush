@@ -27,6 +27,11 @@ public class ClumpLayerBootstrap : MonoBehaviour
         ClumpLayerManager manager = viewer.GetComponent<ClumpLayerManager>();
         if (manager == null) manager = viewer.gameObject.AddComponent<ClumpLayerManager>();
         manager.Init(viewer);
+
+        ClumpUIEnhancements enhancements = viewer.GetComponent<ClumpUIEnhancements>();
+        if (enhancements == null) enhancements = viewer.gameObject.AddComponent<ClumpUIEnhancements>();
+        enhancements.Init(viewer);
+
         CreateButton(canvas.transform, manager);
         installed = true;
     }
