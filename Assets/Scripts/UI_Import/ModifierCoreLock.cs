@@ -8,7 +8,8 @@ using UnityEngine;
 using UnityEngine.UI;
 
 // Structural modifiers lock the whole groom editing surface for the active group.
-// That includes variance sliders: while POST or CLUMP is active, no groom slider may change.
+// That includes variance controls and modifier actions. The inline CLUMP ON/OFF
+// control is deliberately exempt so the user can always release a clump lock.
 [DefaultExecutionOrder(5000)]
 public class ModifierCoreLock : MonoBehaviour
 {
@@ -122,14 +123,21 @@ public class ModifierCoreLock : MonoBehaviour
     {
         if (boundPanel == null) return;
 
-        // Lock every slider in the groom panel, including all VAR ± controls.
-        // POST editing is the only exception because it deliberately reuses the shared groom sliders.
+        // Lock every slider in the groom panel, including all VAR ± and CLUMP controls.
         foreach (Slider slider in boundPanel.GetComponentsInChildren<Slider>(true))
             if (slider != null) slider.interactable = !locked;
 
-        // Seed fields are also variation controls, so prevent them changing too.
+        // Seed fields are variation controls too.
         foreach (TMP_InputField input in boundPanel.GetComponentsInChildren<TMP_InputField>(true))
             if (input != null) input.interactable = !locked;
+
+        // Block buttons that mutate groom/modifier state (variance randomize, clump REGEN/R).
+        // Keep the explicit CLUMP ON/OFF control alive so the lock always has an escape hatch.
+        foreach (Button button in boundPanel.GetComponentsInChildren<Button>(true))
+        {
+            if (button == null || !IsModifierEditButton(button)) continue;
+            button.interactable = button.gameObject.name == "ClumpToggleButton" || !locked;
+        }
 
         foreach (Transform child in boundPanel.transform)
         {
@@ -139,7 +147,8 @@ public class ModifierCoreLock : MonoBehaviour
             if (!editableRow) continue;
             CanvasGroup cg = child.GetComponent<CanvasGroup>();
             if (cg == null) cg = child.gameObject.AddComponent<CanvasGroup>();
-            cg.alpha = locked ? 0.48f : 1f;
+            if (!locked) cg.alpha = 1f;
+            else cg.alpha = child.name == "ClumpPoints_Row" ? 0.72f : 0.48f;
         }
 
         EnsureNotice();
@@ -152,7 +161,22 @@ public class ModifierCoreLock : MonoBehaviour
         List<string> sources = new();
         if (post) sources.Add("POST");
         if (clump) sources.Add("CLUMP");
-        text.text = "GROOM LOCKED — active: " + string.Join(" + ", sources);
+        text.text = "GROOM LOCKED — active: " + string.Join(" + ", sources) +
+                    (clump ? "  •  turn CLUMP OFF to edit root" : "");
+    }
+
+    bool IsModifierEditButton(Button button)
+    {
+        Transform t = button.transform;
+        while (t != null && t != boundPanel.transform)
+        {
+            string n = t.name;
+            if (n.EndsWith("_VarianceRow", StringComparison.Ordinal) ||
+                n == "ClumpPoints_Row" || n == "Clump_Row")
+                return true;
+            t = t.parent;
+        }
+        return false;
     }
 
     void EnsureNotice()
