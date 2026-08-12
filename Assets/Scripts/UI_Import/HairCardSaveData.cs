@@ -43,6 +43,8 @@ public class HairCardSaveData
     public float radius=.02f;
     public float falloff=.03f;
     public float weight=1f;
+    public float clumpBaseline;
+    public float clumpDelta;
     public PostAffectorControlSaveData baseline=new();
     public PostAffectorControlSaveData delta=new();
 }
@@ -86,6 +88,11 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
         ModifierPersistenceBridge bridge=UnityEngine.Object.FindFirstObjectByType<ModifierPersistenceBridge>();
         if(bridge==null||groups==null)return;
         foreach(GroupSaveData group in groups) bridge.PopulateGroupSave(group);
+
+        PostClumpAffectorBridge postClump=UnityEngine.Object.FindFirstObjectByType<PostClumpAffectorBridge>();
+        if(postClump!=null)
+            foreach(GroupSaveData group in groups)
+                postClump.PopulateSave(group.postAffectors);
     }
 
     public void OnAfterDeserialize()
