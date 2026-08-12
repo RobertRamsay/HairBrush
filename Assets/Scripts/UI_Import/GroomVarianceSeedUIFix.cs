@@ -87,7 +87,7 @@ public class GroomVarianceSeedUIFix : MonoBehaviour
             input.textViewport = viewport;
         }
 
-        TextMeshProUGUI text = input.textComponent;
+        TMP_Text text = input.textComponent;
         if (text == null)
         {
             text = input.GetComponentInChildren<TextMeshProUGUI>(true);
