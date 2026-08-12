@@ -55,10 +55,6 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
             }
             hookedInitialButtons = true;
         }
-
-        if (viewer.uiContainer == null || viewer.uiContainer.transform.Find("QuitButton_Runtime") != null) return;
-        GameObject quit = MakeButton(viewer.uiContainer.transform, "QuitButton_Runtime", "QUIT", new Color(.48f,.16f,.16f), 48f);
-        quit.GetComponent<Button>().onClick.AddListener(QuitApplication);
     }
 
     void InstallEditorMenuButton()
@@ -128,7 +124,17 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
         }
         foreach(HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
         {
-            data.hairCards.Add(new HairCardSaveData{posX=card.transform.position.x,posY=card.transform.position.y,posZ=card.transform.position.z,rotX=card.transform.rotation.x,rotY=card.transform.rotation.y,rotZ=card.transform.rotation.z,rotW=card.transform.rotation.w,length=card.length,width=card.width,segments=card.segments,bendAngle=card.bendAngle,twistAngle=card.twistAngle,flattenFactor=card.flattenFactor,embedDepth=card.GetEmbedDepth(),offsetX=card.GetOffsetX(),offsetY=card.GetOffsetY(),offsetZ=card.GetOffsetZ(),uScale=card.uScale,vScale=card.vScale,uOffset=card.uOffset,vOffset=card.vOffset,groupId=card.groupId});
+            Vector3 hit = card.GetSpawnHitPoint();
+            Vector3 normal = card.GetSurfaceNormal();
+            data.hairCards.Add(new HairCardSaveData
+            {
+                posX=card.transform.position.x,posY=card.transform.position.y,posZ=card.transform.position.z,
+                rotX=card.transform.rotation.x,rotY=card.transform.rotation.y,rotZ=card.transform.rotation.z,rotW=card.transform.rotation.w,
+                hitX=hit.x,hitY=hit.y,hitZ=hit.z,normalX=normal.x,normalY=normal.y,normalZ=normal.z,
+                length=card.length,width=card.width,segments=card.segments,bendAngle=card.bendAngle,twistAngle=card.twistAngle,flattenFactor=card.flattenFactor,
+                embedDepth=card.GetEmbedDepth(),offsetX=card.GetOffsetX(),offsetY=card.GetOffsetY(),offsetZ=card.GetOffsetZ(),
+                uScale=card.uScale,vScale=card.vScale,uOffset=card.uOffset,vOffset=card.vOffset,groupId=card.groupId
+            });
         }
         File.WriteAllText(path, JsonUtility.ToJson(data,true));
         Debug.Log("Project saved successfully to: "+path);
@@ -149,18 +155,28 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
             if(model!=null){model.transform.position=Vector3.zero;model.transform.eulerAngles=new Vector3(0,180,0);MeshRenderer[] rs=model.GetComponentsInChildren<MeshRenderer>();if(rs.Length>0){Bounds b=rs[0].bounds;for(int i=1;i<rs.Length;i++)b.Encapsulate(rs[i].bounds);if(viewer.cameraPivot!=null)viewer.cameraPivot.position=b.center;}}
         }
 
-        viewer.currentLength=data.sliderLength;viewer.currentWidth=data.sliderWidth;viewer.currentSegments=data.sliderSegments;viewer.currentBend=data.sliderBend;viewer.currentTwist=data.sliderTwist;viewer.currentEmbedDepth=data.sliderEmbedDepth;viewer.currentOffsetX=data.sliderOffsetX;viewer.currentOffsetY=data.sliderOffsetY;viewer.currentOffsetZ=data.sliderOffsetZ;viewer.currentUScale=data.sliderUScale!=0?data.sliderUScale:1;viewer.currentVScale=data.sliderVScale!=0?data.sliderVScale:1;viewer.currentUOffset=data.sliderUOffset;viewer.currentVOffset=data.sliderVOffset;
+        viewer.currentLength=data.sliderLength;viewer.currentWidth=data.sliderWidth;viewer.currentSegments=data.sliderSegments;viewer.currentBend=data.sliderBend;viewer.currentTwist=data.sliderTwist;viewer.currentEmbedDepth=data.sliderEmbedDepth;viewer.currentOffsetX=data.sliderOffsetX;viewer.currentOffsetY=data.sliderOffsetY;viewer.currentOffsetZ=data.sliderOffsetZ;viewer.currentUScale=data.sliderUScale;viewer.currentVScale=data.sliderVScale;viewer.currentUOffset=data.sliderUOffset;viewer.currentVOffset=data.sliderVOffset;
 
         HashSet<int> ids=GetField<HashSet<int>>("allGroupIds");var names=GetField<Dictionary<int,string>>("groupNames");var us=GetField<Dictionary<int,float>>("groupUScales");var vs=GetField<Dictionary<int,float>>("groupVScales");var uo=GetField<Dictionary<int,float>>("groupUOffsets");var vo=GetField<Dictionary<int,float>>("groupVOffsets");ids?.Clear();names?.Clear();us?.Clear();vs?.Clear();uo?.Clear();vo?.Clear();
-        foreach(GroupSaveData g in data.groups){ids?.Add(g.groupId);if(names!=null)names[g.groupId]=g.groupName;if(us!=null)us[g.groupId]=g.uScale!=0?g.uScale:1;if(vs!=null)vs[g.groupId]=g.vScale!=0?g.vScale:1;if(uo!=null)uo[g.groupId]=g.uOffset;if(vo!=null)vo[g.groupId]=g.vOffset;}
+        foreach(GroupSaveData g in data.groups){ids?.Add(g.groupId);if(names!=null)names[g.groupId]=g.groupName;if(us!=null)us[g.groupId]=g.uScale;if(vs!=null)vs[g.groupId]=g.vScale;if(uo!=null)uo[g.groupId]=g.uOffset;if(vo!=null)vo[g.groupId]=g.vOffset;}
         viewer.currentGroupId=data.groups.Count>0?data.groups[0].groupId:0;
 
         foreach(HairCardSaveData c in data.hairCards)
         {
-            GameObject go=new GameObject("HairCard_Strip",typeof(MeshFilter),typeof(MeshRenderer),typeof(HairCard));HairCard card=go.GetComponent<HairCard>();go.transform.position=new Vector3(c.posX,c.posY,c.posZ);go.transform.rotation=new Quaternion(c.rotX,c.rotY,c.rotZ,c.rotW);card.groupId=c.groupId;float u=c.uScale!=0?c.uScale:1,v=c.vScale!=0?c.vScale:1;card.SetParameters(c.length,c.width,c.segments,c.bendAngle,c.twistAngle,c.offsetX,c.offsetY,c.offsetZ,c.embedDepth,1,u,v,c.uOffset,c.vOffset);if(viewer.hairCardMaterial!=null)go.GetComponent<MeshRenderer>().sharedMaterial=viewer.hairCardMaterial;
+            GameObject go=new GameObject("HairCard_Strip",typeof(MeshFilter),typeof(MeshRenderer),typeof(HairCard));
+            HairCard card=go.GetComponent<HairCard>();
+            Vector3 hit=new Vector3(c.hitX,c.hitY,c.hitZ);
+            Vector3 normal=new Vector3(c.normalX,c.normalY,c.normalZ).normalized;
+            card.SetPlacementData(hit,normal,c.embedDepth,c.offsetX,c.offsetY,c.offsetZ,c.groupId);
+            card.SetParameters(c.length,c.width,c.segments,c.bendAngle,c.twistAngle,c.offsetX,c.offsetY,c.offsetZ,c.embedDepth,1f,c.uScale,c.vScale,c.uOffset,c.vOffset);
+            if(viewer.hairCardMaterial!=null)go.GetComponent<MeshRenderer>().sharedMaterial=viewer.hairCardMaterial;
         }
 
-        if(viewer.uiContainer!=null)viewer.uiContainer.SetActive(false);viewer.OnModelLoaded();viewer.BuildRuntimeGroomingUI();MethodInfo buildGroups=typeof(ModelViewer).GetMethod("BuildGroupManagementUI",BindingFlags.Instance|BindingFlags.NonPublic);buildGroups?.Invoke(viewer,null);SetField("isGroomingMode",true);
+        if(viewer.uiContainer!=null)viewer.uiContainer.SetActive(false);
+        viewer.OnModelLoaded();
+        viewer.BuildRuntimeGroomingUI();
+        MethodInfo buildGroups=typeof(ModelViewer).GetMethod("BuildGroupManagementUI",BindingFlags.Instance|BindingFlags.NonPublic);buildGroups?.Invoke(viewer,null);
+        SetField("isGroomingMode",true);
         foreach(GroupSaveData g in data.groups)modifiers?.RestoreGroup(g);
         RepairAngleControls(true);
         Debug.Log("Project loaded successfully from: "+path);
