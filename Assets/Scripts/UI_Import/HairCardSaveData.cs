@@ -6,7 +6,38 @@ using UnityEngine;
 [Serializable] public class VarianceChannelSaveData { public string channel; public float amount; public int seed; }
 [Serializable] public class ClumpPointSaveData { public float posX,posY,posZ; public float normalX,normalY,normalZ; public float strength; }
 [Serializable] public class ClumpLayerSaveData { public bool enabled; public int pointCount=20; public int generationSeed; public float globalStrength=1f; public float brushRadius=.08f; public float brushStrength=.5f; public float brushFalloff=.5f; public float brushValue=1f; public int debugMode; public float curveEarly=.08f; public float curveMid=.65f; public float curveTip=1f; public List<ClumpPointSaveData> points=new(); }
-[Serializable] public class GroupSaveData { public int groupId; public string groupName; public float uScale; public float vScale; public float uOffset; public float vOffset; public List<VarianceChannelSaveData> variances=new(); public ClumpLayerSaveData clump; }
+
+[Serializable] public class PostAffectorControlSaveData
+{
+    public float length,width,segments,bend,twist,depth;
+    public float x,y,z;
+    public float uScale,vScale,uOffset,vOffset;
+}
+
+[Serializable] public class PostAffectorSaveData
+{
+    public int id;
+    public float centerX,centerY,centerZ;
+    public float normalX,normalY,normalZ;
+    public float radius=.02f;
+    public float falloff=.03f;
+    public float weight=1f;
+    public PostAffectorControlSaveData baseline=new();
+    public PostAffectorControlSaveData delta=new();
+}
+
+[Serializable] public class GroupSaveData
+{
+    public int groupId;
+    public string groupName;
+    public float uScale;
+    public float vScale;
+    public float uOffset;
+    public float vOffset;
+    public List<VarianceChannelSaveData> variances=new();
+    public List<PostAffectorSaveData> postAffectors=new();
+    public ClumpLayerSaveData clump;
+}
 
 [Serializable]
 public class HairProjectSaveData : ISerializationCallbackReceiver
