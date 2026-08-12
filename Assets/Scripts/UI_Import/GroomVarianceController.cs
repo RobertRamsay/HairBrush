@@ -29,6 +29,7 @@ public class GroomVarianceController : MonoBehaviour
     private readonly Dictionary<int, Dictionary<Channel, VarianceSetting>> groupSettings = new();
     private readonly Dictionary<Channel, VarianceRow> rows = new();
     private readonly Dictionary<Channel, Slider> mainSliders = new();
+    private readonly Dictionary<Channel, TextMeshProUGUI> mainLabels = new();
 
     private ModelViewer viewer;
     private bool installed;
@@ -53,6 +54,8 @@ public class GroomVarianceController : MonoBehaviour
         }
 
         if (!installed) return;
+
+        MaintainAngleLabels();
 
         if (viewer.currentGroupId != lastGroupId)
         {
@@ -96,7 +99,9 @@ public class GroomVarianceController : MonoBehaviour
         {
             Transform mainRow = panel.Find(d.Item2);
             Slider main = mainRow.GetComponentInChildren<Slider>(true);
+            TextMeshProUGUI label = mainRow.GetComponentInChildren<TextMeshProUGUI>(true);
             mainSliders[d.Item1] = main;
+            if (label != null) mainLabels[d.Item1] = label;
 
             if (d.Item1 == Channel.AngleX || d.Item1 == Channel.AngleY || d.Item1 == Channel.AngleZ)
                 RenameMainControl(mainRow, d.Item3);
@@ -105,15 +110,20 @@ public class GroomVarianceController : MonoBehaviour
             rows[d.Item1] = row;
 
             Channel captured = d.Item1;
-            // ModelViewer's listener was registered first, so this runs after the main value
-            // has updated and reapplies the deterministic per-card spread around that value.
-            main.onValueChanged.AddListener(_ => ApplyChannel(captured));
+            main.onValueChanged.AddListener(_ =>
+            {
+                // Preserve ModelViewer's existing ABS/REL behaviour when variance is zero.
+                if (GetSetting(viewer.currentGroupId, captured).amount > 0f)
+                    ApplyChannel(captured);
+                MaintainMainLabel(captured);
+            });
         }
 
         installed = true;
         lastGroupId = viewer.currentGroupId;
         lastCardCount = CountCards(lastGroupId);
         SyncRowsForGroup(lastGroupId);
+        MaintainAngleLabels();
     }
 
     void RenameMainControl(Transform row, string newLabel)
@@ -125,6 +135,29 @@ public class GroomVarianceController : MonoBehaviour
             text.text = newLabel + ": " + slider.value.ToString("F3");
         if (text != null) text.gameObject.name = newLabel + "_Text";
         if (slider != null) slider.gameObject.name = newLabel + "_Slider";
+    }
+
+    void MaintainAngleLabels()
+    {
+        MaintainMainLabel(Channel.AngleX);
+        MaintainMainLabel(Channel.AngleY);
+        MaintainMainLabel(Channel.AngleZ);
+    }
+
+    void MaintainMainLabel(Channel channel)
+    {
+        if (!mainLabels.TryGetValue(channel, out TextMeshProUGUI label) || label == null) return;
+        if (!mainSliders.TryGetValue(channel, out Slider slider) || slider == null) return;
+
+        string name = channel switch
+        {
+            Channel.AngleX => "Angle X",
+            Channel.AngleY => "Angle Y",
+            Channel.AngleZ => "Angle Z",
+            _ => null
+        };
+        if (name != null)
+            label.text = name + ": " + slider.value.ToString("F3");
     }
 
     VarianceRow BuildVarianceRow(Transform panel, Transform mainRow, Channel channel, float maxVariance)
@@ -165,6 +198,7 @@ public class GroomVarianceController : MonoBehaviour
             VarianceSetting setting = GetSetting(viewer.currentGroupId, channel);
             setting.amount = v;
             valueText.text = "VAR ± " + FormatVariance(channel, v);
+            // Applying at zero restores the cards exactly to the main value.
             ApplyChannel(channel);
         });
 
@@ -174,15 +208,15 @@ public class GroomVarianceController : MonoBehaviour
             if (!int.TryParse(value, out int parsed)) parsed = 0;
             setting.seed = parsed;
             seedInput.SetTextWithoutNotify(parsed.ToString());
-            ApplyChannel(channel);
+            if (setting.amount > 0f) ApplyChannel(channel);
         });
 
         randomButton.GetComponent<Button>().onClick.AddListener(() =>
         {
             VarianceSetting setting = GetSetting(viewer.currentGroupId, channel);
-            setting.seed = UnityEngine.Random.Range(1, int.MaxValue);
+            setting.seed = UnityEngine.Random.Range(0, 1000000);
             seedInput.SetTextWithoutNotify(setting.seed.ToString());
-            ApplyChannel(channel);
+            if (setting.amount > 0f) ApplyChannel(channel);
         });
 
         return result;
