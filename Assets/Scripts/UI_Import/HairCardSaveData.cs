@@ -67,6 +67,7 @@ public class HairCardSaveData
 public class HairProjectSaveData : ISerializationCallbackReceiver
 {
     public static HairProjectSaveData PendingModifierRestore;
+    public int formatVersion;
     public string modelPath;
     public List<GroupSaveData> groups=new();
     public List<HairCardSaveData> hairCards=new();
@@ -87,22 +88,26 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
     public void OnBeforeSerialize()
     {
         ModifierPersistenceBridge bridge=UnityEngine.Object.FindFirstObjectByType<ModifierPersistenceBridge>();
-        if(bridge==null||groups==null)return;
-        foreach(GroupSaveData group in groups) bridge.PopulateGroupSave(group);
+        if(bridge!=null&&groups!=null)
+            foreach(GroupSaveData group in groups) bridge.PopulateGroupSave(group);
 
         PostClumpAffectorBridge postClump=UnityEngine.Object.FindFirstObjectByType<PostClumpAffectorBridge>();
-        if(postClump!=null)
+        if(postClump!=null&&groups!=null)
             foreach(GroupSaveData group in groups)
                 postClump.PopulateSave(group.postAffectors);
 
         PostVarianceAffectorBridge postVariance=UnityEngine.Object.FindFirstObjectByType<PostVarianceAffectorBridge>();
-        if(postVariance!=null)
+        if(postVariance!=null&&groups!=null)
             foreach(GroupSaveData group in groups)
                 postVariance.PopulateSave(group.postAffectors);
+
+        CanonicalProjectStateBridge.CanonicalizeForSave(this);
     }
 
     public void OnAfterDeserialize()
     {
         PendingModifierRestore=this;
+        if(formatVersion>=CanonicalProjectStateBridge.CurrentFormatVersion)
+            CanonicalProjectStateBridge.PendingCanonicalRestore=this;
     }
 }
