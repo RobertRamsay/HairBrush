@@ -45,6 +45,7 @@ public class HairCardSaveData
     public float weight=1f;
     public float clumpBaseline;
     public float clumpDelta;
+    public List<VarianceChannelSaveData> localVariances=new();
     public PostAffectorControlSaveData baseline=new();
     public PostAffectorControlSaveData delta=new();
 }
@@ -93,6 +94,11 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
         if(postClump!=null)
             foreach(GroupSaveData group in groups)
                 postClump.PopulateSave(group.postAffectors);
+
+        PostVarianceAffectorBridge postVariance=UnityEngine.Object.FindFirstObjectByType<PostVarianceAffectorBridge>();
+        if(postVariance!=null)
+            foreach(GroupSaveData group in groups)
+                postVariance.PopulateSave(group.postAffectors);
     }
 
     public void OnAfterDeserialize()
