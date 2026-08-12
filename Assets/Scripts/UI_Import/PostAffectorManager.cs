@@ -25,10 +25,7 @@ public class PostAffectorManager : MonoBehaviour
         public float radius = .02f;
         public float falloff = .03f;
         [Range(0f, 1f)] public float weight = 1f;
-
-        // Main-control values when this affector was created.
         public ControlState baseline;
-        // Local edit stored as an offset from that creation basis.
         public ControlState delta;
     }
 
@@ -50,7 +47,6 @@ public class PostAffectorManager : MonoBehaviour
 
     private readonly Dictionary<int, List<PostAffector>> groups = new();
     private readonly Dictionary<HairCard, CardState> cardStates = new();
-    private readonly HashSet<string> builtRows = new();
 
     private ModelViewer viewer;
     private FieldInfo hasSelectionField;
@@ -62,7 +58,6 @@ public class PostAffectorManager : MonoBehaviour
     private int activeId = -1;
     private int activeGroup = -1;
     private float nextUIScan;
-    private Vector3 lastCreatedPoint;
     private int lastCreatedFrame = -1;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -118,13 +113,9 @@ public class PostAffectorManager : MonoBehaviour
         if (!Keyboard.current.ctrlKey.isPressed || !Mouse.current.leftButton.wasPressedThisFrame) return;
         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
         if (!HasSelection()) return;
-
-        Vector3 p = GetVector(hitPointField);
         if (lastCreatedFrame == Time.frameCount) return;
         lastCreatedFrame = Time.frameCount;
-
-        // A click on empty space clears the legacy hotspot and therefore never reaches here.
-        CreateAffector(viewer.currentGroupId, p, GetVector(hitNormalField));
+        CreateAffector(viewer.currentGroupId, GetVector(hitPointField), GetVector(hitNormalField));
     }
 
     void CreateAffector(int groupId, Vector3 center, Vector3 normal)
@@ -151,12 +142,10 @@ public class PostAffectorManager : MonoBehaviour
         activeId = a.id;
         activeGroup = groupId;
         viewer.selectionStrength = 1f;
-        lastCreatedPoint = center;
 
-        // Capture the upstream state before any slider edit is authored into this POST.
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None).Where(c => c.groupId == groupId))
         {
-            if (!cardStates.TryGetValue(card, out CardState state))
+            if (!cardStates.ContainsKey(card))
             {
                 ControlState current = ReadCard(card);
                 cardStates[card] = new CardState { baseState = current, lastFinal = current, hasFinal = false };
@@ -182,15 +171,13 @@ public class PostAffectorManager : MonoBehaviour
         active.radius = Mathf.Clamp(viewer.brushRadius, .001f, .25f);
         active.falloff = Mathf.Clamp(viewer.brushFalloffDistance, 0f, .25f);
 
-        // The generated Strength control is now an alias for this POST's WEIGHT.
         if (!Mathf.Approximately(viewer.selectionStrength, active.weight))
         {
             active.weight = Mathf.Clamp01(viewer.selectionStrength);
             RebuildGroupRows(active.groupId);
         }
 
-        ControlState now = ReadControls();
-        active.delta = Subtract(now, active.baseline);
+        active.delta = Subtract(ReadControls(), active.baseline);
     }
 
     void UpdateUpstreamBases()
@@ -210,9 +197,8 @@ public class PostAffectorManager : MonoBehaviour
 
             if (!state.hasFinal) continue;
 
-            // While authoring a POST, the legacy Ctrl-selection callbacks temporarily touch cards.
-            // Ignore those writes: the POST is the authority. Outside POST authoring, changes are
-            // upstream groom/variance edits and become the new base under the modifier stack.
+            // Ignore the legacy localized writes while a POST is being authored. Outside
+            // POST authoring, changed card data is the upstream groom/variance beneath us.
             if (!editingPost && !Approximately(current, state.lastFinal))
             {
                 if (relative)
@@ -227,8 +213,7 @@ public class PostAffectorManager : MonoBehaviour
 
     void ApplyAll()
     {
-        HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
-        foreach (HairCard card in cards)
+        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
         {
             if (!cardStates.TryGetValue(card, out CardState state))
             {
@@ -239,20 +224,23 @@ public class PostAffectorManager : MonoBehaviour
 
             ControlState result = state.baseState;
             if (groups.TryGetValue(card.groupId, out List<PostAffector> list))
-            {
-                foreach (PostAffector a in list)
-                {
-                    float spatial = SpatialWeight(card, a);
-                    float w = spatial * Mathf.Clamp01(a.weight);
-                    if (w <= .000001f) continue;
-                    result = Add(result, Scale(a.delta, w));
-                }
-            }
+                result = Add(result, EffectForCard(card, list));
 
             WriteCard(card, result);
             state.lastFinal = result;
             state.hasFinal = true;
         }
+    }
+
+    ControlState EffectForCard(HairCard card, List<PostAffector> list)
+    {
+        ControlState effect = new ControlState();
+        foreach (PostAffector a in list)
+        {
+            float w = SpatialWeight(card, a) * Mathf.Clamp01(a.weight);
+            if (w > .000001f) effect = Add(effect, Scale(a.delta, w));
+        }
+        return effect;
     }
 
     float SpatialWeight(HairCard card, PostAffector a)
@@ -264,8 +252,7 @@ public class PostAffectorManager : MonoBehaviour
         float outer = radius + Mathf.Max(0f, a.falloff);
         if (d <= radius) return 1f;
         if (a.falloff <= .000001f || d >= outer) return 0f;
-        float t = Mathf.InverseLerp(outer, radius, d);
-        return Mathf.SmoothStep(0f, 1f, t);
+        return Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(outer, radius, d));
     }
 
     void WriteCard(HairCard card, ControlState s)
@@ -273,11 +260,8 @@ public class PostAffectorManager : MonoBehaviour
         float oldWeight = card.selectionWeight;
         card.SetSelectionWeight(0f);
         card.SetParameters(
-            Mathf.Max(.0005f, s.length),
-            Mathf.Max(.0005f, s.width),
-            Mathf.Clamp(Mathf.RoundToInt(s.segments), 4, 36),
-            s.bend, s.twist, s.x, s.y, s.z,
-            Mathf.Max(0f, s.depth), 1f,
+            Mathf.Max(.0005f, s.length), Mathf.Max(.0005f, s.width), Mathf.Clamp(Mathf.RoundToInt(s.segments), 4, 36),
+            s.bend, s.twist, s.x, s.y, s.z, Mathf.Max(0f, s.depth), 1f,
             s.uScale, s.vScale, s.uOffset, s.vOffset);
         card.SetSelectionWeight(oldWeight);
     }
@@ -325,23 +309,22 @@ public class PostAffectorManager : MonoBehaviour
 
         GameObject select = AddButton(row.transform, "POST " + number, 72f);
         select.GetComponent<Button>().onClick.AddListener(() => SelectAffector(a));
-
         TextMeshProUGUI wt = AddText(row.transform, "WEIGHT", 10, 45f);
         wt.alignment = TextAlignmentOptions.Center;
+
         Slider slider = AddWeightSlider(row.transform, a.weight, 128f);
+        TextMeshProUGUI value = AddText(row.transform, a.weight.ToString("F2"), 10, 30f);
+        value.alignment = TextAlignmentOptions.Center;
         slider.onValueChanged.AddListener(v =>
         {
             a.weight = Mathf.Clamp01(v);
+            value.text = a.weight.ToString("F2");
             if (a.id == activeId)
             {
                 viewer.selectionStrength = a.weight;
                 RenameLegacyStrengthToWeight();
             }
         });
-
-        TextMeshProUGUI value = AddText(row.transform, a.weight.ToString("F2"), 10, 30f);
-        value.alignment = TextAlignmentOptions.Center;
-        slider.onValueChanged.AddListener(v => value.text = v.ToString("F2"));
 
         GameObject remove = AddButton(row.transform, "[-]", 34f);
         remove.GetComponent<Button>().onClick.AddListener(() => RemoveAffector(a));
@@ -394,6 +377,9 @@ public class PostAffectorManager : MonoBehaviour
         if (row == null) return;
         TextMeshProUGUI label = row.GetComponentInChildren<TextMeshProUGUI>(true);
         if (label != null) label.text = "WEIGHT: " + viewer.selectionStrength.ToString("F3");
+        Slider slider = row.GetComponentInChildren<Slider>(true);
+        if (slider != null && !Mathf.Approximately(slider.value, viewer.selectionStrength))
+            slider.SetValueWithoutNotify(viewer.selectionStrength);
     }
 
     GameObject AddButton(Transform parent, string text, float width)
@@ -476,16 +462,45 @@ public class PostAffectorManager : MonoBehaviour
         return result;
     }
 
+    public void ClearAll()
+    {
+        groups.Clear();
+        cardStates.Clear();
+        activeId = -1;
+        activeGroup = -1;
+        nextId = 1;
+        foreach (RectTransform r in FindObjectsByType<RectTransform>(FindObjectsSortMode.None).Where(r => r.name.StartsWith("PostAffector_")))
+            Destroy(r.gameObject);
+        nextUIScan = 0f;
+    }
+
     public void ImportGroup(int groupId, List<PostAffectorSaveData> data)
     {
-        if (data == null || data.Count == 0) return;
+        groups.Remove(groupId);
+        if (data == null || data.Count == 0) { RebuildGroupRows(groupId); return; }
+
         List<PostAffector> list = new List<PostAffector>();
         foreach (PostAffectorSaveData d in data)
         {
-            PostAffector a=new PostAffector{id=d.id,groupId=groupId,center=new Vector3(d.centerX,d.centerY,d.centerZ),normal=new Vector3(d.normalX,d.normalY,d.normalZ),radius=d.radius,falloff=d.falloff,weight=d.weight,baseline=FromSave(d.baseline),delta=FromSave(d.delta)};
-            list.Add(a); nextId=Mathf.Max(nextId,a.id+1);
+            PostAffector a = new PostAffector
+            {
+                id=d.id,groupId=groupId,center=new Vector3(d.centerX,d.centerY,d.centerZ),normal=new Vector3(d.normalX,d.normalY,d.normalZ),
+                radius=d.radius,falloff=d.falloff,weight=d.weight,baseline=FromSave(d.baseline),delta=FromSave(d.delta)
+            };
+            list.Add(a);
+            nextId = Mathf.Max(nextId, a.id + 1);
         }
-        groups[groupId]=list;
+        groups[groupId] = list;
+
+        // HairCardSaveData contains the final visible card values, including POST output.
+        // Recover the upstream value by subtracting the restored POST stack once, so the
+        // first evaluation reproduces exactly what was saved instead of double-applying it.
+        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None).Where(c => c.groupId == groupId))
+        {
+            ControlState final = ReadCard(card);
+            ControlState upstream = Subtract(final, EffectForCard(card, list));
+            cardStates[card] = new CardState { baseState = upstream, lastFinal = final, hasFinal = true };
+        }
         RebuildGroupRows(groupId);
     }
 
