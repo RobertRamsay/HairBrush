@@ -51,6 +51,8 @@ public class ModifierCoreLock : MonoBehaviour
         bool clump = GroupHasEnabledClump(groupId);
         bool locked = (post || clump) && !editingPost;
 
+        // Always re-apply the state. Runtime modifier rows are destroyed/rebuilt dynamically,
+        // so relying on a cached lock result can leave newly rebuilt controls stuck disabled.
         ApplyLock(locked, post, clump);
     }
 
@@ -62,7 +64,9 @@ public class ModifierCoreLock : MonoBehaviour
             if (viewer != null)
                 hasSelectionField = typeof(ModelViewer).GetField("hasSelectionHotspot", BindingFlags.Instance | BindingFlags.NonPublic);
         }
+
         if (postManager == null) postManager = FindFirstObjectByType<PostAffectorManager>();
+
         if (clumpManager == null)
         {
             clumpManager = FindFirstObjectByType<ClumpLayerManager>();
@@ -81,10 +85,19 @@ public class ModifierCoreLock : MonoBehaviour
         if (postManager == null) return false;
         try
         {
+            // Internal POST data and visible runtime rows must agree. The manager can retain
+            // stale/persistence state briefly after deletion; that must never keep the groom
+            // locked once the user has removed the final visible POST modifier.
             List<PostAffectorSaveData> items = postManager.ExportGroup(groupId);
-            return items != null && items.Count > 0;
+            if (items == null || items.Count == 0) return false;
+
+            RectTransform[] rows = FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            return rows.Any(r => r != null && r.name.StartsWith("PostAffector_" + groupId + "_", StringComparison.Ordinal));
         }
-        catch { return false; }
+        catch
+        {
+            return false;
+        }
     }
 
     bool GroupHasEnabledClump(int groupId)
@@ -114,8 +127,8 @@ public class ModifierCoreLock : MonoBehaviour
         foreach (Slider slider in boundPanel.GetComponentsInChildren<Slider>(true))
             if (slider != null) slider.interactable = !locked;
 
-        // Seed fields and randomize buttons are also variation controls, so prevent them changing too.
-        foreach (TMPro.TMP_InputField input in boundPanel.GetComponentsInChildren<TMPro.TMP_InputField>(true))
+        // Seed fields are also variation controls, so prevent them changing too.
+        foreach (TMP_InputField input in boundPanel.GetComponentsInChildren<TMP_InputField>(true))
             if (input != null) input.interactable = !locked;
 
         foreach (Transform child in boundPanel.transform)
