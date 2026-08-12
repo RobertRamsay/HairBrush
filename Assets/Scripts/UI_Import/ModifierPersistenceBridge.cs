@@ -13,6 +13,7 @@ public class ModifierPersistenceBridge : MonoBehaviour
     private float nextScan;
     private ClumpLayerManager clumpManager;
     private GroomVarianceController variance;
+    private PostAffectorManager postAffectors;
 
     private struct CardState
     {
@@ -35,6 +36,7 @@ public class ModifierPersistenceBridge : MonoBehaviour
         nextScan = Time.unscaledTime + .2f;
         if (clumpManager == null) clumpManager = FindFirstObjectByType<ClumpLayerManager>();
         if (variance == null) variance = FindFirstObjectByType<GroomVarianceController>();
+        if (postAffectors == null) postAffectors = FindFirstObjectByType<PostAffectorManager>();
         SetNewLayerDefaultTo20();
         InstallClumpRandomButtons();
         TryRestorePendingProject();
@@ -43,7 +45,7 @@ public class ModifierPersistenceBridge : MonoBehaviour
     void TryRestorePendingProject()
     {
         var data = HairProjectSaveData.PendingModifierRestore;
-        if (data == null || clumpManager == null || variance == null) return;
+        if (data == null || clumpManager == null || variance == null || postAffectors == null) return;
         int expected = data.hairCards != null ? data.hairCards.Count : 0;
         if (FindObjectsByType<HairCard>(FindObjectsSortMode.None).Length < expected) return;
 
@@ -145,6 +147,7 @@ public class ModifierPersistenceBridge : MonoBehaviour
     public void PopulateGroupSave(GroupSaveData g)
     {
         if (variance != null) g.variances = variance.ExportGroupSettings(g.groupId);
+        if (postAffectors != null) g.postAffectors = postAffectors.ExportGroup(g.groupId);
         if (clumpManager == null) return;
 
         MethodInfo get = typeof(ClumpLayerManager).GetMethod("GetOrCreateLayer", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -173,13 +176,13 @@ public class ModifierPersistenceBridge : MonoBehaviour
 
     public void RestoreGroup(GroupSaveData g)
     {
-        // HairCardSaveData already stores the final visible per-card values. Importing
-        // variance used to immediately apply the procedural offsets a second time.
-        // Snapshot the saved geometry, restore the modifier controls/seeds, then put
-        // the exact saved card geometry back. Future slider/seed changes remain live.
+        // HairCardSaveData stores the saved visible card state. Restore modifier controls,
+        // then put that exact upstream state back before POST and CLUMP evaluate.
         List<CardState> savedCards = CaptureGroupCardState(g.groupId);
         if (variance != null) variance.ImportGroupSettings(g.groupId, g.variances);
         RestoreGroupCardState(savedCards);
+
+        if (postAffectors != null) postAffectors.ImportGroup(g.groupId, g.postAffectors);
 
         if (g.clump == null || clumpManager == null) return;
         MethodInfo get = typeof(ClumpLayerManager).GetMethod("GetOrCreateLayer", BindingFlags.Instance | BindingFlags.NonPublic);
