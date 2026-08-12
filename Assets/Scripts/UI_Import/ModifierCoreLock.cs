@@ -7,20 +7,11 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
-// The authored group core is deliberately immutable while structural downstream modifiers exist.
-// Variance is intentionally excluded from the core lock: it is a live deterministic variation
-// layer around the root controls and should recalculate as those root values change.
+// Structural modifiers lock the whole groom editing surface for the active group.
+// That includes variance sliders: while POST or CLUMP is active, no groom slider may change.
 [DefaultExecutionOrder(5000)]
 public class ModifierCoreLock : MonoBehaviour
 {
-    private static readonly string[] CoreRowNames =
-    {
-        "Length_Row", "Width_Row", "Segments_Row", "Bend Angle_Row", "Twist Angle_Row",
-        "Embed Depth_Row", "Offset X_Row", "Offset Y_Row", "Offset Z_Row",
-        "Angle X_Row", "Angle Y_Row", "Angle Z_Row", "U Scale_Row", "V Scale_Row",
-        "U Offset_Row", "V Offset_Row"
-    };
-
     private ModelViewer viewer;
     private PostAffectorManager postManager;
     private ClumpLayerManager clumpManager;
@@ -50,6 +41,7 @@ public class ModifierCoreLock : MonoBehaviour
         if (boundPanel != viewer.groomingSliderPanelGO)
         {
             boundPanel = viewer.groomingSliderPanelGO;
+            lockNotice = null;
             EnsureNotice();
         }
 
@@ -57,9 +49,6 @@ public class ModifierCoreLock : MonoBehaviour
         bool editingPost = IsLocalizedPostEditing();
         bool post = GroupHasPost(groupId);
         bool clump = GroupHasEnabledClump(groupId);
-
-        // Variance deliberately does not lock the core. It remains editable and is expected
-        // to re-evaluate from the current root value when the root groom changes.
         bool locked = (post || clump) && !editingPost;
 
         ApplyLock(locked, post, clump);
@@ -93,10 +82,7 @@ public class ModifierCoreLock : MonoBehaviour
         try
         {
             List<PostAffectorSaveData> items = postManager.ExportGroup(groupId);
-            if (items == null || items.Count == 0) return false;
-
-            RectTransform[] rows = FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-            return rows.Any(r => r != null && r.name.StartsWith("PostAffector_" + groupId + "_", StringComparison.Ordinal));
+            return items != null && items.Count > 0;
         }
         catch { return false; }
     }
@@ -123,15 +109,23 @@ public class ModifierCoreLock : MonoBehaviour
     {
         if (boundPanel == null) return;
 
-        foreach (string rowName in CoreRowNames)
-        {
-            Transform row = boundPanel.transform.Find(rowName);
-            if (row == null) continue;
-            foreach (Slider slider in row.GetComponentsInChildren<Slider>(true))
-                slider.interactable = !locked;
+        // Lock every slider in the groom panel, including all VAR ± controls.
+        // POST editing is the only exception because it deliberately reuses the shared groom sliders.
+        foreach (Slider slider in boundPanel.GetComponentsInChildren<Slider>(true))
+            if (slider != null) slider.interactable = !locked;
 
-            CanvasGroup cg = row.GetComponent<CanvasGroup>();
-            if (cg == null) cg = row.gameObject.AddComponent<CanvasGroup>();
+        // Seed fields and randomize buttons are also variation controls, so prevent them changing too.
+        foreach (TMPro.TMP_InputField input in boundPanel.GetComponentsInChildren<TMPro.TMP_InputField>(true))
+            if (input != null) input.interactable = !locked;
+
+        foreach (Transform child in boundPanel.transform)
+        {
+            if (child == null) continue;
+            bool editableRow = child.name.EndsWith("_Row", StringComparison.Ordinal) ||
+                               child.name.EndsWith("_VarianceRow", StringComparison.Ordinal);
+            if (!editableRow) continue;
+            CanvasGroup cg = child.GetComponent<CanvasGroup>();
+            if (cg == null) cg = child.gameObject.AddComponent<CanvasGroup>();
             cg.alpha = locked ? 0.48f : 1f;
         }
 
@@ -145,7 +139,7 @@ public class ModifierCoreLock : MonoBehaviour
         List<string> sources = new();
         if (post) sources.Add("POST");
         if (clump) sources.Add("CLUMP");
-        text.text = "CORE LOCKED — active: " + string.Join(" + ", sources);
+        text.text = "GROOM LOCKED — active: " + string.Join(" + ", sources);
     }
 
     void EnsureNotice()
@@ -169,7 +163,7 @@ public class ModifierCoreLock : MonoBehaviour
         le.minHeight = 34f;
 
         TextMeshProUGUI text = lockNotice.GetComponent<TextMeshProUGUI>();
-        text.text = "CORE LOCKED";
+        text.text = "GROOM LOCKED";
         text.fontSize = 13f;
         text.fontStyle = FontStyles.Bold;
         text.alignment = TextAlignmentOptions.Center;
