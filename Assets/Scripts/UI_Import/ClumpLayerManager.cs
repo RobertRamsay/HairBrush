@@ -3,8 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using TMPro;
 using UnityEngine;
-using UnityEngine.EventSystems;
-using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
 public class ClumpLayerManager : MonoBehaviour
@@ -16,7 +14,7 @@ public class ClumpLayerManager : MonoBehaviour
     {
         public Vector3 position;
         public Vector3 normal;
-        [Range(0f, 1f)] public float strength;
+        [Range(0f, 1f)] public float strength = 1f; // legacy paint field; generated-point modifier treats points as fully active
     }
 
     [Serializable]
@@ -24,12 +22,16 @@ public class ClumpLayerManager : MonoBehaviour
     {
         public int groupId;
         public bool enabled = false;
-        public int pointCount = 100;
-        [Range(0f, 1f)] public float globalStrength = 1f;
-        public float brushRadius = 0.08f;
-        [Range(0f, 1f)] public float brushStrength = 0.5f;
-        [Range(0f, 1f)] public float brushFalloff = 0.5f;
-        [Range(0f, 1f)] public float brushValue = 1f;
+        public int pointCount = 20;
+        [Range(0f, 1f)] public float globalStrength = 1f; // exposed as WEIGHT
+
+        // Kept under the old field names so existing project JSON remains compatible.
+        // They now mean generated-attractor Radius and Falloff rather than paint brush settings.
+        public float brushRadius = 0.04f;
+        public float brushStrength = 0.5f; // legacy, unused
+        public float brushFalloff = 0.05f;
+        public float brushValue = 1f; // legacy, unused
+
         public float guideLength = 0.04f;
         public DebugMode debugMode = DebugMode.Tone;
         public AnimationCurve curve = new AnimationCurve(
@@ -45,26 +47,14 @@ public class ClumpLayerManager : MonoBehaviour
     private readonly List<LineRenderer> guideLines = new List<LineRenderer>();
 
     private ModelViewer viewer;
-    private Camera mainCamera;
     private GameObject guideRoot;
     private Material guideMaterial;
-
-    private GameObject brushRoot;
-    private LineRenderer brushOuterRing;
-    private LineRenderer brushFalloffRing;
-    private Material brushMaterial;
-
-    private bool paintMode;
-    private int paintGroupId = -1;
     private int visualGroupId = -1;
     private float nextUIScanTime;
 
     public void Init(ModelViewer owner)
     {
         viewer = owner;
-        mainCamera = owner.mainCamera != null ? owner.mainCamera : Camera.main;
-        EnsureBrushVisuals();
-        SetBrushVisible(false);
     }
 
     void Update()
@@ -81,43 +71,6 @@ public class ClumpLayerManager : MonoBehaviour
             RefreshGuideVisuals(GetOrCreateLayer(visualGroupId));
         else
             ClearGuides();
-
-        HandlePainting();
-    }
-
-    void HandlePainting()
-    {
-        if (!paintMode || paintGroupId < 0 || Mouse.current == null || mainCamera == null)
-        {
-            SetBrushVisible(false);
-            return;
-        }
-
-        if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
-        {
-            SetBrushVisible(false);
-            return;
-        }
-
-        ClumpLayer layer = GetOrCreateLayer(paintGroupId);
-        Ray ray = mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
-        RaycastHit[] hits = Physics.RaycastAll(ray, 1000f);
-        RaycastHit? modelHit = hits
-            .Where(h => h.collider.GetComponent<HairCard>() == null)
-            .OrderBy(h => h.distance)
-            .Cast<RaycastHit?>()
-            .FirstOrDefault();
-
-        if (!modelHit.HasValue)
-        {
-            SetBrushVisible(false);
-            return;
-        }
-
-        RaycastHit hit = modelHit.Value;
-        UpdateBrushVisuals(layer, hit.point, hit.normal);
-        if (Mouse.current.leftButton.isPressed)
-            Paint(layer, hit.point);
     }
 
     ClumpLayer GetOrCreateLayer(int groupId)
@@ -145,43 +98,7 @@ public class ClumpLayerManager : MonoBehaviour
         bool expanded = expandedGroups.TryGetValue(groupId, out bool current) && current;
         expandedGroups[groupId] = !expanded;
         visualGroupId = !expanded ? groupId : (visualGroupId == groupId ? -1 : visualGroupId);
-        if (expanded) StopPainting(groupId);
         RebuildModifierUI(groupId);
-    }
-
-    void TogglePaint(int groupId)
-    {
-        if (paintMode && paintGroupId == groupId)
-        {
-            StopPainting(groupId);
-            RebuildModifierUI(groupId);
-            return;
-        }
-
-        if (paintMode) StopPainting(paintGroupId);
-
-        ClumpLayer layer = GetOrCreateLayer(groupId);
-        layer.enabled = true;
-        if (layer.points.Count == 0 && layer.pointCount > 0)
-            Regenerate(layer);
-
-        paintMode = true;
-        paintGroupId = groupId;
-        visualGroupId = groupId;
-        viewer.ToggleGroomingMode(false);
-        ApplyLayer(layer);
-        RebuildAllModifierUI();
-    }
-
-    void StopPainting(int groupId)
-    {
-        if (!paintMode) return;
-        if (groupId >= 0 && paintGroupId != groupId) return;
-
-        paintMode = false;
-        paintGroupId = -1;
-        SetBrushVisible(false);
-        if (viewer != null) viewer.ToggleGroomingMode(true);
     }
 
     void Regenerate(ClumpLayer layer)
@@ -213,8 +130,7 @@ public class ClumpLayerManager : MonoBehaviour
                 p = Vector3.Lerp(p, other.GetSpawnHitPoint(), blend);
                 n = Vector3.Slerp(n, other.GetSurfaceNormal().normalized, blend).normalized;
 
-                RaycastHit[] hits = Physics.RaycastAll(p + n * 0.12f, -n, 0.30f);
-                RaycastHit? surfaceHit = hits
+                RaycastHit? surfaceHit = Physics.RaycastAll(p + n * 0.12f, -n, 0.30f)
                     .Where(h => h.collider.GetComponent<HairCard>() == null)
                     .OrderBy(h => h.distance)
                     .Cast<RaycastHit?>()
@@ -226,35 +142,7 @@ public class ClumpLayerManager : MonoBehaviour
                 }
             }
 
-            layer.points.Add(new ClumpPoint { position = p, normal = n, strength = 0f });
-        }
-
-        ApplyLayer(layer);
-        RefreshGuideVisuals(layer);
-    }
-
-    void Paint(ClumpLayer layer, Vector3 center)
-    {
-        float radius = Mathf.Max(0.001f, layer.brushRadius);
-        float falloffAmount = Mathf.Clamp01(layer.brushFalloff);
-        float innerRadius = radius * (1f - falloffAmount);
-        float targetValue = Mathf.Clamp01(layer.brushValue);
-        float strength = Mathf.Clamp01(layer.brushStrength);
-        float temporalBlend = 1f - Mathf.Exp(-12f * strength * Time.deltaTime);
-
-        foreach (ClumpPoint point in layer.points)
-        {
-            float d = Vector3.Distance(center, point.position);
-            if (d > radius) continue;
-
-            float spatialWeight = 1f;
-            if (falloffAmount > 0.0001f && d > innerRadius)
-            {
-                float t = Mathf.InverseLerp(radius, innerRadius, d);
-                spatialWeight = Mathf.SmoothStep(0f, 1f, t);
-            }
-
-            point.strength = Mathf.Lerp(point.strength, targetValue, temporalBlend * spatialWeight);
+            layer.points.Add(new ClumpPoint { position = p, normal = n, strength = 1f });
         }
 
         ApplyLayer(layer);
@@ -273,16 +161,31 @@ public class ClumpLayerManager : MonoBehaviour
             return;
         }
 
+        // Old paint-era projects commonly stored brushFalloff around .5. In the new
+        // distance-based modifier that would cover most of a head, so clamp it to a
+        // sensible physical range while preserving newer small saved values.
+        float radius = Mathf.Clamp(layer.brushRadius, 0.001f, 0.25f);
+        float falloff = Mathf.Clamp(layer.brushFalloff, 0f, 0.25f);
+        float weight = Mathf.Clamp01(layer.globalStrength);
+
         foreach (HairCard card in cards)
         {
+            Vector3 root = card.GetSpawnHitPoint();
+            if (root == Vector3.zero) root = card.transform.position;
+
             ClumpPoint nearest = layer.points
-                .OrderBy(p => Vector3.SqrMagnitude(card.GetSpawnHitPoint() - p.position))
+                .OrderBy(p => Vector3.SqrMagnitude(root - p.position))
                 .First();
-            card.SetClumpModifier(
-                nearest.position,
-                nearest.normal,
-                nearest.strength * layer.globalStrength,
-                layer.curve);
+
+            float distance = Vector3.Distance(root, nearest.position);
+            float outer = radius + falloff;
+            float spatial;
+            if (distance <= radius) spatial = 1f;
+            else if (falloff > 0.000001f && distance < outer)
+                spatial = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(outer, radius, distance));
+            else spatial = 0f;
+
+            card.SetClumpModifier(nearest.position, nearest.normal, spatial * weight, layer.curve);
         }
     }
 
@@ -299,8 +202,7 @@ public class ClumpLayerManager : MonoBehaviour
 
     void EnsureGroupModifierUI()
     {
-        RectTransform[] rects = FindObjectsByType<RectTransform>(FindObjectsSortMode.None);
-        List<RectTransform> groupItems = rects
+        List<RectTransform> groupItems = FindObjectsByType<RectTransform>(FindObjectsSortMode.None)
             .Where(r => r.name.StartsWith("GroupItem_"))
             .OrderBy(r => r.GetSiblingIndex())
             .ToList();
@@ -309,18 +211,15 @@ public class ClumpLayerManager : MonoBehaviour
         {
             if (!int.TryParse(groupItem.name.Substring("GroupItem_".Length), out int groupId)) continue;
             Transform parent = groupItem.parent;
-            if (parent == null) continue;
-            if (parent.Find("ClumpModifier_" + groupId) != null) continue;
+            if (parent == null || parent.Find("ClumpModifier_" + groupId) != null) continue;
             BuildModifierUI(parent, groupItem, groupId);
         }
     }
 
     void RebuildAllModifierUI()
     {
-        RectTransform[] modifiers = FindObjectsByType<RectTransform>(FindObjectsSortMode.None)
-            .Where(r => r.name.StartsWith("ClumpModifier_"))
-            .ToArray();
-        foreach (RectTransform modifier in modifiers)
+        foreach (RectTransform modifier in FindObjectsByType<RectTransform>(FindObjectsSortMode.None)
+            .Where(r => r.name.StartsWith("ClumpModifier_")).ToArray())
             Destroy(modifier.gameObject);
         nextUIScanTime = 0f;
     }
@@ -342,11 +241,11 @@ public class ClumpLayerManager : MonoBehaviour
         root.transform.SetParent(parent, false);
         root.transform.SetSiblingIndex(groupItem.GetSiblingIndex() + 1);
         RectTransform rootRect = root.GetComponent<RectTransform>();
-        rootRect.sizeDelta = new Vector2(0f, expanded ? 515f : 34f);
+        rootRect.sizeDelta = new Vector2(0f, expanded ? 420f : 34f);
         root.GetComponent<Image>().color = new Color(0.11f, 0.13f, 0.11f, 0.98f);
 
         VerticalLayoutGroup layout = root.GetComponent<VerticalLayoutGroup>();
-        layout.padding = new RectOffset(10, 10, 4, 6);
+        layout.padding = new RectOffset(7, 7, 4, 6);
         layout.spacing = 4f;
         layout.childControlWidth = true;
         layout.childControlHeight = false;
@@ -356,36 +255,32 @@ public class ClumpLayerManager : MonoBehaviour
         header.transform.SetParent(root.transform, false);
         header.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 26f);
         HorizontalLayoutGroup headerLayout = header.GetComponent<HorizontalLayoutGroup>();
-        headerLayout.spacing = 6f;
+        headerLayout.spacing = 5f;
         headerLayout.childControlWidth = false;
         headerLayout.childControlHeight = true;
 
-        GameObject expandButton = AddButton(header.transform, expanded ? "[-] CLUMP" : "[+] CLUMP", () => ToggleExpanded(groupId), 205f, 26f);
+        GameObject expandButton = AddButton(header.transform, expanded ? "[-] CLUMP" : "[+] CLUMP", () => ToggleExpanded(groupId), 174f, 26f);
         expandButton.GetComponent<Image>().color = new Color(0.14f, 0.20f, 0.15f);
 
-        GameObject toggleButton = AddButton(header.transform, layer.enabled ? "ON" : "OFF", () => ToggleLayer(groupId), 72f, 26f);
+        GameObject toggleButton = AddButton(header.transform, layer.enabled ? "ON" : "OFF", () => ToggleLayer(groupId), 54f, 26f);
         toggleButton.GetComponent<Image>().color = layer.enabled
             ? new Color(0.18f, 0.48f, 0.22f)
             : new Color(0.28f, 0.28f, 0.28f);
 
         if (!expanded) return;
 
+        AddSlider(root.transform, "WEIGHT", 0f, 1f, layer.globalStrength, v => { layer.globalStrength = v; ApplyLayer(layer); });
+        AddSlider(root.transform, "RADIUS", 0.001f, 0.20f, Mathf.Clamp(layer.brushRadius, .001f, .20f), v => { layer.brushRadius = v; ApplyLayer(layer); });
+        AddSlider(root.transform, "FALLOFF", 0f, 0.20f, Mathf.Clamp(layer.brushFalloff, 0f, .20f), v => { layer.brushFalloff = v; ApplyLayer(layer); });
         AddSlider(root.transform, "POINT COUNT", 0f, 100f, layer.pointCount, v => layer.pointCount = Mathf.RoundToInt(v), true);
-        AddButton(root.transform, "REGENERATE POINTS", () => { Regenerate(layer); RebuildModifierUI(groupId); }, -1f, 28f);
+        AddButton(root.transform, "REGENERATE POINTS", () => { Regenerate(layer); RebuildModifierUI(groupId); }, -1f, 26f);
 
-        AddButton(root.transform, paintMode && paintGroupId == groupId ? "PAINT: ON" : "PAINT: OFF", () => TogglePaint(groupId), -1f, 28f);
-        AddSlider(root.transform, "BRUSH SIZE", 0.01f, 0.4f, layer.brushRadius, v => layer.brushRadius = v);
-        AddSlider(root.transform, "BRUSH STRENGTH", 0f, 1f, layer.brushStrength, v => layer.brushStrength = v);
-        AddSlider(root.transform, "BRUSH FALLOFF", 0f, 1f, layer.brushFalloff, v => layer.brushFalloff = v);
-        AddSlider(root.transform, "PAINT VALUE", 0f, 1f, layer.brushValue, v => layer.brushValue = v);
+        AddButton(root.transform, "VIS: " + layer.debugMode.ToString().ToUpperInvariant(), () => CycleDebug(groupId), -1f, 26f);
 
-        AddButton(root.transform, "VIS: " + layer.debugMode.ToString().ToUpperInvariant(), () => CycleDebug(groupId), -1f, 28f);
-        AddSlider(root.transform, "GLOBAL CLUMP", 0f, 1f, layer.globalStrength, v => { layer.globalStrength = v; ApplyLayer(layer); });
-
-        AddText(root.transform, "CLUMP CURVE  root -> tip", 12, 18f).alignment = TextAlignmentOptions.Left;
+        AddText(root.transform, "CLUMP CURVE  root -> tip", 11, 18f).alignment = TextAlignmentOptions.Left;
         GameObject previewGO = new GameObject("CurvePreview", typeof(RectTransform), typeof(CanvasRenderer), typeof(ClumpCurvePreviewGraphic));
         previewGO.transform.SetParent(root.transform, false);
-        previewGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 75f);
+        previewGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 68f);
         ClumpCurvePreviewGraphic preview = previewGO.GetComponent<ClumpCurvePreviewGraphic>();
         preview.curveProvider = () => layer.curve;
         preview.color = new Color(0.2f, 1f, 0.35f, 1f);
@@ -426,6 +321,7 @@ public class ClumpLayerManager : MonoBehaviour
         t.fontSize = size;
         t.color = Color.white;
         t.alignment = TextAlignmentOptions.Center;
+        t.enableWordWrapping = false;
         return t;
     }
 
@@ -436,12 +332,12 @@ public class ClumpLayerManager : MonoBehaviour
         go.GetComponent<RectTransform>().sizeDelta = new Vector2(width > 0f ? width : 0f, height);
         go.GetComponent<Image>().color = new Color(0.16f, 0.25f, 0.17f);
         go.GetComponent<Button>().onClick.AddListener(() => action());
-        TextMeshProUGUI t = AddText(go.transform, label, 12, 0f);
+        TextMeshProUGUI t = AddText(go.transform, label, 11, 0f);
         RectTransform tr = t.rectTransform;
         tr.anchorMin = Vector2.zero;
         tr.anchorMax = Vector2.one;
-        tr.offsetMin = Vector2.zero;
-        tr.offsetMax = Vector2.zero;
+        tr.offsetMin = new Vector2(2f, 0f);
+        tr.offsetMax = new Vector2(-2f, 0f);
         return go;
     }
 
@@ -449,7 +345,7 @@ public class ClumpLayerManager : MonoBehaviour
     {
         GameObject row = new GameObject(label, typeof(RectTransform));
         row.transform.SetParent(parent, false);
-        row.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 38f);
+        row.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 34f);
 
         VerticalLayoutGroup v = row.AddComponent<VerticalLayoutGroup>();
         v.spacing = 1f;
@@ -457,12 +353,12 @@ public class ClumpLayerManager : MonoBehaviour
         v.childControlHeight = false;
 
         string FormatValue(float x) => wholeNumbers ? Mathf.RoundToInt(x).ToString() : x.ToString("F2");
-        TextMeshProUGUI txt = AddText(row.transform, label + ": " + FormatValue(value), 11, 16f);
+        TextMeshProUGUI txt = AddText(row.transform, label + ": " + FormatValue(value), 10, 15f);
         txt.alignment = TextAlignmentOptions.Left;
 
         GameObject sgo = new GameObject("Slider", typeof(RectTransform), typeof(Slider));
         sgo.transform.SetParent(row.transform, false);
-        sgo.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 17f);
+        sgo.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 15f);
         Slider s = sgo.GetComponent<Slider>();
         s.minValue = min;
         s.maxValue = max;
@@ -472,8 +368,8 @@ public class ClumpLayerManager : MonoBehaviour
         GameObject bg = new GameObject("Background", typeof(RectTransform), typeof(Image));
         bg.transform.SetParent(sgo.transform, false);
         RectTransform br = bg.GetComponent<RectTransform>();
-        br.anchorMin = new Vector2(0f, 0.40f);
-        br.anchorMax = new Vector2(1f, 0.60f);
+        br.anchorMin = new Vector2(0f, 0.43f);
+        br.anchorMax = new Vector2(1f, 0.57f);
         br.offsetMin = Vector2.zero;
         br.offsetMax = Vector2.zero;
         bg.GetComponent<Image>().color = new Color(0.2f, 0.2f, 0.2f);
@@ -481,10 +377,10 @@ public class ClumpLayerManager : MonoBehaviour
         GameObject fillArea = new GameObject("Fill Area", typeof(RectTransform));
         fillArea.transform.SetParent(sgo.transform, false);
         RectTransform far = fillArea.GetComponent<RectTransform>();
-        far.anchorMin = new Vector2(0f, 0.30f);
-        far.anchorMax = new Vector2(1f, 0.70f);
-        far.offsetMin = new Vector2(5f, 0f);
-        far.offsetMax = new Vector2(-5f, 0f);
+        far.anchorMin = new Vector2(0f, 0.38f);
+        far.anchorMax = new Vector2(1f, 0.62f);
+        far.offsetMin = new Vector2(4f, 0f);
+        far.offsetMax = new Vector2(-4f, 0f);
 
         GameObject fill = new GameObject("Fill", typeof(RectTransform), typeof(Image));
         fill.transform.SetParent(fillArea.transform, false);
@@ -501,14 +397,14 @@ public class ClumpLayerManager : MonoBehaviour
         RectTransform har = handleArea.GetComponent<RectTransform>();
         har.anchorMin = Vector2.zero;
         har.anchorMax = Vector2.one;
-        har.offsetMin = new Vector2(7f, 0f);
-        har.offsetMax = new Vector2(-7f, 0f);
+        har.offsetMin = new Vector2(5f, 0f);
+        har.offsetMax = new Vector2(-5f, 0f);
 
         GameObject handle = new GameObject("Handle", typeof(RectTransform), typeof(Image));
         handle.transform.SetParent(handleArea.transform, false);
         handle.GetComponent<Image>().color = Color.white;
         RectTransform hr = handle.GetComponent<RectTransform>();
-        hr.sizeDelta = new Vector2(11f, 15f);
+        hr.sizeDelta = new Vector2(7f, 11f);
         s.handleRect = hr;
 
         s.onValueChanged.AddListener(x =>
@@ -529,8 +425,7 @@ public class ClumpLayerManager : MonoBehaviour
 
         if (guideMaterial == null)
         {
-            Shader shader = Shader.Find("Sprites/Default");
-            if (shader == null) shader = Shader.Find("Universal Render Pipeline/Unlit");
+            Shader shader = Shader.Find("Sprites/Default") ?? Shader.Find("Universal Render Pipeline/Unlit");
             if (shader != null) guideMaterial = new Material(shader) { name = "ClumpGuideRuntimeMaterial" };
         }
 
@@ -560,6 +455,7 @@ public class ClumpLayerManager : MonoBehaviour
         }
 
         EnsureGuidePool(layer.points.Count);
+        float s = Mathf.Clamp01(layer.globalStrength);
         for (int i = 0; i < guideLines.Count; i++)
         {
             LineRenderer line = guideLines[i];
@@ -568,10 +464,8 @@ public class ClumpLayerManager : MonoBehaviour
             if (!active) continue;
 
             ClumpPoint point = layer.points[i];
-            float s = Mathf.Clamp01(point.strength * layer.globalStrength);
             float length = layer.guideLength;
             Color color;
-
             if (layer.debugMode == DebugMode.Tone)
                 color = Color.Lerp(new Color(0f, 0.12f, 0f, 0.75f), new Color(0.1f, 1f, 0.2f, 1f), s);
             else
@@ -580,8 +474,7 @@ public class ClumpLayerManager : MonoBehaviour
                 length *= Mathf.Lerp(0.15f, 1f, s);
             }
 
-            line.startColor = color;
-            line.endColor = color;
+            line.startColor = line.endColor = color;
             line.SetPosition(0, point.position + point.normal * 0.001f);
             line.SetPosition(1, point.position + point.normal * (0.001f + length));
         }
@@ -593,92 +486,9 @@ public class ClumpLayerManager : MonoBehaviour
             if (line != null) line.gameObject.SetActive(false);
     }
 
-    void EnsureBrushVisuals()
-    {
-        if (brushRoot != null) return;
-        brushRoot = new GameObject("ClumpPaintBrushVisual");
-        brushRoot.transform.SetParent(transform, false);
-
-        Shader shader = Shader.Find("Sprites/Default");
-        if (shader == null) shader = Shader.Find("Universal Render Pipeline/Unlit");
-        if (shader != null) brushMaterial = new Material(shader) { name = "ClumpBrushRuntimeMaterial" };
-
-        brushOuterRing = CreateBrushRing("BrushOuterRing", 0.0022f);
-        brushFalloffRing = CreateBrushRing("BrushFalloffRing", 0.0012f);
-    }
-
-    LineRenderer CreateBrushRing(string name, float width)
-    {
-        GameObject go = new GameObject(name);
-        go.transform.SetParent(brushRoot.transform, false);
-        LineRenderer line = go.AddComponent<LineRenderer>();
-        line.useWorldSpace = true;
-        line.loop = true;
-        line.positionCount = 64;
-        line.startWidth = width;
-        line.endWidth = width;
-        line.numCornerVertices = 2;
-        line.numCapVertices = 2;
-        line.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-        line.receiveShadows = false;
-        if (brushMaterial != null) line.sharedMaterial = brushMaterial;
-        return line;
-    }
-
-    void UpdateBrushVisuals(ClumpLayer layer, Vector3 center, Vector3 normal)
-    {
-        EnsureBrushVisuals();
-        SetBrushVisible(true);
-
-        normal = normal.normalized;
-        Vector3 tangent = Vector3.Cross(normal, Mathf.Abs(Vector3.Dot(normal, Vector3.up)) > 0.95f ? Vector3.right : Vector3.up).normalized;
-        Vector3 bitangent = Vector3.Cross(normal, tangent).normalized;
-        Vector3 liftedCenter = center + normal * 0.0025f;
-
-        float outerRadius = Mathf.Max(0.001f, layer.brushRadius);
-        float innerRadius = outerRadius * (1f - Mathf.Clamp01(layer.brushFalloff));
-        Color valueColor = Color.Lerp(new Color(1f, 0.18f, 0.12f, 1f), new Color(0.15f, 1f, 0.25f, 1f), layer.brushValue);
-
-        SetRingGeometry(brushOuterRing, liftedCenter, tangent, bitangent, outerRadius);
-        brushOuterRing.startColor = valueColor;
-        brushOuterRing.endColor = valueColor;
-
-        bool showInner = innerRadius > outerRadius * 0.02f && innerRadius < outerRadius * 0.995f;
-        brushFalloffRing.gameObject.SetActive(showInner);
-        if (showInner)
-        {
-            SetRingGeometry(brushFalloffRing, liftedCenter, tangent, bitangent, innerRadius);
-            Color innerColor = new Color(valueColor.r, valueColor.g, valueColor.b, 0.45f);
-            brushFalloffRing.startColor = innerColor;
-            brushFalloffRing.endColor = innerColor;
-        }
-    }
-
-    void SetRingGeometry(LineRenderer line, Vector3 center, Vector3 tangent, Vector3 bitangent, float radius)
-    {
-        int count = line.positionCount;
-        for (int i = 0; i < count; i++)
-        {
-            float a = (i / (float)count) * Mathf.PI * 2f;
-            Vector3 offset = tangent * Mathf.Cos(a) * radius + bitangent * Mathf.Sin(a) * radius;
-            line.SetPosition(i, center + offset);
-        }
-    }
-
-    void SetBrushVisible(bool visible)
-    {
-        if (brushRoot != null) brushRoot.SetActive(visible);
-    }
-
-    void OnDisable()
-    {
-        StopPainting(-1);
-    }
-
     void OnDestroy()
     {
         if (guideMaterial != null) Destroy(guideMaterial);
-        if (brushMaterial != null) Destroy(brushMaterial);
     }
 }
 
@@ -687,12 +497,9 @@ public class ClumpCurvePreviewGraphic : MaskableGraphic
 {
     public Func<AnimationCurve> curveProvider;
     private const int Samples = 48;
-    private const float StrokeWidth = 2.5f;
+    private const float StrokeWidth = 2.0f;
 
-    void Update()
-    {
-        SetVerticesDirty();
-    }
+    void Update() { SetVerticesDirty(); }
 
     protected override void OnPopulateMesh(VertexHelper vh)
     {
@@ -715,10 +522,7 @@ public class ClumpCurvePreviewGraphic : MaskableGraphic
         }
     }
 
-    Vector2 CurvePoint(Rect plot, float x, float y)
-    {
-        return new Vector2(Mathf.Lerp(plot.xMin, plot.xMax, x), Mathf.Lerp(plot.yMin, plot.yMax, y));
-    }
+    Vector2 CurvePoint(Rect plot, float x, float y) => new Vector2(Mathf.Lerp(plot.xMin, plot.xMax, x), Mathf.Lerp(plot.yMin, plot.yMax, y));
 
     void DrawGrid(VertexHelper vh, Rect plot)
     {
@@ -742,7 +546,6 @@ public class ClumpCurvePreviewGraphic : MaskableGraphic
         if (dir.sqrMagnitude < 0.0001f) return;
         Vector2 n = new Vector2(-dir.y, dir.x) * width * 0.5f;
         int start = vh.currentVertCount;
-
         UIVertex v = UIVertex.simpleVert;
         v.color = c;
         v.position = a - n; vh.AddVert(v);
