@@ -54,6 +54,7 @@ public class ClumpLayerManager : MonoBehaviour
     private TextMeshProUGUI attachText;
     private TextMeshProUGUI enabledText;
 
+    private Slider pointCountSlider;
     private Slider strengthSlider;
     private Slider brushSlider;
     private Slider curveEarlySlider;
@@ -86,7 +87,7 @@ public class ClumpLayerManager : MonoBehaviour
 
         editingGroupId = viewer.currentGroupId;
         ClumpLayer layer = GetOrCreateLayer(editingGroupId);
-        if (layer.points.Count == 0) Regenerate(layer);
+        if (layer.points.Count == 0 && layer.pointCount > 0) Regenerate(layer);
 
         panel.SetActive(true);
         titleText.text = "CLUMP LAYER — GROUP " + editingGroupId;
@@ -136,14 +137,17 @@ public class ClumpLayerManager : MonoBehaviour
             .Where(c => c.groupId == layer.groupId)
             .ToArray();
 
+        layer.pointCount = Mathf.Clamp(layer.pointCount, 0, 100);
         layer.points.Clear();
-        if (cards.Length == 0)
+
+        if (cards.Length == 0 || layer.pointCount == 0)
         {
+            ApplyLayer(layer, true);
             ClearGuides();
             return;
         }
 
-        int count = Mathf.Max(1, layer.pointCount);
+        int count = layer.pointCount;
         for (int i = 0; i < count; i++)
         {
             HairCard seed = cards[i % cards.Length];
@@ -359,7 +363,7 @@ public class ClumpLayerManager : MonoBehaviour
         RectTransform r = panel.GetComponent<RectTransform>();
         r.anchorMin = r.anchorMax = new Vector2(0.5f, 0.5f);
         r.pivot = new Vector2(0.5f, 0.5f);
-        r.sizeDelta = new Vector2(390f, 500f);
+        r.sizeDelta = new Vector2(390f, 545f);
         panel.GetComponent<Image>().color = new Color(0.08f, 0.09f, 0.08f, 0.96f);
 
         VerticalLayoutGroup layout = panel.AddComponent<VerticalLayoutGroup>();
@@ -377,11 +381,17 @@ public class ClumpLayerManager : MonoBehaviour
         enabledText = AddButton(panel.transform, "ENABLED", ToggleEnabled)
             .GetComponentInChildren<TextMeshProUGUI>();
         AddButton(panel.transform, "REMOVE FROM GROUP", RemoveCurrentLayer);
-        AddButton(panel.transform, "REGENERATE 100 POINTS", () =>
+
+        pointCountSlider = AddSlider(panel.transform, "POINT COUNT", 0f, 100f, 100f, v =>
         {
-            ClumpLayer l = GetOrCreateLayer(editingGroupId);
-            l.pointCount = 100;
-            Regenerate(l);
+            if (editingGroupId < 0) return;
+            GetOrCreateLayer(editingGroupId).pointCount = Mathf.RoundToInt(v);
+        }, true);
+
+        AddButton(panel.transform, "REGENERATE POINTS", () =>
+        {
+            if (editingGroupId < 0) return;
+            Regenerate(GetOrCreateLayer(editingGroupId));
         });
 
         paintText = AddButton(panel.transform, "PAINT: OFF", () =>
@@ -479,6 +489,7 @@ public class ClumpLayerManager : MonoBehaviour
 
     void SyncUI(ClumpLayer l)
     {
+        pointCountSlider.SetValueWithoutNotify(l.pointCount);
         strengthSlider.SetValueWithoutNotify(l.globalStrength);
         brushSlider.SetValueWithoutNotify(l.brushRadius);
         debugText.text = "VIS: " + l.debugMode.ToString().ToUpperInvariant();
@@ -517,7 +528,7 @@ public class ClumpLayerManager : MonoBehaviour
         return go;
     }
 
-    Slider AddSlider(Transform parent, string label, float min, float max, float value, Action<float> changed)
+    Slider AddSlider(Transform parent, string label, float min, float max, float value, Action<float> changed, bool wholeNumbers = false)
     {
         GameObject row = new GameObject(label, typeof(RectTransform));
         row.transform.SetParent(parent, false);
@@ -528,7 +539,8 @@ public class ClumpLayerManager : MonoBehaviour
         v.childControlWidth = true;
         v.childControlHeight = false;
 
-        TextMeshProUGUI txt = AddText(row.transform, label + ": " + value.ToString("F2"), 13, 18f);
+        string FormatValue(float x) => wholeNumbers ? Mathf.RoundToInt(x).ToString() : x.ToString("F2");
+        TextMeshProUGUI txt = AddText(row.transform, label + ": " + FormatValue(value), 13, 18f);
 
         GameObject sgo = new GameObject("Slider", typeof(RectTransform), typeof(Slider));
         sgo.transform.SetParent(row.transform, false);
@@ -536,6 +548,7 @@ public class ClumpLayerManager : MonoBehaviour
         Slider s = sgo.GetComponent<Slider>();
         s.minValue = min;
         s.maxValue = max;
+        s.wholeNumbers = wholeNumbers;
         s.value = value;
 
         GameObject bg = new GameObject("Background", typeof(RectTransform), typeof(Image));
@@ -582,7 +595,7 @@ public class ClumpLayerManager : MonoBehaviour
 
         s.onValueChanged.AddListener(x =>
         {
-            txt.text = label + ": " + x.ToString("F2");
+            txt.text = label + ": " + FormatValue(x);
             changed(x);
         });
         return s;
