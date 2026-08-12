@@ -72,7 +72,9 @@ public class ModelViewer : MonoBehaviour
     private Coroutine flashGroupCoroutine;
     private float lastGroupClickTime = 0f;
     private int lastClickedGroupId = -1;
-    private int lastSaveDialogFrame = -1;
+#if UNITY_EDITOR
+    private double nextAllowedSaveDialogTime = 0.0;
+#endif
 
     [Header("Brush Settings")]
     public float brushRadius = 0.2f;
@@ -149,27 +151,15 @@ public class ModelViewer : MonoBehaviour
             loadedModel.transform.position = Vector3.zero;
             loadedModel.transform.eulerAngles = new Vector3(0f, 180f, 0f);
 
-            // Compute true bounds center of the loaded mesh model and center camera pivot
             MeshRenderer[] renderers = loadedModel.GetComponentsInChildren<MeshRenderer>();
             if (renderers.Length > 0)
             {
                 Bounds combinedBounds = renderers[0].bounds;
-                for (int i = 1; i < renderers.Length; i++)
-                {
-                    combinedBounds.Encapsulate(renderers[i].bounds);
-                }
-
-                if (cameraPivot != null)
-                {
-                    cameraPivot.position = combinedBounds.center;
-                }
+                for (int i = 1; i < renderers.Length; i++) combinedBounds.Encapsulate(renderers[i].bounds);
+                if (cameraPivot != null) cameraPivot.position = combinedBounds.center;
             }
 
-            if (uiContainer != null)
-            {
-                uiContainer.SetActive(false);
-            }
-
+            if (uiContainer != null) uiContainer.SetActive(false);
             OnModelLoaded();
             BuildRuntimeGroomingUI();
             BuildGroupManagementUI();
@@ -299,12 +289,10 @@ public class ModelViewer : MonoBehaviour
         currentVScale = 1.0f;
         currentUOffset = 0.0f;
         currentVOffset = 0.0f;
-
         groupUScales[currentGroupId] = currentUScale;
         groupVScales[currentGroupId] = currentVScale;
         groupUOffsets[currentGroupId] = currentUOffset;
         groupVOffsets[currentGroupId] = currentVOffset;
-
         if (lengthSlider != null) lengthSlider.value = currentLength;
         if (widthSlider != null) widthSlider.value = currentWidth;
         if (segmentsSlider != null) segmentsSlider.value = currentSegments;
@@ -318,20 +306,13 @@ public class ModelViewer : MonoBehaviour
         if (vScaleSlider != null) vScaleSlider.value = currentVScale;
         if (uOffsetSlider != null) uOffsetSlider.value = currentUOffset;
         if (vOffsetSlider != null) vOffsetSlider.value = currentVOffset;
-
         UpdateActiveCard();
     }
 
     void ApplyGroupUpdate(System.Action<HairCard> updateAction)
     {
         HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
-        foreach (HairCard card in allCards)
-        {
-            if (card.groupId == currentGroupId)
-            {
-                updateAction(card);
-            }
-        }
+        foreach (HairCard card in allCards) if (card.groupId == currentGroupId) updateAction(card);
     }
 
     void CreateModeToggleButton(Transform parent)
@@ -340,7 +321,6 @@ public class ModelViewer : MonoBehaviour
         containerGO.transform.SetParent(parent, false);
         RectTransform containerRect = containerGO.GetComponent<RectTransform>();
         containerRect.sizeDelta = new Vector2(0, 40);
-
         HorizontalLayoutGroup hLayout = containerGO.AddComponent<HorizontalLayoutGroup>();
         hLayout.spacing = 8;
         hLayout.childControlWidth = true;
@@ -351,7 +331,6 @@ public class ModelViewer : MonoBehaviour
         Image modeImg = modeBtnGO.GetComponent<Image>();
         modeImg.color = new Color(0.25f, 0.25f, 0.25f);
         Button modeBtn = modeBtnGO.GetComponent<Button>();
-
         GameObject modeTxtGO = new GameObject("Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
         modeTxtGO.transform.SetParent(modeBtnGO.transform, false);
         TMPro.TextMeshProUGUI modeTmp = modeTxtGO.GetComponent<TMPro.TextMeshProUGUI>();
@@ -363,7 +342,6 @@ public class ModelViewer : MonoBehaviour
         modeTxtGO.GetComponent<RectTransform>().anchorMin = Vector2.zero;
         modeTxtGO.GetComponent<RectTransform>().anchorMax = Vector2.one;
         modeTxtGO.GetComponent<RectTransform>().sizeDelta = Vector2.zero;
-
         modeBtn.onClick.AddListener(() => {
             isRelativeMode = !isRelativeMode;
             modeTmp.text = isRelativeMode ? "Mode: REL" : "Mode: ABS";
@@ -372,10 +350,8 @@ public class ModelViewer : MonoBehaviour
 
         GameObject saveProjBtnGO = new GameObject("SaveProjectButton", typeof(RectTransform), typeof(Image), typeof(Button));
         saveProjBtnGO.transform.SetParent(containerGO.transform, false);
-        Image saveProjImg = saveProjBtnGO.GetComponent<Image>();
-        saveProjImg.color = new Color(0.2f, 0.5f, 0.3f);
+        saveProjBtnGO.GetComponent<Image>().color = new Color(0.2f, 0.5f, 0.3f);
         Button saveProjBtn = saveProjBtnGO.GetComponent<Button>();
-
         GameObject saveProjTxtGO = new GameObject("Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
         saveProjTxtGO.transform.SetParent(saveProjBtnGO.transform, false);
         TMPro.TextMeshProUGUI saveProjTmp = saveProjTxtGO.GetComponent<TMPro.TextMeshProUGUI>();
@@ -387,17 +363,12 @@ public class ModelViewer : MonoBehaviour
         saveProjTxtGO.GetComponent<RectTransform>().anchorMin = Vector2.zero;
         saveProjTxtGO.GetComponent<RectTransform>().anchorMax = Vector2.one;
         saveProjTxtGO.GetComponent<RectTransform>().sizeDelta = Vector2.zero;
-
-        saveProjBtn.onClick.AddListener(() => {
-            SaveProject();
-        });
+        saveProjBtn.onClick.AddListener(SaveProject);
 
         GameObject resetBtnGO = new GameObject("ResetButton", typeof(RectTransform), typeof(Image), typeof(Button));
         resetBtnGO.transform.SetParent(containerGO.transform, false);
-        Image resetImg = resetBtnGO.GetComponent<Image>();
-        resetImg.color = new Color(0.6f, 0.2f, 0.2f);
+        resetBtnGO.GetComponent<Image>().color = new Color(0.6f, 0.2f, 0.2f);
         Button resetBtn = resetBtnGO.GetComponent<Button>();
-
         GameObject resetTxtGO = new GameObject("Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
         resetTxtGO.transform.SetParent(resetBtnGO.transform, false);
         TMPro.TextMeshProUGUI resetTmp = resetTxtGO.GetComponent<TMPro.TextMeshProUGUI>();
@@ -409,19 +380,14 @@ public class ModelViewer : MonoBehaviour
         resetTxtGO.GetComponent<RectTransform>().anchorMin = Vector2.zero;
         resetTxtGO.GetComponent<RectTransform>().anchorMax = Vector2.one;
         resetTxtGO.GetComponent<RectTransform>().sizeDelta = Vector2.zero;
-
-        resetBtn.onClick.AddListener(() => {
-            ResetAllSliders();
-        });
+        resetBtn.onClick.AddListener(ResetAllSliders);
     }
 
     void CreatePanelTabSwitcher(Transform parent)
     {
         GameObject tabRowGO = new GameObject("PanelTabRow", typeof(RectTransform));
         tabRowGO.transform.SetParent(parent, false);
-        RectTransform tabRect = tabRowGO.GetComponent<RectTransform>();
-        tabRect.sizeDelta = new Vector2(0, 45);
-
+        tabRowGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 45);
         HorizontalLayoutGroup hLayout = tabRowGO.AddComponent<HorizontalLayoutGroup>();
         hLayout.spacing = 8;
         hLayout.childControlWidth = true;
@@ -431,7 +397,6 @@ public class ModelViewer : MonoBehaviour
         groomTabGO.transform.SetParent(tabRowGO.transform, false);
         groomTabGO.GetComponent<Image>().color = new Color(0.2f, 0.5f, 0.8f);
         Button groomBtn = groomTabGO.GetComponent<Button>();
-
         GameObject groomTxtGO = new GameObject("Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
         groomTxtGO.transform.SetParent(groomTabGO.transform, false);
         TMPro.TextMeshProUGUI groomTmp = groomTxtGO.GetComponent<TMPro.TextMeshProUGUI>();
@@ -448,7 +413,6 @@ public class ModelViewer : MonoBehaviour
         texTabGO.transform.SetParent(tabRowGO.transform, false);
         texTabGO.GetComponent<Image>().color = new Color(0.25f, 0.25f, 0.25f);
         Button texBtn = texTabGO.GetComponent<Button>();
-
         GameObject texTxtGO = new GameObject("Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
         texTxtGO.transform.SetParent(texTabGO.transform, false);
         TMPro.TextMeshProUGUI texTmp = texTxtGO.GetComponent<TMPro.TextMeshProUGUI>();
@@ -460,7 +424,6 @@ public class ModelViewer : MonoBehaviour
         texTxtGO.GetComponent<RectTransform>().anchorMin = Vector2.zero;
         texTxtGO.GetComponent<RectTransform>().anchorMax = Vector2.one;
         texTxtGO.GetComponent<RectTransform>().sizeDelta = Vector2.zero;
-
         groomBtn.onClick.AddListener(() => SwitchEditorMode(false));
         texBtn.onClick.AddListener(() => SwitchEditorMode(true));
     }
@@ -468,24 +431,12 @@ public class ModelViewer : MonoBehaviour
     public void SwitchEditorMode(bool textureMode)
     {
         isTextureEditorMode = textureMode;
-
-        if (groomingSliderPanelGO != null)
-            groomingSliderPanelGO.SetActive(!textureMode);
-
+        if (groomingSliderPanelGO != null) groomingSliderPanelGO.SetActive(!textureMode);
         Transform canvasTransform = groomingSliderPanelGO != null ? groomingSliderPanelGO.transform.parent : FindObjectsByType<Canvas>(FindObjectsSortMode.None).FirstOrDefault()?.transform;
-        if (canvasTransform != null)
-        {
-            textureEditorManager.SetPanelActive(textureMode, canvasTransform, () => SwitchEditorMode(false));
-        }
-
-        if (loadedModel != null)
-        {
-            loadedModel.SetActive(!textureMode);
-        }
-
+        if (canvasTransform != null) textureEditorManager.SetPanelActive(textureMode, canvasTransform, () => SwitchEditorMode(false));
+        if (loadedModel != null) loadedModel.SetActive(!textureMode);
         HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
-        foreach (var card in allCards)
-        {
+        foreach (var card in allCards) {
             var mr = card.GetComponent<MeshRenderer>();
             if (mr != null) mr.enabled = !textureMode;
         }
@@ -499,42 +450,30 @@ public class ModelViewer : MonoBehaviour
             GameObject canvasGO = new GameObject("GroomingCanvas", typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
             canvas = canvasGO.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-
             CanvasScaler scaler = canvasGO.GetComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = new Vector2(1920, 1080);
         }
-
-        if (FindObjectsByType<EventSystem>(FindObjectsSortMode.None).Length == 0)
-        {
-            new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule));
-        }
-
+        if (FindObjectsByType<EventSystem>(FindObjectsSortMode.None).Length == 0) new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule));
         GameObject panelGO = new GameObject("GroomingPanel", typeof(RectTransform), typeof(Image), typeof(GraphicRaycaster));
         panelGO.transform.SetParent(canvas.transform, false);
-
         RectTransform panelRect = panelGO.GetComponent<RectTransform>();
         panelRect.anchorMin = new Vector2(1, 0);
         panelRect.anchorMax = new Vector2(1, 1);
         panelRect.pivot = new Vector2(1, 0.5f);
         panelRect.sizeDelta = new Vector2(560, 0);
         panelRect.anchoredPosition = new Vector2(-10, 0);
-
         activePanelImage = panelGO.GetComponent<Image>();
         activePanelImage.color = new Color(0.15f, 0.15f, 0.15f, 0.85f);
-
         VerticalLayoutGroup layout = panelGO.AddComponent<VerticalLayoutGroup>();
         layout.padding = new RectOffset(15, 15, 12, 12);
         layout.spacing = 4;
         layout.childControlWidth = true;
         layout.childControlHeight = false;
-
         groomingSliderPanelGO = panelGO;
         activeSliderPanel = panelGO;
-
         CreatePanelTabSwitcher(panelGO.transform);
         CreateModeToggleButton(panelGO.transform);
-
         CreateSliderUI(panelGO.transform, "Length", 0.0005f, 1.0f, currentLength, OnActualSliderLengthChanged, out lengthSlider, 38, 16);
         CreateSliderUI(panelGO.transform, "Width", 0.0005f, 0.05f, currentWidth, OnSliderWidthChanged, out widthSlider, 38, 16);
         CreateSliderUI(panelGO.transform, "Segments", 4, 36, currentSegments, OnSliderSegmentsChanged, out segmentsSlider, 38, 16);
@@ -554,26 +493,22 @@ public class ModelViewer : MonoBehaviour
     {
         Transform canvasTransform = activeSliderPanel != null ? activeSliderPanel.transform.parent : FindObjectsByType<Canvas>(FindObjectsSortMode.None).FirstOrDefault()?.transform;
         if (canvasTransform == null) return;
-
+        GameObject existing = GameObject.Find("GroupManagerPanel");
+        if (existing != null) Destroy(existing);
         GameObject groupPanelGO = new GameObject("GroupManagerPanel", typeof(RectTransform), typeof(Image), typeof(GraphicRaycaster));
         groupPanelGO.transform.SetParent(canvasTransform, false);
-
         RectTransform panelRect = groupPanelGO.GetComponent<RectTransform>();
         panelRect.anchorMin = new Vector2(0, 0);
         panelRect.anchorMax = new Vector2(0, 1);
         panelRect.pivot = new Vector2(0, 0.5f);
         panelRect.sizeDelta = new Vector2(300, 0);
         panelRect.anchoredPosition = new Vector2(15, 0);
-
-        Image bgImage = groupPanelGO.GetComponent<Image>();
-        bgImage.color = new Color(0.15f, 0.15f, 0.15f, 0.85f);
-
+        groupPanelGO.GetComponent<Image>().color = new Color(0.15f, 0.15f, 0.15f, 0.85f);
         VerticalLayoutGroup vLayout = groupPanelGO.AddComponent<VerticalLayoutGroup>();
         vLayout.padding = new RectOffset(10, 10, 10, 10);
         vLayout.spacing = 8;
         vLayout.childControlWidth = true;
         vLayout.childControlHeight = false;
-
         GameObject titleGO = new GameObject("TitleText", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
         titleGO.transform.SetParent(groupPanelGO.transform, false);
         TMPro.TextMeshProUGUI titleTmp = titleGO.GetComponent<TMPro.TextMeshProUGUI>();
@@ -582,13 +517,11 @@ public class ModelViewer : MonoBehaviour
         titleTmp.fontStyle = TMPro.FontStyles.Bold;
         titleTmp.color = Color.white;
         titleGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 35);
-
         GameObject newBtnGO = new GameObject("NewGroupButton", typeof(RectTransform), typeof(Image), typeof(Button));
         newBtnGO.transform.SetParent(groupPanelGO.transform, false);
         newBtnGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 45);
         newBtnGO.GetComponent<Image>().color = new Color(0.2f, 0.5f, 0.8f);
         Button btn = newBtnGO.GetComponent<Button>();
-
         GameObject btnTextGO = new GameObject("Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
         btnTextGO.transform.SetParent(newBtnGO.transform, false);
         TMPro.TextMeshProUGUI btnTmp = btnTextGO.GetComponent<TMPro.TextMeshProUGUI>();
@@ -599,7 +532,6 @@ public class ModelViewer : MonoBehaviour
         btnTextGO.GetComponent<RectTransform>().anchorMin = Vector2.zero;
         btnTextGO.GetComponent<RectTransform>().anchorMax = Vector2.one;
         btnTextGO.GetComponent<RectTransform>().sizeDelta = Vector2.zero;
-
         btn.onClick.AddListener(() => {
             int newId = GetNextAvailableGroupId();
             allGroupIds.Add(newId);
@@ -610,20 +542,16 @@ public class ModelViewer : MonoBehaviour
             groupVOffsets[newId] = 0.0f;
             SelectGroup(newId);
         });
-
         GameObject scrollGO = new GameObject("GroupScrollView", typeof(RectTransform), typeof(ScrollRect), typeof(Image));
         scrollGO.transform.SetParent(groupPanelGO.transform, false);
-        RectTransform scrollRectTransform = scrollGO.GetComponent<RectTransform>();
-        scrollRectTransform.sizeDelta = new Vector2(0, 600);
+        scrollGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 600);
         scrollGO.GetComponent<Image>().color = new Color(0.1f, 0.1f, 0.1f, 0.5f);
-
         GameObject viewportGO = new GameObject("Viewport", typeof(RectTransform), typeof(RectMask2D));
         viewportGO.transform.SetParent(scrollGO.transform, false);
         RectTransform viewportRect = viewportGO.GetComponent<RectTransform>();
         viewportRect.anchorMin = Vector2.zero;
         viewportRect.anchorMax = Vector2.one;
         viewportRect.sizeDelta = Vector2.zero;
-
         GameObject contentGO = new GameObject("Content", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
         contentGO.transform.SetParent(viewportGO.transform, false);
         RectTransform contentRect = contentGO.GetComponent<RectTransform>();
@@ -631,23 +559,18 @@ public class ModelViewer : MonoBehaviour
         contentRect.anchorMax = new Vector2(1, 1);
         contentRect.pivot = new Vector2(0.5f, 1f);
         contentRect.sizeDelta = new Vector2(0, 0);
-
         VerticalLayoutGroup contentLayout = contentGO.GetComponent<VerticalLayoutGroup>();
         contentLayout.spacing = 6;
         contentLayout.padding = new RectOffset(5, 5, 5, 5);
         contentLayout.childControlWidth = true;
         contentLayout.childControlHeight = false;
         contentLayout.childForceExpandHeight = false;
-
-        ContentSizeFitter sizeFitter = contentGO.GetComponent<ContentSizeFitter>();
-        sizeFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-
+        contentGO.GetComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
         ScrollRect scrollRect = scrollGO.GetComponent<ScrollRect>();
         scrollRect.content = contentRect;
         scrollRect.viewport = viewportRect;
         scrollRect.horizontal = false;
         scrollRect.vertical = true;
-
         groupListContentTransform = contentGO.transform;
         RefreshGroupListUI();
     }
@@ -655,108 +578,56 @@ public class ModelViewer : MonoBehaviour
     void SelectGroup(int id)
     {
         currentGroupId = id;
-        
-        if (groupUScales.ContainsKey(id)) currentUScale = groupUScales[id];
-        else { currentUScale = 1.0f; groupUScales[id] = 1.0f; }
-
-        if (groupVScales.ContainsKey(id)) currentVScale = groupVScales[id];
-        else { currentVScale = 1.0f; groupVScales[id] = 1.0f; }
-
-        if (groupUOffsets.ContainsKey(id)) currentUOffset = groupUOffsets[id];
-        else { currentUOffset = 0.0f; groupUOffsets[id] = 0.0f; }
-
-        if (groupVOffsets.ContainsKey(id)) currentVOffset = groupVOffsets[id];
-        else { currentVOffset = 0.0f; groupVOffsets[id] = 0.0f; }
-
+        currentUScale = groupUScales.ContainsKey(id) ? groupUScales[id] : 1.0f;
+        currentVScale = groupVScales.ContainsKey(id) ? groupVScales[id] : 1.0f;
+        currentUOffset = groupUOffsets.ContainsKey(id) ? groupUOffsets[id] : 0.0f;
+        currentVOffset = groupVOffsets.ContainsKey(id) ? groupVOffsets[id] : 0.0f;
+        groupUScales[id] = currentUScale;
+        groupVScales[id] = currentVScale;
+        groupUOffsets[id] = currentUOffset;
+        groupVOffsets[id] = currentVOffset;
         if (uScaleSlider != null) uScaleSlider.SetValueWithoutNotify(currentUScale);
         if (vScaleSlider != null) vScaleSlider.SetValueWithoutNotify(currentVScale);
         if (uOffsetSlider != null) uOffsetSlider.SetValueWithoutNotify(currentUOffset);
         if (vOffsetSlider != null) vOffsetSlider.SetValueWithoutNotify(currentVOffset);
-
         RefreshGroupListUI();
-
-        if (flashGroupCoroutine != null)
-        {
-            StopCoroutine(flashGroupCoroutine);
-        }
+        if (flashGroupCoroutine != null) StopCoroutine(flashGroupCoroutine);
         flashGroupCoroutine = StartCoroutine(FlashActiveGroupRoutine(currentGroupId));
     }
 
     IEnumerator FlashActiveGroupRoutine(int activeId)
     {
         HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
-
-        foreach (var card in allCards)
-        {
-            if (card.groupId != activeId)
-            {
-                var mr = card.GetComponent<MeshRenderer>();
-                if (mr != null) mr.enabled = false;
-            }
-        }
-
+        foreach (var card in allCards) if (card.groupId != activeId) { var mr = card.GetComponent<MeshRenderer>(); if (mr != null) mr.enabled = false; }
         yield return new WaitForSeconds(0.5f);
-
-        foreach (var card in allCards)
-        {
-            if (card != null)
-            {
-                var mr = card.GetComponent<MeshRenderer>();
-                if (mr != null) mr.enabled = true;
-            }
-        }
+        foreach (var card in allCards) if (card != null) { var mr = card.GetComponent<MeshRenderer>(); if (mr != null) mr.enabled = true; }
     }
 
     void RefreshGroupListUI()
     {
         if (groupListContentTransform == null) return;
-
-        foreach (Transform child in groupListContentTransform)
-        {
-            Destroy(child.gameObject);
-        }
-
+        foreach (Transform child in groupListContentTransform) Destroy(child.gameObject);
         HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
         Dictionary<int, int> groupCardCounts = new Dictionary<int, int>();
-        foreach (var card in allCards)
-        {
-            if (!groupCardCounts.ContainsKey(card.groupId)) groupCardCounts[card.groupId] = 0;
-            groupCardCounts[card.groupId]++;
-        }
-
+        foreach (var card in allCards) { if (!groupCardCounts.ContainsKey(card.groupId)) groupCardCounts[card.groupId] = 0; groupCardCounts[card.groupId]++; }
         foreach (int id in allGroupIds.OrderBy(g => g))
         {
             int gid = id;
             int cardCount = groupCardCounts.ContainsKey(gid) ? groupCardCounts[gid] : 0;
-
             GameObject itemGO = new GameObject("GroupItem_" + gid, typeof(RectTransform), typeof(Image), typeof(HorizontalLayoutGroup));
             itemGO.transform.SetParent(groupListContentTransform, false);
             itemGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 48);
-
-            Image img = itemGO.GetComponent<Image>();
-            img.color = (gid == currentGroupId) ? new Color(0.3f, 0.6f, 0.3f, 1f) : new Color(0.25f, 0.25f, 0.25f, 1f);
-
+            itemGO.GetComponent<Image>().color = (gid == currentGroupId) ? new Color(0.3f, 0.6f, 0.3f, 1f) : new Color(0.25f, 0.25f, 0.25f, 1f);
             HorizontalLayoutGroup rowLayout = itemGO.GetComponent<HorizontalLayoutGroup>();
             rowLayout.padding = new RectOffset(8, 8, 4, 4);
             rowLayout.spacing = 8;
             rowLayout.childControlWidth = false;
             rowLayout.childControlHeight = true;
-
             GameObject labelBtnGO = new GameObject("LabelButton", typeof(RectTransform), typeof(Button), typeof(CustomClickDetector));
             labelBtnGO.transform.SetParent(itemGO.transform, false);
-            RectTransform labelRect = labelBtnGO.GetComponent<RectTransform>();
-            labelRect.sizeDelta = new Vector2(170, 40);
-
-            Button itemBtn = labelBtnGO.GetComponent<Button>();
-            itemBtn.onClick.AddListener(() => {
-                HandleGroupItemClick(gid);
-            });
-
-            CustomClickDetector detector = labelBtnGO.GetComponent<CustomClickDetector>();
-            detector.onRightClick = () => {
-                PromptDeleteGroup(gid);
-            };
-
+            labelBtnGO.GetComponent<RectTransform>().sizeDelta = new Vector2(170, 40);
+            labelBtnGO.GetComponent<Button>().onClick.AddListener(() => HandleGroupItemClick(gid));
+            labelBtnGO.GetComponent<CustomClickDetector>().onRightClick = () => PromptDeleteGroup(gid);
             GameObject txtGO = new GameObject("Label", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
             txtGO.transform.SetParent(labelBtnGO.transform, false);
             TMPro.TextMeshProUGUI tmp = txtGO.GetComponent<TMPro.TextMeshProUGUI>();
@@ -770,7 +641,6 @@ public class ModelViewer : MonoBehaviour
             txtRect.anchorMax = Vector2.one;
             txtRect.offsetMin = new Vector2(2, 2);
             txtRect.offsetMax = new Vector2(-2, -2);
-
             GameObject countTxtGO = new GameObject("CardCountLabel", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
             countTxtGO.transform.SetParent(labelBtnGO.transform, false);
             TMPro.TextMeshProUGUI countTmp = countTxtGO.GetComponent<TMPro.TextMeshProUGUI>();
@@ -783,16 +653,11 @@ public class ModelViewer : MonoBehaviour
             countRect.anchorMax = Vector2.one;
             countRect.offsetMin = new Vector2(2, 2);
             countRect.offsetMax = new Vector2(-2, -2);
-
             GameObject soloBtnGO = new GameObject("SoloButton", typeof(RectTransform), typeof(Image), typeof(Button));
             soloBtnGO.transform.SetParent(itemGO.transform, false);
-            RectTransform soloRect = soloBtnGO.GetComponent<RectTransform>();
-            soloRect.sizeDelta = new Vector2(65, 36);
-
-            Image soloImg = soloBtnGO.GetComponent<Image>();
+            soloBtnGO.GetComponent<RectTransform>().sizeDelta = new Vector2(65, 36);
             bool isSoloed = groupSoloState.ContainsKey(gid) && groupSoloState[gid];
-            soloImg.color = isSoloed ? new Color(0.9f, 0.5f, 0.1f) : new Color(0.35f, 0.35f, 0.35f);
-
+            soloBtnGO.GetComponent<Image>().color = isSoloed ? new Color(0.9f, 0.5f, 0.1f) : new Color(0.35f, 0.35f, 0.35f);
             Button soloBtn = soloBtnGO.GetComponent<Button>();
             GameObject soloTxtGO = new GameObject("Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
             soloTxtGO.transform.SetParent(soloBtnGO.transform, false);
@@ -805,10 +670,7 @@ public class ModelViewer : MonoBehaviour
             soloTxtGO.GetComponent<RectTransform>().anchorMin = Vector2.zero;
             soloTxtGO.GetComponent<RectTransform>().anchorMax = Vector2.one;
             soloTxtGO.GetComponent<RectTransform>().sizeDelta = Vector2.zero;
-
-            soloBtn.onClick.AddListener(() => {
-                ToggleGroupSolo(gid);
-            });
+            soloBtn.onClick.AddListener(() => ToggleGroupSolo(gid));
         }
     }
 
@@ -816,44 +678,20 @@ public class ModelViewer : MonoBehaviour
     {
         bool currentState = groupSoloState.ContainsKey(gid) && groupSoloState[gid];
         groupSoloState[gid] = !currentState;
-
         bool anySoloActive = groupSoloState.Values.Any(s => s);
-
         HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
-        foreach (var card in allCards)
-        {
+        foreach (var card in allCards) {
             var mr = card.GetComponent<MeshRenderer>();
-            if (mr != null)
-            {
-                if (anySoloActive)
-                {
-                    bool cardSoloed = groupSoloState.ContainsKey(card.groupId) && groupSoloState[card.groupId];
-                    mr.enabled = cardSoloed;
-                }
-                else
-                {
-                    mr.enabled = true;
-                }
-            }
+            if (mr != null) mr.enabled = !anySoloActive || (groupSoloState.ContainsKey(card.groupId) && groupSoloState[card.groupId]);
         }
-
         RefreshGroupListUI();
     }
 
     void HandleGroupItemClick(int gid)
     {
         float timeSinceLastClick = Time.time - lastGroupClickTime;
-        if (lastClickedGroupId == gid && timeSinceLastClick < 0.4f)
-        {
-            PromptRenameGroup(gid);
-            lastClickedGroupId = -1;
-        }
-        else
-        {
-            SelectGroup(gid);
-            lastClickedGroupId = gid;
-            lastGroupClickTime = Time.time;
-        }
+        if (lastClickedGroupId == gid && timeSinceLastClick < 0.4f) { PromptRenameGroup(gid); lastClickedGroupId = -1; }
+        else { SelectGroup(gid); lastClickedGroupId = gid; lastGroupClickTime = Time.time; }
     }
 
     void PromptRenameGroup(int gid)
@@ -861,91 +699,58 @@ public class ModelViewer : MonoBehaviour
 #if UNITY_EDITOR
         string currentName = groupNames.ContainsKey(gid) ? groupNames[gid] : ("Group " + gid);
         string newName = EditorInputDialog.Show("Rename Group", "Enter new name for group:", currentName);
-        if (!string.IsNullOrEmpty(newName))
-        {
-            groupNames[gid] = newName;
-            RefreshGroupListUI();
-        }
+        if (!string.IsNullOrEmpty(newName)) { groupNames[gid] = newName; RefreshGroupListUI(); }
 #endif
     }
 
     void PromptDeleteGroup(int gid)
     {
-        bool confirm = EditorUtility.DisplayDialog("Delete Group", "Are you sure you want to delete this group and all its hair cards?", "Yes", "No");
-        if (confirm)
-        {
-            DeleteGroupAndCards(gid);
-        }
+#if UNITY_EDITOR
+        if (EditorUtility.DisplayDialog("Delete Group", "Are you sure you want to delete this group and all its hair cards?", "Yes", "No")) DeleteGroupAndCards(gid);
+#endif
     }
 
     void DeleteGroupAndCards(int gid)
     {
         HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
-        foreach (var card in allCards)
-        {
-            if (card.groupId == gid)
-            {
-                Destroy(card.gameObject);
-            }
-        }
-
+        foreach (var card in allCards) if (card.groupId == gid) Destroy(card.gameObject);
         allGroupIds.Remove(gid);
-        if (groupNames.ContainsKey(gid)) groupNames.Remove(gid);
-        if (groupSoloState.ContainsKey(gid)) groupSoloState.Remove(gid);
-        if (groupUScales.ContainsKey(gid)) groupUScales.Remove(gid);
-        if (groupVScales.ContainsKey(gid)) groupVScales.Remove(gid);
-        if (groupUOffsets.ContainsKey(gid)) groupUOffsets.Remove(gid);
-        if (groupVOffsets.ContainsKey(gid)) groupVOffsets.Remove(gid);
-
-        if (currentGroupId == gid)
-        {
-            currentGroupId = allGroupIds.FirstOrDefault();
-            SelectGroup(currentGroupId);
-        }
+        groupNames.Remove(gid);
+        groupSoloState.Remove(gid);
+        groupUScales.Remove(gid);
+        groupVScales.Remove(gid);
+        groupUOffsets.Remove(gid);
+        groupVOffsets.Remove(gid);
+        if (currentGroupId == gid) { currentGroupId = allGroupIds.FirstOrDefault(); SelectGroup(currentGroupId); }
         RefreshGroupListUI();
     }
 
-    int GetNextAvailableGroupId()
-    {
-        int id = 0;
-        while (allGroupIds.Contains(id))
-        {
-            id++;
-        }
-        return id;
-    }
+    int GetNextAvailableGroupId() { int id = 0; while (allGroupIds.Contains(id)) id++; return id; }
 
     GameObject CreateSliderUI(Transform parent, string labelText, float min, float max, float defaultValue, UnityEngine.Events.UnityAction<float> onValueChanged, out Slider createdSlider, float rowHeight = 44f, int fontSize = 16)
     {
         GameObject rowGO = new GameObject(labelText + "_Row", typeof(RectTransform));
         rowGO.transform.SetParent(parent, false);
-        RectTransform rowRect = rowGO.GetComponent<RectTransform>();
-        rowRect.sizeDelta = new Vector2(0, rowHeight);
-
+        rowGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, rowHeight);
         VerticalLayoutGroup rowLayout = rowGO.AddComponent<VerticalLayoutGroup>();
         rowLayout.spacing = 2;
         rowLayout.padding = new RectOffset(0, 0, 2, 2);
         rowLayout.childControlWidth = true;
         rowLayout.childControlHeight = false;
-
         GameObject textGO = new GameObject(labelText + "_Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
         textGO.transform.SetParent(rowGO.transform, false);
         textGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 18);
-
         TMPro.TextMeshProUGUI tmp = textGO.GetComponent<TMPro.TextMeshProUGUI>();
         tmp.text = labelText + ": " + defaultValue.ToString("F3");
         tmp.fontSize = fontSize;
         tmp.color = Color.white;
-
         GameObject sliderGO = new GameObject(labelText + "_Slider", typeof(RectTransform), typeof(Slider));
         sliderGO.transform.SetParent(rowGO.transform, false);
         sliderGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 18);
-
         Slider slider = sliderGO.GetComponent<Slider>();
         slider.minValue = min;
         slider.maxValue = max;
         slider.value = defaultValue;
-
         GameObject backgroundGO = new GameObject("Background", typeof(RectTransform), typeof(Image));
         backgroundGO.transform.SetParent(sliderGO.transform, false);
         backgroundGO.GetComponent<Image>().color = new Color(0.3f, 0.3f, 0.3f);
@@ -953,14 +758,12 @@ public class ModelViewer : MonoBehaviour
         bgRect.anchorMin = new Vector2(0, 0.3f);
         bgRect.anchorMax = new Vector2(1, 0.7f);
         bgRect.sizeDelta = Vector2.zero;
-
         GameObject fillAreaGO = new GameObject("Fill Area", typeof(RectTransform));
         fillAreaGO.transform.SetParent(sliderGO.transform, false);
         RectTransform fillAreaRect = fillAreaGO.GetComponent<RectTransform>();
         fillAreaRect.anchorMin = new Vector2(0, 0.3f);
         fillAreaRect.anchorMax = new Vector2(1, 0.7f);
         fillAreaRect.sizeDelta = Vector2.zero;
-
         GameObject fillGO = new GameObject("Fill", typeof(RectTransform), typeof(Image));
         fillGO.transform.SetParent(fillAreaGO.transform, false);
         fillGO.GetComponent<Image>().color = new Color(0.2f, 0.6f, 1.0f);
@@ -968,25 +771,18 @@ public class ModelViewer : MonoBehaviour
         slider.fillRect.anchorMin = Vector2.zero;
         slider.fillRect.anchorMax = Vector2.zero;
         slider.fillRect.sizeDelta = Vector2.zero;
-
         GameObject handleAreaGO = new GameObject("Handle Slide Area", typeof(RectTransform));
         handleAreaGO.transform.SetParent(sliderGO.transform, false);
         RectTransform handleAreaRect = handleAreaGO.GetComponent<RectTransform>();
         handleAreaRect.anchorMin = Vector2.zero;
         handleAreaRect.anchorMax = Vector2.one;
         handleAreaRect.sizeDelta = Vector2.zero;
-
         GameObject handleGO = new GameObject("Handle", typeof(RectTransform), typeof(Image));
         handleGO.transform.SetParent(handleAreaGO.transform, false);
         handleGO.GetComponent<Image>().color = Color.white;
         slider.handleRect = handleGO.GetComponent<RectTransform>();
         slider.handleRect.sizeDelta = new Vector2(20, 0);
-
-        slider.onValueChanged.AddListener((val) => {
-            tmp.text = labelText + ": " + val.ToString("F3");
-            onValueChanged.Invoke(val);
-        });
-
+        slider.onValueChanged.AddListener((val) => { tmp.text = labelText + ": " + val.ToString("F3"); onValueChanged.Invoke(val); });
         createdSlider = slider;
         return rowGO;
     }
@@ -996,75 +792,38 @@ public class ModelViewer : MonoBehaviour
         if (hasSelectionHotspot)
         {
             HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
-            foreach (HairCard card in allCards)
-            {
-                if (card.groupId == currentGroupId && card.selectionWeight > 0f)
-                {
-                    card.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, selectionStrength, currentUScale, currentVScale, currentUOffset, currentVOffset);
-                }
-            }
+            foreach (HairCard card in allCards) if (card.groupId == currentGroupId && card.selectionWeight > 0f) card.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, selectionStrength, currentUScale, currentVScale, currentUOffset, currentVOffset);
         }
-        else if (lastPlacedCard != null)
-        {
-            lastPlacedCard.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, 1f, currentUScale, currentVScale, currentUOffset, currentVOffset);
-        }
+        else if (lastPlacedCard != null) lastPlacedCard.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, 1f, currentUScale, currentVScale, currentUOffset, currentVOffset);
     }
 
-    void Update()
-    {
-        HandleCameraControls();
-        HandleGrooming();
-    }
+    void Update() { HandleCameraControls(); HandleGrooming(); }
 
-    void OnDrawGizmos()
-    {
-        if (!hasSelectionHotspot) return;
+    void OnDrawGizmos() { if (!hasSelectionHotspot) return; Gizmos.color = Color.yellow; Gizmos.DrawLine(selectionHitPoint, selectionHitPoint + (selectionHitNormal * 2.0f)); }
 
-        Gizmos.color = Color.yellow;
-        Gizmos.DrawLine(selectionHitPoint, selectionHitPoint + (selectionHitNormal * 2.0f));
-    }
-
-    public void ToggleGroomingMode(bool state)
-    {
-        isGroomingMode = state;
-    }
+    public void ToggleGroomingMode(bool state) { isGroomingMode = state; }
 
     void HandleGrooming()
     {
-        if (!isGroomingMode || Mouse.current == null) return;
-        if (isTextureEditorMode) return;
+        if (!isGroomingMode || Mouse.current == null || isTextureEditorMode) return;
         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
-
         bool isHoldingAlt = Keyboard.current != null && (Keyboard.current.leftAltKey.isPressed || Keyboard.current.rightAltKey.isPressed);
         bool isHoldingCtrl = Keyboard.current != null && Keyboard.current.ctrlKey.isPressed;
         bool isHoldingShift = Keyboard.current != null && (Keyboard.current.leftShiftKey.isPressed || Keyboard.current.rightShiftKey.isPressed);
-
         if (isHoldingAlt && Mouse.current.leftButton.wasPressedThisFrame)
         {
             Ray altRay = mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
             if (Physics.Raycast(altRay, out RaycastHit altHit))
             {
                 HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
-                if (allCards.Length > 0)
-                {
-                    HairCard nearestCard = allCards.OrderBy(c => Vector3.Distance(altHit.point, c.transform.position)).FirstOrDefault();
-                    if (nearestCard != null)
-                    {
-                        SelectGroup(nearestCard.groupId);
-                    }
-                }
+                if (allCards.Length > 0) { HairCard nearestCard = allCards.OrderBy(c => Vector3.Distance(altHit.point, c.transform.position)).FirstOrDefault(); if (nearestCard != null) SelectGroup(nearestCard.groupId); }
             }
             return;
         }
-
-        if (isHoldingShift && !wasHoldingShiftDrag)
-        {
-            wasHoldingShiftDrag = true;
-            sessionPlacedCards.Clear();
-        }
-
+        if (isHoldingShift && !wasHoldingShiftDrag) { wasHoldingShiftDrag = true; sessionPlacedCards.Clear(); }
         if (wasHoldingShiftDrag && !isHoldingShift)
         {
+#if UNITY_EDITOR
             if (sessionPlacedCards.Count > 0 && EditorUtility.DisplayDialog("New Group", "Do you want to create a new group for the hair cards placed during this stroke?", "Yes", "No"))
             {
                 int newId = GetNextAvailableGroupId();
@@ -1074,66 +833,25 @@ public class ModelViewer : MonoBehaviour
                 groupVScales[newId] = currentVScale;
                 groupUOffsets[newId] = currentUOffset;
                 groupVOffsets[newId] = currentVOffset;
-
-                foreach (var card in sessionPlacedCards)
-                {
-                    if (card != null)
-                    {
-                        card.groupId = newId;
-                        card.SetParameters(card.length, card.width, card.segments, card.bendAngle, card.twistAngle, card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ(), card.GetEmbedDepth(), 1f, currentUScale, currentVScale, currentUOffset, currentVOffset);
-                    }
-                }
-
+                foreach (var card in sessionPlacedCards) if (card != null) { card.groupId = newId; card.SetParameters(card.length, card.width, card.segments, card.bendAngle, card.twistAngle, card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ(), card.GetEmbedDepth(), 1f, currentUScale, currentVScale, currentUOffset, currentVOffset); }
                 SelectGroup(newId);
             }
+#endif
             wasHoldingShiftDrag = false;
             sessionPlacedCards.Clear();
             RefreshGroupListUI();
         }
-
         if (isHoldingCtrl && Mouse.current.leftButton.wasPressedThisFrame)
         {
             Ray ray = mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
-            if (Physics.Raycast(ray, out RaycastHit hit))
-            {
-                EnterSelectionMode(hit.point, hit.normal);
-            }
-            else
-            {
-                ClearSelectionHotspot();
-            }
+            if (Physics.Raycast(ray, out RaycastHit hit)) EnterSelectionMode(hit.point, hit.normal); else ClearSelectionHotspot();
             return;
         }
-
-        bool shouldSpawn = false;
-
-        if (isHoldingShift)
-        {
-            if (Mouse.current.leftButton.isPressed && Time.time >= lastSpawnTime + spawnCooldown)
-            {
-                shouldSpawn = true;
-            }
-        }
-        else
-        {
-            if (Mouse.current.leftButton.wasPressedThisFrame)
-            {
-                shouldSpawn = true;
-            }
-        }
-
+        bool shouldSpawn = isHoldingShift ? (Mouse.current.leftButton.isPressed && Time.time >= lastSpawnTime + spawnCooldown) : Mouse.current.leftButton.wasPressedThisFrame;
         if (shouldSpawn && !isSelectionMode)
         {
             Ray ray = mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
-            if (Physics.Raycast(ray, out RaycastHit hit))
-            {
-                HairCard card = PinHairCard(hit.point, hit.normal);
-                if (isHoldingShift && card != null)
-                {
-                    sessionPlacedCards.Add(card);
-                }
-                lastSpawnTime = Time.time;
-            }
+            if (Physics.Raycast(ray, out RaycastHit hit)) { HairCard card = PinHairCard(hit.point, hit.normal); if (isHoldingShift && card != null) sessionPlacedCards.Add(card); lastSpawnTime = Time.time; }
         }
     }
 
@@ -1141,44 +859,20 @@ public class ModelViewer : MonoBehaviour
     {
         if (falloffRowGO != null) Destroy(falloffRowGO);
         if (strengthRowGO != null) Destroy(strengthRowGO);
-
         isSelectionMode = true;
         hasSelectionHotspot = true;
         selectionStrength = 0.25f;
         brushFalloffDistance = 0.25f;
         selectionHitPoint = brushCenter;
         selectionHitNormal = hitNormal;
-
-        if (activePanelImage != null)
-        {
-            activePanelImage.color = new Color(0.35f, 0.32f, 0.1f, 0.9f);
-        }
-
+        if (activePanelImage != null) activePanelImage.color = new Color(0.35f, 0.32f, 0.1f, 0.9f);
         HairCard[] groupCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None).Where(c => c.groupId == currentGroupId).ToArray();
         if (groupCards.Length > 0)
         {
-            var nearestCards = groupCards
-                .OrderBy(card => Vector3.Distance(brushCenter, card.transform.position))
-                .Take(6)
-                .ToList();
-
-            float totalWeight = 0f;
-            float avgLength = 0f, avgWidth = 0f, avgBend = 0f, avgTwist = 0f;
+            var nearestCards = groupCards.OrderBy(card => Vector3.Distance(brushCenter, card.transform.position)).Take(6).ToList();
+            float totalWeight = 0f, avgLength = 0f, avgWidth = 0f, avgBend = 0f, avgTwist = 0f;
             int accumulatedSegments = 0;
-
-            foreach (var card in nearestCards)
-            {
-                float dist = Vector3.Distance(brushCenter, card.transform.position);
-                float weight = 1f / (dist + 0.0001f);
-
-                totalWeight += weight;
-                avgLength += card.length * weight;
-                avgWidth += card.width * weight;
-                avgBend += card.bendAngle * weight;
-                avgTwist += card.twistAngle * weight;
-                accumulatedSegments += card.segments;
-            }
-
+            foreach (var card in nearestCards) { float dist = Vector3.Distance(brushCenter, card.transform.position); float weight = 1f / (dist + 0.0001f); totalWeight += weight; avgLength += card.length * weight; avgWidth += card.width * weight; avgBend += card.bendAngle * weight; avgTwist += card.twistAngle * weight; accumulatedSegments += card.segments; }
             if (totalWeight > 0f)
             {
                 currentLength = avgLength / totalWeight;
@@ -1186,7 +880,6 @@ public class ModelViewer : MonoBehaviour
                 currentBend = avgBend / totalWeight;
                 currentTwist = avgTwist / totalWeight;
                 currentSegments = Mathf.RoundToInt((float)accumulatedSegments / nearestCards.Count);
-
                 if (lengthSlider != null) lengthSlider.SetValueWithoutNotify(currentLength);
                 if (widthSlider != null) widthSlider.SetValueWithoutNotify(currentWidth);
                 if (bendSlider != null) bendSlider.SetValueWithoutNotify(currentBend);
@@ -1194,20 +887,11 @@ public class ModelViewer : MonoBehaviour
                 if (segmentsSlider != null) segmentsSlider.SetValueWithoutNotify(currentSegments);
             }
         }
-
         if (activeSliderPanel != null)
         {
-            falloffRowGO = CreateSliderUI(activeSliderPanel.transform, "Falloff Dist", 0.001f, 1.0f, brushFalloffDistance, (val) => {
-                brushFalloffDistance = val;
-                RecomputeSelectionWeights(selectionHitPoint);
-            }, out _, 38, 16);
-
-            strengthRowGO = CreateSliderUI(activeSliderPanel.transform, "Strength", 0.0f, 1.0f, selectionStrength, (val) => {
-                selectionStrength = val;
-                UpdateActiveCard();
-            }, out _, 38, 16);
+            falloffRowGO = CreateSliderUI(activeSliderPanel.transform, "Falloff Dist", 0.001f, 1.0f, brushFalloffDistance, (val) => { brushFalloffDistance = val; RecomputeSelectionWeights(selectionHitPoint); }, out _, 38, 16);
+            strengthRowGO = CreateSliderUI(activeSliderPanel.transform, "Strength", 0.0f, 1.0f, selectionStrength, (val) => { selectionStrength = val; UpdateActiveCard(); }, out _, 38, 16);
         }
-
         RecomputeSelectionWeights(brushCenter);
     }
 
@@ -1215,21 +899,11 @@ public class ModelViewer : MonoBehaviour
     {
         hasSelectionHotspot = false;
         isSelectionMode = false;
-
-        if (activePanelImage != null)
-        {
-            activePanelImage.color = new Color(0.15f, 0.15f, 0.15f, 0.85f);
-        }
-
+        if (activePanelImage != null) activePanelImage.color = new Color(0.15f, 0.15f, 0.15f, 0.85f);
         if (falloffRowGO != null) Destroy(falloffRowGO);
         if (strengthRowGO != null) Destroy(strengthRowGO);
-
         HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
-        foreach (HairCard card in allCards)
-        {
-            card.SetSelectionWeight(0f);
-            card.UpdateVisualHighlight();
-        }
+        foreach (HairCard card in allCards) { card.SetSelectionWeight(0f); card.UpdateVisualHighlight(); }
     }
 
     void RecomputeSelectionWeights(Vector3 brushCenter)
@@ -1237,23 +911,10 @@ public class ModelViewer : MonoBehaviour
         HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
         foreach (HairCard card in allCards)
         {
-            if (card.groupId != currentGroupId)
-            {
-                card.SetSelectionWeight(0f);
-                continue;
-            }
-
+            if (card.groupId != currentGroupId) { card.SetSelectionWeight(0f); continue; }
             float distance = Vector3.Distance(brushCenter, card.transform.position);
-            if (distance <= brushFalloffDistance)
-            {
-                float weight = Mathf.Clamp01(1f - (distance / brushFalloffDistance));
-                card.SetSelectionWeight(weight);
-                card.CaptureBaseState(card.length, card.width, card.segments, card.bendAngle, card.twistAngle, card.GetEmbedDepth(), card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ());
-            }
-            else
-            {
-                card.SetSelectionWeight(0f);
-            }
+            if (distance <= brushFalloffDistance) { float weight = Mathf.Clamp01(1f - (distance / brushFalloffDistance)); card.SetSelectionWeight(weight); card.CaptureBaseState(card.length, card.width, card.segments, card.bendAngle, card.twistAngle, card.GetEmbedDepth(), card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ()); }
+            else card.SetSelectionWeight(0f);
         }
     }
 
@@ -1261,18 +922,11 @@ public class ModelViewer : MonoBehaviour
     {
         GameObject cardGO = new GameObject("HairCard_Strip", typeof(MeshFilter), typeof(MeshRenderer), typeof(HairCard));
         HairCard card = cardGO.GetComponent<HairCard>();
-
         card.SetPlacementData(position, normal, currentEmbedDepth, currentOffsetX, currentOffsetY, currentOffsetZ, currentGroupId);
         card.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, 1f, currentUScale, currentVScale, currentUOffset, currentVOffset);
-
         lastPlacedCard = card;
-
         MeshRenderer mr = cardGO.GetComponent<MeshRenderer>();
-        if (hairCardMaterial != null)
-        {
-            mr.sharedMaterial = hairCardMaterial;
-        }
-
+        if (hairCardMaterial != null) mr.sharedMaterial = hairCardMaterial;
         RefreshGroupListUI();
         return card;
     }
@@ -1280,37 +934,26 @@ public class ModelViewer : MonoBehaviour
     void HandleCameraControls()
     {
         if (Mouse.current == null) return;
-
         if (Mouse.current.rightButton.isPressed)
         {
             float mouseX = Mouse.current.delta.x.ReadValue() * 0.1f;
             float mouseY = Mouse.current.delta.y.ReadValue() * 0.1f;
-
             cameraPivot.Rotate(Vector3.up, mouseX * rotateSpeed, Space.World);
-
             pitch -= mouseY * rotateSpeed;
             pitch = Mathf.Clamp(pitch, -89f, 89f);
-
             cameraPivot.eulerAngles = new Vector3(pitch, cameraPivot.eulerAngles.y, 0f);
         }
-
         if (Mouse.current.middleButton.isPressed)
         {
             float mouseX = Mouse.current.delta.x.ReadValue() * 0.1f;
             float mouseY = Mouse.current.delta.y.ReadValue() * 0.1f;
-
             cameraPivot.Translate(Vector3.left * mouseX * panSpeed, Space.Self);
             cameraPivot.Translate(Vector3.down * mouseY * panSpeed, Space.Self);
         }
-
         float scroll = Mouse.current.scroll.y.ReadValue();
         if (scroll != 0.0f)
         {
-            if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
-            {
-                return;
-            }
-
+            if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
             mainCamera.transform.Translate(Vector3.forward * (scroll * 0.001f) * zoomSpeed, Space.Self);
         }
     }
@@ -1318,19 +961,15 @@ public class ModelViewer : MonoBehaviour
     public void SaveProject()
     {
 #if UNITY_EDITOR
-        // Native save panels block the Unity frame. In some editor/UI setups the
-        // same Button.onClick can be delivered again when the modal closes, which
-        // immediately opens a second dialog. Ignore duplicate save callbacks from
-        // the same frame while preserving normal subsequent Save clicks.
-        if (lastSaveDialogFrame == Time.frameCount) return;
-        lastSaveDialogFrame = Time.frameCount;
+        double now = EditorApplication.timeSinceStartup;
+        if (now < nextAllowedSaveDialogTime) return;
 
         string path = EditorUtility.SaveFilePanel("Save Hair Project", "", "HairProject", "json");
+        nextAllowedSaveDialogTime = EditorApplication.timeSinceStartup + 0.75;
         if (string.IsNullOrEmpty(path)) return;
 
         HairProjectSaveData saveData = new HairProjectSaveData();
         saveData.modelPath = currentModelPath;
-        
         saveData.sliderLength = currentLength;
         saveData.sliderWidth = currentWidth;
         saveData.sliderSegments = currentSegments;
@@ -1344,7 +983,6 @@ public class ModelViewer : MonoBehaviour
         saveData.sliderVScale = currentVScale;
         saveData.sliderUOffset = currentUOffset;
         saveData.sliderVOffset = currentVOffset;
-
         foreach (int id in allGroupIds)
         {
             GroupSaveData gData = new GroupSaveData();
@@ -1356,7 +994,6 @@ public class ModelViewer : MonoBehaviour
             gData.vOffset = groupVOffsets.ContainsKey(id) ? groupVOffsets[id] : 0.0f;
             saveData.groups.Add(gData);
         }
-
         HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
         foreach (var card in allCards)
         {
@@ -1364,12 +1001,10 @@ public class ModelViewer : MonoBehaviour
             cardData.posX = card.transform.position.x;
             cardData.posY = card.transform.position.y;
             cardData.posZ = card.transform.position.z;
-            
             cardData.rotX = card.transform.rotation.x;
             cardData.rotY = card.transform.rotation.y;
             cardData.rotZ = card.transform.rotation.z;
             cardData.rotW = card.transform.rotation.w;
-
             cardData.length = card.length;
             cardData.width = card.width;
             cardData.segments = card.segments;
@@ -1385,10 +1020,8 @@ public class ModelViewer : MonoBehaviour
             cardData.uOffset = card.uOffset;
             cardData.vOffset = card.vOffset;
             cardData.groupId = card.groupId;
-
             saveData.hairCards.Add(cardData);
         }
-
         string json = JsonUtility.ToJson(saveData, true);
         System.IO.File.WriteAllText(path, json);
         Debug.Log("Project saved successfully to: " + path);
@@ -1400,44 +1033,28 @@ public class ModelViewer : MonoBehaviour
 #if UNITY_EDITOR
         string path = EditorUtility.OpenFilePanel("Open Hair Project", "", "json");
         if (string.IsNullOrEmpty(path)) return;
-
         string json = System.IO.File.ReadAllText(path);
         HairProjectSaveData saveData = JsonUtility.FromJson<HairProjectSaveData>(json);
-
         if (!string.IsNullOrEmpty(saveData.modelPath))
         {
             currentModelPath = saveData.modelPath;
             if (loadedModel != null) Destroy(loadedModel);
-
             loadedModel = CustomOBJImporter.Load(currentModelPath);
             if (loadedModel != null)
             {
                 loadedModel.transform.position = Vector3.zero;
                 loadedModel.transform.eulerAngles = new Vector3(0f, 180f, 0f);
-
                 MeshRenderer[] renderers = loadedModel.GetComponentsInChildren<MeshRenderer>();
                 if (renderers.Length > 0)
                 {
                     Bounds combinedBounds = renderers[0].bounds;
-                    for (int i = 1; i < renderers.Length; i++)
-                    {
-                        combinedBounds.Encapsulate(renderers[i].bounds);
-                    }
-
-                    if (cameraPivot != null)
-                    {
-                        cameraPivot.position = combinedBounds.center;
-                    }
+                    for (int i = 1; i < renderers.Length; i++) combinedBounds.Encapsulate(renderers[i].bounds);
+                    if (cameraPivot != null) cameraPivot.position = combinedBounds.center;
                 }
             }
         }
-
         HairCard[] oldCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
-        foreach (var card in oldCards)
-        {
-            Destroy(card.gameObject);
-        }
-
+        foreach (var card in oldCards) Destroy(card.gameObject);
         currentLength = saveData.sliderLength;
         currentWidth = saveData.sliderWidth;
         currentSegments = saveData.sliderSegments;
@@ -1451,14 +1068,12 @@ public class ModelViewer : MonoBehaviour
         currentVScale = saveData.sliderVScale != 0 ? saveData.sliderVScale : 1.0f;
         currentUOffset = saveData.sliderUOffset;
         currentVOffset = saveData.sliderVOffset;
-
         allGroupIds.Clear();
         groupNames.Clear();
         groupUScales.Clear();
         groupVScales.Clear();
         groupUOffsets.Clear();
         groupVOffsets.Clear();
-
         foreach (var g in saveData.groups)
         {
             allGroupIds.Add(g.groupId);
@@ -1468,27 +1083,19 @@ public class ModelViewer : MonoBehaviour
             groupUOffsets[g.groupId] = g.uOffset;
             groupVOffsets[g.groupId] = g.vOffset;
         }
-
         foreach (var cData in saveData.hairCards)
         {
             GameObject cardGO = new GameObject("HairCard_Strip", typeof(MeshFilter), typeof(MeshRenderer), typeof(HairCard));
             HairCard card = cardGO.GetComponent<HairCard>();
-
             card.transform.position = new Vector3(cData.posX, cData.posY, cData.posZ);
             card.transform.rotation = new Quaternion(cData.rotX, cData.rotY, cData.rotZ, cData.rotW);
-            
             card.groupId = cData.groupId;
             float u = cData.uScale != 0 ? cData.uScale : 1.0f;
             float v = cData.vScale != 0 ? cData.vScale : 1.0f;
             card.SetParameters(cData.length, cData.width, cData.segments, cData.bendAngle, cData.twistAngle, cData.offsetX, cData.offsetY, cData.offsetZ, cData.embedDepth, 1f, u, v, cData.uOffset, cData.vOffset);
-
             MeshRenderer mr = cardGO.GetComponent<MeshRenderer>();
-            if (hairCardMaterial != null)
-            {
-                mr.sharedMaterial = hairCardMaterial;
-            }
+            if (hairCardMaterial != null) mr.sharedMaterial = hairCardMaterial;
         }
-
         if (uiContainer != null) uiContainer.SetActive(false);
         OnModelLoaded();
         if (activeSliderPanel == null) BuildRuntimeGroomingUI();
@@ -1502,14 +1109,7 @@ public class ModelViewer : MonoBehaviour
 public class CustomClickDetector : MonoBehaviour, IPointerClickHandler
 {
     public System.Action onRightClick;
-
-    public void OnPointerClick(PointerEventData eventData)
-    {
-        if (eventData.button == PointerEventData.InputButton.Right)
-        {
-            onRightClick?.Invoke();
-        }
-    }
+    public void OnPointerClick(PointerEventData eventData) { if (eventData.button == PointerEventData.InputButton.Right) onRightClick?.Invoke(); }
 }
 
 #if UNITY_EDITOR
@@ -1517,7 +1117,6 @@ public class EditorInputDialog : EditorWindow
 {
     private string inputString = "";
     private string description = "";
-
     public static string Show(string title, string desc, string defaultText)
     {
         EditorInputDialog window = CreateInstance<EditorInputDialog>();
@@ -1527,7 +1126,6 @@ public class EditorInputDialog : EditorWindow
         window.ShowModalUtility();
         return window.inputString;
     }
-
     void OnGUI()
     {
         EditorGUILayout.Space(10);
@@ -1535,17 +1133,9 @@ public class EditorInputDialog : EditorWindow
         EditorGUILayout.Space(5);
         inputString = EditorGUILayout.TextField(inputString);
         EditorGUILayout.Space(15);
-
         EditorGUILayout.BeginHorizontal();
-        if (GUILayout.Button("OK"))
-        {
-            Close();
-        }
-        if (GUILayout.Button("Cancel"))
-        {
-            inputString = "";
-            Close();
-        }
+        if (GUILayout.Button("OK")) Close();
+        if (GUILayout.Button("Cancel")) { inputString = ""; Close(); }
         EditorGUILayout.EndHorizontal();
     }
 }
