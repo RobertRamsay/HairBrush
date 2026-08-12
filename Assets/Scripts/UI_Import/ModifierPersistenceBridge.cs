@@ -7,6 +7,8 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
+// Current project-format modifier persistence only.
+// Projects created before this modifier stack are intentionally not supported here.
 public class ModifierPersistenceBridge : MonoBehaviour
 {
     private readonly Dictionary<int, int> clumpSeeds = new();
@@ -14,13 +16,6 @@ public class ModifierPersistenceBridge : MonoBehaviour
     private ClumpLayerManager clumpManager;
     private GroomVarianceController variance;
     private PostAffectorManager postAffectors;
-
-    private struct CardState
-    {
-        public HairCard card;
-        public float length, width, bend, twist, embed, ox, oy, oz, uScale, vScale, uOffset, vOffset;
-        public int segments;
-    }
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
@@ -37,35 +32,24 @@ public class ModifierPersistenceBridge : MonoBehaviour
         if (clumpManager == null) clumpManager = FindFirstObjectByType<ClumpLayerManager>();
         if (variance == null) variance = FindFirstObjectByType<GroomVarianceController>();
         if (postAffectors == null) postAffectors = FindFirstObjectByType<PostAffectorManager>();
-        SetNewLayerDefaultTo20();
         InstallClumpRandomButtons();
         TryRestorePendingProject();
     }
 
     void TryRestorePendingProject()
     {
-        var data = HairProjectSaveData.PendingModifierRestore;
+        HairProjectSaveData data = HairProjectSaveData.PendingModifierRestore;
         if (data == null || clumpManager == null || variance == null || postAffectors == null) return;
         int expected = data.hairCards != null ? data.hairCards.Count : 0;
         if (FindObjectsByType<HairCard>(FindObjectsSortMode.None).Length < expected) return;
 
         HairProjectSaveData.PendingModifierRestore = null;
         variance.ClearSavedSettings();
-        if (data.groups != null)
-            foreach (var g in data.groups) RestoreGroup(g);
-    }
+        postAffectors.ClearAll();
 
-    void SetNewLayerDefaultTo20()
-    {
-        if (clumpManager == null) return;
-        FieldInfo f = typeof(ClumpLayerManager).GetField("layers", BindingFlags.Instance | BindingFlags.NonPublic);
-        IDictionary d = f?.GetValue(clumpManager) as IDictionary;
-        if (d == null) return;
-        foreach (DictionaryEntry e in d)
-        {
-            var l = e.Value as ClumpLayerManager.ClumpLayer;
-            if (l != null && l.pointCount == 100 && l.points.Count == 0) l.pointCount = 20;
-        }
+        if (data.groups != null)
+            foreach (GroupSaveData g in data.groups)
+                RestoreGroup(g);
     }
 
     void InstallClumpRandomButtons()
@@ -83,7 +67,7 @@ public class ModifierPersistenceBridge : MonoBehaviour
             go.GetComponent<LayoutElement>().preferredHeight = 24;
             go.GetComponent<Image>().color = new Color(.27f, .34f, .20f);
 
-            var text = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI)).GetComponent<TextMeshProUGUI>();
+            TextMeshProUGUI text = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI)).GetComponent<TextMeshProUGUI>();
             text.transform.SetParent(go.transform, false);
             text.rectTransform.anchorMin = Vector2.zero;
             text.rectTransform.anchorMax = Vector2.one;
@@ -113,7 +97,7 @@ public class ModifierPersistenceBridge : MonoBehaviour
         MethodInfo get = typeof(ClumpLayerManager).GetMethod("GetOrCreateLayer", BindingFlags.Instance | BindingFlags.NonPublic);
         MethodInfo apply = typeof(ClumpLayerManager).GetMethod("ApplyLayer", BindingFlags.Instance | BindingFlags.NonPublic);
         MethodInfo refresh = typeof(ClumpLayerManager).GetMethod("RefreshGuideVisuals", BindingFlags.Instance | BindingFlags.NonPublic);
-        var layer = get?.Invoke(clumpManager, new object[] { groupId }) as ClumpLayerManager.ClumpLayer;
+        ClumpLayerManager.ClumpLayer layer = get?.Invoke(clumpManager, new object[] { groupId }) as ClumpLayerManager.ClumpLayer;
         if (layer == null) return;
 
         HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None).Where(c => c.groupId == groupId).ToArray();
@@ -138,7 +122,7 @@ public class ModifierPersistenceBridge : MonoBehaviour
                 .Cast<RaycastHit?>()
                 .FirstOrDefault();
             if (hit.HasValue) { p = hit.Value.point; n = hit.Value.normal.normalized; }
-            layer.points.Add(new ClumpLayerManager.ClumpPoint { position = p, normal = n, strength = 0 });
+            layer.points.Add(new ClumpLayerManager.ClumpPoint { position = p, normal = n, strength = 1f });
         }
         apply?.Invoke(clumpManager, new object[] { layer });
         refresh?.Invoke(clumpManager, new object[] { layer });
@@ -151,95 +135,56 @@ public class ModifierPersistenceBridge : MonoBehaviour
         if (clumpManager == null) return;
 
         MethodInfo get = typeof(ClumpLayerManager).GetMethod("GetOrCreateLayer", BindingFlags.Instance | BindingFlags.NonPublic);
-        var l = get?.Invoke(clumpManager, new object[] { g.groupId }) as ClumpLayerManager.ClumpLayer;
+        ClumpLayerManager.ClumpLayer l = get?.Invoke(clumpManager, new object[] { g.groupId }) as ClumpLayerManager.ClumpLayer;
         if (l == null) return;
 
-        var d = new ClumpLayerSaveData
+        ClumpLayerSaveData d = new ClumpLayerSaveData
         {
             enabled = l.enabled,
             pointCount = l.pointCount,
             generationSeed = GetClumpSeed(g.groupId),
             globalStrength = l.globalStrength,
             brushRadius = l.brushRadius,
-            brushStrength = l.brushStrength,
             brushFalloff = l.brushFalloff,
-            brushValue = l.brushValue,
             debugMode = (int)l.debugMode,
             curveEarly = l.curve.Evaluate(.25f),
             curveMid = l.curve.Evaluate(.65f),
-            curveTip = l.curve.Evaluate(1)
+            curveTip = l.curve.Evaluate(1f)
         };
-        foreach (var p in l.points)
-            d.points.Add(new ClumpPointSaveData { posX = p.position.x, posY = p.position.y, posZ = p.position.z, normalX = p.normal.x, normalY = p.normal.y, normalZ = p.normal.z, strength = p.strength });
+        foreach (ClumpLayerManager.ClumpPoint p in l.points)
+            d.points.Add(new ClumpPointSaveData { posX = p.position.x, posY = p.position.y, posZ = p.position.z, normalX = p.normal.x, normalY = p.normal.y, normalZ = p.normal.z, strength = 1f });
         g.clump = d;
     }
 
     public void RestoreGroup(GroupSaveData g)
     {
-        // HairCardSaveData stores the saved visible card state. Restore modifier controls,
-        // then put that exact upstream state back before POST and CLUMP evaluate.
-        List<CardState> savedCards = CaptureGroupCardState(g.groupId);
-        if (variance != null) variance.ImportGroupSettings(g.groupId, g.variances);
-        RestoreGroupCardState(savedCards);
+        // Current format: restore persistent modifier state and evaluate it once.
+        // There is no legacy "cards already contain baked variance" undo path.
+        if (variance != null)
+            variance.ImportGroupSettings(g.groupId, g.variances);
 
-        if (postAffectors != null) postAffectors.ImportGroup(g.groupId, g.postAffectors);
+        if (postAffectors != null)
+            postAffectors.ImportGroup(g.groupId, g.postAffectors);
 
         if (g.clump == null || clumpManager == null) return;
         MethodInfo get = typeof(ClumpLayerManager).GetMethod("GetOrCreateLayer", BindingFlags.Instance | BindingFlags.NonPublic);
         MethodInfo apply = typeof(ClumpLayerManager).GetMethod("ApplyLayer", BindingFlags.Instance | BindingFlags.NonPublic);
-        var l = get?.Invoke(clumpManager, new object[] { g.groupId }) as ClumpLayerManager.ClumpLayer;
+        ClumpLayerManager.ClumpLayer l = get?.Invoke(clumpManager, new object[] { g.groupId }) as ClumpLayerManager.ClumpLayer;
         if (l == null) return;
 
-        var d = g.clump;
+        ClumpLayerSaveData d = g.clump;
         l.enabled = d.enabled;
         l.pointCount = d.pointCount;
         l.globalStrength = d.globalStrength;
         l.brushRadius = d.brushRadius;
-        l.brushStrength = d.brushStrength;
         l.brushFalloff = d.brushFalloff;
-        l.brushValue = d.brushValue;
         l.debugMode = (ClumpLayerManager.DebugMode)d.debugMode;
         l.curve = new AnimationCurve(new Keyframe(0, 0), new Keyframe(.25f, d.curveEarly), new Keyframe(.65f, d.curveMid), new Keyframe(1, d.curveTip));
         l.points.Clear();
         if (d.points != null)
-            foreach (var p in d.points)
-                l.points.Add(new ClumpLayerManager.ClumpPoint { position = new Vector3(p.posX, p.posY, p.posZ), normal = new Vector3(p.normalX, p.normalY, p.normalZ), strength = p.strength });
+            foreach (ClumpPointSaveData p in d.points)
+                l.points.Add(new ClumpLayerManager.ClumpPoint { position = new Vector3(p.posX, p.posY, p.posZ), normal = new Vector3(p.normalX, p.normalY, p.normalZ), strength = 1f });
         SetClumpSeed(g.groupId, d.generationSeed);
         apply?.Invoke(clumpManager, new object[] { l });
-    }
-
-    List<CardState> CaptureGroupCardState(int groupId)
-    {
-        List<CardState> result = new();
-        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None).Where(c => c.groupId == groupId))
-        {
-            result.Add(new CardState
-            {
-                card = card,
-                length = card.length,
-                width = card.width,
-                segments = card.segments,
-                bend = card.bendAngle,
-                twist = card.twistAngle,
-                embed = card.GetEmbedDepth(),
-                ox = card.GetOffsetX(),
-                oy = card.GetOffsetY(),
-                oz = card.GetOffsetZ(),
-                uScale = card.uScale,
-                vScale = card.vScale,
-                uOffset = card.uOffset,
-                vOffset = card.vOffset
-            });
-        }
-        return result;
-    }
-
-    void RestoreGroupCardState(List<CardState> states)
-    {
-        foreach (CardState s in states)
-        {
-            if (s.card == null) continue;
-            s.card.SetParameters(s.length, s.width, s.segments, s.bend, s.twist, s.ox, s.oy, s.oz, s.embed, 1f, s.uScale, s.vScale, s.uOffset, s.vOffset);
-        }
     }
 }
