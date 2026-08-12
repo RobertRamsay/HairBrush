@@ -72,6 +72,7 @@ public class ModelViewer : MonoBehaviour
     private Coroutine flashGroupCoroutine;
     private float lastGroupClickTime = 0f;
     private int lastClickedGroupId = -1;
+    private int lastSaveDialogFrame = -1;
 
     [Header("Brush Settings")]
     public float brushRadius = 0.2f;
@@ -1317,6 +1318,13 @@ public class ModelViewer : MonoBehaviour
     public void SaveProject()
     {
 #if UNITY_EDITOR
+        // Native save panels block the Unity frame. In some editor/UI setups the
+        // same Button.onClick can be delivered again when the modal closes, which
+        // immediately opens a second dialog. Ignore duplicate save callbacks from
+        // the same frame while preserving normal subsequent Save clicks.
+        if (lastSaveDialogFrame == Time.frameCount) return;
+        lastSaveDialogFrame = Time.frameCount;
+
         string path = EditorUtility.SaveFilePanel("Save Hair Project", "", "HairProject", "json");
         if (string.IsNullOrEmpty(path)) return;
 
