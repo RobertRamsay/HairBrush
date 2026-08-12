@@ -9,9 +9,8 @@ using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
 // Ctrl+Click creates a persistent localized post-affector for the active group.
-// Evaluation order is intentionally: authored/group groom -> variance -> POST affectors -> clump.
-// HairCard.GenerateMesh evaluates its clump modifier after SetParameters, so applying POST here
-// in LateUpdate keeps the stack order visible in the group UI and in the resulting mesh.
+// Evaluation is deterministic: canonical/authored card state -> POST affectors -> HairCard mesh/clump.
+// Evaluated values are never fed back into canonical state.
 [DefaultExecutionOrder(3300)]
 public class PostAffectorManager : MonoBehaviour
 {
@@ -53,7 +52,6 @@ public class PostAffectorManager : MonoBehaviour
     private FieldInfo hitPointField;
     private FieldInfo hitNormalField;
     private FieldInfo strengthRowField;
-    private FieldInfo relativeModeField;
     private int nextId = 1;
     private int activeId = -1;
     private int activeGroup = -1;
@@ -74,6 +72,7 @@ public class PostAffectorManager : MonoBehaviour
         EnsureViewer();
         if (viewer == null) return;
 
+        DetectGroupRootSelection();
         DetectCtrlClick();
         MaintainActiveAuthoring();
 
@@ -89,7 +88,7 @@ public class PostAffectorManager : MonoBehaviour
     {
         EnsureViewer();
         if (viewer == null) return;
-        UpdateUpstreamBases();
+        UpdateCanonicalBases();
         ApplyAll();
     }
 
@@ -104,7 +103,19 @@ public class PostAffectorManager : MonoBehaviour
         hitPointField = t.GetField("selectionHitPoint", flags);
         hitNormalField = t.GetField("selectionHitNormal", flags);
         strengthRowField = t.GetField("strengthRowGO", flags);
-        relativeModeField = t.GetField("isRelativeMode", flags);
+    }
+
+    void DetectGroupRootSelection()
+    {
+        if (activeId < 0 || EventSystem.current == null) return;
+        GameObject selected = EventSystem.current.currentSelectedGameObject;
+        if (selected == null || selected.name != "LabelButton") return;
+        Transform item = selected.transform.parent;
+        if (item == null || !item.name.StartsWith("GroupItem_")) return;
+
+        activeId = -1;
+        activeGroup = -1;
+        SetField(hasSelectionField, false);
     }
 
     void DetectCtrlClick()
@@ -147,8 +158,8 @@ public class PostAffectorManager : MonoBehaviour
         {
             if (!cardStates.ContainsKey(card))
             {
-                ControlState current = ReadCard(card);
-                cardStates[card] = new CardState { baseState = current, lastFinal = current, hasFinal = false };
+                ControlState canonical = ReadCanonical(card);
+                cardStates[card] = new CardState { baseState = canonical, lastFinal = canonical, hasFinal = false };
             }
         }
 
@@ -180,35 +191,34 @@ public class PostAffectorManager : MonoBehaviour
         active.delta = Subtract(ReadControls(), active.baseline);
     }
 
-    void UpdateUpstreamBases()
+    // Canonical state is now the only upstream source of truth. While a POST is actively
+    // authored, ModelViewer's legacy selection path may still call SetParameters on cards;
+    // restore canonical immediately so those preview writes cannot pollute the group root.
+    void UpdateCanonicalBases()
     {
         bool editingPost = GetActive() != null && HasSelection();
-        bool relative = relativeModeField != null && relativeModeField.GetValue(viewer) is bool b && b;
 
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
         {
-            ControlState current = ReadCard(card);
             if (!cardStates.TryGetValue(card, out CardState state))
             {
-                state = new CardState { baseState = current, lastFinal = current, hasFinal = false };
+                ControlState canonical = ReadCanonical(card);
+                state = new CardState { baseState = canonical, lastFinal = canonical, hasFinal = false };
                 cardStates[card] = state;
-                continue;
             }
 
-            if (!state.hasFinal) continue;
-
-            // Ignore the legacy localized writes while a POST is being authored. Outside
-            // POST authoring, changed card data is the upstream groom/variance beneath us.
-            if (!editingPost && !Approximately(current, state.lastFinal))
+            if (editingPost)
             {
-                if (relative)
-                    state.baseState = Add(state.baseState, Subtract(current, state.lastFinal));
-                else
-                    state.baseState = current;
+                WriteCanonicalOnly(card, state.baseState);
+            }
+            else
+            {
+                state.baseState = ReadCanonical(card);
             }
         }
 
-        foreach (HairCard dead in cardStates.Keys.Where(c => c == null).ToArray()) cardStates.Remove(dead);
+        foreach (HairCard dead in cardStates.Keys.Where(c => c == null).ToArray())
+            cardStates.Remove(dead);
     }
 
     void ApplyAll()
@@ -217,8 +227,8 @@ public class PostAffectorManager : MonoBehaviour
         {
             if (!cardStates.TryGetValue(card, out CardState state))
             {
-                ControlState current = ReadCard(card);
-                state = new CardState { baseState = current, lastFinal = current };
+                ControlState canonical = ReadCanonical(card);
+                state = new CardState { baseState = canonical, lastFinal = canonical, hasFinal = false };
                 cardStates[card] = state;
             }
 
@@ -226,7 +236,7 @@ public class PostAffectorManager : MonoBehaviour
             if (groups.TryGetValue(card.groupId, out List<PostAffector> list))
                 result = Add(result, EffectForCard(card, list));
 
-            WriteCard(card, result);
+            WriteEvaluatedCard(card, result);
             state.lastFinal = result;
             state.hasFinal = true;
         }
@@ -255,15 +265,34 @@ public class PostAffectorManager : MonoBehaviour
         return Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(outer, radius, d));
     }
 
-    void WriteCard(HairCard card, ControlState s)
+    void WriteEvaluatedCard(HairCard card, ControlState s)
     {
-        float oldWeight = card.selectionWeight;
-        card.SetSelectionWeight(0f);
-        card.SetParameters(
-            Mathf.Max(.0005f, s.length), Mathf.Max(.0005f, s.width), Mathf.Clamp(Mathf.RoundToInt(s.segments), 4, 36),
-            s.bend, s.twist, s.x, s.y, s.z, Mathf.Max(0f, s.depth), 1f,
-            s.uScale, s.vScale, s.uOffset, s.vOffset);
-        card.SetSelectionWeight(oldWeight);
+        card.ApplyEvaluatedState(ToGroomState(s));
+    }
+
+    void WriteCanonicalOnly(HairCard card, ControlState s)
+    {
+        card.SetCanonicalState(ToGroomState(s), false);
+    }
+
+    HairCard.GroomState ToGroomState(ControlState s)
+    {
+        return new HairCard.GroomState
+        {
+            length = Mathf.Max(.0005f, s.length),
+            width = Mathf.Max(.0005f, s.width),
+            segments = Mathf.Clamp(Mathf.RoundToInt(s.segments), 4, 36),
+            bend = s.bend,
+            twist = s.twist,
+            depth = Mathf.Max(0f, s.depth),
+            x = s.x,
+            y = s.y,
+            z = s.z,
+            uScale = s.uScale,
+            vScale = s.vScale,
+            uOffset = s.uOffset,
+            vOffset = s.vOffset
+        };
     }
 
     void EnsureRowsAndOrder()
@@ -390,7 +419,10 @@ public class PostAffectorManager : MonoBehaviour
         go.GetComponent<Image>().color = new Color(.20f, .25f, .32f);
         TextMeshProUGUI t = AddText(go.transform, text, 10, width);
         RectTransform tr = t.rectTransform;
-        tr.anchorMin = Vector2.zero; tr.anchorMax = Vector2.one; tr.offsetMin = Vector2.zero; tr.offsetMax = Vector2.zero;
+        tr.anchorMin = Vector2.zero;
+        tr.anchorMax = Vector2.one;
+        tr.offsetMin = Vector2.zero;
+        tr.offsetMax = Vector2.zero;
         t.raycastTarget = false;
         return go;
     }
@@ -401,21 +433,62 @@ public class PostAffectorManager : MonoBehaviour
         go.transform.SetParent(parent, false);
         go.GetComponent<RectTransform>().sizeDelta = new Vector2(width, 25f);
         TextMeshProUGUI t = go.GetComponent<TextMeshProUGUI>();
-        t.text = text; t.fontSize = size; t.color = Color.white; t.alignment = TextAlignmentOptions.Center;
+        t.text = text;
+        t.fontSize = size;
+        t.color = Color.white;
+        t.alignment = TextAlignmentOptions.Center;
         return t;
     }
 
     Slider AddWeightSlider(Transform parent, float value, float width)
     {
         GameObject go = new GameObject("WeightSlider", typeof(RectTransform), typeof(Slider));
-        go.transform.SetParent(parent, false); go.GetComponent<RectTransform>().sizeDelta = new Vector2(width, 24f);
-        Slider s = go.GetComponent<Slider>(); s.minValue = 0f; s.maxValue = 1f; s.value = value;
-        GameObject bg = new GameObject("Background", typeof(RectTransform), typeof(Image)); bg.transform.SetParent(go.transform, false);
-        RectTransform br = bg.GetComponent<RectTransform>(); br.anchorMin = new Vector2(0,.42f); br.anchorMax = new Vector2(1,.58f); br.offsetMin = br.offsetMax = Vector2.zero; bg.GetComponent<Image>().color = new Color(.24f,.24f,.24f);
-        GameObject fillArea = new GameObject("Fill Area", typeof(RectTransform)); fillArea.transform.SetParent(go.transform,false); RectTransform far=fillArea.GetComponent<RectTransform>(); far.anchorMin=new Vector2(0,.35f);far.anchorMax=new Vector2(1,.65f);far.offsetMin=new Vector2(4,0);far.offsetMax=new Vector2(-4,0);
-        GameObject fill = new GameObject("Fill", typeof(RectTransform), typeof(Image)); fill.transform.SetParent(fillArea.transform,false); RectTransform fr=fill.GetComponent<RectTransform>();fr.anchorMin=Vector2.zero;fr.anchorMax=Vector2.one;fr.offsetMin=fr.offsetMax=Vector2.zero;fill.GetComponent<Image>().color=new Color(.28f,.58f,.95f);s.fillRect=fr;
-        GameObject ha=new GameObject("Handle Slide Area",typeof(RectTransform));ha.transform.SetParent(go.transform,false);RectTransform har=ha.GetComponent<RectTransform>();har.anchorMin=Vector2.zero;har.anchorMax=Vector2.one;har.offsetMin=new Vector2(5,0);har.offsetMax=new Vector2(-5,0);
-        GameObject h=new GameObject("Handle",typeof(RectTransform),typeof(Image));h.transform.SetParent(ha.transform,false);RectTransform hr=h.GetComponent<RectTransform>();hr.sizeDelta=new Vector2(9,16);h.GetComponent<Image>().color=Color.white;s.handleRect=hr;
+        go.transform.SetParent(parent, false);
+        go.GetComponent<RectTransform>().sizeDelta = new Vector2(width, 24f);
+        Slider s = go.GetComponent<Slider>();
+        s.minValue = 0f;
+        s.maxValue = 1f;
+        s.value = value;
+
+        GameObject bg = new GameObject("Background", typeof(RectTransform), typeof(Image));
+        bg.transform.SetParent(go.transform, false);
+        RectTransform br = bg.GetComponent<RectTransform>();
+        br.anchorMin = new Vector2(0, .42f);
+        br.anchorMax = new Vector2(1, .58f);
+        br.offsetMin = br.offsetMax = Vector2.zero;
+        bg.GetComponent<Image>().color = new Color(.24f, .24f, .24f);
+
+        GameObject fillArea = new GameObject("Fill Area", typeof(RectTransform));
+        fillArea.transform.SetParent(go.transform, false);
+        RectTransform far = fillArea.GetComponent<RectTransform>();
+        far.anchorMin = new Vector2(0, .35f);
+        far.anchorMax = new Vector2(1, .65f);
+        far.offsetMin = new Vector2(4, 0);
+        far.offsetMax = new Vector2(-4, 0);
+
+        GameObject fill = new GameObject("Fill", typeof(RectTransform), typeof(Image));
+        fill.transform.SetParent(fillArea.transform, false);
+        RectTransform fr = fill.GetComponent<RectTransform>();
+        fr.anchorMin = Vector2.zero;
+        fr.anchorMax = Vector2.one;
+        fr.offsetMin = fr.offsetMax = Vector2.zero;
+        fill.GetComponent<Image>().color = new Color(.28f, .58f, .95f);
+        s.fillRect = fr;
+
+        GameObject ha = new GameObject("Handle Slide Area", typeof(RectTransform));
+        ha.transform.SetParent(go.transform, false);
+        RectTransform har = ha.GetComponent<RectTransform>();
+        har.anchorMin = Vector2.zero;
+        har.anchorMax = Vector2.one;
+        har.offsetMin = new Vector2(5, 0);
+        har.offsetMax = new Vector2(-5, 0);
+
+        GameObject h = new GameObject("Handle", typeof(RectTransform), typeof(Image));
+        h.transform.SetParent(ha.transform, false);
+        RectTransform hr = h.GetComponent<RectTransform>();
+        hr.sizeDelta = new Vector2(9, 16);
+        h.GetComponent<Image>().color = Color.white;
+        s.handleRect = hr;
         return s;
     }
 
@@ -427,25 +500,102 @@ public class PostAffectorManager : MonoBehaviour
 
     ControlState ReadControls() => new ControlState
     {
-        length=viewer.currentLength,width=viewer.currentWidth,segments=viewer.currentSegments,bend=viewer.currentBend,twist=viewer.currentTwist,depth=viewer.currentEmbedDepth,
-        x=viewer.currentOffsetX,y=viewer.currentOffsetY,z=viewer.currentOffsetZ,uScale=viewer.currentUScale,vScale=viewer.currentVScale,uOffset=viewer.currentUOffset,vOffset=viewer.currentVOffset
+        length = viewer.currentLength,
+        width = viewer.currentWidth,
+        segments = viewer.currentSegments,
+        bend = viewer.currentBend,
+        twist = viewer.currentTwist,
+        depth = viewer.currentEmbedDepth,
+        x = viewer.currentOffsetX,
+        y = viewer.currentOffsetY,
+        z = viewer.currentOffsetZ,
+        uScale = viewer.currentUScale,
+        vScale = viewer.currentVScale,
+        uOffset = viewer.currentUOffset,
+        vOffset = viewer.currentVOffset
     };
+
+    ControlState ReadCanonical(HairCard c)
+    {
+        HairCard.GroomState s = c.GetCanonicalState();
+        return new ControlState
+        {
+            length = s.length,
+            width = s.width,
+            segments = s.segments,
+            bend = s.bend,
+            twist = s.twist,
+            depth = s.depth,
+            x = s.x,
+            y = s.y,
+            z = s.z,
+            uScale = s.uScale,
+            vScale = s.vScale,
+            uOffset = s.uOffset,
+            vOffset = s.vOffset
+        };
+    }
 
     ControlState ReadCard(HairCard c) => new ControlState
     {
-        length=c.length,width=c.width,segments=c.segments,bend=c.bendAngle,twist=c.twistAngle,depth=c.GetEmbedDepth(),x=c.GetOffsetX(),y=c.GetOffsetY(),z=c.GetOffsetZ(),uScale=c.uScale,vScale=c.vScale,uOffset=c.uOffset,vOffset=c.vOffset
+        length = c.length,
+        width = c.width,
+        segments = c.segments,
+        bend = c.bendAngle,
+        twist = c.twistAngle,
+        depth = c.GetEmbedDepth(),
+        x = c.GetOffsetX(),
+        y = c.GetOffsetY(),
+        z = c.GetOffsetZ(),
+        uScale = c.uScale,
+        vScale = c.vScale,
+        uOffset = c.uOffset,
+        vOffset = c.vOffset
     };
 
     void ApplyControls(ControlState s)
     {
-        viewer.currentLength=s.length;viewer.currentWidth=s.width;viewer.currentSegments=Mathf.RoundToInt(s.segments);viewer.currentBend=s.bend;viewer.currentTwist=s.twist;viewer.currentEmbedDepth=s.depth;
-        viewer.currentOffsetX=s.x;viewer.currentOffsetY=s.y;viewer.currentOffsetZ=s.z;viewer.currentUScale=s.uScale;viewer.currentVScale=s.vScale;viewer.currentUOffset=s.uOffset;viewer.currentVOffset=s.vOffset;
+        viewer.currentLength = s.length;
+        viewer.currentWidth = s.width;
+        viewer.currentSegments = Mathf.RoundToInt(s.segments);
+        viewer.currentBend = s.bend;
+        viewer.currentTwist = s.twist;
+        viewer.currentEmbedDepth = s.depth;
+        viewer.currentOffsetX = s.x;
+        viewer.currentOffsetY = s.y;
+        viewer.currentOffsetZ = s.z;
+        viewer.currentUScale = s.uScale;
+        viewer.currentVScale = s.vScale;
+        viewer.currentUOffset = s.uOffset;
+        viewer.currentVOffset = s.vOffset;
     }
 
-    static ControlState Add(ControlState a, ControlState b) => new ControlState{length=a.length+b.length,width=a.width+b.width,segments=a.segments+b.segments,bend=a.bend+b.bend,twist=a.twist+b.twist,depth=a.depth+b.depth,x=a.x+b.x,y=a.y+b.y,z=a.z+b.z,uScale=a.uScale+b.uScale,vScale=a.vScale+b.vScale,uOffset=a.uOffset+b.uOffset,vOffset=a.vOffset+b.vOffset};
-    static ControlState Subtract(ControlState a, ControlState b) => new ControlState{length=a.length-b.length,width=a.width-b.width,segments=a.segments-b.segments,bend=a.bend-b.bend,twist=a.twist-b.twist,depth=a.depth-b.depth,x=a.x-b.x,y=a.y-b.y,z=a.z-b.z,uScale=a.uScale-b.uScale,vScale=a.vScale-b.vScale,uOffset=a.uOffset-b.uOffset,vOffset=a.vOffset-b.vOffset};
-    static ControlState Scale(ControlState a,float s)=>new ControlState{length=a.length*s,width=a.width*s,segments=a.segments*s,bend=a.bend*s,twist=a.twist*s,depth=a.depth*s,x=a.x*s,y=a.y*s,z=a.z*s,uScale=a.uScale*s,vScale=a.vScale*s,uOffset=a.uOffset*s,vOffset=a.vOffset*s};
-    static bool Approximately(ControlState a, ControlState b)=>Mathf.Approximately(a.length,b.length)&&Mathf.Approximately(a.width,b.width)&&Mathf.Approximately(a.segments,b.segments)&&Mathf.Approximately(a.bend,b.bend)&&Mathf.Approximately(a.twist,b.twist)&&Mathf.Approximately(a.depth,b.depth)&&Mathf.Approximately(a.x,b.x)&&Mathf.Approximately(a.y,b.y)&&Mathf.Approximately(a.z,b.z)&&Mathf.Approximately(a.uScale,b.uScale)&&Mathf.Approximately(a.vScale,b.vScale)&&Mathf.Approximately(a.uOffset,b.uOffset)&&Mathf.Approximately(a.vOffset,b.vOffset);
+    static ControlState Add(ControlState a, ControlState b) => new ControlState
+    {
+        length = a.length + b.length, width = a.width + b.width, segments = a.segments + b.segments,
+        bend = a.bend + b.bend, twist = a.twist + b.twist, depth = a.depth + b.depth,
+        x = a.x + b.x, y = a.y + b.y, z = a.z + b.z,
+        uScale = a.uScale + b.uScale, vScale = a.vScale + b.vScale,
+        uOffset = a.uOffset + b.uOffset, vOffset = a.vOffset + b.vOffset
+    };
+
+    static ControlState Subtract(ControlState a, ControlState b) => new ControlState
+    {
+        length = a.length - b.length, width = a.width - b.width, segments = a.segments - b.segments,
+        bend = a.bend - b.bend, twist = a.twist - b.twist, depth = a.depth - b.depth,
+        x = a.x - b.x, y = a.y - b.y, z = a.z - b.z,
+        uScale = a.uScale - b.uScale, vScale = a.vScale - b.vScale,
+        uOffset = a.uOffset - b.uOffset, vOffset = a.vOffset - b.vOffset
+    };
+
+    static ControlState Scale(ControlState a, float s) => new ControlState
+    {
+        length = a.length * s, width = a.width * s, segments = a.segments * s,
+        bend = a.bend * s, twist = a.twist * s, depth = a.depth * s,
+        x = a.x * s, y = a.y * s, z = a.z * s,
+        uScale = a.uScale * s, vScale = a.vScale * s,
+        uOffset = a.uOffset * s, vOffset = a.vOffset * s
+    };
 
     public List<PostAffectorSaveData> ExportGroup(int groupId)
     {
@@ -455,8 +605,11 @@ public class PostAffectorManager : MonoBehaviour
         {
             result.Add(new PostAffectorSaveData
             {
-                id=a.id,centerX=a.center.x,centerY=a.center.y,centerZ=a.center.z,normalX=a.normal.x,normalY=a.normal.y,normalZ=a.normal.z,radius=a.radius,falloff=a.falloff,weight=a.weight,
-                baseline=ToSave(a.baseline),delta=ToSave(a.delta)
+                id = a.id,
+                centerX = a.center.x, centerY = a.center.y, centerZ = a.center.z,
+                normalX = a.normal.x, normalY = a.normal.y, normalZ = a.normal.z,
+                radius = a.radius, falloff = a.falloff, weight = a.weight,
+                baseline = ToSave(a.baseline), delta = ToSave(a.delta)
             });
         }
         return result;
@@ -477,33 +630,56 @@ public class PostAffectorManager : MonoBehaviour
     public void ImportGroup(int groupId, List<PostAffectorSaveData> data)
     {
         groups.Remove(groupId);
-        if (data == null || data.Count == 0) { RebuildGroupRows(groupId); return; }
+        if (data == null || data.Count == 0)
+        {
+            RebuildGroupRows(groupId);
+            return;
+        }
 
         List<PostAffector> list = new List<PostAffector>();
         foreach (PostAffectorSaveData d in data)
         {
             PostAffector a = new PostAffector
             {
-                id=d.id,groupId=groupId,center=new Vector3(d.centerX,d.centerY,d.centerZ),normal=new Vector3(d.normalX,d.normalY,d.normalZ),
-                radius=d.radius,falloff=d.falloff,weight=d.weight,baseline=FromSave(d.baseline),delta=FromSave(d.delta)
+                id = d.id,
+                groupId = groupId,
+                center = new Vector3(d.centerX, d.centerY, d.centerZ),
+                normal = new Vector3(d.normalX, d.normalY, d.normalZ),
+                radius = d.radius,
+                falloff = d.falloff,
+                weight = d.weight,
+                baseline = FromSave(d.baseline),
+                delta = FromSave(d.delta)
             };
             list.Add(a);
             nextId = Mathf.Max(nextId, a.id + 1);
         }
         groups[groupId] = list;
 
-        // HairCardSaveData contains the final visible card values, including POST output.
-        // Recover the upstream value by subtracting the restored POST stack once, so the
-        // first evaluation reproduces exactly what was saved instead of double-applying it.
+        // Existing project files store the visible/evaluated card state. Recover canonical
+        // upstream state once on import, then persist that recovered value in HairCard so
+        // subsequent root edits start from the correct base instead of double-applying POST.
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None).Where(c => c.groupId == groupId))
         {
             ControlState final = ReadCard(card);
             ControlState upstream = Subtract(final, EffectForCard(card, list));
+            WriteCanonicalOnly(card, upstream);
             cardStates[card] = new CardState { baseState = upstream, lastFinal = final, hasFinal = true };
         }
         RebuildGroupRows(groupId);
     }
 
-    static PostAffectorControlSaveData ToSave(ControlState s)=>new PostAffectorControlSaveData{length=s.length,width=s.width,segments=s.segments,bend=s.bend,twist=s.twist,depth=s.depth,x=s.x,y=s.y,z=s.z,uScale=s.uScale,vScale=s.vScale,uOffset=s.uOffset,vOffset=s.vOffset};
-    static ControlState FromSave(PostAffectorControlSaveData s)=>s==null?new ControlState():new ControlState{length=s.length,width=s.width,segments=s.segments,bend=s.bend,twist=s.twist,depth=s.depth,x=s.x,y=s.y,z=s.z,uScale=s.uScale,vScale=s.vScale,uOffset=s.uOffset,vOffset=s.vOffset};
+    static PostAffectorControlSaveData ToSave(ControlState s) => new PostAffectorControlSaveData
+    {
+        length = s.length, width = s.width, segments = s.segments, bend = s.bend, twist = s.twist,
+        depth = s.depth, x = s.x, y = s.y, z = s.z,
+        uScale = s.uScale, vScale = s.vScale, uOffset = s.uOffset, vOffset = s.vOffset
+    };
+
+    static ControlState FromSave(PostAffectorControlSaveData s) => s == null ? new ControlState() : new ControlState
+    {
+        length = s.length, width = s.width, segments = s.segments, bend = s.bend, twist = s.twist,
+        depth = s.depth, x = s.x, y = s.y, z = s.z,
+        uScale = s.uScale, vScale = s.vScale, uOffset = s.uOffset, vOffset = s.vOffset
+    };
 }
