@@ -30,7 +30,6 @@ public class ModifierCoreLock : MonoBehaviour
     private FieldInfo clumpLayersField;
     private GameObject boundPanel;
     private GameObject lockNotice;
-    private bool? lastLocked;
     private int lastGroup = int.MinValue;
     private float nextScan;
 
@@ -54,7 +53,6 @@ public class ModifierCoreLock : MonoBehaviour
         if (boundPanel != viewer.groomingSliderPanelGO)
         {
             boundPanel = viewer.groomingSliderPanelGO;
-            lastLocked = null;
             EnsureNotice();
         }
 
@@ -63,12 +61,11 @@ public class ModifierCoreLock : MonoBehaviour
         bool hasModifiers = GroupHasPost(groupId) || GroupHasVariance(groupId) || GroupHasEnabledClump(groupId);
         bool locked = hasModifiers && !editingPost;
 
-        if (lastLocked != locked || lastGroup != groupId)
-        {
-            ApplyLock(locked);
-            lastLocked = locked;
-            lastGroup = groupId;
-        }
+        // Do not cache the applied UI state. Runtime rows are rebuilt/destroyed by several
+        // modifier managers, so a slider that was locked can otherwise survive a modifier
+        // removal/rebuild without ever receiving the unlock state.
+        ApplyLock(locked);
+        lastGroup = groupId;
     }
 
     void ResolveReferences()
@@ -100,7 +97,13 @@ public class ModifierCoreLock : MonoBehaviour
         try
         {
             List<PostAffectorSaveData> items = postManager.ExportGroup(groupId);
-            return items != null && items.Count > 0;
+            if (items == null || items.Count == 0) return false;
+
+            // The runtime UI row is the authoritative signal that the POST still exists.
+            // This prevents stale manager data from keeping the core locked after the user
+            // has removed the visible modifier.
+            RectTransform[] rows = FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            return rows.Any(r => r != null && r.name.StartsWith("PostAffector_" + groupId + "_", StringComparison.Ordinal));
         }
         catch { return false; }
     }
@@ -175,14 +178,13 @@ public class ModifierCoreLock : MonoBehaviour
         le.minHeight = 34f;
 
         TextMeshProUGUI text = lockNotice.GetComponent<TextMeshProUGUI>();
-        text.text = "CORE LOCKED — remove modifiers to edit base groom";
+        text.text = "CORE LOCKED — disable/remove modifiers to edit base groom";
         text.fontSize = 13f;
         text.fontStyle = FontStyles.Bold;
         text.alignment = TextAlignmentOptions.Center;
         text.color = new Color(1f, 0.72f, 0.28f, 1f);
         text.raycastTarget = false;
 
-        // Put the warning directly below the top control rows, before the groom sliders.
         int targetIndex = Mathf.Min(2, boundPanel.transform.childCount - 1);
         lockNotice.transform.SetSiblingIndex(targetIndex);
         lockNotice.SetActive(false);
