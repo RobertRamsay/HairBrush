@@ -187,29 +187,33 @@ public class GroupPredeterminedUVController : MonoBehaviour
         GroupUVSettings settings = GetSettings(viewer.currentGroupId);
         List<UVRectSaveData> rects = GetAllRects();
         bool haveRects = rects.Count > 0;
-        bool groupLocked = GroupHasPost(viewer.currentGroupId);
+        bool editingPost = IsEditingPost();
 
         modeButtonText.text = settings.predetermined ? "PREDETERMINED" : "ADJUSTABLE";
         rectStatusText.text = haveRects ? rects.Count + " UV RECTS" : "NO UV RECTS";
-        modeButton.interactable = !groupLocked && (haveRects || settings.predetermined);
+
+        // UV source/range is group routing metadata, not an authored groom slider. Keep it
+        // editable at the group root even when downstream POST modifiers exist. Only disable
+        // it while actively inside a POST-local edit context.
+        modeButton.interactable = !editingPost && (haveRects || settings.predetermined);
 
         if (minInput != null)
         {
             if (minInput.text != settings.minId.ToString()) minInput.SetTextWithoutNotify(settings.minId.ToString());
-            minInput.interactable = settings.predetermined && haveRects && !groupLocked;
+            minInput.interactable = settings.predetermined && haveRects && !editingPost;
         }
         if (maxInput != null)
         {
             if (maxInput.text != settings.maxId.ToString()) maxInput.SetTextWithoutNotify(settings.maxId.ToString());
-            maxInput.interactable = settings.predetermined && haveRects && !groupLocked;
+            maxInput.interactable = settings.predetermined && haveRects && !editingPost;
         }
         if (seedInput != null)
         {
             if (seedInput.text != settings.seed.ToString()) seedInput.SetTextWithoutNotify(settings.seed.ToString());
-            seedInput.interactable = settings.predetermined && haveRects && !groupLocked;
+            seedInput.interactable = settings.predetermined && haveRects && !editingPost;
         }
         if (randomButton != null)
-            randomButton.interactable = settings.predetermined && haveRects && !groupLocked;
+            randomButton.interactable = settings.predetermined && haveRects && !editingPost;
 
         // PREDETERMINED is intentionally a complete base-UV source: no hidden group scale/
         // offset survives underneath it. POST editing also cannot change those base UVs.
@@ -349,7 +353,7 @@ public class GroupPredeterminedUVController : MonoBehaviour
 
     void ToggleMode(int groupId)
     {
-        if (GroupHasPost(groupId)) return;
+        if (IsEditingPost()) return;
 
         GroupUVSettings settings = GetSettings(groupId);
         if (!settings.predetermined)
@@ -386,7 +390,7 @@ public class GroupPredeterminedUVController : MonoBehaviour
 
     void SetRangeValue(int groupId, bool isMin, string value)
     {
-        if (GroupHasPost(groupId)) return;
+        if (IsEditingPost()) return;
         GroupUVSettings settings = GetSettings(groupId);
         if (!int.TryParse(value, out int parsed)) parsed = isMin ? settings.minId : settings.maxId;
         if (isMin) settings.minId = parsed;
@@ -399,7 +403,7 @@ public class GroupPredeterminedUVController : MonoBehaviour
 
     void SetSeed(int groupId, string value)
     {
-        if (GroupHasPost(groupId)) return;
+        if (IsEditingPost()) return;
         GroupUVSettings settings = GetSettings(groupId);
         if (!int.TryParse(value, out int parsed)) parsed = 0;
         settings.seed = parsed;
@@ -410,7 +414,7 @@ public class GroupPredeterminedUVController : MonoBehaviour
 
     void RandomizeSeed(int groupId)
     {
-        if (GroupHasPost(groupId)) return;
+        if (IsEditingPost()) return;
         GroupUVSettings settings = GetSettings(groupId);
         settings.seed = UnityEngine.Random.Range(0, 1000000);
         ClearAppliedForGroup(groupId);
