@@ -314,8 +314,13 @@ public class HairCard : MonoBehaviour
             float baseURight = uScale < 0f ? 0f : 1f;
             float finalULeft = baseULeft * Mathf.Abs(uScale) + uOffset;
             float finalURight = baseURight * Mathf.Abs(uScale) + uOffset;
-            float baseV = t * Mathf.Abs(vScale);
-            if (vScale < 0f) baseV = Mathf.Abs(vScale) - baseV;
+
+            // Hair textures are authored root-at-top / tip-at-bottom. In Unity UV space
+            // the top of the texture is V=1, so the card's native (+V scale) mapping is
+            // root V=1 -> tip V=0. A negative V scale remains an intentional vertical flip.
+            float absVScale = Mathf.Abs(vScale);
+            float baseV = (1f - t) * absVScale;
+            if (vScale < 0f) baseV = absVScale - baseV;
             float finalV = baseV + vOffset;
             int index = i * 2;
             float currentWidth = halfWidth * flattenFactor;
