@@ -101,6 +101,10 @@ public class PostVarianceAffectorBridge : MonoBehaviour
         Dictionary<int, List<PostAffectorManager.PostAffector>> groups = GetGroups();
         if (groups == null || groups.Count == 0) return;
 
+        // PostAffectorManager has already evaluated canonical -> POST for this frame.
+        // Local variance is a final evaluated-only layer. Never call SetParameters here:
+        // that is an authored/root write and would feed the variance back into canonical,
+        // causing the same delta to accumulate again on every frame.
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
         {
             if (!groups.TryGetValue(card.groupId, out List<PostAffectorManager.PostAffector> list)) continue;
@@ -124,14 +128,23 @@ public class PostVarianceAffectorBridge : MonoBehaviour
             if (Mathf.Abs(dLength) + Mathf.Abs(dWidth) + Mathf.Abs(dBend) + Mathf.Abs(dTwist) + Mathf.Abs(dX) + Mathf.Abs(dY) + Mathf.Abs(dZ) <= .000001f)
                 continue;
 
-            float oldSelection = card.selectionWeight;
-            card.SetSelectionWeight(0f);
-            card.SetParameters(
-                Mathf.Max(.0005f, card.length + dLength), Mathf.Max(.0005f, card.width + dWidth), card.segments,
-                card.bendAngle + dBend, card.twistAngle + dTwist,
-                NormalizeAngle(card.GetOffsetX() + dX), NormalizeAngle(card.GetOffsetY() + dY), NormalizeAngle(card.GetOffsetZ() + dZ),
-                card.GetEmbedDepth(), 1f, card.uScale, card.vScale, card.uOffset, card.vOffset);
-            card.SetSelectionWeight(oldSelection);
+            HairCard.GroomState evaluated = new HairCard.GroomState
+            {
+                length = Mathf.Max(.0005f, card.length + dLength),
+                width = Mathf.Max(.0005f, card.width + dWidth),
+                segments = card.segments,
+                bend = card.bendAngle + dBend,
+                twist = card.twistAngle + dTwist,
+                depth = card.GetEmbedDepth(),
+                x = NormalizeAngle(card.GetOffsetX() + dX),
+                y = NormalizeAngle(card.GetOffsetY() + dY),
+                z = NormalizeAngle(card.GetOffsetZ() + dZ),
+                uScale = card.uScale,
+                vScale = card.vScale,
+                uOffset = card.uOffset,
+                vOffset = card.vOffset
+            };
+            card.ApplyEvaluatedState(evaluated);
         }
     }
 
