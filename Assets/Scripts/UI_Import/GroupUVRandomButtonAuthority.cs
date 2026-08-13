@@ -97,7 +97,14 @@ public class GroupUVRandomButtonAuthority : MonoBehaviour
                 spacer = spacerGO.transform;
             }
             SetLayout(spacer.gameObject, 20f, 30f);
-            spacer.SetSiblingIndex(seedLabel.transform.GetSiblingIndex());
+
+            int spacerIndex = spacer.GetSiblingIndex();
+            int labelIndex = seedLabel.transform.GetSiblingIndex();
+            if (spacerIndex + 1 != labelIndex)
+            {
+                int target = spacerIndex < labelIndex ? labelIndex - 1 : labelIndex;
+                spacer.SetSiblingIndex(Mathf.Max(0, target));
+            }
         }
     }
 
