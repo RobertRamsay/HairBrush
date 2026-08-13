@@ -1,7 +1,6 @@
 using System.Reflection;
 using TMPro;
 using UnityEngine;
-using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 // Gives the group UV source selector one unambiguous interaction surface.
@@ -77,21 +76,12 @@ public class GroupUVModeInteractionFix : MonoBehaviour
         rowButton.onClick.RemoveAllListeners();
         rowButton.onClick.AddListener(ToggleCurrentGroup);
 
-        if (sourceButton != null)
-        {
-            // The parent row is the single click authority. Leaving the nested button active
-            // can consume the pointer event before it bubbles to the row.
-            sourceButton.interactable = false;
-            Image sourceImage = sourceButton.GetComponent<Image>();
-            if (sourceImage != null) sourceImage.raycastTarget = false;
-            foreach (Graphic graphic in sourceButton.GetComponentsInChildren<Graphic>(true))
-                graphic.raycastTarget = false;
-        }
-
         CanvasGroup cg = boundRow.GetComponent<CanvasGroup>();
         if (cg == null) cg = boundRow.AddComponent<CanvasGroup>();
         cg.blocksRaycasts = true;
         cg.interactable = true;
+
+        DisableNestedHitTarget();
     }
 
     void ToggleCurrentGroup()
@@ -109,9 +99,10 @@ public class GroupUVModeInteractionFix : MonoBehaviour
     {
         if (boundRow == null || rowButton == null || sourceText == null) return;
 
-        // The controller remains authoritative for whether a predetermined source is actually
-        // available. If it has disabled its nested button because there are no authored rects,
-        // preserve that rule at the row level.
+        // The main controller refreshes its nested button every few frames, so make the row
+        // the sole click authority every pass instead of only when the row is first bound.
+        DisableNestedHitTarget();
+
         bool haveRects = HasAuthoredRects();
         rowButton.interactable = haveRects;
 
@@ -125,9 +116,22 @@ public class GroupUVModeInteractionFix : MonoBehaviour
                 : new Color(.11f, .13f, .16f, .98f);
     }
 
+    void DisableNestedHitTarget()
+    {
+        if (sourceButton == null) return;
+
+        sourceButton.interactable = false;
+        Image sourceImage = sourceButton.GetComponent<Image>();
+        if (sourceImage != null) sourceImage.raycastTarget = false;
+        foreach (Graphic graphic in sourceButton.GetComponentsInChildren<Graphic>(true))
+            graphic.raycastTarget = false;
+    }
+
     bool HasAuthoredRects()
     {
         TextureUVRectWorkspace workspace = FindFirstObjectByType<TextureUVRectWorkspace>();
-        return workspace != null && workspace.ExportDefinitions() != null && workspace.ExportDefinitions().Count > 0;
+        if (workspace == null) return false;
+        var rects = workspace.ExportDefinitions();
+        return rects != null && rects.Count > 0;
     }
 }
