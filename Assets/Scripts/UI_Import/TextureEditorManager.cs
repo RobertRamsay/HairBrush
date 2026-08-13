@@ -6,6 +6,8 @@ public class TextureEditorManager : MonoBehaviour
 {
     private GameObject textureSliderPanelGO;
     private GameObject texturePreviewPlane;
+    private Material sourceHairCardMaterial;
+    private Material generatedHairMaterial;
     private Material hairCardMaterial;
     private Texture2D generatedHairTexture;
 
@@ -23,7 +25,36 @@ public class TextureEditorManager : MonoBehaviour
 
     public void Init(Material mat)
     {
-        hairCardMaterial = mat;
+        sourceHairCardMaterial = mat;
+
+        if (generatedHairMaterial != null)
+            Destroy(generatedHairMaterial);
+
+        if (sourceHairCardMaterial != null)
+        {
+            generatedHairMaterial = new Material(sourceHairCardMaterial);
+            generatedHairMaterial.name = sourceHairCardMaterial.name + "_Generated_Runtime";
+            hairCardMaterial = generatedHairMaterial;
+
+            // ModelViewer should use the runtime clone for procedural cards.
+            // The source HairCard material and its original texture remain untouched.
+            ModelViewer viewer = GetComponent<ModelViewer>();
+            if (viewer != null)
+                viewer.hairCardMaterial = generatedHairMaterial;
+        }
+        else
+        {
+            hairCardMaterial = null;
+        }
+    }
+
+    private void OnDestroy()
+    {
+        if (generatedHairTexture != null)
+            Destroy(generatedHairTexture);
+
+        if (generatedHairMaterial != null)
+            Destroy(generatedHairMaterial);
     }
 
     public void SetPanelActive(bool active, Transform parentCanvas, System.Action onSwitchToGroom)
@@ -153,21 +184,20 @@ public class TextureEditorManager : MonoBehaviour
 
     private void ApplyGeneratedTextureToHairMaterial()
     {
-        if (hairCardMaterial == null || generatedHairTexture == null)
+        if (generatedHairMaterial == null || generatedHairTexture == null)
             return;
 
-        if (hairCardMaterial.HasProperty("_BaseMap"))
-            hairCardMaterial.SetTexture("_BaseMap", generatedHairTexture);
+        if (generatedHairMaterial.HasProperty("_BaseMap"))
+            generatedHairMaterial.SetTexture("_BaseMap", generatedHairTexture);
 
-        if (hairCardMaterial.HasProperty("_MainTex"))
-            hairCardMaterial.SetTexture("_MainTex", generatedHairTexture);
+        if (generatedHairMaterial.HasProperty("_MainTex"))
+            generatedHairMaterial.SetTexture("_MainTex", generatedHairTexture);
 
-        // Preview and all existing cards using this shared material now show the generated texture.
         if (texturePreviewPlane != null)
         {
             MeshRenderer mr = texturePreviewPlane.GetComponent<MeshRenderer>();
             if (mr != null)
-                mr.sharedMaterial = hairCardMaterial;
+                mr.sharedMaterial = generatedHairMaterial;
         }
     }
 
