@@ -7,10 +7,11 @@ using UnityEngine;
 using UnityEngine.UI;
 
 // Group-level UV source selector.
-// ADJUSTABLE keeps the existing U/V Scale + Offset root controls.
+// ADJUSTABLE uses the existing U/V Scale + Offset controls.
 // PREDETERMINED maps each card to one authored Texture Editor UV rectangle, chosen
-// deterministically from the group's inclusive rect-ID range and seed. The chosen rect
-// becomes canonical/base UV state, so POST-local UV edits may still operate downstream.
+// deterministically from the group's inclusive rect-ID range and seed.
+// The source selector belongs to the right grooming/modifier panel; the left group list
+// remains navigation only.
 [DefaultExecutionOrder(6000)]
 public class GroupPredeterminedUVController : MonoBehaviour
 {
@@ -23,19 +24,7 @@ public class GroupPredeterminedUVController : MonoBehaviour
         public int seed;
     }
 
-    private class RowUI
-    {
-        public GameObject root;
-        public Button modeButton;
-        public TextMeshProUGUI modeText;
-        public TMP_InputField minInput;
-        public TMP_InputField maxInput;
-        public TMP_InputField seedInput;
-        public Button randomButton;
-    }
-
     private readonly Dictionary<int, GroupUVSettings> settingsByGroup = new();
-    private readonly Dictionary<int, RowUI> rowsByGroup = new();
     private readonly Dictionary<int, int> appliedSignatureByCard = new();
 
     private ModelViewer viewer;
@@ -47,6 +36,21 @@ public class GroupPredeterminedUVController : MonoBehaviour
     private FieldInfo groupVScalesField;
     private FieldInfo groupUOffsetsField;
     private FieldInfo groupVOffsetsField;
+
+    private GameObject boundPanel;
+    private GameObject modeRow;
+    private Button modeButton;
+    private TextMeshProUGUI modeButtonText;
+    private TextMeshProUGUI rectStatusText;
+    private GameObject predeterminedRow;
+    private TMP_InputField minInput;
+    private TMP_InputField maxInput;
+    private TMP_InputField seedInput;
+    private Button randomButton;
+    private GameObject uScaleRow;
+    private GameObject vScaleRow;
+    private GameObject uOffsetRow;
+    private GameObject vOffsetRow;
 
     private float nextUIScan;
     private float nextApplyScan;
@@ -69,8 +73,9 @@ public class GroupPredeterminedUVController : MonoBehaviour
 
         if (Time.unscaledTime >= nextUIScan)
         {
-            nextUIScan = Time.unscaledTime + .08f;
-            MaintainGroupRows();
+            nextUIScan = Time.unscaledTime + .06f;
+            MaintainRightPanelUI();
+            RemoveLegacyLeftRows();
         }
 
         if (Time.unscaledTime >= nextApplyScan)
@@ -78,8 +83,6 @@ public class GroupPredeterminedUVController : MonoBehaviour
             nextApplyScan = Time.unscaledTime + .10f;
             ApplyPredeterminedAssignments();
         }
-
-        MaintainRootUVLock();
     }
 
     void Resolve()
@@ -133,12 +136,9 @@ public class GroupPredeterminedUVController : MonoBehaviour
     {
         settingsByGroup.Clear();
         appliedSignatureByCard.Clear();
-
-        foreach (RowUI row in rowsByGroup.Values)
-            if (row != null && row.root != null) Destroy(row.root);
-        rowsByGroup.Clear();
         nextUIScan = 0f;
         nextApplyScan = 0f;
+        if (viewer != null) MaintainRightPanelUI();
     }
 
     void RestorePendingProject()
@@ -146,9 +146,8 @@ public class GroupPredeterminedUVController : MonoBehaviour
         HairProjectSaveData pending = HairProjectSaveData.PendingGroupUVRestore;
         if (pending == null) return;
 
-        // Texture rectangle definitions restore in the dedicated texture workspace later in
-        // execution order. Wait until that handoff has completed before applying any ranges,
-        // otherwise a newly loaded project could briefly use the previous project's rectangles.
+        // Rectangle definitions restore in the texture workspace first. Do not apply group
+        // ranges against a previous project's rectangle set during the model-load handoff.
         if (HairProjectSaveData.PendingUVRectRestore != null) return;
 
         int expectedCards = pending.hairCards != null ? pending.hairCards.Count : 0;
@@ -177,128 +176,181 @@ public class GroupPredeterminedUVController : MonoBehaviour
         ApplyPredeterminedAssignments();
     }
 
-    void MaintainGroupRows()
+    void MaintainRightPanelUI()
     {
-        RectTransform[] all = FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-        HashSet<int> liveGroups = new();
+        if (viewer == null || viewer.groomingSliderPanelGO == null) return;
 
-        foreach (RectTransform groupItem in all)
+        if (boundPanel != viewer.groomingSliderPanelGO || modeRow == null)
+            BindRightPanel(viewer.groomingSliderPanelGO);
+        if (modeRow == null) return;
+
+        GroupUVSettings settings = GetSettings(viewer.currentGroupId);
+        List<UVRectSaveData> rects = GetAllRects();
+        bool haveRects = rects.Count > 0;
+        bool groupLocked = GroupHasPost(viewer.currentGroupId);
+
+        modeButtonText.text = settings.predetermined ? "PREDETERMINED" : "ADJUSTABLE";
+        rectStatusText.text = haveRects ? rects.Count + " UV RECTS" : "NO UV RECTS";
+        modeButton.interactable = !groupLocked && (haveRects || settings.predetermined);
+
+        if (minInput != null)
         {
-            if (groupItem == null || !groupItem.name.StartsWith("GroupItem_", StringComparison.Ordinal)) continue;
-            if (!int.TryParse(groupItem.name.Substring("GroupItem_".Length), out int groupId)) continue;
-            Transform parent = groupItem.parent;
-            if (parent == null) continue;
-
-            liveGroups.Add(groupId);
-            RowUI row = EnsureRow(parent, groupItem, groupId);
-            if (row == null || row.root == null) continue;
-
-            // Keep group-owned UV state immediately under the group header. POST rows are
-            // reordered earlier in the frame and naturally shift down after this insertion.
-            int targetIndex = Mathf.Min(groupItem.GetSiblingIndex() + 1, parent.childCount - 1);
-            if (row.root.transform.GetSiblingIndex() != targetIndex)
-                row.root.transform.SetSiblingIndex(targetIndex);
-
-            SyncRow(groupId, row);
+            if (minInput.text != settings.minId.ToString()) minInput.SetTextWithoutNotify(settings.minId.ToString());
+            minInput.interactable = settings.predetermined && haveRects && !groupLocked;
         }
-
-        foreach (int groupId in rowsByGroup.Keys.Where(id => !liveGroups.Contains(id)).ToArray())
+        if (maxInput != null)
         {
-            RowUI row = rowsByGroup[groupId];
-            if (row != null && row.root != null) Destroy(row.root);
-            rowsByGroup.Remove(groupId);
+            if (maxInput.text != settings.maxId.ToString()) maxInput.SetTextWithoutNotify(settings.maxId.ToString());
+            maxInput.interactable = settings.predetermined && haveRects && !groupLocked;
         }
+        if (seedInput != null)
+        {
+            if (seedInput.text != settings.seed.ToString()) seedInput.SetTextWithoutNotify(settings.seed.ToString());
+            seedInput.interactable = settings.predetermined && haveRects && !groupLocked;
+        }
+        if (randomButton != null)
+            randomButton.interactable = settings.predetermined && haveRects && !groupLocked;
+
+        // PREDETERMINED is intentionally a complete base-UV source: no hidden group scale/
+        // offset survives underneath it. POST editing also cannot change those base UVs.
+        SetRowActive(uScaleRow, !settings.predetermined);
+        SetRowActive(vScaleRow, !settings.predetermined);
+        SetRowActive(uOffsetRow, !settings.predetermined);
+        SetRowActive(vOffsetRow, !settings.predetermined);
+        if (predeterminedRow != null) predeterminedRow.SetActive(settings.predetermined);
+
+        Image buttonImage = modeButton != null ? modeButton.GetComponent<Image>() : null;
+        if (buttonImage != null)
+            buttonImage.color = settings.predetermined
+                ? new Color(.20f, .50f, .80f, 1f)
+                : new Color(.25f, .25f, .25f, 1f);
+
+        MaintainRightPanelOrder();
     }
 
-    RowUI EnsureRow(Transform parent, RectTransform groupItem, int groupId)
+    void BindRightPanel(GameObject panel)
     {
-        if (rowsByGroup.TryGetValue(groupId, out RowUI cached) && cached != null && cached.root != null)
-            return cached;
+        boundPanel = panel;
+        modeRow = null;
+        modeButton = null;
+        modeButtonText = null;
+        rectStatusText = null;
+        predeterminedRow = null;
+        minInput = null;
+        maxInput = null;
+        seedInput = null;
+        randomButton = null;
 
-        Transform existing = parent.Find("GroupUV_" + groupId);
-        if (existing != null) Destroy(existing.gameObject);
+        if (panel == null) return;
+        Transform root = panel.transform;
+        uScaleRow = FindDirectOrDeep(root, "U Scale_Row")?.gameObject;
+        vScaleRow = FindDirectOrDeep(root, "V Scale_Row")?.gameObject;
+        uOffsetRow = FindDirectOrDeep(root, "U Offset_Row")?.gameObject;
+        vOffsetRow = FindDirectOrDeep(root, "V Offset_Row")?.gameObject;
+        if (uScaleRow == null || vScaleRow == null || uOffsetRow == null || vOffsetRow == null) return;
 
-        GameObject root = new GameObject("GroupUV_" + groupId, typeof(RectTransform), typeof(Image), typeof(HorizontalLayoutGroup));
-        root.transform.SetParent(parent, false);
-        root.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 30f);
-        root.GetComponent<Image>().color = new Color(.10f, .12f, .16f, .96f);
+        Transform oldMode = root.Find("GroupUVMode_Row");
+        if (oldMode != null) Destroy(oldMode.gameObject);
+        Transform oldPred = root.Find("GroupUVPredetermined_Row");
+        if (oldPred != null) Destroy(oldPred.gameObject);
 
-        HorizontalLayoutGroup layout = root.GetComponent<HorizontalLayoutGroup>();
-        layout.padding = new RectOffset(5, 5, 3, 3);
-        layout.spacing = 4f;
+        BuildModeRow(root);
+        BuildPredeterminedRow(root);
+        MaintainRightPanelOrder();
+    }
+
+    void BuildModeRow(Transform parent)
+    {
+        modeRow = new GameObject("GroupUVMode_Row", typeof(RectTransform), typeof(HorizontalLayoutGroup));
+        modeRow.transform.SetParent(parent, false);
+        modeRow.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 38f);
+
+        HorizontalLayoutGroup layout = modeRow.GetComponent<HorizontalLayoutGroup>();
+        layout.padding = new RectOffset(0, 0, 3, 3);
+        layout.spacing = 8f;
         layout.childControlWidth = false;
         layout.childControlHeight = true;
         layout.childForceExpandWidth = false;
         layout.childForceExpandHeight = false;
 
-        GameObject modeGO = AddButton(root.transform, "UV: ADJ", 76f);
-        Button modeButton = modeGO.GetComponent<Button>();
-        TextMeshProUGUI modeText = modeGO.GetComponentInChildren<TextMeshProUGUI>(true);
+        TextMeshProUGUI label = AddText(modeRow.transform, "UV MODE", 14f, 92f, TextAlignmentOptions.MidlineLeft);
+        label.fontStyle = FontStyles.Bold;
 
-        TMP_InputField minInput = AddIntInput(root.transform, "MIN", 30f);
-        AddText(root.transform, "→", 10f, 10f);
-        TMP_InputField maxInput = AddIntInput(root.transform, "MAX", 30f);
-        AddText(root.transform, "S", 9f, 10f);
-        TMP_InputField seedInput = AddIntInput(root.transform, "SEED", 47f);
-        GameObject randomGO = AddButton(root.transform, "R", 22f);
-        Button randomButton = randomGO.GetComponent<Button>();
+        GameObject buttonGO = AddButton(modeRow.transform, "ADJUSTABLE", 290f, 30f);
+        buttonGO.name = "GroupUVModeButton";
+        modeButton = buttonGO.GetComponent<Button>();
+        modeButtonText = buttonGO.GetComponentInChildren<TextMeshProUGUI>(true);
+        modeButton.onClick.AddListener(() => ToggleMode(viewer.currentGroupId));
 
-        int capturedGroup = groupId;
-        modeButton.onClick.AddListener(() => ToggleMode(capturedGroup));
-        minInput.onEndEdit.AddListener(value => SetRangeValue(capturedGroup, true, value));
-        maxInput.onEndEdit.AddListener(value => SetRangeValue(capturedGroup, false, value));
-        seedInput.onEndEdit.AddListener(value => SetSeed(capturedGroup, value));
-        randomButton.onClick.AddListener(() => RandomizeSeed(capturedGroup));
-
-        RowUI row = new RowUI
-        {
-            root = root,
-            modeButton = modeButton,
-            modeText = modeText,
-            minInput = minInput,
-            maxInput = maxInput,
-            seedInput = seedInput,
-            randomButton = randomButton
-        };
-        rowsByGroup[groupId] = row;
-        return row;
+        rectStatusText = AddText(modeRow.transform, "NO UV RECTS", 11f, 120f, TextAlignmentOptions.MidlineRight);
+        rectStatusText.color = new Color(.72f, .78f, .86f, 1f);
     }
 
-    void SyncRow(int groupId, RowUI row)
+    void BuildPredeterminedRow(Transform parent)
     {
-        GroupUVSettings settings = GetSettings(groupId);
-        bool haveRects = GetAllRects().Count > 0;
+        predeterminedRow = new GameObject("GroupUVPredetermined_Row", typeof(RectTransform), typeof(HorizontalLayoutGroup));
+        predeterminedRow.transform.SetParent(parent, false);
+        predeterminedRow.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 38f);
 
-        if (row.modeText != null)
-            row.modeText.text = settings.predetermined ? "UV: PRE" : "UV: ADJ";
-        if (row.modeButton != null)
-            row.modeButton.interactable = haveRects || settings.predetermined;
+        HorizontalLayoutGroup layout = predeterminedRow.GetComponent<HorizontalLayoutGroup>();
+        layout.padding = new RectOffset(0, 0, 3, 3);
+        layout.spacing = 6f;
+        layout.childControlWidth = false;
+        layout.childControlHeight = true;
+        layout.childForceExpandWidth = false;
+        layout.childForceExpandHeight = false;
 
-        bool inputsEnabled = settings.predetermined && haveRects;
-        if (row.minInput != null)
-        {
-            if (row.minInput.text != settings.minId.ToString()) row.minInput.SetTextWithoutNotify(settings.minId.ToString());
-            row.minInput.interactable = inputsEnabled;
-        }
-        if (row.maxInput != null)
-        {
-            if (row.maxInput.text != settings.maxId.ToString()) row.maxInput.SetTextWithoutNotify(settings.maxId.ToString());
-            row.maxInput.interactable = inputsEnabled;
-        }
-        if (row.seedInput != null)
-        {
-            if (row.seedInput.text != settings.seed.ToString()) row.seedInput.SetTextWithoutNotify(settings.seed.ToString());
-            row.seedInput.interactable = inputsEnabled;
-        }
-        if (row.randomButton != null) row.randomButton.interactable = inputsEnabled;
+        TextMeshProUGUI rectLabel = AddText(predeterminedRow.transform, "UV RECTS", 13f, 88f, TextAlignmentOptions.MidlineLeft);
+        rectLabel.fontStyle = FontStyles.Bold;
+        minInput = AddIntInput(predeterminedRow.transform, "MIN", 64f);
+        AddText(predeterminedRow.transform, "→", 13f, 22f, TextAlignmentOptions.Center);
+        maxInput = AddIntInput(predeterminedRow.transform, "MAX", 64f);
+        AddText(predeterminedRow.transform, "SEED", 11f, 48f, TextAlignmentOptions.Center);
+        seedInput = AddIntInput(predeterminedRow.transform, "SEED", 105f);
+        GameObject randomGO = AddButton(predeterminedRow.transform, "R", 42f, 30f);
+        randomGO.name = "GroupUVRandomSeedButton";
+        randomButton = randomGO.GetComponent<Button>();
 
-        Image image = row.root != null ? row.root.GetComponent<Image>() : null;
-        if (image != null)
-            image.color = settings.predetermined ? new Color(.11f, .20f, .27f, .98f) : new Color(.10f, .12f, .16f, .96f);
+        minInput.onEndEdit.AddListener(value => SetRangeValue(viewer.currentGroupId, true, value));
+        maxInput.onEndEdit.AddListener(value => SetRangeValue(viewer.currentGroupId, false, value));
+        seedInput.onEndEdit.AddListener(value => SetSeed(viewer.currentGroupId, value));
+        randomButton.onClick.AddListener(() => RandomizeSeed(viewer.currentGroupId));
+    }
+
+    void MaintainRightPanelOrder()
+    {
+        if (modeRow == null || uScaleRow == null || modeRow.transform.parent != uScaleRow.transform.parent) return;
+        Transform parent = modeRow.transform.parent;
+
+        int uvStart = uScaleRow.transform.GetSiblingIndex();
+        modeRow.transform.SetSiblingIndex(Mathf.Clamp(uvStart, 0, parent.childCount - 1));
+        if (predeterminedRow != null)
+            predeterminedRow.transform.SetSiblingIndex(Mathf.Min(modeRow.transform.GetSiblingIndex() + 1, parent.childCount - 1));
+
+        if (!GetSettings(viewer.currentGroupId).predetermined)
+        {
+            int insert = modeRow.transform.GetSiblingIndex() + 1;
+            uScaleRow.transform.SetSiblingIndex(Mathf.Min(insert++, parent.childCount - 1));
+            vScaleRow.transform.SetSiblingIndex(Mathf.Min(insert++, parent.childCount - 1));
+            uOffsetRow.transform.SetSiblingIndex(Mathf.Min(insert++, parent.childCount - 1));
+            vOffsetRow.transform.SetSiblingIndex(Mathf.Min(insert, parent.childCount - 1));
+        }
+    }
+
+    void RemoveLegacyLeftRows()
+    {
+        foreach (RectTransform row in FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            if (row == null || !row.name.StartsWith("GroupUV_", StringComparison.Ordinal)) continue;
+            if (row.name == "GroupUVMode_Row" || row.name == "GroupUVPredetermined_Row") continue;
+            Destroy(row.gameObject);
+        }
     }
 
     void ToggleMode(int groupId)
     {
+        if (GroupHasPost(groupId)) return;
+
         GroupUVSettings settings = GetSettings(groupId);
         if (!settings.predetermined)
         {
@@ -307,14 +359,10 @@ public class GroupPredeterminedUVController : MonoBehaviour
 
             int min = rects.Min(r => r.id);
             int max = rects.Max(r => r.id);
-            if (settings.minId <= 0 || settings.maxId <= 0 || !rects.Any(r => r.id >= settings.minId && r.id <= settings.maxId))
+            if (settings.minId <= 0 || settings.maxId <= 0 ||
+                !rects.Any(r => r.id >= settings.minId && r.id <= settings.maxId) ||
+                (settings.minId == 1 && settings.maxId == 1 && rects.Count > 1))
             {
-                settings.minId = min;
-                settings.maxId = max;
-            }
-            else if (settings.minId == 1 && settings.maxId == 1 && rects.Count > 1)
-            {
-                // First activation should naturally use the complete authored set.
                 settings.minId = min;
                 settings.maxId = max;
             }
@@ -333,10 +381,12 @@ public class GroupPredeterminedUVController : MonoBehaviour
 
         nextUIScan = 0f;
         nextApplyScan = 0f;
+        MaintainRightPanelUI();
     }
 
     void SetRangeValue(int groupId, bool isMin, string value)
     {
+        if (GroupHasPost(groupId)) return;
         GroupUVSettings settings = GetSettings(groupId);
         if (!int.TryParse(value, out int parsed)) parsed = isMin ? settings.minId : settings.maxId;
         if (isMin) settings.minId = parsed;
@@ -344,23 +394,28 @@ public class GroupPredeterminedUVController : MonoBehaviour
         NormalizeRange(settings);
         ClearAppliedForGroup(groupId);
         ForceApplyGroup(groupId);
+        nextUIScan = 0f;
     }
 
     void SetSeed(int groupId, string value)
     {
+        if (GroupHasPost(groupId)) return;
         GroupUVSettings settings = GetSettings(groupId);
         if (!int.TryParse(value, out int parsed)) parsed = 0;
         settings.seed = parsed;
         ClearAppliedForGroup(groupId);
         ForceApplyGroup(groupId);
+        nextUIScan = 0f;
     }
 
     void RandomizeSeed(int groupId)
     {
+        if (GroupHasPost(groupId)) return;
         GroupUVSettings settings = GetSettings(groupId);
         settings.seed = UnityEngine.Random.Range(0, 1000000);
         ClearAppliedForGroup(groupId);
         ForceApplyGroup(groupId);
+        nextUIScan = 0f;
     }
 
     void NormalizeRange(GroupUVSettings settings)
@@ -397,7 +452,7 @@ public class GroupPredeterminedUVController : MonoBehaviour
             ApplyGroup(pair.Key, pair.Value, allRects);
         }
 
-        HashSet<int> liveCardIds = new(FindObjectsByType<HairCard>(FindObjectsSortMode.None)
+        HashSet<int> liveCardIds = new HashSet<int>(FindObjectsByType<HairCard>(FindObjectsSortMode.None)
             .Where(card => card != null).Select(card => card.GetInstanceID()));
         foreach (int dead in appliedSignatureByCard.Keys.Where(id => !liveCardIds.Contains(id)).ToArray())
             appliedSignatureByCard.Remove(dead);
@@ -489,25 +544,11 @@ public class GroupPredeterminedUVController : MonoBehaviour
             : new List<UVRectSaveData>();
     }
 
-    void MaintainRootUVLock()
+    bool GroupHasPost(int groupId)
     {
-        if (viewer == null || viewer.groomingSliderPanelGO == null) return;
-
-        GroupUVSettings settings = GetSettings(viewer.currentGroupId);
-        bool editingPost = IsEditingPost();
-        bool predeterminedRoot = settings.predetermined && !editingPost;
-        bool canEditOtherwise = !GroupHasPost(viewer.currentGroupId) || editingPost;
-
-        foreach (Slider slider in viewer.groomingSliderPanelGO.GetComponentsInChildren<Slider>(true))
-        {
-            if (slider == null) continue;
-            string name = slider.gameObject.name;
-            if (name != "U Scale_Slider" && name != "V Scale_Slider" &&
-                name != "U Offset_Slider" && name != "V Offset_Slider") continue;
-
-            if (predeterminedRoot) slider.interactable = false;
-            else if (canEditOtherwise) slider.interactable = true;
-        }
+        if (posts == null) return false;
+        List<PostAffectorSaveData> list = posts.ExportGroup(groupId);
+        return list != null && list.Count > 0;
     }
 
     bool IsEditingPost()
@@ -518,27 +559,20 @@ public class GroupPredeterminedUVController : MonoBehaviour
         return activeId >= 0 && selected;
     }
 
-    bool GroupHasPost(int groupId)
-    {
-        if (posts == null) return false;
-        List<PostAffectorSaveData> list = posts.ExportGroup(groupId);
-        return list != null && list.Count > 0;
-    }
-
     static int StableCardHash(HairCard card, int groupId, int seed)
     {
-        Vector3 p = card.transform.position;
-        Quaternion q = card.transform.rotation;
+        Vector3 p = card.GetSpawnHitPoint();
+        if (p == Vector3.zero) p = card.transform.position;
+        Vector3 n = card.GetSurfaceNormal();
         unchecked
         {
             uint hash = 2166136261u;
             Mix(ref hash, Mathf.RoundToInt(p.x * 10000f));
             Mix(ref hash, Mathf.RoundToInt(p.y * 10000f));
             Mix(ref hash, Mathf.RoundToInt(p.z * 10000f));
-            Mix(ref hash, Mathf.RoundToInt(q.x * 10000f));
-            Mix(ref hash, Mathf.RoundToInt(q.y * 10000f));
-            Mix(ref hash, Mathf.RoundToInt(q.z * 10000f));
-            Mix(ref hash, Mathf.RoundToInt(q.w * 10000f));
+            Mix(ref hash, Mathf.RoundToInt(n.x * 10000f));
+            Mix(ref hash, Mathf.RoundToInt(n.y * 10000f));
+            Mix(ref hash, Mathf.RoundToInt(n.z * 10000f));
             Mix(ref hash, groupId);
             Mix(ref hash, seed);
             return (int)(hash & 0x7fffffff);
@@ -577,12 +611,31 @@ public class GroupPredeterminedUVController : MonoBehaviour
         return result < 0 ? result + modulus : result;
     }
 
-    GameObject AddButton(Transform parent, string label, float width)
+    static void SetRowActive(GameObject row, bool active)
+    {
+        if (row != null && row.activeSelf != active) row.SetActive(active);
+    }
+
+    static Transform FindDirectOrDeep(Transform root, string name)
+    {
+        if (root == null) return null;
+        Transform direct = root.Find(name);
+        if (direct != null) return direct;
+        foreach (Transform child in root)
+        {
+            if (child.name == name) return child;
+            Transform nested = FindDirectOrDeep(child, name);
+            if (nested != null) return nested;
+        }
+        return null;
+    }
+
+    GameObject AddButton(Transform parent, string label, float width, float height)
     {
         GameObject go = new GameObject(label, typeof(RectTransform), typeof(Image), typeof(Button));
         go.transform.SetParent(parent, false);
-        go.GetComponent<RectTransform>().sizeDelta = new Vector2(width, 24f);
-        go.GetComponent<Image>().color = new Color(.20f, .27f, .35f, 1f);
+        go.GetComponent<RectTransform>().sizeDelta = new Vector2(width, height);
+        go.GetComponent<Image>().color = new Color(.25f, .25f, .25f, 1f);
 
         GameObject textGO = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
         textGO.transform.SetParent(go.transform, false);
@@ -593,7 +646,7 @@ public class GroupPredeterminedUVController : MonoBehaviour
         rect.offsetMax = Vector2.zero;
         TextMeshProUGUI text = textGO.GetComponent<TextMeshProUGUI>();
         text.text = label;
-        text.fontSize = 9f;
+        text.fontSize = 12f;
         text.fontStyle = FontStyles.Bold;
         text.alignment = TextAlignmentOptions.Center;
         text.color = Color.white;
@@ -601,16 +654,16 @@ public class GroupPredeterminedUVController : MonoBehaviour
         return go;
     }
 
-    TextMeshProUGUI AddText(Transform parent, string value, float fontSize, float width)
+    TextMeshProUGUI AddText(Transform parent, string value, float fontSize, float width, TextAlignmentOptions alignment)
     {
         GameObject go = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
         go.transform.SetParent(parent, false);
-        go.GetComponent<RectTransform>().sizeDelta = new Vector2(width, 24f);
+        go.GetComponent<RectTransform>().sizeDelta = new Vector2(width, 30f);
         TextMeshProUGUI text = go.GetComponent<TextMeshProUGUI>();
         text.text = value;
         text.fontSize = fontSize;
-        text.alignment = TextAlignmentOptions.Center;
-        text.color = new Color(.82f, .86f, .90f, 1f);
+        text.alignment = alignment;
+        text.color = Color.white;
         text.raycastTarget = false;
         return text;
     }
@@ -619,7 +672,7 @@ public class GroupPredeterminedUVController : MonoBehaviour
     {
         GameObject go = new GameObject(placeholder + "Input", typeof(RectTransform), typeof(Image), typeof(TMP_InputField));
         go.transform.SetParent(parent, false);
-        go.GetComponent<RectTransform>().sizeDelta = new Vector2(width, 24f);
+        go.GetComponent<RectTransform>().sizeDelta = new Vector2(width, 30f);
         go.GetComponent<Image>().color = new Color(.16f, .18f, .22f, 1f);
 
         GameObject textArea = new GameObject("Text Area", typeof(RectTransform), typeof(RectMask2D));
@@ -627,8 +680,8 @@ public class GroupPredeterminedUVController : MonoBehaviour
         RectTransform areaRect = textArea.GetComponent<RectTransform>();
         areaRect.anchorMin = Vector2.zero;
         areaRect.anchorMax = Vector2.one;
-        areaRect.offsetMin = new Vector2(2f, 1f);
-        areaRect.offsetMax = new Vector2(-2f, -1f);
+        areaRect.offsetMin = new Vector2(4f, 2f);
+        areaRect.offsetMax = new Vector2(-4f, -2f);
 
         GameObject textGO = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
         textGO.transform.SetParent(textArea.transform, false);
@@ -638,7 +691,7 @@ public class GroupPredeterminedUVController : MonoBehaviour
         textRect.offsetMin = Vector2.zero;
         textRect.offsetMax = Vector2.zero;
         TextMeshProUGUI text = textGO.GetComponent<TextMeshProUGUI>();
-        text.fontSize = 9f;
+        text.fontSize = 12f;
         text.alignment = TextAlignmentOptions.Center;
         text.color = Color.white;
 
