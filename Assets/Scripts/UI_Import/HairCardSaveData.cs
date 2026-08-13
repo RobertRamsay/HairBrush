@@ -78,6 +78,15 @@ public class UVRectSaveData
     public float vScale;
     public float uOffset;
     public float vOffset;
+
+    // Group UV source. Adjustable keeps the legacy group U/V controls. Predetermined
+    // chooses one authored Texture Editor rectangle per card using the inclusive ID range
+    // and a deterministic seed.
+    public bool usePredeterminedUVs;
+    public int uvRectMinId=1;
+    public int uvRectMaxId=1;
+    public int uvRectSeed;
+
     public List<VarianceChannelSaveData> variances=new();
     public List<PostAffectorSaveData> postAffectors=new();
     // Legacy-only; retained for old JSON compatibility.
@@ -89,6 +98,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
 {
     public static HairProjectSaveData PendingModifierRestore;
     public static HairProjectSaveData PendingUVRectRestore;
+    public static HairProjectSaveData PendingGroupUVRestore;
     public int formatVersion;
     public string modelPath;
     public List<GroupSaveData> groups=new();
@@ -128,6 +138,11 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
         if(uvWorkspace!=null)
             uvRects=uvWorkspace.ExportDefinitions();
 
+        GroupPredeterminedUVController groupUV=UnityEngine.Object.FindFirstObjectByType<GroupPredeterminedUVController>();
+        if(groupUV!=null&&groups!=null)
+            foreach(GroupSaveData group in groups)
+                groupUV.PopulateGroupSave(group);
+
         CanonicalProjectStateBridge.CanonicalizeForSave(this);
     }
 
@@ -148,6 +163,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
 
         PendingModifierRestore=this;
         PendingUVRectRestore=this;
+        PendingGroupUVRestore=this;
         PostClumpAffectorBridge.PendingRestore=this;
         if(sourceVersion>=2)
             CanonicalProjectStateBridge.PendingCanonicalRestore=this;
