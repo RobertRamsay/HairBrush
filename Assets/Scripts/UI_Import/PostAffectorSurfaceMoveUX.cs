@@ -96,10 +96,40 @@ public class PostAffectorSurfaceMoveUX : MonoBehaviour
         Vector3 normal = hit.normal.sqrMagnitude > .000001f ? hit.normal.normalized : Vector3.up;
         hitPointField?.SetValue(viewer, hit.point);
         hitNormalField?.SetValue(viewer, normal);
+        RecomputeVisibleSelectionWeights(hit.point, viewer.brushRadius, viewer.brushFalloffDistance);
+    }
 
-        // Keep the visible selection/highlight in step with the moved POST immediately.
-        SelectionBrushScaleTuning tuning = FindFirstObjectByType<SelectionBrushScaleTuning>();
-        if (tuning != null)
-            tuning.RecomputeWeights(hit.point, viewer.brushRadius, viewer.brushFalloffDistance);
+    void RecomputeVisibleSelectionWeights(Vector3 center, float radius, float falloff)
+    {
+        radius = Mathf.Max(.001f, radius);
+        falloff = Mathf.Max(0f, falloff);
+        float outer = radius + falloff;
+
+        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
+        {
+            if (card == null || card.groupId != viewer.currentGroupId)
+            {
+                if (card != null) card.SetSelectionWeight(0f);
+                continue;
+            }
+
+            Vector3 root = card.GetSpawnHitPoint();
+            if (root == Vector3.zero) root = card.transform.position;
+            float distance = Vector3.Distance(center, root);
+            float weight;
+
+            if (distance <= radius) weight = 1f;
+            else if (falloff > .000001f && distance < outer)
+                weight = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(outer, radius, distance));
+            else weight = 0f;
+
+            float previousWeight = card.selectionWeight;
+            if (previousWeight <= 0f && weight > 0f)
+            {
+                card.CaptureBaseState(card.length, card.width, card.segments, card.bendAngle, card.twistAngle,
+                    card.GetEmbedDepth(), card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ());
+            }
+            card.SetSelectionWeight(weight);
+        }
     }
 }
