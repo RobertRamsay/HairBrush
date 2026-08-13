@@ -26,6 +26,16 @@ public class HairCardSaveData
 
 [Serializable] public class VarianceChannelSaveData { public string channel; public float amount; public int seed; }
 
+[Serializable]
+public class UVRectSaveData
+{
+    public int id;
+    public float uMin;
+    public float vMin;
+    public float uMax;
+    public float vMax;
+}
+
 // Legacy clump payloads remain in the schema so older JSON project files still deserialize cleanly.
 // No runtime group-clump system reads or writes these fields anymore.
 [Serializable] public class ClumpPointSaveData { public float posX,posY,posZ; public float normalX,normalY,normalZ; public float strength; }
@@ -78,10 +88,12 @@ public class HairCardSaveData
 public class HairProjectSaveData : ISerializationCallbackReceiver
 {
     public static HairProjectSaveData PendingModifierRestore;
+    public static HairProjectSaveData PendingUVRectRestore;
     public int formatVersion;
     public string modelPath;
     public List<GroupSaveData> groups=new();
     public List<HairCardSaveData> hairCards=new();
+    public List<UVRectSaveData> uvRects=new();
     public float sliderLength;
     public float sliderWidth;
     public int sliderSegments;
@@ -112,6 +124,10 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
             foreach(GroupSaveData group in groups)
                 postClump.PopulateSave(group.postAffectors);
 
+        TextureUVRectWorkspace uvWorkspace=UnityEngine.Object.FindFirstObjectByType<TextureUVRectWorkspace>();
+        if(uvWorkspace!=null)
+            uvRects=uvWorkspace.ExportDefinitions();
+
         CanonicalProjectStateBridge.CanonicalizeForSave(this);
     }
 
@@ -131,6 +147,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
             formatVersion = CanonicalProjectStateBridge.CurrentFormatVersion;
 
         PendingModifierRestore=this;
+        PendingUVRectRestore=this;
         PostClumpAffectorBridge.PendingRestore=this;
         if(sourceVersion>=2)
             CanonicalProjectStateBridge.PendingCanonicalRestore=this;
