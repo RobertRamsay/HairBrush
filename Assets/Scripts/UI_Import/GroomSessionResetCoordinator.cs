@@ -95,6 +95,7 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         ClearModifierManagers();
         ClearSelectionState();
         ResetViewerControlsToDefaults();
+        ResetRootAuthority();
         ResetAllCardGroomToDefaults();
         RefreshRuntimeUI();
     }
@@ -109,6 +110,7 @@ public class GroomSessionResetCoordinator : MonoBehaviour
 
         ResetViewerGroupsToDefault();
         ResetViewerControlsToDefaults();
+        ResetRootAuthority();
         CleanupDuplicateRuntimePanels();
         RefreshRuntimeUI();
     }
@@ -222,6 +224,12 @@ public class GroomSessionResetCoordinator : MonoBehaviour
             if (input.gameObject.name == "SeedInput") input.SetTextWithoutNotify("0");
             input.interactable = true;
         }
+    }
+
+    void ResetRootAuthority()
+    {
+        GroomRootStateAuthority roots = FindFirstObjectByType<GroomRootStateAuthority>();
+        roots?.ClearStoredRoots();
     }
 
     void ResetAllCardGroomToDefaults()
