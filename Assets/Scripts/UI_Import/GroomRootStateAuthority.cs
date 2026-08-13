@@ -23,6 +23,7 @@ public class GroomRootStateAuthority : MonoBehaviour
     private FieldInfo hasSelectionField;
     private FieldInfo loadedModelField;
     private GameObject lastLoadedModel;
+    private bool wasSelected;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
@@ -43,6 +44,7 @@ public class GroomRootStateAuthority : MonoBehaviour
         {
             lastLoadedModel = loaded;
             roots.Clear();
+            wasSelected = false;
             // LoadProject has already populated the saved root controls by the next Update.
             // New-model RESET may replace them later this frame; with no POST they will be
             // captured again on the following frame.
@@ -53,10 +55,20 @@ public class GroomRootStateAuthority : MonoBehaviour
         bool selected = HasSelection();
         bool hasPost = GroupHasPost(groupId);
 
+        // A POST row can be removed or group-root can be selected after this component's
+        // previous Update. On the next frame restore the preserved root before deciding
+        // whether the now-unlocked controls should become authoritative again.
+        if (wasSelected && !selected && roots.TryGetValue(groupId, out RootState exitedRoot))
+            WriteViewer(exitedRoot);
+
         if (!roots.ContainsKey(groupId) && !selected)
             roots[groupId] = ReadViewer();
 
-        if (selected) return;
+        if (selected)
+        {
+            wasSelected = true;
+            return;
+        }
 
         if (hasPost)
         {
@@ -70,6 +82,8 @@ public class GroomRootStateAuthority : MonoBehaviour
             // With no structural modifier the normal sliders are the authoritative root.
             roots[groupId] = ReadViewer();
         }
+
+        wasSelected = false;
     }
 
     void Resolve()
@@ -154,6 +168,7 @@ public class GroomRootStateAuthority : MonoBehaviour
     public void ClearStoredRoots()
     {
         roots.Clear();
+        wasSelected = false;
         if (viewer != null) roots[viewer.currentGroupId] = ReadViewer();
     }
 }
