@@ -35,7 +35,6 @@ public class TextureEditorManager : MonoBehaviour
 
     private Material sourceHairCardMaterial;
     private Material generatedHairMaterial;
-    private Material hairCardMaterial;
     private Texture2D generatedHairTexture;
 
     private readonly List<HairTextureCluster> clusters = new List<HairTextureCluster>();
@@ -43,6 +42,7 @@ public class TextureEditorManager : MonoBehaviour
     private int nextClusterId = 0;
     private bool placementMode = false;
     private bool panelActive = false;
+    private bool textureCreated = false;
 
     private Slider strandCountSlider;
     private Slider strandWidthSlider;
@@ -58,8 +58,8 @@ public class TextureEditorManager : MonoBehaviour
     public float clumpStrength = 0.2f;
     public float taperAmount = 0.5f;
     public float noiseScale = 0.1f;
-    public float strandLength = 1.0f;
-    public float strandWidth = 2.0f;
+    public float strandLength = 1f;
+    public float strandWidth = 2f;
     public int textureSize = 4096;
     public int generationSeed = 12345;
 
@@ -74,14 +74,11 @@ public class TextureEditorManager : MonoBehaviour
         {
             generatedHairMaterial = new Material(sourceHairCardMaterial);
             generatedHairMaterial.name = sourceHairCardMaterial.name + "_Generated_Runtime";
-            hairCardMaterial = generatedHairMaterial;
 
             ModelViewer viewer = GetComponent<ModelViewer>();
             if (viewer != null)
                 viewer.hairCardMaterial = generatedHairMaterial;
         }
-
-        EnsureAtlas();
     }
 
     private void OnDestroy()
@@ -94,27 +91,24 @@ public class TextureEditorManager : MonoBehaviour
     {
         if (!panelActive || !placementMode || Mouse.current == null)
             return;
-
         if (!Mouse.current.leftButton.wasPressedThisFrame)
             return;
-
         if (activeClusterIndex < 0 || activeClusterIndex >= clusters.Count || texturePreviewPlane == null)
             return;
 
-        Camera cam = null;
         ModelViewer viewer = GetComponent<ModelViewer>();
-        if (viewer != null) cam = viewer.mainCamera;
-        if (cam == null) cam = Camera.main;
+        Camera cam = viewer != null ? viewer.mainCamera : Camera.main;
         if (cam == null) return;
 
         Ray ray = cam.ScreenPointToRay(Mouse.current.position.ReadValue());
-        RaycastHit hit;
         Collider previewCollider = texturePreviewPlane.GetComponent<Collider>();
-        if (previewCollider == null || !previewCollider.Raycast(ray, out hit, 10000f))
+        if (previewCollider == null) return;
+
+        RaycastHit hit;
+        if (!previewCollider.Raycast(ray, out hit, 10000f))
             return;
 
-        Vector2 uv = hit.textureCoord;
-        PlaceActiveClusterAtUV(uv);
+        PlaceActiveClusterAtUV(hit.textureCoord);
     }
 
     public void SetPanelActive(bool active, Transform parentCanvas, System.Action onSwitchToGroom)
@@ -129,32 +123,9 @@ public class TextureEditorManager : MonoBehaviour
 
         if (active)
         {
-            EnsureAtlas();
-
-            if (texturePreviewPlane == null)
-            {
-                texturePreviewPlane = GameObject.CreatePrimitive(PrimitiveType.Quad);
-                texturePreviewPlane.name = "HairTexturePreviewPlane";
-                texturePreviewPlane.transform.position = new Vector3(0f, 0f, 1.5f);
-                texturePreviewPlane.transform.localScale = new Vector3(0.9f, 0.9f, 1f);
-
-                MeshFilter meshFilter = texturePreviewPlane.GetComponent<MeshFilter>();
-                if (meshFilter != null && meshFilter.sharedMesh != null)
-                {
-                    Mesh mesh = meshFilter.mesh;
-                    mesh.uv = new Vector2[]
-                    {
-                        new Vector2(0, 0), new Vector2(1, 0),
-                        new Vector2(0, 1), new Vector2(1, 1)
-                    };
-                }
-            }
-            else
-            {
-                texturePreviewPlane.SetActive(true);
-            }
-
+            EnsurePreviewPlane();
             ApplyGeneratedTextureToHairMaterial();
+            RebuildClusterList();
             RefreshPlacementStatus();
         }
         else
@@ -164,71 +135,86 @@ public class TextureEditorManager : MonoBehaviour
         }
     }
 
-    private void EnsureAtlas()
+    private void EnsurePreviewPlane()
     {
-        const int size = 4096;
-        textureSize = size;
+        if (texturePreviewPlane == null)
+        {
+            texturePreviewPlane = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            texturePreviewPlane.name = "HairTexturePreviewPlane";
+            texturePreviewPlane.transform.position = new Vector3(0f, 0f, 1.5f);
+            texturePreviewPlane.transform.localScale = new Vector3(0.9f, 0.9f, 1f);
 
-        if (generatedHairTexture != null && generatedHairTexture.width == size && generatedHairTexture.height == size)
-            return;
+            MeshFilter mf = texturePreviewPlane.GetComponent<MeshFilter>();
+            if (mf != null && mf.sharedMesh != null)
+            {
+                Mesh mesh = mf.mesh;
+                mesh.uv = new Vector2[]
+                {
+                    new Vector2(0, 0), new Vector2(1, 0),
+                    new Vector2(0, 1), new Vector2(1, 1)
+                };
+            }
+        }
+        else
+        {
+            texturePreviewPlane.SetActive(true);
+        }
+
+        MeshRenderer mr = texturePreviewPlane.GetComponent<MeshRenderer>();
+        if (mr != null && generatedHairMaterial != null)
+            mr.sharedMaterial = generatedHairMaterial;
+    }
+
+    private void NewTexture()
+    {
+        textureSize = 4096;
 
         if (generatedHairTexture != null)
             Destroy(generatedHairTexture);
 
-        generatedHairTexture = new Texture2D(size, size, TextureFormat.RGBA32, true, false);
+        generatedHairTexture = new Texture2D(textureSize, textureSize, TextureFormat.RGBA32, true, false);
         generatedHairTexture.name = "GeneratedHairAtlas_4096_Runtime";
         generatedHairTexture.wrapMode = TextureWrapMode.Clamp;
         generatedHairTexture.filterMode = FilterMode.Bilinear;
 
-        Color32[] pixels = new Color32[size * size];
+        Color32[] pixels = new Color32[textureSize * textureSize];
         Color32 black = new Color32(0, 0, 0, 255);
         for (int i = 0; i < pixels.Length; i++) pixels[i] = black;
         generatedHairTexture.SetPixels32(pixels);
         generatedHairTexture.Apply(true, false);
+
+        clusters.Clear();
+        activeClusterIndex = -1;
+        nextClusterId = 0;
+        currentTextureGroupId = -1;
+        placementMode = false;
+        textureCreated = true;
+
         ApplyGeneratedTextureToHairMaterial();
+        RebuildClusterList();
+        RefreshPlacementStatus();
+        Debug.Log("Created new 4096 x 4096 procedural hair texture.");
     }
 
     private void NewCluster()
     {
-        HairTextureCluster cluster = new HairTextureCluster();
-        cluster.id = nextClusterId++;
-        cluster.name = "Cluster " + cluster.id;
-        cluster.seed = 12345 + cluster.id * 7919;
-        clusters.Add(cluster);
+        if (!textureCreated || generatedHairTexture == null)
+        {
+            Debug.LogWarning("Create a New Texture first.");
+            RefreshPlacementStatus();
+            return;
+        }
+
+        HairTextureCluster c = new HairTextureCluster();
+        c.id = nextClusterId++;
+        c.name = "Cluster " + c.id;
+        c.seed = 12345 + c.id * 7919;
+        clusters.Add(c);
 
         SelectCluster(clusters.Count - 1);
         placementMode = true;
         RebuildClusterList();
         RefreshPlacementStatus();
-    }
-
-    private void PlaceActiveClusterAtUV(Vector2 uv)
-    {
-        if (activeClusterIndex < 0 || activeClusterIndex >= clusters.Count)
-            return;
-
-        HairTextureCluster c = clusters[activeClusterIndex];
-        int centreX = Mathf.RoundToInt(Mathf.Clamp01(uv.x) * (textureSize - 1));
-        int centreY = Mathf.RoundToInt(Mathf.Clamp01(uv.y) * (textureSize - 1));
-
-        int width = Mathf.Clamp(c.rectWidth, 256, textureSize);
-        int height = Mathf.Clamp(c.rectHeight, 256, textureSize);
-        int x = centreX - width / 2;
-        int y = centreY - height / 2;
-        x = Mathf.Clamp(x, 0, textureSize - width);
-        y = Mathf.Clamp(y, 0, textureSize - height);
-
-        if (c.generated && c.placed)
-            ClearClusterRect(c);
-
-        c.pixelRect = new RectInt(x, y, width, height);
-        c.placed = true;
-        c.generated = false;
-        placementMode = false;
-
-        RebuildClusterList();
-        RefreshPlacementStatus();
-        Debug.Log(c.name + " placed at atlas rect " + c.pixelRect);
     }
 
     private void SelectCluster(int index)
@@ -246,8 +232,8 @@ public class TextureEditorManager : MonoBehaviour
         taperAmount = c.taperAmount;
         noiseScale = c.noiseScale;
         generationSeed = c.seed;
-
         placementMode = false;
+
         SyncSlidersFromActiveCluster();
         RebuildClusterList();
         RefreshPlacementStatus();
@@ -257,8 +243,54 @@ public class TextureEditorManager : MonoBehaviour
     {
         if (activeClusterIndex < 0 || activeClusterIndex >= clusters.Count)
             return;
+
+        CommitControlsToActiveCluster();
         placementMode = true;
         RefreshPlacementStatus();
+    }
+
+    private void PlaceActiveClusterAtUV(Vector2 uv)
+    {
+        if (!textureCreated || generatedHairTexture == null) return;
+        if (activeClusterIndex < 0 || activeClusterIndex >= clusters.Count) return;
+
+        CommitControlsToActiveCluster();
+        HairTextureCluster c = clusters[activeClusterIndex];
+        bool shouldRegenerate = c.generated && c.placed;
+        RectInt oldRect = c.pixelRect;
+
+        int centreX = Mathf.RoundToInt(Mathf.Clamp01(uv.x) * (textureSize - 1));
+        int centreY = Mathf.RoundToInt(Mathf.Clamp01(uv.y) * (textureSize - 1));
+        int width = Mathf.Clamp(c.rectWidth, 256, textureSize);
+        int height = Mathf.Clamp(c.rectHeight, 256, textureSize);
+        int x = Mathf.Clamp(centreX - width / 2, 0, textureSize - width);
+        int y = Mathf.Clamp(centreY - height / 2, 0, textureSize - height);
+
+        Color32[] pixels = generatedHairTexture.GetPixels32();
+        if (shouldRegenerate)
+            ClearRect(pixels, textureSize, oldRect);
+
+        c.pixelRect = new RectInt(x, y, width, height);
+        c.placed = true;
+        placementMode = false;
+
+        if (shouldRegenerate)
+        {
+            ClearRect(pixels, textureSize, c.pixelRect);
+            DrawCluster(pixels, textureSize, c);
+            c.generated = true;
+            generatedHairTexture.SetPixels32(pixels);
+            generatedHairTexture.Apply(true, false);
+            ApplyGeneratedTextureToHairMaterial();
+        }
+        else
+        {
+            c.generated = false;
+        }
+
+        RebuildClusterList();
+        RefreshPlacementStatus();
+        Debug.Log(c.name + " placed at atlas rect " + c.pixelRect + (shouldRegenerate ? " and regenerated." : "."));
     }
 
     private void CommitControlsToActiveCluster()
@@ -282,8 +314,11 @@ public class TextureEditorManager : MonoBehaviour
 
     public void GenerateOrUpdateActiveCluster()
     {
-        EnsureAtlas();
-
+        if (!textureCreated || generatedHairTexture == null)
+        {
+            Debug.LogWarning("Create a New Texture first.");
+            return;
+        }
         if (activeClusterIndex < 0 || activeClusterIndex >= clusters.Count)
         {
             Debug.LogWarning("Create and select a cluster first.");
@@ -293,33 +328,22 @@ public class TextureEditorManager : MonoBehaviour
         HairTextureCluster c = clusters[activeClusterIndex];
         if (!c.placed)
         {
-            Debug.LogWarning(c.name + " has not been placed. Click the atlas to place it first.");
             placementMode = true;
             RefreshPlacementStatus();
+            Debug.LogWarning(c.name + " has not been placed. Click the atlas to place it.");
             return;
         }
 
         CommitControlsToActiveCluster();
-
         Color32[] pixels = generatedHairTexture.GetPixels32();
         ClearRect(pixels, textureSize, c.pixelRect);
         DrawCluster(pixels, textureSize, c);
         c.generated = true;
-
         generatedHairTexture.SetPixels32(pixels);
         generatedHairTexture.Apply(true, false);
         ApplyGeneratedTextureToHairMaterial();
         RebuildClusterList();
         RefreshPlacementStatus();
-    }
-
-    private void ClearClusterRect(HairTextureCluster c)
-    {
-        if (generatedHairTexture == null || c == null || !c.placed) return;
-        Color32[] pixels = generatedHairTexture.GetPixels32();
-        ClearRect(pixels, textureSize, c.pixelRect);
-        generatedHairTexture.SetPixels32(pixels);
-        generatedHairTexture.Apply(true, false);
     }
 
     private void DrawCluster(Color32[] pixels, int size, HairTextureCluster c)
@@ -330,7 +354,7 @@ public class TextureEditorManager : MonoBehaviour
         float maxX = r.xMax - pad - 1f;
         float rootY = r.yMin + pad;
         float usableHeight = Mathf.Max(1f, r.height - pad * 2f);
-        float lengthPixels = Mathf.Clamp01(c.strandLength / 2.0f) * usableHeight;
+        float lengthPixels = Mathf.Clamp01(c.strandLength / 2f) * usableHeight;
         float centreX = r.center.x;
         float guideWavePixels = c.waveAmount * r.width * 0.12f;
 
@@ -344,8 +368,8 @@ public class TextureEditorManager : MonoBehaviour
             rootX += NextRange(random, -8f, 8f);
 
             float finalLength = Mathf.Min(lengthPixels * NextRange(random, 0.90f, 1.03f), usableHeight);
-            float strandPhase = NextRange(random, 0f, Mathf.PI * 2f);
-            float strandWaveScale = NextRange(random, 0.75f, 1.25f);
+            float phase = NextRange(random, 0f, Mathf.PI * 2f);
+            float waveScale = NextRange(random, 0.75f, 1.25f);
             float noiseOffset = NextRange(random, 0f, 1000f);
             float widthVariation = NextRange(random, 0.82f, 1.18f);
             int samples = Mathf.Clamp(Mathf.CeilToInt(finalLength / 1.5f), 32, 1200);
@@ -355,7 +379,7 @@ public class TextureEditorManager : MonoBehaviour
                 float t = samples <= 1 ? 0f : sample / (float)(samples - 1);
                 float y = rootY + finalLength * t;
                 float guideX = centreX + Mathf.Sin(t * Mathf.PI * 2f + guidePhase) * guideWavePixels;
-                float waveX = Mathf.Sin(t * Mathf.PI * 2f + strandPhase) * guideWavePixels * strandWaveScale;
+                float waveX = Mathf.Sin(t * Mathf.PI * 2f + phase) * guideWavePixels * waveScale;
                 float independentX = rootX + waveX;
                 float clumpT = Mathf.Clamp01(c.clumpStrength) * Mathf.SmoothStep(0f, 1f, t);
                 float x = Mathf.Lerp(independentX, guideX, clumpT);
@@ -381,21 +405,6 @@ public class TextureEditorManager : MonoBehaviour
         for (int y = minY; y < maxY; y++)
             for (int x = minX; x < maxX; x++)
                 pixels[y * size + x] = black;
-    }
-
-    private void ApplyGeneratedTextureToHairMaterial()
-    {
-        if (generatedHairMaterial == null || generatedHairTexture == null) return;
-        if (generatedHairMaterial.HasProperty("_BaseMap")) generatedHairMaterial.SetTexture("_BaseMap", generatedHairTexture);
-        if (generatedHairMaterial.HasProperty("_MainTex")) generatedHairMaterial.SetTexture("_MainTex", generatedHairTexture);
-        if (generatedHairMaterial.HasProperty("_BaseColor")) generatedHairMaterial.SetColor("_BaseColor", Color.white);
-        if (generatedHairMaterial.HasProperty("_Color")) generatedHairMaterial.SetColor("_Color", Color.white);
-
-        if (texturePreviewPlane != null)
-        {
-            MeshRenderer mr = texturePreviewPlane.GetComponent<MeshRenderer>();
-            if (mr != null) mr.sharedMaterial = generatedHairMaterial;
-        }
     }
 
     private static void StampCircle(Color32[] pixels, int size, float cx, float cy, float radius)
@@ -428,6 +437,25 @@ public class TextureEditorManager : MonoBehaviour
         return Mathf.Lerp(min, max, (float)random.NextDouble());
     }
 
+    private void ApplyGeneratedTextureToHairMaterial()
+    {
+        if (generatedHairMaterial == null) return;
+
+        if (generatedHairTexture != null)
+        {
+            if (generatedHairMaterial.HasProperty("_BaseMap")) generatedHairMaterial.SetTexture("_BaseMap", generatedHairTexture);
+            if (generatedHairMaterial.HasProperty("_MainTex")) generatedHairMaterial.SetTexture("_MainTex", generatedHairTexture);
+        }
+        if (generatedHairMaterial.HasProperty("_BaseColor")) generatedHairMaterial.SetColor("_BaseColor", Color.white);
+        if (generatedHairMaterial.HasProperty("_Color")) generatedHairMaterial.SetColor("_Color", Color.white);
+
+        if (texturePreviewPlane != null)
+        {
+            MeshRenderer mr = texturePreviewPlane.GetComponent<MeshRenderer>();
+            if (mr != null) mr.sharedMaterial = generatedHairMaterial;
+        }
+    }
+
     private void BuildTextureEditorUI(Transform parentCanvas, System.Action onSwitchToGroom)
     {
         BuildLeftClusterPanel(parentCanvas);
@@ -454,6 +482,7 @@ public class TextureEditorManager : MonoBehaviour
         layout.childControlWidth = true;
         layout.childControlHeight = false;
 
+        CreateActionButton(leftClusterPanelGO.transform, "+ NEW TEXTURE", NewTexture, 48f);
         CreateHeader(leftClusterPanelGO.transform, "CLUSTERS");
 
         GameObject listGO = new GameObject("ClusterList", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
@@ -466,7 +495,7 @@ public class TextureEditorManager : MonoBehaviour
         listLayout.childControlHeight = false;
         clusterListRoot = listGO.transform;
 
-        CreateActionButton(leftClusterPanelGO.transform, "+ New Cluster", NewCluster, 44f);
+        CreateActionButton(leftClusterPanelGO.transform, "+ NEW CLUSTER", NewCluster, 44f);
     }
 
     private void BuildRightControlPanel(Transform parentCanvas, System.Action onSwitchToGroom)
@@ -502,13 +531,13 @@ public class TextureEditorManager : MonoBehaviour
 
         GameObject statusGO = new GameObject("PlacementStatus", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI), typeof(LayoutElement));
         statusGO.transform.SetParent(rightControlPanelGO.transform, false);
-        statusGO.GetComponent<LayoutElement>().preferredHeight = 42f;
+        statusGO.GetComponent<LayoutElement>().preferredHeight = 48f;
         placementStatusText = statusGO.GetComponent<TMPro.TextMeshProUGUI>();
         placementStatusText.fontSize = 15f;
         placementStatusText.color = Color.white;
         placementStatusText.alignment = TMPro.TextAlignmentOptions.MidlineLeft;
 
-        CreateActionButton(rightControlPanelGO.transform, "Place / Reposition On Atlas", RepositionActiveCluster, 38f);
+        CreateActionButton(rightControlPanelGO.transform, "REPOSITION - CLICK ATLAS", RepositionActiveCluster, 40f);
 
         CreateSliderUI(rightControlPanelGO.transform, "Strand Count", 1f, 100f, strandCount, v => strandCount = v, out strandCountSlider);
         CreateSliderUI(rightControlPanelGO.transform, "Strand Width", 0.5f, 8f, strandWidth, v => strandWidth = v, out strandWidthSlider);
@@ -518,7 +547,7 @@ public class TextureEditorManager : MonoBehaviour
         CreateSliderUI(rightControlPanelGO.transform, "Taper Amount", 0f, 1f, taperAmount, v => taperAmount = v, out taperSlider);
         CreateSliderUI(rightControlPanelGO.transform, "Noise Scale", 0f, 1f, noiseScale, v => noiseScale = v, out noiseSlider);
 
-        CreateActionButton(rightControlPanelGO.transform, "Generate / Update Cluster", GenerateOrUpdateActiveCluster, 48f);
+        CreateActionButton(rightControlPanelGO.transform, "GENERATE / UPDATE", GenerateOrUpdateActiveCluster, 48f);
     }
 
     private void RebuildClusterList()
@@ -536,8 +565,7 @@ public class TextureEditorManager : MonoBehaviour
 
             GameObject buttonGO = new GameObject(c.name + "Button", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
             buttonGO.transform.SetParent(clusterListRoot, false);
-            LayoutElement le = buttonGO.GetComponent<LayoutElement>();
-            le.preferredHeight = 58f;
+            buttonGO.GetComponent<LayoutElement>().preferredHeight = 58f;
             buttonGO.GetComponent<Image>().color = active ? new Color(0.18f, 0.48f, 0.78f, 1f) : new Color(0.20f, 0.20f, 0.20f, 1f);
             buttonGO.GetComponent<Button>().onClick.AddListener(() => SelectCluster(capturedIndex));
 
@@ -549,7 +577,7 @@ public class TextureEditorManager : MonoBehaviour
             lr.offsetMin = new Vector2(10f, 4f);
             lr.offsetMax = new Vector2(-8f, -4f);
             TMPro.TextMeshProUGUI tmp = labelGO.GetComponent<TMPro.TextMeshProUGUI>();
-            string state = c.generated ? "generated" : (c.placed ? "placed" : "click atlas to place");
+            string state = c.generated ? "generated" : (c.placed ? "placed" : "place on atlas");
             tmp.text = c.name + "\n" + c.strandCount + " strands  •  " + state;
             tmp.fontSize = 14f;
             tmp.color = Color.white;
@@ -562,9 +590,16 @@ public class TextureEditorManager : MonoBehaviour
     {
         if (placementStatusText == null) return;
 
+        if (!textureCreated || generatedHairTexture == null)
+        {
+            placementStatusText.text = "1. NEW TEXTURE\n2. NEW CLUSTER";
+            placementStatusText.color = new Color(1f, 0.75f, 0.25f);
+            return;
+        }
+
         if (activeClusterIndex < 0 || activeClusterIndex >= clusters.Count)
         {
-            placementStatusText.text = "1. New Cluster\n2. Click the atlas to place it";
+            placementStatusText.text = "Texture ready - create a NEW CLUSTER";
             placementStatusText.color = new Color(0.75f, 0.75f, 0.75f);
             return;
         }
@@ -572,7 +607,7 @@ public class TextureEditorManager : MonoBehaviour
         HairTextureCluster c = clusters[activeClusterIndex];
         if (placementMode)
         {
-            placementStatusText.text = c.name + ": CLICK THE ATLAS TO PLACE";
+            placementStatusText.text = c.name + ": CLICK THE TEXTURE TO PLACE";
             placementStatusText.color = new Color(0.25f, 0.75f, 1f);
         }
         else if (!c.placed)
@@ -582,7 +617,7 @@ public class TextureEditorManager : MonoBehaviour
         }
         else
         {
-            placementStatusText.text = c.name + "  Rect: " + c.pixelRect.x + ", " + c.pixelRect.y + "  " + c.pixelRect.width + "×" + c.pixelRect.height;
+            placementStatusText.text = c.name + "  Rect: " + c.pixelRect.x + ", " + c.pixelRect.y + "  " + c.pixelRect.width + "x" + c.pixelRect.height;
             placementStatusText.color = Color.white;
         }
     }
