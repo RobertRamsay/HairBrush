@@ -1,8 +1,10 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 [DefaultExecutionOrder(6750)]
@@ -13,7 +15,7 @@ public class GroupUVSeedButtonFix : MonoBehaviour
     private MethodInfo setSeedMethod;
     private Button button;
     private TMP_InputField seedInput;
-    private float nextScan;
+    private UVSeedPointerRelay relay;
     private bool wasFocused;
     private string editText = "0";
 
@@ -31,10 +33,7 @@ public class GroupUVSeedButtonFix : MonoBehaviour
         Resolve();
         Bind();
         MaintainEdit();
-
-        if (Time.unscaledTime < nextScan) return;
-        nextScan = Time.unscaledTime + 0.1f;
-        OwnRandomButton();
+        MaintainButtonStyle();
     }
 
     void Resolve()
@@ -56,6 +55,7 @@ public class GroupUVSeedButtonFix : MonoBehaviour
         {
             button = null;
             seedInput = null;
+            relay = null;
             wasFocused = false;
             return;
         }
@@ -75,15 +75,18 @@ public class GroupUVSeedButtonFix : MonoBehaviour
         if (seedInput != null)
             seedInput.onValueChanged.AddListener(OnSeedChanged);
 
-        OwnRandomButton();
-        Compact(row);
-    }
+        if (button != null)
+        {
+            // The controller rebuild/refresh cycle has historically made Button.onClick
+            // ownership fragile here. Pointer-down gives this action one stable input path.
+            relay = button.GetComponent<UVSeedPointerRelay>();
+            if (relay == null) relay = button.gameObject.AddComponent<UVSeedPointerRelay>();
+            relay.onPress = Reshuffle;
+            button.onClick.RemoveAllListeners();
+        }
 
-    void OwnRandomButton()
-    {
-        if (button == null) return;
-        button.onClick.RemoveAllListeners();
-        button.onClick.AddListener(Reshuffle);
+        Compact(row);
+        MaintainButtonStyle();
     }
 
     void MaintainEdit()
@@ -96,12 +99,19 @@ public class GroupUVSeedButtonFix : MonoBehaviour
 
         if (focused)
         {
+            // Keep partial edits (including an empty field) alive while the controller's
+            // periodic UI sync writes its stored seed back into the input.
             if (seedInput.text != editText)
                 seedInput.SetTextWithoutNotify(editText);
         }
         else if (wasFocused && int.TryParse(editText, out int parsed))
         {
             SetSeed(parsed);
+        }
+        else if (!focused)
+        {
+            // When not editing, follow the controller's stored/displayed value.
+            editText = seedInput.text;
         }
 
         wasFocused = focused;
@@ -129,18 +139,54 @@ public class GroupUVSeedButtonFix : MonoBehaviour
             LayoutElement le = range.GetComponent<LayoutElement>();
             if (le != null)
             {
-                le.preferredWidth = 170f;
-                le.minWidth = 135f;
+                le.preferredWidth = 160f;
+                le.minWidth = 130f;
             }
-            range.GetComponent<RectTransform>().sizeDelta = new Vector2(170f, 30f);
+            range.GetComponent<RectTransform>().sizeDelta = new Vector2(160f, 30f);
         }
-        if (seedInput != null) seedInput.GetComponent<RectTransform>().sizeDelta = new Vector2(70f, 30f);
-        if (button != null) button.GetComponent<RectTransform>().sizeDelta = new Vector2(34f, 30f);
+        if (seedInput != null) seedInput.GetComponent<RectTransform>().sizeDelta = new Vector2(72f, 30f);
+        if (button != null) button.GetComponent<RectTransform>().sizeDelta = new Vector2(46f, 30f);
+    }
+
+    void MaintainButtonStyle()
+    {
+        if (button == null) return;
+
+        RectTransform rect = button.transform as RectTransform;
+        if (rect != null) rect.sizeDelta = new Vector2(46f, 30f);
+
+        Image image = button.GetComponent<Image>();
+        if (image == null) image = button.gameObject.AddComponent<Image>();
+        image.raycastTarget = true;
+        button.targetGraphic = image;
+        button.transition = Selectable.Transition.ColorTint;
+
+        ColorBlock colors = button.colors;
+        colors.normalColor = new Color(.25f, .42f, .58f, 1f);
+        colors.highlightedColor = new Color(.32f, .58f, .78f, 1f);
+        colors.selectedColor = new Color(.30f, .52f, .70f, 1f);
+        colors.pressedColor = new Color(.16f, .36f, .56f, 1f);
+        colors.disabledColor = new Color(.16f, .20f, .24f, .65f);
+        colors.colorMultiplier = 1f;
+        colors.fadeDuration = .06f;
+        button.colors = colors;
+        image.color = colors.normalColor;
+
+        TextMeshProUGUI label = button.GetComponentInChildren<TextMeshProUGUI>(true);
+        if (label != null)
+        {
+            label.text = "R";
+            label.fontStyle = FontStyles.Bold;
+            label.fontSize = Mathf.Max(label.fontSize, 14f);
+            label.alignment = TextAlignmentOptions.Center;
+            label.raycastTarget = false;
+        }
     }
 
     void Reshuffle()
     {
         if (controller == null || viewer == null || setSeedMethod == null) return;
+        if (button != null && !button.interactable) return;
 
         int oldSeed = 0;
         if (seedInput != null) int.TryParse(seedInput.text, out oldSeed);
@@ -187,8 +233,20 @@ public class GroupUVSeedButtonFix : MonoBehaviour
         {
             HairCard.GroomState s = cards[i].GetCanonicalState();
             Vector4 now = new Vector4(s.uScale, s.vScale, s.uOffset, s.vOffset);
-            if ((now - before[i]).sqrMagnitude > 0.0000000001f) return true;
+            if ((now - before[i]).sqrMagnitude > .0000000001f) return true;
         }
         return false;
+    }
+}
+
+public class UVSeedPointerRelay : MonoBehaviour, IPointerDownHandler
+{
+    public Action onPress;
+
+    public void OnPointerDown(PointerEventData eventData)
+    {
+        if (eventData.button != PointerEventData.InputButton.Left) return;
+        onPress?.Invoke();
+        eventData.Use();
     }
 }
