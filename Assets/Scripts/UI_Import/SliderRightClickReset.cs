@@ -98,6 +98,9 @@ public class SliderRightClickResetInstaller : MonoBehaviour
             case "Falloff_Slider":
             case "Falloff Dist_Slider": value = .05f; return true;
 
+            case "CLUMP Point_Slider": value = .9f; return true;
+            case "CLUMP Amount_Slider": value = 0f; return true;
+
             // In POST editing the legacy Strength row is repurposed as WEIGHT.
             case "Strength_Slider": value = 1f; return true;
         }
