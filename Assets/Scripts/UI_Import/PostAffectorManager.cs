@@ -9,7 +9,7 @@ using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
 // Ctrl+Click creates a persistent localized post-affector for the active group.
-// Evaluation is deterministic: canonical/authored card state -> POST affectors -> HairCard mesh/clump.
+// Evaluation is deterministic: canonical/authored card state -> POST affectors -> rendered card.
 // Evaluated values are never fed back into canonical state.
 [DefaultExecutionOrder(3300)]
 public class PostAffectorManager : MonoBehaviour
@@ -191,7 +191,7 @@ public class PostAffectorManager : MonoBehaviour
         active.delta = Subtract(ReadControls(), active.baseline);
     }
 
-    // Canonical state is now the only upstream source of truth. While a POST is actively
+    // Canonical state is the only upstream source of truth. While a POST is actively
     // authored, ModelViewer's legacy selection path may still call SetParameters on cards;
     // restore canonical immediately so those preview writes cannot pollute the group root.
     void UpdateCanonicalBases()
@@ -306,21 +306,17 @@ public class PostAffectorManager : MonoBehaviour
 
             List<PostAffector> list = groups.TryGetValue(gid, out List<PostAffector> found) ? found : null;
             int insert = groupItem.GetSiblingIndex() + 1;
-            if (list != null)
-            {
-                int number = 1;
-                foreach (PostAffector a in list)
-                {
-                    string rowName = RowName(gid, a.id);
-                    Transform row = parent.Find(rowName);
-                    if (row == null) row = BuildRow(parent, a, number).transform;
-                    row.SetSiblingIndex(insert++);
-                    number++;
-                }
-            }
+            if (list == null) continue;
 
-            Transform clump = parent.Find("ClumpModifier_" + gid);
-            if (clump != null) clump.SetSiblingIndex(insert);
+            int number = 1;
+            foreach (PostAffector a in list)
+            {
+                string rowName = RowName(gid, a.id);
+                Transform row = parent.Find(rowName);
+                if (row == null) row = BuildRow(parent, a, number).transform;
+                row.SetSiblingIndex(insert++);
+                number++;
+            }
         }
     }
 
@@ -536,23 +532,6 @@ public class PostAffectorManager : MonoBehaviour
         };
     }
 
-    ControlState ReadCard(HairCard c) => new ControlState
-    {
-        length = c.length,
-        width = c.width,
-        segments = c.segments,
-        bend = c.bendAngle,
-        twist = c.twistAngle,
-        depth = c.GetEmbedDepth(),
-        x = c.GetOffsetX(),
-        y = c.GetOffsetY(),
-        z = c.GetOffsetZ(),
-        uScale = c.uScale,
-        vScale = c.vScale,
-        uOffset = c.uOffset,
-        vOffset = c.vOffset
-    };
-
     void ApplyControls(ControlState s)
     {
         viewer.currentLength = s.length;
@@ -617,11 +596,20 @@ public class PostAffectorManager : MonoBehaviour
 
     public void ClearAll()
     {
+        EnsureViewer();
         groups.Clear();
         cardStates.Clear();
         activeId = -1;
         activeGroup = -1;
         nextId = 1;
+
+        // A saved-project load can begin while a POST is selected. Clear the shared
+        // selection hotspot as part of POST teardown so the radial marker cannot survive
+        // into the newly loaded project/model.
+        SetField(hasSelectionField, false);
+        SetField(hitPointField, Vector3.zero);
+        SetField(hitNormalField, Vector3.zero);
+
         foreach (RectTransform r in FindObjectsByType<RectTransform>(FindObjectsSortMode.None).Where(r => r.name.StartsWith("PostAffector_")))
             Destroy(r.gameObject);
         nextUIScan = 0f;
@@ -656,15 +644,14 @@ public class PostAffectorManager : MonoBehaviour
         }
         groups[groupId] = list;
 
-        // Existing project files store the visible/evaluated card state. Recover canonical
-        // upstream state once on import, then persist that recovered value in HairCard so
-        // subsequent root edits start from the correct base instead of double-applying POST.
+        // Format-v2 projects save canonical/upstream card state already. Do not subtract
+        // POST effects during import: that old recovery path turns a valid base into
+        // "base - POST", then the normal evaluator applies POST again and can create a
+        // double-state handoff when several affectors are restored.
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None).Where(c => c.groupId == groupId))
         {
-            ControlState final = ReadCard(card);
-            ControlState upstream = Subtract(final, EffectForCard(card, list));
-            WriteCanonicalOnly(card, upstream);
-            cardStates[card] = new CardState { baseState = upstream, lastFinal = final, hasFinal = true };
+            ControlState canonical = ReadCanonical(card);
+            cardStates[card] = new CardState { baseState = canonical, lastFinal = canonical, hasFinal = false };
         }
         RebuildGroupRows(groupId);
     }
