@@ -23,6 +23,7 @@ public class TextureEditorManager : MonoBehaviour
         public int rectWidth = 760;
         public int rectHeight = 1800;
         public RectInt pixelRect;
+        public Vector2Int rootPixel;
         public bool placed;
         public bool generated;
     }
@@ -104,11 +105,8 @@ public class TextureEditorManager : MonoBehaviour
         Collider previewCollider = texturePreviewPlane.GetComponent<Collider>();
         if (previewCollider == null) return;
 
-        RaycastHit hit;
-        if (!previewCollider.Raycast(ray, out hit, 10000f))
-            return;
-
-        PlaceActiveClusterAtUV(hit.textureCoord);
+        if (previewCollider.Raycast(ray, out RaycastHit hit, 10000f))
+            PlaceActiveClusterAtUV(hit.textureCoord);
     }
 
     public void SetPanelActive(bool active, Transform parentCanvas, System.Action onSwitchToGroom)
@@ -205,10 +203,13 @@ public class TextureEditorManager : MonoBehaviour
             return;
         }
 
-        HairTextureCluster c = new HairTextureCluster();
-        c.id = nextClusterId++;
-        c.name = "Cluster " + c.id;
-        c.seed = 12345 + c.id * 7919;
+        HairTextureCluster c = new HairTextureCluster
+        {
+            id = nextClusterId,
+            name = "Cluster " + nextClusterId,
+            seed = 12345 + nextClusterId * 7919
+        };
+        nextClusterId++;
         clusters.Add(c);
 
         SelectCluster(clusters.Count - 1);
@@ -259,18 +260,28 @@ public class TextureEditorManager : MonoBehaviour
         bool shouldRegenerate = c.generated && c.placed;
         RectInt oldRect = c.pixelRect;
 
-        int centreX = Mathf.RoundToInt(Mathf.Clamp01(uv.x) * (textureSize - 1));
-        int centreY = Mathf.RoundToInt(Mathf.Clamp01(uv.y) * (textureSize - 1));
+        int rootX = Mathf.RoundToInt(Mathf.Clamp01(uv.x) * (textureSize - 1));
+        int rootY = Mathf.RoundToInt(Mathf.Clamp01(uv.y) * (textureSize - 1));
         int width = Mathf.Clamp(c.rectWidth, 256, textureSize);
         int height = Mathf.Clamp(c.rectHeight, 256, textureSize);
-        int x = Mathf.Clamp(centreX - width / 2, 0, textureSize - width);
-        int y = Mathf.Clamp(centreY - height / 2, 0, textureSize - height);
+        int pad = Mathf.Clamp(c.padding, 8, Mathf.Min(width, height) / 3);
+
+        // Placement click is the semantic root centre. The cluster rectangle hangs below it.
+        int xMin = Mathf.Clamp(rootX - width / 2, 0, textureSize - width);
+        int desiredYMin = rootY - (height - pad);
+        int yMin = Mathf.Clamp(desiredYMin, 0, textureSize - height);
+
+        // Keep the root on the clicked point whenever there is room. If the click is too close
+        // to a canvas edge, clamp only as much as required to keep the cluster drawable.
+        int clampedRootX = Mathf.Clamp(rootX, xMin + pad, xMin + width - pad - 1);
+        int clampedRootY = Mathf.Clamp(rootY, yMin + pad, yMin + height - pad - 1);
 
         Color32[] pixels = generatedHairTexture.GetPixels32();
         if (shouldRegenerate)
             ClearRect(pixels, textureSize, oldRect);
 
-        c.pixelRect = new RectInt(x, y, width, height);
+        c.pixelRect = new RectInt(xMin, yMin, width, height);
+        c.rootPixel = new Vector2Int(clampedRootX, clampedRootY);
         c.placed = true;
         placementMode = false;
 
@@ -290,7 +301,7 @@ public class TextureEditorManager : MonoBehaviour
 
         RebuildClusterList();
         RefreshPlacementStatus();
-        Debug.Log(c.name + " placed at atlas rect " + c.pixelRect + (shouldRegenerate ? " and regenerated." : "."));
+        Debug.Log(c.name + " root placed at " + c.rootPixel + " in atlas rect " + c.pixelRect + (shouldRegenerate ? " and regenerated." : "."));
     }
 
     private void CommitControlsToActiveCluster()
@@ -330,7 +341,7 @@ public class TextureEditorManager : MonoBehaviour
         {
             placementMode = true;
             RefreshPlacementStatus();
-            Debug.LogWarning(c.name + " has not been placed. Click the atlas to place it.");
+            Debug.LogWarning(c.name + " has not been placed. Click the atlas to place its root.");
             return;
         }
 
@@ -352,10 +363,10 @@ public class TextureEditorManager : MonoBehaviour
         float pad = Mathf.Clamp(c.padding, 8, Mathf.Min(r.width, r.height) / 3);
         float minX = r.xMin + pad;
         float maxX = r.xMax - pad - 1f;
-        float rootY = r.yMin + pad;
-        float usableHeight = Mathf.Max(1f, r.height - pad * 2f);
-        float lengthPixels = Mathf.Clamp01(c.strandLength / 2f) * usableHeight;
-        float centreX = r.center.x;
+        float rootY = c.rootPixel.y;
+        float availableDown = Mathf.Max(1f, rootY - (r.yMin + pad));
+        float lengthPixels = Mathf.Clamp01(c.strandLength / 2f) * availableDown;
+        float centreX = c.rootPixel.x;
         float guideWavePixels = c.waveAmount * r.width * 0.12f;
 
         System.Random random = new System.Random(c.seed);
@@ -367,17 +378,20 @@ public class TextureEditorManager : MonoBehaviour
             float rootX = Mathf.Lerp(minX, maxX, count <= 1 ? 0.5f : strandIndex / (float)(count - 1));
             rootX += NextRange(random, -8f, 8f);
 
-            float finalLength = Mathf.Min(lengthPixels * NextRange(random, 0.90f, 1.03f), usableHeight);
+            float finalLength = Mathf.Min(lengthPixels * NextRange(random, 0.90f, 1.03f), availableDown);
             float phase = NextRange(random, 0f, Mathf.PI * 2f);
             float waveScale = NextRange(random, 0.75f, 1.25f);
             float noiseOffset = NextRange(random, 0f, 1000f);
             float widthVariation = NextRange(random, 0.82f, 1.18f);
+            float rootYJitter = NextRange(random, -1.5f, 1.5f) * Mathf.Max(1f, c.strandWidth * 0.35f);
             int samples = Mathf.Clamp(Mathf.CeilToInt(finalLength / 1.5f), 32, 1200);
 
             for (int sample = 0; sample < samples; sample++)
             {
                 float t = samples <= 1 ? 0f : sample / (float)(samples - 1);
-                float y = rootY + finalLength * t;
+
+                // Texture V increases upward, so subtracting length makes strands hang down.
+                float y = rootY + rootYJitter - finalLength * t;
                 float guideX = centreX + Mathf.Sin(t * Mathf.PI * 2f + guidePhase) * guideWavePixels;
                 float waveX = Mathf.Sin(t * Mathf.PI * 2f + phase) * guideWavePixels * waveScale;
                 float independentX = rootX + waveX;
@@ -389,7 +403,11 @@ public class TextureEditorManager : MonoBehaviour
                 x += noise * c.noiseScale * r.width * 0.04f;
 
                 float taper = Mathf.Lerp(1f, Mathf.Max(0.08f, 1f - c.taperAmount), t);
-                float radius = Mathf.Max(0.5f, c.strandWidth * widthVariation * taper);
+
+                // Avoid the heavy horizontal root band when width is increased: roots begin
+                // narrower, then reach full strand width over the first ~5% of the strand.
+                float rootRamp = Mathf.Lerp(0.58f, 1f, Mathf.SmoothStep(0f, 0.05f, t));
+                float radius = Mathf.Max(0.5f, c.strandWidth * widthVariation * taper * rootRamp);
                 StampCircle(pixels, size, x, y, radius);
             }
         }
@@ -607,7 +625,7 @@ public class TextureEditorManager : MonoBehaviour
         HairTextureCluster c = clusters[activeClusterIndex];
         if (placementMode)
         {
-            placementStatusText.text = c.name + ": CLICK THE TEXTURE TO PLACE";
+            placementStatusText.text = c.name + ": CLICK THE TEXTURE TO PLACE ROOT";
             placementStatusText.color = new Color(0.25f, 0.75f, 1f);
         }
         else if (!c.placed)
@@ -617,7 +635,7 @@ public class TextureEditorManager : MonoBehaviour
         }
         else
         {
-            placementStatusText.text = c.name + "  Rect: " + c.pixelRect.x + ", " + c.pixelRect.y + "  " + c.pixelRect.width + "x" + c.pixelRect.height;
+            placementStatusText.text = c.name + "  Root: " + c.rootPixel.x + ", " + c.rootPixel.y + "  Rect: " + c.pixelRect.width + "x" + c.pixelRect.height;
             placementStatusText.color = Color.white;
         }
     }
