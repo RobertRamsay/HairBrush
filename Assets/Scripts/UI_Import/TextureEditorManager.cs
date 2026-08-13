@@ -11,7 +11,6 @@ public class TextureEditorManager : MonoBehaviour
     private Material hairCardMaterial;
     private Texture2D generatedHairTexture;
 
-    // One generated cluster for the first texture-generation pass.
     public int currentTextureGroupId = 0;
     public float strandCount = 50f;
     public float waveAmount = 0.1f;
@@ -20,7 +19,7 @@ public class TextureEditorManager : MonoBehaviour
     public float noiseScale = 0.1f;
     public float strandLength = 1.0f;
     public float strandWidth = 2.0f;
-    public int textureSize = 1024;
+    public int textureSize = 4096;
     public int generationSeed = 12345;
 
     public void Init(Material mat)
@@ -36,8 +35,6 @@ public class TextureEditorManager : MonoBehaviour
             generatedHairMaterial.name = sourceHairCardMaterial.name + "_Generated_Runtime";
             hairCardMaterial = generatedHairMaterial;
 
-            // ModelViewer should use the runtime clone for procedural cards.
-            // The source HairCard material and its original texture remain untouched.
             ModelViewer viewer = GetComponent<ModelViewer>();
             if (viewer != null)
                 viewer.hairCardMaterial = generatedHairMaterial;
@@ -52,7 +49,6 @@ public class TextureEditorManager : MonoBehaviour
     {
         if (generatedHairTexture != null)
             Destroy(generatedHairTexture);
-
         if (generatedHairMaterial != null)
             Destroy(generatedHairMaterial);
     }
@@ -60,13 +56,9 @@ public class TextureEditorManager : MonoBehaviour
     public void SetPanelActive(bool active, Transform parentCanvas, System.Action onSwitchToGroom)
     {
         if (textureSliderPanelGO == null && active)
-        {
             BuildTextureEditorUI(parentCanvas, onSwitchToGroom);
-        }
         else if (textureSliderPanelGO != null)
-        {
             textureSliderPanelGO.SetActive(active);
-        }
 
         if (active)
         {
@@ -110,7 +102,8 @@ public class TextureEditorManager : MonoBehaviour
 
     public void GenerateProceduralTexture()
     {
-        int size = Mathf.Clamp(textureSize, 128, 4096);
+        int size = 4096;
+        textureSize = size;
 
         if (generatedHairTexture == null || generatedHairTexture.width != size || generatedHairTexture.height != size)
         {
@@ -118,19 +111,19 @@ public class TextureEditorManager : MonoBehaviour
                 Destroy(generatedHairTexture);
 
             generatedHairTexture = new Texture2D(size, size, TextureFormat.RGBA32, true, false);
-            generatedHairTexture.name = "GeneratedHairTexture_Runtime";
+            generatedHairTexture.name = "GeneratedHairAtlas_4096_Runtime";
             generatedHairTexture.wrapMode = TextureWrapMode.Clamp;
             generatedHairTexture.filterMode = FilterMode.Bilinear;
         }
 
         Color32[] pixels = new Color32[size * size];
+        Color32 black = new Color32(0, 0, 0, 255);
         for (int i = 0; i < pixels.Length; i++)
-            pixels[i] = new Color32(0, 0, 0, 0);
+            pixels[i] = black;
 
         int count = Mathf.Clamp(Mathf.RoundToInt(strandCount), 1, 100);
         System.Random random = new System.Random(generationSeed);
 
-        // First-pass cluster rectangle. Later this becomes an atlas-owned rect with explicit padding.
         float padding = size * 0.06f;
         float minX = padding;
         float maxX = size - 1f - padding;
@@ -144,7 +137,7 @@ public class TextureEditorManager : MonoBehaviour
         for (int strandIndex = 0; strandIndex < count; strandIndex++)
         {
             float rootX = Mathf.Lerp(minX, maxX, count <= 1 ? 0.5f : strandIndex / (float)(count - 1));
-            rootX += NextRange(random, -4f, 4f);
+            rootX += NextRange(random, -16f, 16f);
 
             float strandLengthVariation = NextRange(random, 0.90f, 1.03f);
             float strandPhase = NextRange(random, 0f, Mathf.PI * 2f);
@@ -153,7 +146,7 @@ public class TextureEditorManager : MonoBehaviour
             float widthVariation = NextRange(random, 0.82f, 1.18f);
 
             float finalLength = Mathf.Min(lengthPixels * strandLengthVariation, usableHeight);
-            int samples = Mathf.Clamp(Mathf.CeilToInt(finalLength / 3f), 24, 320);
+            int samples = Mathf.Clamp(Mathf.CeilToInt(finalLength / 2.5f), 32, 1400);
 
             for (int sample = 0; sample < samples; sample++)
             {
@@ -172,7 +165,7 @@ public class TextureEditorManager : MonoBehaviour
                 x += noise * noiseScale * size * 0.018f;
 
                 float taper = Mathf.Lerp(1f, Mathf.Max(0.08f, 1f - taperAmount), t);
-                float radius = Mathf.Max(0.35f, strandWidth * widthVariation * taper);
+                float radius = Mathf.Max(0.5f, strandWidth * 2.0f * widthVariation * taper);
                 StampCircle(pixels, size, x, y, radius);
             }
         }
@@ -189,9 +182,12 @@ public class TextureEditorManager : MonoBehaviour
 
         if (generatedHairMaterial.HasProperty("_BaseMap"))
             generatedHairMaterial.SetTexture("_BaseMap", generatedHairTexture);
-
         if (generatedHairMaterial.HasProperty("_MainTex"))
             generatedHairMaterial.SetTexture("_MainTex", generatedHairTexture);
+        if (generatedHairMaterial.HasProperty("_BaseColor"))
+            generatedHairMaterial.SetColor("_BaseColor", Color.white);
+        if (generatedHairMaterial.HasProperty("_Color"))
+            generatedHairMaterial.SetColor("_Color", Color.white);
 
         if (texturePreviewPlane != null)
         {
@@ -216,14 +212,13 @@ public class TextureEditorManager : MonoBehaviour
                 float dx = (x + 0.5f) - cx;
                 float dy = (y + 0.5f) - cy;
                 float distance = Mathf.Sqrt(dx * dx + dy * dy);
-                float alpha = 1f - Mathf.SmoothStep(Mathf.Max(0f, radius - feather), radius + feather, distance);
-                if (alpha <= 0f) continue;
+                float coverage = 1f - Mathf.SmoothStep(Mathf.Max(0f, radius - feather), radius + feather, distance);
+                if (coverage <= 0f) continue;
 
                 int index = y * size + x;
-                byte oldAlpha = pixels[index].a;
-                byte newAlpha = (byte)Mathf.Clamp(Mathf.RoundToInt(alpha * 255f), 0, 255);
-                byte combinedAlpha = (byte)Mathf.Max(oldAlpha, newAlpha);
-                pixels[index] = new Color32(255, 255, 255, combinedAlpha);
+                byte white = (byte)Mathf.Clamp(Mathf.RoundToInt(coverage * 255f), 0, 255);
+                byte value = (byte)Mathf.Max(pixels[index].r, white);
+                pixels[index] = new Color32(value, value, value, 255);
             }
         }
     }
