@@ -8,8 +8,7 @@ using UnityEngine;
 // Current-format save/load contract:
 // HairCardSaveData stores the card state immediately upstream of persistent POST
 // affectors. Group variance is already represented in that upstream card state;
-// POST deltas, POST-local variance and local clump are stored separately and are
-// evaluated once after load.
+// POST deltas and POST-local variance are stored separately and evaluated once after load.
 [DefaultExecutionOrder(3900)]
 public class CanonicalProjectStateBridge : MonoBehaviour
 {
@@ -133,7 +132,6 @@ public class CanonicalProjectStateBridge : MonoBehaviour
         }
 
         RestorePostLocalVariance(data);
-        RestorePostLocalClump(data);
     }
 
     void RestorePostLocalVariance(HairProjectSaveData data)
@@ -148,28 +146,6 @@ public class CanonicalProjectStateBridge : MonoBehaviour
             if (g?.postAffectors != null)
                 foreach (PostAffectorSaveData p in g.postAffectors)
                     dict[p.id] = CloneVariance(p.localVariances);
-    }
-
-    void RestorePostLocalClump(HairProjectSaveData data)
-    {
-        PostClumpAffectorBridge bridge = FindFirstObjectByType<PostClumpAffectorBridge>();
-        if (bridge == null || data.groups == null) return;
-        FieldInfo field = typeof(PostClumpAffectorBridge).GetField("states", BindingFlags.Instance | BindingFlags.NonPublic);
-        IDictionary dict = field?.GetValue(bridge) as IDictionary;
-        Type stateType = typeof(PostClumpAffectorBridge).GetNestedType("LocalClumpState", BindingFlags.NonPublic);
-        if (dict == null || stateType == null) return;
-        dict.Clear();
-        foreach (GroupSaveData g in data.groups)
-        {
-            if (g?.postAffectors == null) continue;
-            foreach (PostAffectorSaveData p in g.postAffectors)
-            {
-                object s = Activator.CreateInstance(stateType);
-                stateType.GetField("baseline", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.SetValue(s, p.clumpBaseline);
-                stateType.GetField("delta", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.SetValue(s, p.clumpDelta);
-                dict[p.id] = s;
-            }
-        }
     }
 
     static List<VarianceChannelSaveData> CloneVariance(List<VarianceChannelSaveData> src)
