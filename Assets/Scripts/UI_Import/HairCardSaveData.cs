@@ -27,7 +27,7 @@ public class HairCardSaveData
 [Serializable] public class VarianceChannelSaveData { public string channel; public float amount; public int seed; }
 
 // Legacy clump payloads remain in the schema so older JSON project files still deserialize cleanly.
-// No runtime clump system reads or writes these fields anymore.
+// No runtime group-clump system reads or writes these fields anymore.
 [Serializable] public class ClumpPointSaveData { public float posX,posY,posZ; public float normalX,normalY,normalZ; public float strength; }
 [Serializable] public class ClumpLayerSaveData { public bool enabled; public int pointCount=20; public int generationSeed; public float globalStrength=1f; public float brushRadius=.08f; public float brushStrength=.5f; public float brushFalloff=.5f; public float brushValue=1f; public int debugMode; public float curveEarly=.08f; public float curveMid=.65f; public float curveTip=1f; public List<ClumpPointSaveData> points=new(); }
 
@@ -43,9 +43,15 @@ public class HairCardSaveData
     public int id;
     public float centerX,centerY,centerZ;
     public float normalX,normalY,normalZ;
-    public float radius=.02f;
-    public float falloff=.03f;
+    public float radius=.03f;
+    public float falloff=.05f;
     public float weight=1f;
+
+    // POST-owned centreline clump. Point is measured in representative hair lengths
+    // along the affector's surface-normal ray; amount is the deformation strength.
+    public float clumpPoint=.9f;
+    public float clumpAmount=0f;
+
     // Legacy-only; retained for old JSON compatibility.
     public float clumpBaseline;
     public float clumpDelta;
@@ -101,6 +107,11 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
             foreach(GroupSaveData group in groups)
                 postVariance.PopulateSave(group.postAffectors);
 
+        PostClumpAffectorBridge postClump=UnityEngine.Object.FindFirstObjectByType<PostClumpAffectorBridge>();
+        if(postClump!=null&&groups!=null)
+            foreach(GroupSaveData group in groups)
+                postClump.PopulateSave(group.postAffectors);
+
         CanonicalProjectStateBridge.CanonicalizeForSave(this);
     }
 
@@ -120,6 +131,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
             formatVersion = CanonicalProjectStateBridge.CurrentFormatVersion;
 
         PendingModifierRestore=this;
+        PostClumpAffectorBridge.PendingRestore=this;
         if(sourceVersion>=2)
             CanonicalProjectStateBridge.PendingCanonicalRestore=this;
     }
