@@ -16,7 +16,8 @@ public class TextureEditorManager : MonoBehaviour
         public float strandLength = 1f;
         public float waveAmount = 0.1f;
         public float clumpStrength = 0.2f;
-        public float taperAmount = 0.5f;
+        public int clumpCount = 1;
+        public float thicknessAmount = 1f;
         public float noiseScale = 0.1f;
         public int seed = 12345;
         public int padding = 48;
@@ -33,6 +34,7 @@ public class TextureEditorManager : MonoBehaviour
     private GameObject texturePreviewPlane;
     private Transform clusterListRoot;
     private TMPro.TextMeshProUGUI placementStatusText;
+    private TMPro.TextMeshProUGUI seedValueText;
 
     private Material sourceHairCardMaterial;
     private Material generatedHairMaterial;
@@ -41,23 +43,25 @@ public class TextureEditorManager : MonoBehaviour
     private readonly List<HairTextureCluster> clusters = new List<HairTextureCluster>();
     private int activeClusterIndex = -1;
     private int nextClusterId = 0;
-    private bool placementMode = false;
-    private bool panelActive = false;
-    private bool textureCreated = false;
+    private bool placementMode;
+    private bool panelActive;
+    private bool textureCreated;
 
     private Slider strandCountSlider;
     private Slider strandWidthSlider;
     private Slider strandLengthSlider;
     private Slider waveSlider;
     private Slider clumpSlider;
-    private Slider taperSlider;
+    private Slider clumpCountSlider;
+    private Slider thicknessSlider;
     private Slider noiseSlider;
 
     public int currentTextureGroupId = -1;
     public float strandCount = 50f;
     public float waveAmount = 0.1f;
     public float clumpStrength = 0.2f;
-    public float taperAmount = 0.5f;
+    public float clumpCount = 1f;
+    public float thicknessAmount = 1f;
     public float noiseScale = 0.1f;
     public float strandLength = 1f;
     public float strandWidth = 2f;
@@ -109,7 +113,7 @@ public class TextureEditorManager : MonoBehaviour
             PlaceActiveClusterAtUV(hit.textureCoord);
     }
 
-    public void SetPanelActive(bool active, Transform parentCanvas, System.Action onSwitchToGroom)
+    public void SetPanelActive(bool active, Transform parentCanvas, Action onSwitchToGroom)
     {
         panelActive = active;
 
@@ -230,7 +234,8 @@ public class TextureEditorManager : MonoBehaviour
         strandLength = c.strandLength;
         waveAmount = c.waveAmount;
         clumpStrength = c.clumpStrength;
-        taperAmount = c.taperAmount;
+        clumpCount = c.clumpCount;
+        thicknessAmount = c.thicknessAmount;
         noiseScale = c.noiseScale;
         generationSeed = c.seed;
         placementMode = false;
@@ -266,13 +271,10 @@ public class TextureEditorManager : MonoBehaviour
         int height = Mathf.Clamp(c.rectHeight, 256, textureSize);
         int pad = Mathf.Clamp(c.padding, 8, Mathf.Min(width, height) / 3);
 
-        // Placement click is the semantic root centre. The cluster rectangle hangs below it.
         int xMin = Mathf.Clamp(rootX - width / 2, 0, textureSize - width);
         int desiredYMin = rootY - (height - pad);
         int yMin = Mathf.Clamp(desiredYMin, 0, textureSize - height);
 
-        // Keep the root on the clicked point whenever there is room. If the click is too close
-        // to a canvas edge, clamp only as much as required to keep the cluster drawable.
         int clampedRootX = Mathf.Clamp(rootX, xMin + pad, xMin + width - pad - 1);
         int clampedRootY = Mathf.Clamp(rootY, yMin + pad, yMin + height - pad - 1);
 
@@ -313,7 +315,8 @@ public class TextureEditorManager : MonoBehaviour
         c.strandLength = strandLength;
         c.waveAmount = waveAmount;
         c.clumpStrength = clumpStrength;
-        c.taperAmount = taperAmount;
+        c.clumpCount = Mathf.Clamp(Mathf.RoundToInt(clumpCount), 1, 10);
+        c.thicknessAmount = Mathf.Clamp(thicknessAmount, 1f, 10f);
         c.noiseScale = noiseScale;
         c.seed = generationSeed;
     }
@@ -346,6 +349,13 @@ public class TextureEditorManager : MonoBehaviour
         }
 
         CommitControlsToActiveCluster();
+        RedrawCluster(c);
+    }
+
+    private void RedrawCluster(HairTextureCluster c)
+    {
+        if (generatedHairTexture == null || c == null || !c.placed) return;
+
         Color32[] pixels = generatedHairTexture.GetPixels32();
         ClearRect(pixels, textureSize, c.pixelRect);
         DrawCluster(pixels, textureSize, c);
@@ -357,6 +367,20 @@ public class TextureEditorManager : MonoBehaviour
         RefreshPlacementStatus();
     }
 
+    private void RandomiseActiveClusterSeed()
+    {
+        if (activeClusterIndex < 0 || activeClusterIndex >= clusters.Count) return;
+
+        int newSeed = UnityEngine.Random.Range(0, 1000000);
+        generationSeed = newSeed;
+        HairTextureCluster c = clusters[activeClusterIndex];
+        c.seed = newSeed;
+        UpdateSeedText();
+
+        if (c.generated && c.placed)
+            RedrawCluster(c);
+    }
+
     private void DrawCluster(Color32[] pixels, int size, HairTextureCluster c)
     {
         RectInt r = c.pixelRect;
@@ -366,17 +390,36 @@ public class TextureEditorManager : MonoBehaviour
         float rootY = c.rootPixel.y;
         float availableDown = Mathf.Max(1f, rootY - (r.yMin + pad));
         float lengthPixels = Mathf.Clamp01(c.strandLength / 2f) * availableDown;
-        float centreX = c.rootPixel.x;
         float guideWavePixels = c.waveAmount * r.width * 0.12f;
 
         System.Random random = new System.Random(c.seed);
-        float guidePhase = NextRange(random, 0f, Mathf.PI * 2f);
         int count = Mathf.Clamp(c.strandCount, 1, 100);
+        int guides = Mathf.Clamp(c.clumpCount, 1, 10);
+
+        float[] guideCentres = new float[guides];
+        float[] guidePhases = new float[guides];
+        float[] guideWaveScales = new float[guides];
+
+        float guideSpacing = guides > 1 ? (maxX - minX) / (guides - 1f) : (maxX - minX);
+        for (int g = 0; g < guides; g++)
+        {
+            float baseT = guides <= 1 ? 0.5f : g / (float)(guides - 1);
+            float baseX = Mathf.Lerp(minX, maxX, baseT);
+            float jitterLimit = guides <= 1 ? r.width * 0.035f : guideSpacing * 0.18f;
+            guideCentres[g] = Mathf.Clamp(baseX + NextRange(random, -jitterLimit, jitterLimit), minX, maxX);
+            guidePhases[g] = NextRange(random, 0f, Mathf.PI * 2f);
+            guideWaveScales[g] = NextRange(random, 0.8f, 1.2f);
+        }
 
         for (int strandIndex = 0; strandIndex < count; strandIndex++)
         {
-            float rootX = Mathf.Lerp(minX, maxX, count <= 1 ? 0.5f : strandIndex / (float)(count - 1));
+            float strandT = count <= 1 ? 0.5f : strandIndex / (float)(count - 1);
+            float rootX = Mathf.Lerp(minX, maxX, strandT);
             rootX += NextRange(random, -8f, 8f);
+
+            int guideIndex = guides <= 1
+                ? 0
+                : Mathf.Clamp(Mathf.RoundToInt(strandT * (guides - 1)), 0, guides - 1);
 
             float finalLength = Mathf.Min(lengthPixels * NextRange(random, 0.90f, 1.03f), availableDown);
             float phase = NextRange(random, 0f, Mathf.PI * 2f);
@@ -389,10 +432,12 @@ public class TextureEditorManager : MonoBehaviour
             for (int sample = 0; sample < samples; sample++)
             {
                 float t = samples <= 1 ? 0f : sample / (float)(samples - 1);
-
-                // Texture V increases upward, so subtracting length makes strands hang down.
                 float y = rootY + rootYJitter - finalLength * t;
-                float guideX = centreX + Mathf.Sin(t * Mathf.PI * 2f + guidePhase) * guideWavePixels;
+
+                float guideX = guideCentres[guideIndex]
+                    + Mathf.Sin(t * Mathf.PI * 2f + guidePhases[guideIndex])
+                    * guideWavePixels * guideWaveScales[guideIndex];
+
                 float waveX = Mathf.Sin(t * Mathf.PI * 2f + phase) * guideWavePixels * waveScale;
                 float independentX = rootX + waveX;
                 float clumpT = Mathf.Clamp01(c.clumpStrength) * Mathf.SmoothStep(0f, 1f, t);
@@ -402,12 +447,12 @@ public class TextureEditorManager : MonoBehaviour
                 float noise = Mathf.PerlinNoise(noiseOffset, t * noiseFrequency) * 2f - 1f;
                 x += noise * c.noiseScale * r.width * 0.04f;
 
-                float taper = Mathf.Lerp(1f, Mathf.Max(0.08f, 1f - c.taperAmount), t);
-
-                // Avoid the heavy horizontal root band when width is increased: roots begin
-                // narrower, then reach full strand width over the first ~5% of the strand.
+                float naturalTipTaper = Mathf.Lerp(1f, 0.12f, Mathf.SmoothStep(0.55f, 1f, t));
                 float rootRamp = Mathf.Lerp(0.58f, 1f, Mathf.SmoothStep(0f, 0.05f, t));
-                float radius = Mathf.Max(0.5f, c.strandWidth * widthVariation * taper * rootRamp);
+                float radius = Mathf.Max(
+                    0.5f,
+                    c.strandWidth * c.thicknessAmount * widthVariation * naturalTipTaper * rootRamp);
+
                 StampCircle(pixels, size, x, y, radius);
             }
         }
@@ -442,6 +487,7 @@ public class TextureEditorManager : MonoBehaviour
                 float distance = Mathf.Sqrt(dx * dx + dy * dy);
                 float coverage = 1f - Mathf.SmoothStep(Mathf.Max(0f, radius - feather), radius + feather, distance);
                 if (coverage <= 0f) continue;
+
                 int index = y * size + x;
                 byte white = (byte)Mathf.Clamp(Mathf.RoundToInt(coverage * 255f), 0, 255);
                 byte value = (byte)Mathf.Max(pixels[index].r, white);
@@ -461,11 +507,16 @@ public class TextureEditorManager : MonoBehaviour
 
         if (generatedHairTexture != null)
         {
-            if (generatedHairMaterial.HasProperty("_BaseMap")) generatedHairMaterial.SetTexture("_BaseMap", generatedHairTexture);
-            if (generatedHairMaterial.HasProperty("_MainTex")) generatedHairMaterial.SetTexture("_MainTex", generatedHairTexture);
+            if (generatedHairMaterial.HasProperty("_BaseMap"))
+                generatedHairMaterial.SetTexture("_BaseMap", generatedHairTexture);
+            if (generatedHairMaterial.HasProperty("_MainTex"))
+                generatedHairMaterial.SetTexture("_MainTex", generatedHairTexture);
         }
-        if (generatedHairMaterial.HasProperty("_BaseColor")) generatedHairMaterial.SetColor("_BaseColor", Color.white);
-        if (generatedHairMaterial.HasProperty("_Color")) generatedHairMaterial.SetColor("_Color", Color.white);
+
+        if (generatedHairMaterial.HasProperty("_BaseColor"))
+            generatedHairMaterial.SetColor("_BaseColor", Color.white);
+        if (generatedHairMaterial.HasProperty("_Color"))
+            generatedHairMaterial.SetColor("_Color", Color.white);
 
         if (texturePreviewPlane != null)
         {
@@ -474,7 +525,7 @@ public class TextureEditorManager : MonoBehaviour
         }
     }
 
-    private void BuildTextureEditorUI(Transform parentCanvas, System.Action onSwitchToGroom)
+    private void BuildTextureEditorUI(Transform parentCanvas, Action onSwitchToGroom)
     {
         BuildLeftClusterPanel(parentCanvas);
         BuildRightControlPanel(parentCanvas, onSwitchToGroom);
@@ -484,8 +535,11 @@ public class TextureEditorManager : MonoBehaviour
 
     private void BuildLeftClusterPanel(Transform parentCanvas)
     {
-        leftClusterPanelGO = new GameObject("TextureClusterListPanel", typeof(RectTransform), typeof(Image), typeof(GraphicRaycaster));
+        leftClusterPanelGO = new GameObject(
+            "TextureClusterListPanel",
+            typeof(RectTransform), typeof(Image), typeof(GraphicRaycaster));
         leftClusterPanelGO.transform.SetParent(parentCanvas, false);
+
         RectTransform rect = leftClusterPanelGO.GetComponent<RectTransform>();
         rect.anchorMin = new Vector2(0f, 0f);
         rect.anchorMax = new Vector2(0f, 1f);
@@ -503,7 +557,9 @@ public class TextureEditorManager : MonoBehaviour
         CreateActionButton(leftClusterPanelGO.transform, "+ NEW TEXTURE", NewTexture, 48f);
         CreateHeader(leftClusterPanelGO.transform, "CLUSTERS");
 
-        GameObject listGO = new GameObject("ClusterList", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
+        GameObject listGO = new GameObject(
+            "ClusterList",
+            typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
         listGO.transform.SetParent(leftClusterPanelGO.transform, false);
         LayoutElement le = listGO.GetComponent<LayoutElement>();
         le.flexibleHeight = 1f;
@@ -516,10 +572,13 @@ public class TextureEditorManager : MonoBehaviour
         CreateActionButton(leftClusterPanelGO.transform, "+ NEW CLUSTER", NewCluster, 44f);
     }
 
-    private void BuildRightControlPanel(Transform parentCanvas, System.Action onSwitchToGroom)
+    private void BuildRightControlPanel(Transform parentCanvas, Action onSwitchToGroom)
     {
-        rightControlPanelGO = new GameObject("TextureGeneratorControlsPanel", typeof(RectTransform), typeof(Image), typeof(GraphicRaycaster));
+        rightControlPanelGO = new GameObject(
+            "TextureGeneratorControlsPanel",
+            typeof(RectTransform), typeof(Image), typeof(GraphicRaycaster));
         rightControlPanelGO.transform.SetParent(parentCanvas, false);
+
         RectTransform rect = rightControlPanelGO.GetComponent<RectTransform>();
         rect.anchorMin = new Vector2(1f, 0f);
         rect.anchorMax = new Vector2(1f, 1f);
@@ -547,7 +606,9 @@ public class TextureEditorManager : MonoBehaviour
 
         CreateHeader(rightControlPanelGO.transform, "ACTIVE CLUSTER CONTROLS");
 
-        GameObject statusGO = new GameObject("PlacementStatus", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI), typeof(LayoutElement));
+        GameObject statusGO = new GameObject(
+            "PlacementStatus",
+            typeof(RectTransform), typeof(TMPro.TextMeshProUGUI), typeof(LayoutElement));
         statusGO.transform.SetParent(rightControlPanelGO.transform, false);
         statusGO.GetComponent<LayoutElement>().preferredHeight = 48f;
         placementStatusText = statusGO.GetComponent<TMPro.TextMeshProUGUI>();
@@ -557,15 +618,78 @@ public class TextureEditorManager : MonoBehaviour
 
         CreateActionButton(rightControlPanelGO.transform, "REPOSITION - CLICK ATLAS", RepositionActiveCluster, 40f);
 
-        CreateSliderUI(rightControlPanelGO.transform, "Strand Count", 1f, 100f, strandCount, v => strandCount = v, out strandCountSlider);
-        CreateSliderUI(rightControlPanelGO.transform, "Strand Width", 0.5f, 8f, strandWidth, v => strandWidth = v, out strandWidthSlider);
-        CreateSliderUI(rightControlPanelGO.transform, "Strand Length", 0.1f, 2f, strandLength, v => strandLength = v, out strandLengthSlider);
-        CreateSliderUI(rightControlPanelGO.transform, "Wave Amount", 0f, 1f, waveAmount, v => waveAmount = v, out waveSlider);
-        CreateSliderUI(rightControlPanelGO.transform, "Clump Strength", 0f, 1f, clumpStrength, v => clumpStrength = v, out clumpSlider);
-        CreateSliderUI(rightControlPanelGO.transform, "Taper Amount", 0f, 1f, taperAmount, v => taperAmount = v, out taperSlider);
-        CreateSliderUI(rightControlPanelGO.transform, "Noise Scale", 0f, 1f, noiseScale, v => noiseScale = v, out noiseSlider);
+        CreateSliderUI(rightControlPanelGO.transform, "Strand Count", 1f, 100f, strandCount,
+            v => strandCount = Mathf.Round(v), out strandCountSlider, true);
+        CreateSliderUI(rightControlPanelGO.transform, "Strand Width", 0.5f, 8f, strandWidth,
+            v => strandWidth = v, out strandWidthSlider);
+        CreateSliderUI(rightControlPanelGO.transform, "Strand Length", 0.1f, 2f, strandLength,
+            v => strandLength = v, out strandLengthSlider);
+        CreateSliderUI(rightControlPanelGO.transform, "Wave Amount", 0f, 1f, waveAmount,
+            v => waveAmount = v, out waveSlider);
+        CreateSliderUI(rightControlPanelGO.transform, "Clump Strength", 0f, 1f, clumpStrength,
+            v => clumpStrength = v, out clumpSlider);
+        CreateSliderUI(rightControlPanelGO.transform, "Number of Clumps", 1f, 10f, clumpCount,
+            v => clumpCount = Mathf.Round(v), out clumpCountSlider, true);
+        CreateSliderUI(rightControlPanelGO.transform, "Thickness Amount", 1f, 10f, thicknessAmount,
+            v => thicknessAmount = v, out thicknessSlider);
+        CreateSliderUI(rightControlPanelGO.transform, "Noise Scale", 0f, 1f, noiseScale,
+            v => noiseScale = v, out noiseSlider);
 
+        CreateSeedRow(rightControlPanelGO.transform);
         CreateActionButton(rightControlPanelGO.transform, "GENERATE / UPDATE", GenerateOrUpdateActiveCluster, 48f);
+    }
+
+    private void CreateSeedRow(Transform parent)
+    {
+        GameObject rowGO = new GameObject(
+            "ClusterSeedRow",
+            typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
+        rowGO.transform.SetParent(parent, false);
+        rowGO.GetComponent<LayoutElement>().preferredHeight = 40f;
+
+        HorizontalLayoutGroup row = rowGO.GetComponent<HorizontalLayoutGroup>();
+        row.spacing = 6f;
+        row.childControlHeight = true;
+        row.childControlWidth = true;
+        row.childForceExpandWidth = false;
+
+        GameObject labelGO = new GameObject(
+            "SeedLabel",
+            typeof(RectTransform), typeof(TMPro.TextMeshProUGUI), typeof(LayoutElement));
+        labelGO.transform.SetParent(rowGO.transform, false);
+        labelGO.GetComponent<LayoutElement>().flexibleWidth = 1f;
+        TMPro.TextMeshProUGUI label = labelGO.GetComponent<TMPro.TextMeshProUGUI>();
+        label.text = "Cluster Seed";
+        label.fontSize = 14f;
+        label.color = Color.white;
+        label.alignment = TMPro.TextAlignmentOptions.MidlineLeft;
+
+        GameObject valueGO = new GameObject(
+            "SeedValue",
+            typeof(RectTransform), typeof(TMPro.TextMeshProUGUI), typeof(LayoutElement));
+        valueGO.transform.SetParent(rowGO.transform, false);
+        valueGO.GetComponent<LayoutElement>().preferredWidth = 100f;
+        seedValueText = valueGO.GetComponent<TMPro.TextMeshProUGUI>();
+        seedValueText.fontSize = 14f;
+        seedValueText.color = Color.white;
+        seedValueText.alignment = TMPro.TextAlignmentOptions.Center;
+
+        GameObject randomGO = new GameObject(
+            "RandomSeedButton",
+            typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
+        randomGO.transform.SetParent(rowGO.transform, false);
+        randomGO.GetComponent<LayoutElement>().preferredWidth = 42f;
+        randomGO.GetComponent<Image>().color = new Color(0.20f, 0.50f, 0.82f);
+        randomGO.GetComponent<Button>().onClick.AddListener(RandomiseActiveClusterSeed);
+        CreateButtonLabel(randomGO.transform, "R");
+
+        UpdateSeedText();
+    }
+
+    private void UpdateSeedText()
+    {
+        if (seedValueText != null)
+            seedValueText.text = generationSeed.ToString();
     }
 
     private void RebuildClusterList()
@@ -581,23 +705,30 @@ public class TextureEditorManager : MonoBehaviour
             HairTextureCluster c = clusters[i];
             bool active = i == activeClusterIndex;
 
-            GameObject buttonGO = new GameObject(c.name + "Button", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
+            GameObject buttonGO = new GameObject(
+                c.name + "Button",
+                typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
             buttonGO.transform.SetParent(clusterListRoot, false);
-            buttonGO.GetComponent<LayoutElement>().preferredHeight = 58f;
-            buttonGO.GetComponent<Image>().color = active ? new Color(0.18f, 0.48f, 0.78f, 1f) : new Color(0.20f, 0.20f, 0.20f, 1f);
+            buttonGO.GetComponent<LayoutElement>().preferredHeight = 62f;
+            buttonGO.GetComponent<Image>().color = active
+                ? new Color(0.18f, 0.48f, 0.78f, 1f)
+                : new Color(0.20f, 0.20f, 0.20f, 1f);
             buttonGO.GetComponent<Button>().onClick.AddListener(() => SelectCluster(capturedIndex));
 
-            GameObject labelGO = new GameObject("Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
+            GameObject labelGO = new GameObject(
+                "Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
             labelGO.transform.SetParent(buttonGO.transform, false);
             RectTransform lr = labelGO.GetComponent<RectTransform>();
             lr.anchorMin = Vector2.zero;
             lr.anchorMax = Vector2.one;
             lr.offsetMin = new Vector2(10f, 4f);
             lr.offsetMax = new Vector2(-8f, -4f);
+
             TMPro.TextMeshProUGUI tmp = labelGO.GetComponent<TMPro.TextMeshProUGUI>();
             string state = c.generated ? "generated" : (c.placed ? "placed" : "place on atlas");
-            tmp.text = c.name + "\n" + c.strandCount + " strands  •  " + state;
-            tmp.fontSize = 14f;
+            tmp.text = c.name + "\n" + c.strandCount + " strands  •  "
+                + c.clumpCount + " clump" + (c.clumpCount == 1 ? "" : "s") + "  •  " + state;
+            tmp.fontSize = 13.5f;
             tmp.color = Color.white;
             tmp.alignment = TMPro.TextAlignmentOptions.MidlineLeft;
             tmp.raycastTarget = false;
@@ -635,7 +766,8 @@ public class TextureEditorManager : MonoBehaviour
         }
         else
         {
-            placementStatusText.text = c.name + "  Root: " + c.rootPixel.x + ", " + c.rootPixel.y + "  Rect: " + c.pixelRect.width + "x" + c.pixelRect.height;
+            placementStatusText.text = c.name + "  Root: " + c.rootPixel.x + ", " + c.rootPixel.y
+                + "  •  " + c.clumpCount + " clump" + (c.clumpCount == 1 ? "" : "s");
             placementStatusText.color = Color.white;
         }
     }
@@ -647,13 +779,16 @@ public class TextureEditorManager : MonoBehaviour
         if (strandLengthSlider != null) strandLengthSlider.SetValueWithoutNotify(strandLength);
         if (waveSlider != null) waveSlider.SetValueWithoutNotify(waveAmount);
         if (clumpSlider != null) clumpSlider.SetValueWithoutNotify(clumpStrength);
-        if (taperSlider != null) taperSlider.SetValueWithoutNotify(taperAmount);
+        if (clumpCountSlider != null) clumpCountSlider.SetValueWithoutNotify(clumpCount);
+        if (thicknessSlider != null) thicknessSlider.SetValueWithoutNotify(thicknessAmount);
         if (noiseSlider != null) noiseSlider.SetValueWithoutNotify(noiseScale);
+        UpdateSeedText();
     }
 
     private void CreateHeader(Transform parent, string text)
     {
-        GameObject go = new GameObject(text, typeof(RectTransform), typeof(TMPro.TextMeshProUGUI), typeof(LayoutElement));
+        GameObject go = new GameObject(
+            text, typeof(RectTransform), typeof(TMPro.TextMeshProUGUI), typeof(LayoutElement));
         go.transform.SetParent(parent, false);
         go.GetComponent<LayoutElement>().preferredHeight = 28f;
         TMPro.TextMeshProUGUI tmp = go.GetComponent<TMPro.TextMeshProUGUI>();
@@ -666,16 +801,20 @@ public class TextureEditorManager : MonoBehaviour
 
     private void CreateDisabledLabelButton(Transform parent, string text, float height)
     {
-        GameObject go = new GameObject(text, typeof(RectTransform), typeof(Image), typeof(LayoutElement));
+        GameObject go = new GameObject(
+            text, typeof(RectTransform), typeof(Image), typeof(LayoutElement));
         go.transform.SetParent(parent, false);
         go.GetComponent<LayoutElement>().preferredHeight = height;
         go.GetComponent<Image>().color = new Color(0.18f, 0.48f, 0.78f, 1f);
         CreateButtonLabel(go.transform, text);
     }
 
-    private void CreateActionButton(Transform parent, string label, UnityEngine.Events.UnityAction action, float height)
+    private void CreateActionButton(
+        Transform parent, string label, UnityEngine.Events.UnityAction action, float height)
     {
-        GameObject buttonGO = new GameObject(label + "Button", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
+        GameObject buttonGO = new GameObject(
+            label + "Button",
+            typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
         buttonGO.transform.SetParent(parent, false);
         buttonGO.GetComponent<Image>().color = new Color(0.20f, 0.50f, 0.82f);
         LayoutElement layout = buttonGO.GetComponent<LayoutElement>();
@@ -688,7 +827,8 @@ public class TextureEditorManager : MonoBehaviour
 
     private void CreateButtonLabel(Transform parent, string text)
     {
-        GameObject textGO = new GameObject("Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
+        GameObject textGO = new GameObject(
+            "Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
         textGO.transform.SetParent(parent, false);
         TMPro.TextMeshProUGUI tmp = textGO.GetComponent<TMPro.TextMeshProUGUI>();
         tmp.text = text;
@@ -703,9 +843,18 @@ public class TextureEditorManager : MonoBehaviour
         rect.sizeDelta = Vector2.zero;
     }
 
-    private GameObject CreateSliderUI(Transform parent, string labelText, float min, float max, float defaultValue, UnityEngine.Events.UnityAction<float> onValueChanged, out Slider createdSlider)
+    private GameObject CreateSliderUI(
+        Transform parent,
+        string labelText,
+        float min,
+        float max,
+        float defaultValue,
+        UnityEngine.Events.UnityAction<float> onValueChanged,
+        out Slider createdSlider,
+        bool wholeNumbers = false)
     {
-        GameObject rowGO = new GameObject(labelText + "_Row", typeof(RectTransform), typeof(LayoutElement));
+        GameObject rowGO = new GameObject(
+            labelText + "_Row", typeof(RectTransform), typeof(LayoutElement));
         rowGO.transform.SetParent(parent, false);
         rowGO.GetComponent<LayoutElement>().preferredHeight = 48f;
 
@@ -715,24 +864,28 @@ public class TextureEditorManager : MonoBehaviour
         rowLayout.childControlWidth = true;
         rowLayout.childControlHeight = false;
 
-        GameObject textGO = new GameObject(labelText + "_Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
+        GameObject textGO = new GameObject(
+            labelText + "_Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
         textGO.transform.SetParent(rowGO.transform, false);
         textGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 20);
         TMPro.TextMeshProUGUI tmp = textGO.GetComponent<TMPro.TextMeshProUGUI>();
-        tmp.text = labelText + ": " + defaultValue.ToString("F3");
+        tmp.text = FormatSliderLabel(labelText, defaultValue, wholeNumbers);
         tmp.fontSize = 14f;
         tmp.color = Color.white;
 
-        GameObject sliderGO = new GameObject(labelText + "_Slider", typeof(RectTransform), typeof(Slider));
+        GameObject sliderGO = new GameObject(
+            labelText + "_Slider", typeof(RectTransform), typeof(Slider));
         sliderGO.transform.SetParent(rowGO.transform, false);
         sliderGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 20);
 
         Slider slider = sliderGO.GetComponent<Slider>();
         slider.minValue = min;
         slider.maxValue = max;
+        slider.wholeNumbers = wholeNumbers;
         slider.value = defaultValue;
 
-        GameObject backgroundGO = new GameObject("Background", typeof(RectTransform), typeof(Image));
+        GameObject backgroundGO = new GameObject(
+            "Background", typeof(RectTransform), typeof(Image));
         backgroundGO.transform.SetParent(sliderGO.transform, false);
         backgroundGO.GetComponent<Image>().color = new Color(0.28f, 0.28f, 0.28f);
         RectTransform bgRect = backgroundGO.GetComponent<RectTransform>();
@@ -762,7 +915,8 @@ public class TextureEditorManager : MonoBehaviour
         handleAreaRect.anchorMax = Vector2.one;
         handleAreaRect.sizeDelta = Vector2.zero;
 
-        GameObject handleGO = new GameObject("Handle", typeof(RectTransform), typeof(Image));
+        GameObject handleGO = new GameObject(
+            "Handle", typeof(RectTransform), typeof(Image));
         handleGO.transform.SetParent(handleAreaGO.transform, false);
         handleGO.GetComponent<Image>().color = Color.white;
         slider.handleRect = handleGO.GetComponent<RectTransform>();
@@ -770,11 +924,16 @@ public class TextureEditorManager : MonoBehaviour
 
         slider.onValueChanged.AddListener(val =>
         {
-            tmp.text = labelText + ": " + val.ToString("F3");
+            tmp.text = FormatSliderLabel(labelText, val, wholeNumbers);
             onValueChanged.Invoke(val);
         });
 
         createdSlider = slider;
         return rowGO;
+    }
+
+    private static string FormatSliderLabel(string label, float value, bool wholeNumbers)
+    {
+        return label + ": " + (wholeNumbers ? Mathf.RoundToInt(value).ToString() : value.ToString("F3"));
     }
 }
