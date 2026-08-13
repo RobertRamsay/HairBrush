@@ -12,7 +12,7 @@ using UnityEngine.UI;
 [DefaultExecutionOrder(2100)]
 public class SelectionBrushScaleTuning : MonoBehaviour
 {
-    private const float DefaultRadius = .02f;
+    private const float DefaultRadius = .03f;
     private const float DefaultFalloff = .05f;
     private const float MaxRadius = .25f;
     private const float MaxFalloff = .25f;
