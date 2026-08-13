@@ -21,6 +21,7 @@ public class SelectionBrushScaleTuning : MonoBehaviour
     private FieldInfo hasSelectionField;
     private FieldInfo hitPointField;
     private FieldInfo falloffRowField;
+    private FieldInfo activeSliderPanelField;
     private MethodInfo createSliderMethod;
 
     private GameObject radiusRow;
@@ -64,7 +65,8 @@ public class SelectionBrushScaleTuning : MonoBehaviour
         if (selected && !wasSelected)
         {
             // EnterSelectionMode still writes its legacy .25 falloff. Replace only that
-            // legacy reset with the last user value (or .05 on first use).
+            // legacy reset with the last user value (or .05 on first use). Selecting an
+            // existing POST already loaded its own stored radius/falloff before we get here.
             if (Mathf.Approximately(viewer.brushFalloffDistance, .25f))
                 viewer.brushFalloffDistance = lastFalloff > 0f ? lastFalloff : DefaultFalloff;
             if (viewer.brushRadius <= 0f || viewer.brushRadius > MaxRadius)
@@ -106,6 +108,7 @@ public class SelectionBrushScaleTuning : MonoBehaviour
         hasSelectionField = type.GetField("hasSelectionHotspot", flags);
         hitPointField = type.GetField("selectionHitPoint", flags);
         falloffRowField = type.GetField("falloffRowGO", flags);
+        activeSliderPanelField = type.GetField("activeSliderPanel", flags);
         createSliderMethod = type.GetMethod("CreateSliderUI", flags);
     }
 
@@ -120,10 +123,43 @@ public class SelectionBrushScaleTuning : MonoBehaviour
             radiusRow = null;
             radiusSlider = null;
             falloffSlider = null;
+
+            // Group-header selection can end POST mode without going through
+            // ModelViewer.ClearSelectionHotspot(), so clean up the legacy falloff row here too.
+            GameObject staleFalloff = falloffRowField?.GetValue(viewer) as GameObject;
+            if (staleFalloff != null) Destroy(staleFalloff);
+            falloffRowField?.SetValue(viewer, null);
             return;
         }
 
         GameObject falloffRow = falloffRowField?.GetValue(viewer) as GameObject;
+
+        // Ctrl+Click creation builds this row in ModelViewer, but selecting an existing POST
+        // from the left panel does not. Recreate it here so Radius/Falloff are always available
+        // whenever a POST/local edit is active.
+        if (falloffRow == null && createSliderMethod != null)
+        {
+            GameObject panel = activeSliderPanelField?.GetValue(viewer) as GameObject;
+            if (panel == null) panel = viewer.groomingSliderPanelGO;
+
+            if (panel != null)
+            {
+                UnityAction<float> onFalloff = value =>
+                {
+                    viewer.brushFalloffDistance = Mathf.Clamp(value, 0f, MaxFalloff);
+                    RecomputeWeights(GetHitPoint(), viewer.brushRadius, viewer.brushFalloffDistance);
+                    lastRadius = viewer.brushRadius;
+                    lastFalloff = viewer.brushFalloffDistance;
+                };
+
+                object[] args = { panel.transform, "Falloff", 0f, MaxFalloff, viewer.brushFalloffDistance, onFalloff, null, 38f, 16 };
+                falloffRow = createSliderMethod.Invoke(viewer, args) as GameObject;
+                falloffSlider = args[6] as Slider;
+                if (falloffRow != null)
+                    falloffRowField?.SetValue(viewer, falloffRow);
+            }
+        }
+
         if (falloffRow == null) return;
 
         falloffSlider = falloffRow.GetComponentInChildren<Slider>(true);
