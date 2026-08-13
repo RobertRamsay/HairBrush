@@ -106,8 +106,54 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
 
     public void OnAfterDeserialize()
     {
+        int sourceVersion = formatVersion;
+
+        // v3 changes the native procedural card UV convention from root V=0 / tip V=1
+        // to root V=1 / tip V=0. Negating every saved absolute V scale (and POST V delta)
+        // preserves the exact visual orientation of older projects under the corrected mesh.
+        if(sourceVersion < CanonicalProjectStateBridge.CurrentFormatVersion)
+            MigrateLegacyVConvention();
+
+        // v2 already has the canonical POST save contract. Promote it after the UV-only
+        // migration so the normal canonical restore path still runs unchanged.
+        if(sourceVersion >= 2 && sourceVersion < CanonicalProjectStateBridge.CurrentFormatVersion)
+            formatVersion = CanonicalProjectStateBridge.CurrentFormatVersion;
+
         PendingModifierRestore=this;
-        if(formatVersion>=CanonicalProjectStateBridge.CurrentFormatVersion)
+        if(sourceVersion>=2)
             CanonicalProjectStateBridge.PendingCanonicalRestore=this;
+    }
+
+    void MigrateLegacyVConvention()
+    {
+        // The legacy loader interpreted a serialized 0 group/card/root V scale as +1.
+        // Preserve that old meaning while switching the mesh's native orientation.
+        sliderVScale = FlipLegacyAbsoluteV(sliderVScale);
+
+        if(groups != null)
+        {
+            foreach(GroupSaveData group in groups)
+            {
+                if(group == null) continue;
+                group.vScale = FlipLegacyAbsoluteV(group.vScale);
+
+                if(group.postAffectors == null) continue;
+                foreach(PostAffectorSaveData post in group.postAffectors)
+                {
+                    if(post == null) continue;
+                    if(post.baseline != null) post.baseline.vScale = -post.baseline.vScale;
+                    if(post.delta != null) post.delta.vScale = -post.delta.vScale;
+                }
+            }
+        }
+
+        if(hairCards != null)
+            foreach(HairCardSaveData card in hairCards)
+                if(card != null) card.vScale = FlipLegacyAbsoluteV(card.vScale);
+    }
+
+    static float FlipLegacyAbsoluteV(float value)
+    {
+        return Mathf.Approximately(value, 0f) ? -1f : -value;
     }
 }
