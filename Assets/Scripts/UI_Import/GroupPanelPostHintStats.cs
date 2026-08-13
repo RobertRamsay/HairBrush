@@ -56,11 +56,11 @@ public class GroupPanelPostHintStats : MonoBehaviour
         go.transform.SetParent(panel.transform, false);
 
         LayoutElement layout = go.GetComponent<LayoutElement>();
-        layout.preferredHeight = 44f;
-        layout.minHeight = 44f;
+        layout.preferredHeight = 60f;
+        layout.minHeight = 60f;
 
         RectTransform rect = go.GetComponent<RectTransform>();
-        rect.sizeDelta = new Vector2(0f, 44f);
+        rect.sizeDelta = new Vector2(0f, 60f);
 
         hint = go.GetComponent<TextMeshProUGUI>();
         ApplyHintStyle();
@@ -71,7 +71,7 @@ public class GroupPanelPostHintStats : MonoBehaviour
     void ApplyHintStyle()
     {
         if (hint == null) return;
-        hint.text = "CTRL+CLICK on SURFACE to add a POST EFFECT\nCTRL+CLICK in SPACE to deactivate";
+        hint.text = "CTRL+CLICK on SURFACE to add a POST EFFECT\nSPACE+CLICK on SURFACE to move selected POST\nCTRL+CLICK in SPACE to deactivate";
         hint.fontSize = 11f;
         hint.fontStyle = FontStyles.Bold;
         hint.alignment = TextAlignmentOptions.MidlineLeft;
@@ -82,10 +82,10 @@ public class GroupPanelPostHintStats : MonoBehaviour
         LayoutElement layout = hint.GetComponent<LayoutElement>();
         if (layout != null)
         {
-            layout.preferredHeight = 44f;
-            layout.minHeight = 44f;
+            layout.preferredHeight = 60f;
+            layout.minHeight = 60f;
         }
-        hint.rectTransform.sizeDelta = new Vector2(0f, 44f);
+        hint.rectTransform.sizeDelta = new Vector2(0f, 60f);
     }
 
     void MaintainHintOrder(Transform panel)
