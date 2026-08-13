@@ -12,12 +12,15 @@ public class GroupUVSeedButtonFix : MonoBehaviour
 {
     private GroupPredeterminedUVController controller;
     private ModelViewer viewer;
-    private MethodInfo setSeedMethod;
+    private MethodInfo getSettingsMethod;
+    private MethodInfo clearAppliedMethod;
+    private MethodInfo forceApplyMethod;
     private Button button;
     private TMP_InputField seedInput;
     private UVSeedPointerRelay relay;
     private bool wasFocused;
     private string editText = "0";
+    private float nextStyleScan;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
@@ -33,7 +36,12 @@ public class GroupUVSeedButtonFix : MonoBehaviour
         Resolve();
         Bind();
         MaintainEdit();
-        MaintainButtonStyle();
+
+        if (Time.unscaledTime >= nextStyleScan)
+        {
+            nextStyleScan = Time.unscaledTime + .1f;
+            StyleAllRandomButtons();
+        }
     }
 
     void Resolve()
@@ -42,14 +50,20 @@ public class GroupUVSeedButtonFix : MonoBehaviour
         {
             controller = FindFirstObjectByType<GroupPredeterminedUVController>();
             if (controller != null)
-                setSeedMethod = typeof(GroupPredeterminedUVController).GetMethod("SetSeed", BindingFlags.Instance | BindingFlags.NonPublic);
+            {
+                BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+                Type type = typeof(GroupPredeterminedUVController);
+                getSettingsMethod = type.GetMethod("GetSettings", flags);
+                clearAppliedMethod = type.GetMethod("ClearAppliedForGroup", flags);
+                forceApplyMethod = type.GetMethod("ForceApplyGroup", flags);
+            }
         }
         if (viewer == null) viewer = FindFirstObjectByType<ModelViewer>();
     }
 
     void Bind()
     {
-        if (viewer == null || viewer.groomingSliderPanelGO == null || controller == null || setSeedMethod == null) return;
+        if (viewer == null || viewer.groomingSliderPanelGO == null || controller == null || getSettingsMethod == null) return;
         Transform row = viewer.groomingSliderPanelGO.transform.Find("GroupUVPredetermined_Row");
         if (row == null)
         {
@@ -77,8 +91,6 @@ public class GroupUVSeedButtonFix : MonoBehaviour
 
         if (button != null)
         {
-            // The controller rebuild/refresh cycle has historically made Button.onClick
-            // ownership fragile here. Pointer-down gives this action one stable input path.
             relay = button.GetComponent<UVSeedPointerRelay>();
             if (relay == null) relay = button.gameObject.AddComponent<UVSeedPointerRelay>();
             relay.onPress = Reshuffle;
@@ -86,7 +98,7 @@ public class GroupUVSeedButtonFix : MonoBehaviour
         }
 
         Compact(row);
-        MaintainButtonStyle();
+        StyleRandomButton(button);
     }
 
     void MaintainEdit()
@@ -99,18 +111,15 @@ public class GroupUVSeedButtonFix : MonoBehaviour
 
         if (focused)
         {
-            // Keep partial edits (including an empty field) alive while the controller's
-            // periodic UI sync writes its stored seed back into the input.
             if (seedInput.text != editText)
                 seedInput.SetTextWithoutNotify(editText);
         }
         else if (wasFocused && int.TryParse(editText, out int parsed))
         {
-            SetSeed(parsed);
+            SetSeedDirect(parsed);
         }
         else if (!focused)
         {
-            // When not editing, follow the controller's stored/displayed value.
             editText = seedInput.text;
         }
 
@@ -122,13 +131,22 @@ public class GroupUVSeedButtonFix : MonoBehaviour
         if (seedInput == null || !seedInput.isFocused) return;
         editText = value;
         if (int.TryParse(value, out int parsed))
-            SetSeed(parsed);
+            SetSeedDirect(parsed);
     }
 
-    void SetSeed(int seed)
+    void SetSeedDirect(int seed)
     {
-        if (controller == null || viewer == null || setSeedMethod == null) return;
-        setSeedMethod.Invoke(controller, new object[] { viewer.currentGroupId, seed.ToString() });
+        if (controller == null || viewer == null || getSettingsMethod == null) return;
+
+        object settings = getSettingsMethod.Invoke(controller, new object[] { viewer.currentGroupId });
+        if (settings == null) return;
+
+        FieldInfo seedField = settings.GetType().GetField("seed", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        if (seedField == null) return;
+
+        seedField.SetValue(settings, seed);
+        clearAppliedMethod?.Invoke(controller, new object[] { viewer.currentGroupId });
+        forceApplyMethod?.Invoke(controller, new object[] { viewer.currentGroupId });
     }
 
     void Compact(Transform row)
@@ -148,20 +166,46 @@ public class GroupUVSeedButtonFix : MonoBehaviour
         if (button != null) button.GetComponent<RectTransform>().sizeDelta = new Vector2(46f, 30f);
     }
 
-    void MaintainButtonStyle()
+    void StyleAllRandomButtons()
     {
-        if (button == null) return;
+        foreach (Button candidate in FindObjectsByType<Button>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            if (!IsRandomButton(candidate)) continue;
+            StyleRandomButton(candidate);
+        }
+    }
 
-        RectTransform rect = button.transform as RectTransform;
+    static bool IsRandomButton(Button candidate)
+    {
+        if (candidate == null) return false;
+        if (candidate.gameObject.name == "RButton" || candidate.gameObject.name == "GroupUVRandomSeedButton") return true;
+        TextMeshProUGUI label = candidate.GetComponentInChildren<TextMeshProUGUI>(true);
+        return label != null && label.text.Trim() == "R";
+    }
+
+    static void StyleRandomButton(Button candidate)
+    {
+        if (candidate == null) return;
+
+        RectTransform rect = candidate.transform as RectTransform;
         if (rect != null) rect.sizeDelta = new Vector2(46f, 30f);
 
-        Image image = button.GetComponent<Image>();
-        if (image == null) image = button.gameObject.AddComponent<Image>();
-        image.raycastTarget = true;
-        button.targetGraphic = image;
-        button.transition = Selectable.Transition.ColorTint;
+        LayoutElement le = candidate.GetComponent<LayoutElement>();
+        if (le != null)
+        {
+            le.minWidth = 42f;
+            le.preferredWidth = 46f;
+            le.minHeight = 28f;
+            le.preferredHeight = 30f;
+        }
 
-        ColorBlock colors = button.colors;
+        Image image = candidate.GetComponent<Image>();
+        if (image == null) image = candidate.gameObject.AddComponent<Image>();
+        image.raycastTarget = true;
+        candidate.targetGraphic = image;
+        candidate.transition = Selectable.Transition.ColorTint;
+
+        ColorBlock colors = candidate.colors;
         colors.normalColor = new Color(.25f, .42f, .58f, 1f);
         colors.highlightedColor = new Color(.32f, .58f, .78f, 1f);
         colors.selectedColor = new Color(.30f, .52f, .70f, 1f);
@@ -169,10 +213,10 @@ public class GroupUVSeedButtonFix : MonoBehaviour
         colors.disabledColor = new Color(.16f, .20f, .24f, .65f);
         colors.colorMultiplier = 1f;
         colors.fadeDuration = .06f;
-        button.colors = colors;
+        candidate.colors = colors;
         image.color = colors.normalColor;
 
-        TextMeshProUGUI label = button.GetComponentInChildren<TextMeshProUGUI>(true);
+        TextMeshProUGUI label = candidate.GetComponentInChildren<TextMeshProUGUI>(true);
         if (label != null)
         {
             label.text = "R";
@@ -185,7 +229,7 @@ public class GroupUVSeedButtonFix : MonoBehaviour
 
     void Reshuffle()
     {
-        if (controller == null || viewer == null || setSeedMethod == null) return;
+        if (controller == null || viewer == null || getSettingsMethod == null) return;
         if (button != null && !button.interactable) return;
 
         int oldSeed = 0;
@@ -201,7 +245,7 @@ public class GroupUVSeedButtonFix : MonoBehaviour
         {
             int candidate = UnityEngine.Random.Range(0, 1000000);
             if (candidate == oldSeed) continue;
-            SetSeed(candidate);
+            SetSeedDirect(candidate);
             chosen = candidate;
             if (cards.Length == 0 || Changed(cards, before)) break;
         }
@@ -209,7 +253,7 @@ public class GroupUVSeedButtonFix : MonoBehaviour
         if (chosen == oldSeed)
         {
             chosen = oldSeed == int.MaxValue ? 0 : oldSeed + 1;
-            SetSeed(chosen);
+            SetSeedDirect(chosen);
         }
 
         editText = chosen.ToString();
