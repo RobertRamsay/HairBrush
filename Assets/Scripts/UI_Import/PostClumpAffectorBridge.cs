@@ -8,9 +8,9 @@ using UnityEngine.Events;
 using UnityEngine.UI;
 
 // POST-local clump operator.
-// Evaluation order is intentionally: evaluated Length/Width -> CLUMP centreline -> Bend -> Twist.
+// Evaluation order is intentionally: evaluated Length/Width -> Bend/Twist/angles -> CLUMP attractor.
 // It never writes back to HairCard canonical state, so it cannot accumulate frame-to-frame.
-[DefaultExecutionOrder(3500)]
+[DefaultExecutionOrder(3600)]
 public class PostClumpAffectorBridge : MonoBehaviour
 {
     [Serializable]
@@ -263,11 +263,12 @@ public class PostClumpAffectorBridge : MonoBehaviour
             amountSlider = args[6] as Slider;
         }
 
-        // The UI mirrors the deformation stack: Length -> CLUMP -> Width/Bend/etc.
-        Transform lengthRow = panel.Find("Length_Row");
-        if (lengthRow != null)
+        // The UI mirrors the deformation stack: authored shape/orientation first, CLUMP last.
+        Transform anchor = panel.Find("Offset Z_Row");
+        if (anchor == null) anchor = panel.Find("Twist Angle_Row");
+        if (anchor != null)
         {
-            int insert = Mathf.Min(lengthRow.GetSiblingIndex() + 1, panel.childCount - 1);
+            int insert = Mathf.Min(anchor.GetSiblingIndex() + 1, panel.childCount - 1);
             if (pointRow != null) pointRow.transform.SetSiblingIndex(insert);
             if (amountRow != null) amountRow.transform.SetSiblingIndex(Mathf.Min(insert + 1, panel.childCount - 1));
         }
@@ -453,9 +454,9 @@ public class PostClumpAffectorBridge : MonoBehaviour
     }
 }
 
-// Rebuilds only a clumped card's visible mesh after PostAffectorManager has evaluated
-// scalar controls. The root stays pinned; t^2 progressively gathers the upper strand/tip
-// toward the attraction point, then authored bend and twist are applied afterwards.
+// Rebuilds only a clumped card's visible mesh after every authored/evaluated shape control
+// has already been resolved. Clump is a final directional attractor: it steers each existing
+// shaped segment toward the target while preserving that segment's original length.
 public static class PostClumpMeshDeformer
 {
     public static void Apply(HairCard card, Vector3 targetWorld, float strength)
@@ -467,41 +468,72 @@ public static class PostClumpMeshDeformer
         if (mesh == null) return;
 
         int segments = Mathf.Max(1, card.segments);
-        int numVertices = (segments + 1) * 2;
+        int ringCount = segments + 1;
+        int numVertices = ringCount * 2;
         Vector3[] vertices = new Vector3[numVertices];
         Vector2[] uvs = new Vector2[numVertices];
         int[] triangles = new int[segments * 6];
+        Vector3[] authoredCenters = new Vector3[ringCount];
+        Vector3[] authoredHalfSpans = new Vector3[ringCount];
+        Vector3[] clumpedCenters = new Vector3[ringCount];
+        Quaternion[] steering = new Quaternion[ringCount];
 
         float segmentHeight = card.length / segments;
         float halfWidth = card.width * .5f;
         Vector3 targetLocal = card.transform.InverseTransformPoint(targetWorld);
 
+        // First build the fully authored/evaluated card shape: Length -> Bend -> Twist.
+        // The HairCard transform already contains the card angle/offset orientation; converting
+        // the world target into local space means the attraction happens after that orientation too.
         for (int i = 0; i <= segments; i++)
         {
             float t = (float)i / segments;
             float z = i * segmentHeight;
-            int index = i * 2;
             float currentWidth = halfWidth * card.flattenFactor;
-
             Vector3 left = new Vector3(-currentWidth, 0f, z);
             Vector3 right = new Vector3(currentWidth, 0f, z);
 
-            if (t > 0f)
-            {
-                float influence = Mathf.Clamp01(strength * t * t);
-                Vector3 straightCenter = (left + right) * .5f;
-                Vector3 center = Vector3.Lerp(straightCenter, targetLocal, influence);
-                Vector3 halfSpan = (right - left) * .5f;
-                left = center - halfSpan;
-                right = center + halfSpan;
-            }
-
-            // CLUMP deliberately precedes Bend/Twist in the shape chain.
             Quaternion authoredRotation = Quaternion.Euler(card.bendAngle * (t * t), 0f, card.twistAngle * t);
             left = authoredRotation * left;
             right = authoredRotation * right;
-            vertices[index] = left;
-            vertices[index + 1] = right;
+            authoredCenters[i] = (left + right) * .5f;
+            authoredHalfSpans[i] = (right - left) * .5f;
+            steering[i] = Quaternion.identity;
+        }
+
+        // Then gather the already-shaped centreline. Each segment retains its authored arc
+        // length; only its direction is progressively steered toward the attraction point.
+        clumpedCenters[0] = authoredCenters[0];
+        for (int i = 1; i <= segments; i++)
+        {
+            float t = (float)i / segments;
+            Vector3 authoredSegment = authoredCenters[i] - authoredCenters[i - 1];
+            float segmentLength = authoredSegment.magnitude;
+            if (segmentLength <= .000001f)
+            {
+                clumpedCenters[i] = clumpedCenters[i - 1];
+                continue;
+            }
+
+            Vector3 authoredDirection = authoredSegment / segmentLength;
+            Vector3 toTarget = targetLocal - clumpedCenters[i - 1];
+            Vector3 targetDirection = toTarget.sqrMagnitude > .000001f ? toTarget.normalized : authoredDirection;
+            float influence = Mathf.Clamp01(strength * t * t);
+            Vector3 steeredDirection = Vector3.Slerp(authoredDirection, targetDirection, influence);
+            if (steeredDirection.sqrMagnitude <= .000001f) steeredDirection = authoredDirection;
+            steeredDirection.Normalize();
+
+            clumpedCenters[i] = clumpedCenters[i - 1] + steeredDirection * segmentLength;
+            steering[i] = Quaternion.FromToRotation(authoredDirection, steeredDirection);
+        }
+
+        for (int i = 0; i <= segments; i++)
+        {
+            float t = (float)i / segments;
+            int index = i * 2;
+            Vector3 halfSpan = steering[i] * authoredHalfSpans[i];
+            vertices[index] = clumpedCenters[i] - halfSpan;
+            vertices[index + 1] = clumpedCenters[i] + halfSpan;
 
             float baseULeft = card.uScale < 0f ? 1f : 0f;
             float baseURight = card.uScale < 0f ? 0f : 1f;
