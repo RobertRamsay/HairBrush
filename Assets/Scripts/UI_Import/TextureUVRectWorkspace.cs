@@ -54,6 +54,8 @@ public class TextureUVRectWorkspace : MonoBehaviour
     private FieldInfo isSelectionModeField;
     private FieldInfo selectionHitPointField;
     private FieldInfo selectionHitNormalField;
+    private FieldInfo loadedModelField;
+    private GameObject lastLoadedModel;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
@@ -67,6 +69,7 @@ public class TextureUVRectWorkspace : MonoBehaviour
     void Update()
     {
         Resolve();
+        HandleModelLifecycle();
         RestorePendingProjectData();
 
         bool active = texturePanel != null && texturePanel.activeInHierarchy;
@@ -111,6 +114,8 @@ public class TextureUVRectWorkspace : MonoBehaviour
                 isSelectionModeField = type.GetField("isSelectionMode", flags);
                 selectionHitPointField = type.GetField("selectionHitPoint", flags);
                 selectionHitNormalField = type.GetField("selectionHitNormal", flags);
+                loadedModelField = type.GetField("loadedModel", flags);
+                lastLoadedModel = loadedModelField?.GetValue(viewer) as GameObject;
             }
         }
 
@@ -119,6 +124,21 @@ public class TextureUVRectWorkspace : MonoBehaviour
 
         if (groupPanel == null)
             groupPanel = FindInactiveGameObject("GroupManagerPanel");
+    }
+
+    void HandleModelLifecycle()
+    {
+        if (viewer == null || loadedModelField == null) return;
+        GameObject current = loadedModelField.GetValue(viewer) as GameObject;
+        if (current == lastLoadedModel) return;
+
+        bool projectRestorePending = HairProjectSaveData.PendingUVRectRestore != null;
+        lastLoadedModel = current;
+
+        // A new OBJ is a brand-new session. A project load also replaces the model, but
+        // its UV rectangles are already waiting in PendingUVRectRestore and must survive.
+        if (current != null && !projectRestorePending)
+            ClearDefinitions();
     }
 
     void ResolvePreviewPlane()
@@ -675,7 +695,9 @@ public class TextureUVRectWorkspace : MonoBehaviour
             return;
         }
 
-        IEnumerable<UVRectSaveData> shown = rectangles.OrderBy(r => r.id).TakeLast(4);
+        List<UVRectSaveData> ordered = rectangles.OrderBy(r => r.id).ToList();
+        int start = Mathf.Max(0, ordered.Count - 4);
+        IEnumerable<UVRectSaveData> shown = ordered.Skip(start);
         string rows = string.Join("\n", shown.Select(r =>
             "#" + r.id + "  U " + r.uMin.ToString("F3") + "–" + r.uMax.ToString("F3") +
             "  V " + r.vMin.ToString("F3") + "–" + r.vMax.ToString("F3")));
