@@ -12,7 +12,7 @@ using UnityEngine;
 [DefaultExecutionOrder(3900)]
 public class CanonicalProjectStateBridge : MonoBehaviour
 {
-    public const int CurrentFormatVersion = 2;
+    public const int CurrentFormatVersion = 3;
     public static HairProjectSaveData PendingCanonicalRestore;
 
     private HairProjectSaveData pending;
