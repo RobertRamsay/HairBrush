@@ -3,11 +3,9 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
-// Final authority for generated rows beneath each Hair Group header.
-// Several runtime features maintain their own rows at different execution orders; without
-// one final ordering pass the UV row and POST rows can repeatedly compete for the same
-// sibling index and visibly jump. Keep the contract deterministic:
-// Group header -> group UV row -> POST rows.
+// Final authority for generated POST rows beneath each Hair Group header.
+// Group-owned UV controls now live in the right grooming/modifier panel, so the left
+// panel is navigation only: Group header -> POST rows.
 [DefaultExecutionOrder(10000)]
 public class GroupPanelRowOrderAuthority : MonoBehaviour
 {
@@ -32,11 +30,6 @@ public class GroupPanelRowOrderAuthority : MonoBehaviour
             if (parent == null) continue;
 
             int insert = groupItem.GetSiblingIndex() + 1;
-
-            Transform uvRow = parent.Find("GroupUV_" + groupId);
-            if (uvRow != null)
-                uvRow.SetSiblingIndex(Mathf.Min(insert++, parent.childCount - 1));
-
             string postPrefix = "PostAffector_" + groupId + "_";
             List<Transform> postRows = parent.Cast<Transform>()
                 .Where(t => t != null && t.name.StartsWith(postPrefix, StringComparison.Ordinal))
