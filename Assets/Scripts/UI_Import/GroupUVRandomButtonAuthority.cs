@@ -29,7 +29,12 @@ public class GroupUVRandomButtonAuthority : MonoBehaviour
             if (controller != null)
                 randomizeMethod = typeof(GroupPredeterminedUVController).GetMethod("RandomizeSeed", BindingFlags.Instance | BindingFlags.NonPublic);
         }
-        if (viewer == null || controller == null || randomizeMethod == null || viewer.groomingSliderPanelGO == null) return;
+        if (viewer == null || viewer.groomingSliderPanelGO == null) return;
+
+        // Make every random-seed control use the same obvious blue button treatment.
+        StyleAllRandomButtons(viewer.groomingSliderPanelGO.transform);
+
+        if (controller == null || randomizeMethod == null) return;
 
         Transform row = viewer.groomingSliderPanelGO.transform.Find("GroupUVPredetermined_Row");
         if (row == null) return;
@@ -59,11 +64,16 @@ public class GroupUVRandomButtonAuthority : MonoBehaviour
             layout.childForceExpandHeight = false;
         }
 
+        TextMeshProUGUI seedLabel = null;
         foreach (TextMeshProUGUI text in row.GetComponentsInChildren<TextMeshProUGUI>(true))
         {
             string value = text.text != null ? text.text.Trim() : string.Empty;
             if (value == "UV RECTS") SetLayout(text.gameObject, 76f, 30f);
-            else if (value == "SEED") SetLayout(text.gameObject, 42f, 30f);
+            else if (value == "SEED")
+            {
+                seedLabel = text;
+                SetLayout(text.gameObject, 42f, 30f);
+            }
         }
 
         Transform range = row.Find("UVRectRangeSlider");
@@ -74,6 +84,40 @@ public class GroupUVRandomButtonAuthority : MonoBehaviour
 
         Transform random = row.Find("GroupUVRandomSeedButton");
         if (random != null) SetLayout(random.gameObject, 46f, 30f);
+
+        // Shift only the SEED [value] R cluster to the right by about 20 px.
+        // A dedicated layout spacer keeps the range slider itself in place.
+        if (seedLabel != null && seedLabel.transform.parent == row)
+        {
+            Transform spacer = row.Find("UVSeedSpacer");
+            if (spacer == null)
+            {
+                GameObject spacerGO = new GameObject("UVSeedSpacer", typeof(RectTransform), typeof(LayoutElement));
+                spacerGO.transform.SetParent(row, false);
+                spacer = spacerGO.transform;
+            }
+            SetLayout(spacer.gameObject, 20f, 30f);
+            spacer.SetSiblingIndex(seedLabel.transform.GetSiblingIndex());
+        }
+    }
+
+    static void StyleAllRandomButtons(Transform root)
+    {
+        if (root == null) return;
+        foreach (Button button in root.GetComponentsInChildren<Button>(true))
+        {
+            if (!IsRandomButton(button)) continue;
+            SetLayout(button.gameObject, 46f, 30f);
+            StyleButton(button);
+        }
+    }
+
+    static bool IsRandomButton(Button button)
+    {
+        if (button == null) return false;
+        if (button.gameObject.name == "RButton" || button.gameObject.name == "GroupUVRandomSeedButton") return true;
+        TextMeshProUGUI label = button.GetComponentInChildren<TextMeshProUGUI>(true);
+        return label != null && label.text != null && label.text.Trim() == "R";
     }
 
     static void SetLayout(GameObject go, float width, float height)
@@ -84,6 +128,9 @@ public class GroupUVRandomButtonAuthority : MonoBehaviour
         le.preferredWidth = width;
         le.minHeight = height;
         le.preferredHeight = height;
+
+        RectTransform rect = go.transform as RectTransform;
+        if (rect != null) rect.sizeDelta = new Vector2(width, height);
     }
 
     static void StyleButton(Button button)
@@ -91,14 +138,25 @@ public class GroupUVRandomButtonAuthority : MonoBehaviour
         Image image = button.GetComponent<Image>();
         if (image == null) image = button.gameObject.AddComponent<Image>();
         image.raycastTarget = true;
-        image.color = button.interactable ? new Color(.25f, .42f, .58f, 1f) : new Color(.16f, .20f, .24f, .65f);
         button.targetGraphic = image;
+        button.transition = Selectable.Transition.ColorTint;
+
+        ColorBlock colors = button.colors;
+        colors.normalColor = new Color(.25f, .42f, .58f, 1f);
+        colors.highlightedColor = new Color(.32f, .58f, .78f, 1f);
+        colors.selectedColor = new Color(.30f, .52f, .70f, 1f);
+        colors.pressedColor = new Color(.16f, .36f, .56f, 1f);
+        colors.disabledColor = new Color(.16f, .20f, .24f, .65f);
+        colors.colorMultiplier = 1f;
+        colors.fadeDuration = .06f;
+        button.colors = colors;
+        image.color = button.interactable ? colors.normalColor : colors.disabledColor;
 
         TextMeshProUGUI label = button.GetComponentInChildren<TextMeshProUGUI>(true);
         if (label != null)
         {
             label.text = "R";
-            label.fontSize = 14f;
+            label.fontSize = Mathf.Max(label.fontSize, 14f);
             label.fontStyle = FontStyles.Bold;
             label.alignment = TextAlignmentOptions.Center;
             label.raycastTarget = false;
