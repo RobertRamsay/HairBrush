@@ -20,7 +20,7 @@ public class PanelTypographyScale : MonoBehaviour
     void LateUpdate()
     {
         if (Time.unscaledTime < nextScan) return;
-        nextScan = Time.unscaledTime + 0.15f;
+        nextScan = Time.unscaledTime;
         ScalePanel(GameObject.Find("GroupManagerPanel"));
         ScalePanel(GameObject.Find("GroomingPanel"));
     }
