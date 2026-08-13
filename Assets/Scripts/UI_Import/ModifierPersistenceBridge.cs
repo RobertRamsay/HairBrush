@@ -1,7 +1,8 @@
 using UnityEngine;
 
 // Current project-format modifier persistence for the active modifier stack.
-// Clump is intentionally not restored/saved by the runtime stack for now.
+// Legacy group-clump data stays disabled; POST-owned clump is persisted on each
+// PostAffectorSaveData by PostClumpAffectorBridge after the POST rows are exported.
 public class ModifierPersistenceBridge : MonoBehaviour
 {
     private float nextScan;
@@ -54,8 +55,8 @@ public class ModifierPersistenceBridge : MonoBehaviour
         if (variance != null) g.variances = variance.ExportGroupSettings(g.groupId);
         if (postAffectors != null) g.postAffectors = postAffectors.ExportGroup(g.groupId);
 
-        // Leave any legacy clump DTO empty. Keeping the data class itself means old JSON can
-        // still deserialize, but clump no longer participates in the current runtime workflow.
+        // Leave the legacy GROUP clump DTO empty. Keeping the schema means old JSON can
+        // still deserialize, while current POST clump values live on PostAffectorSaveData.
         g.clump = null;
     }
 
