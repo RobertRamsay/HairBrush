@@ -20,7 +20,6 @@ public class GroupUVSeedButtonFix : MonoBehaviour
     private UVSeedPointerRelay relay;
     private bool wasFocused;
     private string editText = "0";
-    private float nextStyleScan;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
@@ -36,12 +35,7 @@ public class GroupUVSeedButtonFix : MonoBehaviour
         Resolve();
         Bind();
         MaintainEdit();
-
-        if (Time.unscaledTime >= nextStyleScan)
-        {
-            nextStyleScan = Time.unscaledTime + .1f;
-            StyleAllRandomButtons();
-        }
+        StyleAllRandomButtons();
     }
 
     void Resolve()
