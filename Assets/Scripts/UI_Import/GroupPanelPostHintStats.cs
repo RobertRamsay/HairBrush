@@ -48,6 +48,7 @@ public class GroupPanelPostHintStats : MonoBehaviour
         if (existing != null)
         {
             hint = existing.GetComponent<TextMeshProUGUI>();
+            ApplyHintStyle();
             return;
         }
 
@@ -55,14 +56,22 @@ public class GroupPanelPostHintStats : MonoBehaviour
         go.transform.SetParent(panel.transform, false);
 
         LayoutElement layout = go.GetComponent<LayoutElement>();
-        layout.preferredHeight = 30f;
-        layout.minHeight = 30f;
+        layout.preferredHeight = 44f;
+        layout.minHeight = 44f;
 
         RectTransform rect = go.GetComponent<RectTransform>();
-        rect.sizeDelta = new Vector2(0f, 30f);
+        rect.sizeDelta = new Vector2(0f, 44f);
 
         hint = go.GetComponent<TextMeshProUGUI>();
-        hint.text = "CTRL+CLICK on SURFACE to add a POST EFFECT";
+        ApplyHintStyle();
+
+        MaintainHintOrder(panel.transform);
+    }
+
+    void ApplyHintStyle()
+    {
+        if (hint == null) return;
+        hint.text = "CTRL+CLICK on SURFACE to add a POST EFFECT\nCTRL+CLICK in SPACE to deactivate";
         hint.fontSize = 11f;
         hint.fontStyle = FontStyles.Bold;
         hint.alignment = TextAlignmentOptions.MidlineLeft;
@@ -70,7 +79,13 @@ public class GroupPanelPostHintStats : MonoBehaviour
         hint.textWrappingMode = TextWrappingModes.Normal;
         hint.raycastTarget = false;
 
-        MaintainHintOrder(panel.transform);
+        LayoutElement layout = hint.GetComponent<LayoutElement>();
+        if (layout != null)
+        {
+            layout.preferredHeight = 44f;
+            layout.minHeight = 44f;
+        }
+        hint.rectTransform.sizeDelta = new Vector2(0f, 44f);
     }
 
     void MaintainHintOrder(Transform panel)
