@@ -50,12 +50,15 @@ public class GroupUVSeedButtonFix : MonoBehaviour
         if (row == null) return;
 
         Button found = row.Find("GroupUVRandomSeedButton")?.GetComponent<Button>();
-        if (found == null || found == button) return;
+        if (found == null) return;
 
-        button = found;
-        seedInput = row.Find("SEEDInput")?.GetComponent<TMP_InputField>();
-        button.onClick.RemoveAllListeners();
-        button.onClick.AddListener(Reshuffle);
+        if (found != button)
+        {
+            button = found;
+            seedInput = row.Find("SEEDInput")?.GetComponent<TMP_InputField>();
+            button.onClick.RemoveAllListeners();
+            button.onClick.AddListener(Reshuffle);
+        }
 
         CompactRow(row);
     }
