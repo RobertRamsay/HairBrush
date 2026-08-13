@@ -18,8 +18,10 @@ public class GroomVarianceController : MonoBehaviour
     private readonly Dictionary<Channel, VarianceRow> rows = new();
     private readonly Dictionary<Channel, Slider> mainSliders = new();
     private readonly Dictionary<Channel, TextMeshProUGUI> mainLabels = new();
+    private readonly HashSet<int> knownCardIds = new();
 
     private ModelViewer viewer;
+    private GroomRootStateAuthority rootAuthority;
     private bool installed;
     private GameObject installedPanel;
     private int lastGroupId = int.MinValue;
@@ -56,6 +58,8 @@ public class GroomVarianceController : MonoBehaviour
             SyncRowsForGroup(groupId);
 
         ApplyAllVarianceForGroup(groupId);
+        if (viewer != null && viewer.currentGroupId == groupId)
+            SyncKnownCards(groupId);
     }
 
     public void ClearSavedSettings()
@@ -68,6 +72,7 @@ public class GroomVarianceController : MonoBehaviour
     {
         if (viewer == null) viewer = FindFirstObjectByType<ModelViewer>();
         if (viewer == null) return;
+        if (rootAuthority == null) rootAuthority = FindFirstObjectByType<GroomRootStateAuthority>();
 
         GameObject currentPanel = viewer.groomingSliderPanelGO;
         if (installed && installedPanel != currentPanel)
@@ -86,15 +91,10 @@ public class GroomVarianceController : MonoBehaviour
         {
             lastGroupId = viewer.currentGroupId;
             SyncRowsForGroup(lastGroupId);
-            lastCardCount = CountCards(lastGroupId);
+            SyncKnownCards(lastGroupId);
         }
 
-        int count = CountCards(viewer.currentGroupId);
-        if (count != lastCardCount)
-        {
-            lastCardCount = count;
-            ApplyAllVarianceForGroup(viewer.currentGroupId);
-        }
+        TrackCardMembershipAndApplyNewCards(viewer.currentGroupId);
     }
 
     void ResetUIBindings()
@@ -104,6 +104,7 @@ public class GroomVarianceController : MonoBehaviour
         rows.Clear();
         mainSliders.Clear();
         mainLabels.Clear();
+        knownCardIds.Clear();
         lastGroupId = int.MinValue;
         lastCardCount = -1;
         nextInstallAttempt = 0f;
@@ -169,7 +170,7 @@ public class GroomVarianceController : MonoBehaviour
         installed = true;
         installedPanel = viewer.groomingSliderPanelGO;
         lastGroupId = viewer.currentGroupId;
-        lastCardCount = CountCards(lastGroupId);
+        SyncKnownCards(lastGroupId);
         SyncRowsForGroup(lastGroupId);
         MaintainAngleLabels();
         ApplyAllVarianceForGroup(lastGroupId);
@@ -279,6 +280,31 @@ public class GroomVarianceController : MonoBehaviour
         return s;
     }
 
+    void TrackCardMembershipAndApplyNewCards(int groupId)
+    {
+        HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None).Where(c => c.groupId == groupId).ToArray();
+        bool membershipChanged = cards.Length != lastCardCount || cards.Any(c => !knownCardIds.Contains(c.GetInstanceID()));
+        if (!membershipChanged) return;
+
+        // Card count changes are not groom edits. Only seed variance onto genuinely new cards;
+        // never touch the canonical state of cards that were already in the group.
+        foreach (HairCard card in cards)
+            if (!knownCardIds.Contains(card.GetInstanceID()))
+                ApplyAllVarianceForCard(card, groupId);
+
+        knownCardIds.Clear();
+        foreach (HairCard card in cards) knownCardIds.Add(card.GetInstanceID());
+        lastCardCount = cards.Length;
+    }
+
+    void SyncKnownCards(int groupId)
+    {
+        knownCardIds.Clear();
+        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None).Where(c => c.groupId == groupId))
+            knownCardIds.Add(card.GetInstanceID());
+        lastCardCount = knownCardIds.Count;
+    }
+
     void ApplyAllVarianceForGroup(int groupId)
     {
         foreach (Channel c in Enum.GetValues(typeof(Channel)))
@@ -286,44 +312,109 @@ public class GroomVarianceController : MonoBehaviour
                 ApplyChannel(c, groupId);
     }
 
+    void ApplyAllVarianceForCard(HairCard card, int groupId)
+    {
+        if (card == null) return;
+        foreach (Channel c in Enum.GetValues(typeof(Channel)))
+        {
+            VarianceSetting s = GetSetting(groupId, c);
+            if (s.amount > 0f)
+                ApplyChannelToCard(card, c, groupId, MainValue(c, groupId), s);
+        }
+    }
+
     void ApplyChannel(Channel c, int groupId)
     {
         if (viewer == null) return;
         VarianceSetting s = GetSetting(groupId, c);
-        float baseValue = MainValue(c);
+        float baseValue = MainValue(c, groupId);
 
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None).Where(x => x.groupId == groupId))
-        {
-            float varied = baseValue + SignedRandom(card, c, s.seed, groupId) * s.amount;
-            float l = card.length, w = card.width, bend = card.bendAngle, twist = card.twistAngle;
-            float x = card.GetOffsetX(), y = card.GetOffsetY(), z = card.GetOffsetZ();
-
-            switch (c)
-            {
-                case Channel.Length: l = Mathf.Max(.0005f, varied); break;
-                case Channel.Width: w = Mathf.Max(.0005f, varied); break;
-                case Channel.Bend: bend = varied; break;
-                case Channel.Twist: twist = varied; break;
-                case Channel.AngleX: x = varied; break;
-                case Channel.AngleY: y = varied; break;
-                case Channel.AngleZ: z = varied; break;
-            }
-
-            card.SetParameters(l, w, card.segments, bend, twist, x, y, z, card.GetEmbedDepth(), 1f, card.uScale, card.vScale, card.uOffset, card.vOffset);
-        }
+            ApplyChannelToCard(card, c, groupId, baseValue, s);
     }
 
-    float MainValue(Channel c) => c switch
+    void ApplyChannelToCard(HairCard card, Channel c, int groupId, float baseValue, VarianceSetting setting)
     {
-        Channel.Length => viewer.currentLength,
-        Channel.Width => viewer.currentWidth,
-        Channel.Bend => viewer.currentBend,
-        Channel.Twist => viewer.currentTwist,
-        Channel.AngleX => viewer.currentOffsetX,
-        Channel.AngleY => viewer.currentOffsetY,
-        Channel.AngleZ => viewer.currentOffsetZ,
-        _ => 0f
-    };
+        if (card == null) return;
+
+        float varied = baseValue + SignedRandom(card, c, setting.seed, groupId) * setting.amount;
+        HairCard.GroomState state = card.GetCanonicalState();
+
+        switch (c)
+        {
+            case Channel.Length: state.length = Mathf.Max(.0005f, varied); break;
+            case Channel.Width: state.width = Mathf.Max(.0005f, varied); break;
+            case Channel.Bend: state.bend = varied; break;
+            case Channel.Twist: state.twist = varied; break;
+            case Channel.AngleX: state.x = varied; break;
+            case Channel.AngleY: state.y = varied; break;
+            case Channel.AngleZ: state.z = varied; break;
+        }
+
+        // Variance is upstream authored state. Write that canonical channel directly instead
+        // of reading other channels from the POST-evaluated/rendered card and accidentally
+        // baking downstream effects back into the base.
+        card.SetCanonicalState(state, true);
+    }
+
+    float MainValue(Channel c, int groupId)
+    {
+        if (rootAuthority == null) rootAuthority = FindFirstObjectByType<GroomRootStateAuthority>();
+        if (rootAuthority != null && rootAuthority.TryGetRootState(groupId, out GroomRootStateAuthority.RootState root))
+        {
+            return c switch
+            {
+                Channel.Length => root.length,
+                Channel.Width => root.width,
+                Channel.Bend => root.bend,
+                Channel.Twist => root.twist,
+                Channel.AngleX => root.x,
+                Channel.AngleY => root.y,
+                Channel.AngleZ => root.z,
+                _ => 0f
+            };
+        }
+
+        if (viewer != null && viewer.currentGroupId == groupId)
+        {
+            return c switch
+            {
+                Channel.Length => viewer.currentLength,
+                Channel.Width => viewer.currentWidth,
+                Channel.Bend => viewer.currentBend,
+                Channel.Twist => viewer.currentTwist,
+                Channel.AngleX => viewer.currentOffsetX,
+                Channel.AngleY => viewer.currentOffsetY,
+                Channel.AngleZ => viewer.currentOffsetZ,
+                _ => 0f
+            };
+        }
+
+        // Fallback for an off-screen group: recover the deterministic root channel from one
+        // canonical card by removing that card's saved variance contribution.
+        HairCard sample = FindObjectsByType<HairCard>(FindObjectsSortMode.None).FirstOrDefault(x => x.groupId == groupId);
+        if (sample != null)
+        {
+            HairCard.GroomState state = sample.GetCanonicalState();
+            float value = c switch
+            {
+                Channel.Length => state.length,
+                Channel.Width => state.width,
+                Channel.Bend => state.bend,
+                Channel.Twist => state.twist,
+                Channel.AngleX => state.x,
+                Channel.AngleY => state.y,
+                Channel.AngleZ => state.z,
+                _ => 0f
+            };
+            VarianceSetting s = GetSetting(groupId, c);
+            if (s.amount > 0f)
+                value -= SignedRandom(sample, c, s.seed, groupId) * s.amount;
+            return value;
+        }
+
+        return 0f;
+    }
 
     float SignedRandom(HairCard card, Channel c, int seed, int groupId)
     {
