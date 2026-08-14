@@ -86,23 +86,20 @@ public class TextureEditorManager : MonoBehaviour
         layout.childForceExpandHeight = false;
         textureSliderPanelGO = panelGO;
 
-        // Match the Groom panel's two-tab treatment: equal-width buttons in one row.
+        // Texture mode shows only the destination mode: one centered GROOM MODE button.
         GameObject topRow = new GameObject("ModeRow", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
         topRow.transform.SetParent(panelGO.transform, false);
         topRow.GetComponent<LayoutElement>().preferredHeight = 64f;
 
         HorizontalLayoutGroup rowLayout = topRow.GetComponent<HorizontalLayoutGroup>();
-        rowLayout.spacing = 8f;
-        rowLayout.childControlWidth = true;
+        rowLayout.childControlWidth = false;
         rowLayout.childControlHeight = true;
-        rowLayout.childForceExpandWidth = true;
+        rowLayout.childForceExpandWidth = false;
         rowLayout.childForceExpandHeight = false;
+        rowLayout.childAlignment = TextAnchor.MiddleCenter;
 
-        GameObject groomButton = CreateModeTab(topRow.transform, "Groom Mode", true);
+        GameObject groomButton = CreateModeButton(topRow.transform, "GROOM MODE");
         groomButton.GetComponent<Button>().onClick.AddListener(() => ExitToGroom(onSwitchToGroom));
-
-        GameObject textureTab = CreateModeTab(topRow.transform, "Texture Editor", false);
-        textureTab.GetComponent<Button>().interactable = false;
     }
 
     private void ExitToGroom(System.Action callback)
@@ -132,28 +129,24 @@ public class TextureEditorManager : MonoBehaviour
         callback?.Invoke();
     }
 
-    private static GameObject CreateModeTab(Transform parent, string label, bool clickable)
+    private static GameObject CreateModeButton(Transform parent, string label)
     {
-        GameObject go = new GameObject(label.Replace(" ", "") + "Tab", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
+        GameObject go = new GameObject("ModeSwitchButton", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
         go.transform.SetParent(parent, false);
 
         LayoutElement le = go.GetComponent<LayoutElement>();
+        le.preferredWidth = 300f;
+        le.minWidth = 300f;
         le.preferredHeight = 64f;
-        le.flexibleWidth = 1f;
 
         Image image = go.GetComponent<Image>();
-        image.color = clickable
-            ? new Color(0.20f, 0.50f, 0.82f, 1f)
-            : new Color(0.22f, 0.22f, 0.22f, 1f);
-        image.raycastTarget = clickable;
+        image.color = new Color(0.20f, 0.50f, 0.82f, 1f);
 
         Button button = go.GetComponent<Button>();
-        button.interactable = clickable;
         ColorBlock colors = button.colors;
         colors.normalColor = Color.white;
         colors.highlightedColor = new Color(1f, 1f, 1f, 0.92f);
         colors.pressedColor = new Color(0.85f, 0.85f, 0.85f, 1f);
-        colors.disabledColor = Color.white;
         button.colors = colors;
 
         AddCenteredLabel(go.transform, label, 16f, Color.white);
