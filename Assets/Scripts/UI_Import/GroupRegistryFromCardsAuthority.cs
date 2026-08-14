@@ -66,9 +66,12 @@ public class GroupRegistryFromCardsAuthority : MonoBehaviour
             if (vOffsets != null && !vOffsets.ContainsKey(id)) vOffsets[id] = representative != null ? representative.vOffset : 0f;
         }
 
-        if (!cardIds.Contains(viewer.currentGroupId))
+        // A group is valid because it exists in the registry, not because it currently owns cards.
+        // Newly-created empty groups must remain selectable. Only recover the selection when the
+        // selected ID genuinely no longer exists (for example after deleting a group).
+        if (!ids.Contains(viewer.currentGroupId))
         {
-            viewer.currentGroupId = cardIds.OrderBy(id => id).First();
+            viewer.currentGroupId = ids.Count > 0 ? ids.OrderBy(id => id).First() : cardIds.OrderBy(id => id).First();
             changed = true;
         }
 
