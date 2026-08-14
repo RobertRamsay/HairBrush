@@ -5,15 +5,16 @@ using System.Reflection;
 using UnityEngine;
 
 // POST-local authoring uses ModelViewer's selection hotspot/selectionWeight machinery.
-// The important lifecycle boundary is not "active POST disappeared"; it is
-// "this group went from one-or-more POSTs to zero POSTs". At that exact transition
-// restore genuine group-root control so subsequent sliders affect every card in the group.
+// When the final POST disappears, release BOTH legacy selection state and the POST
+// manager's cached per-card authority. Otherwise its LateUpdate can keep writing the
+// old cached base state over normal group slider edits.
 [DefaultExecutionOrder(3600)]
 public class FinalPostGroupControlRestore : MonoBehaviour
 {
     private PostAffectorManager manager;
     private ModelViewer viewer;
     private FieldInfo groupsField;
+    private FieldInfo cardStatesField;
     private MethodInfo clearSelectionMethod;
     private readonly Dictionary<int, int> previousCounts = new Dictionary<int, int>();
     private float nextScan;
@@ -34,19 +35,14 @@ public class FinalPostGroupControlRestore : MonoBehaviour
         Resolve();
         if (manager == null || viewer == null || groupsField == null) return;
 
-        object raw = groupsField.GetValue(manager);
-        if (raw == null) return;
-
-        // Avoid coupling to PostAffectorManager's private generic type here.
-        IDictionary dict = raw as IDictionary;
+        IDictionary dict = groupsField.GetValue(manager) as IDictionary;
         if (dict == null) return;
 
         Dictionary<int, int> current = new Dictionary<int, int>();
         foreach (DictionaryEntry entry in dict)
         {
             if (!(entry.Key is int gid)) continue;
-            int count = 0;
-            if (entry.Value is ICollection collection) count = collection.Count;
+            int count = entry.Value is ICollection collection ? collection.Count : 0;
             current[gid] = count;
         }
 
@@ -67,19 +63,28 @@ public class FinalPostGroupControlRestore : MonoBehaviour
 
     void RestoreWholeGroupControl(int gid)
     {
-        // The normal ModelViewer teardown clears yellow/local edit mode and removes
-        // falloff/weight UI. Invoke it even if PostAffectorManager already cleared activeId.
+        // First remove ModelViewer's local-selection mode/weights.
         clearSelectionMethod?.Invoke(viewer, null);
-
-        // Belt-and-suspenders: no card in a POST-free group may retain local selection weight.
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
         {
             if (card != null && card.groupId == gid)
-                card.selectionWeight = 0f;
+                card.SetSelectionWeight(0f);
         }
 
-        // Keep the group that just lost its final POST as the active group; do not let
-        // cleanup silently bounce ownership elsewhere.
+        // Critical: PostAffectorManager caches a CardState.baseState per HairCard and its
+        // LateUpdate writes that state back every frame. With no POST left, those cached
+        // entries must be released so ordinary ModelViewer group edits become canonical.
+        // IDictionary.Remove(object) works without depending on the manager's private
+        // CardState generic type.
+        IDictionary cachedStates = cardStatesField?.GetValue(manager) as IDictionary;
+        if (cachedStates != null)
+        {
+            HairCard[] groupCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None)
+                .Where(c => c != null && c.groupId == gid).ToArray();
+            foreach (HairCard card in groupCards)
+                cachedStates.Remove(card);
+        }
+
         viewer.currentGroupId = gid;
     }
 
@@ -89,7 +94,11 @@ public class FinalPostGroupControlRestore : MonoBehaviour
         {
             manager = FindFirstObjectByType<PostAffectorManager>();
             if (manager != null)
-                groupsField = typeof(PostAffectorManager).GetField("groups", BindingFlags.Instance | BindingFlags.NonPublic);
+            {
+                BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+                groupsField = typeof(PostAffectorManager).GetField("groups", flags);
+                cardStatesField = typeof(PostAffectorManager).GetField("cardStates", flags);
+            }
         }
 
         if (viewer == null)
