@@ -6,24 +6,25 @@ using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.UI;
 
-// Stateless group-level clumping. Each card is attracted to the centreline of its
-// nearest card in the same group. This never writes HairCard authored/canonical state
-// and never uses POST selection weights.
+// Stateless POST clumping.
+// The card whose root is nearest the POST marker becomes that POST's anchor.
+// Other cards inside the POST radius/falloff magnetise toward the anchor centreline.
+// This is mesh-only: it never writes HairCard canonical state or selection weights.
 [DefaultExecutionOrder(5000)]
 public class NearestCardClumpController : MonoBehaviour
 {
-    private readonly Dictionary<int, float> strengthByGroup = new();
-    private readonly Dictionary<HairCard, HairCard> nearestByCard = new();
+    private readonly Dictionary<int, float> strengthByPost = new();
 
+    private PostAffectorManager posts;
     private ModelViewer viewer;
+    private FieldInfo groupsField;
+    private FieldInfo activeIdField;
     private FieldInfo hasSelectionField;
     private MethodInfo createSliderMethod;
 
     private GameObject sliderRow;
     private Slider slider;
-    private int uiGroupId = int.MinValue;
-    private float nextNearestRefresh;
-    private int lastCardCount = -1;
+    private int uiPostId = -1;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
@@ -37,118 +38,168 @@ public class NearestCardClumpController : MonoBehaviour
     void Update()
     {
         Resolve();
-        if (viewer == null) return;
-
+        if (viewer == null || posts == null) return;
+        SyncLivePosts();
         MaintainUI();
-
-        HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
-        if (cards.Length != lastCardCount || Time.unscaledTime >= nextNearestRefresh)
-        {
-            lastCardCount = cards.Length;
-            nextNearestRefresh = Time.unscaledTime + 0.5f;
-            RebuildNearestMap(cards);
-        }
     }
 
     void LateUpdate()
     {
-        HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
-        if (cards.Length == 0) return;
+        Resolve();
+        if (viewer == null || posts == null) return;
 
-        bool anyClump = cards.Any(c => c != null && GetStrength(c.groupId) > 0.0001f);
-        if (!anyClump) return;
+        List<PostAffectorManager.PostAffector> live = AllPosts()
+            .Where(p => p != null && GetStrength(p.id) > 0.0001f)
+            .ToList();
+        if (live.Count == 0) return;
 
-        // First rebuild every participating card from the current evaluated groom values.
-        // Then snapshot those clean meshes before deforming anything, so a card never
-        // samples an already-clumped neighbour in the same frame.
-        Dictionary<HairCard, Vector3[]> cleanVertices = new();
-        foreach (HairCard card in cards)
+        HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
+        HashSet<int> affectedGroups = new(live.Select(p => p.groupId));
+
+        // Rebuild from the POST-evaluated parameters, then freeze a clean snapshot.
+        // Every clump samples that snapshot, so there is no frame-to-frame accumulation
+        // and no chain reaction from already-clumped cards.
+        Dictionary<HairCard, Vector3[]> clean = new();
+        foreach (HairCard card in allCards)
         {
-            if (card == null || GetStrength(card.groupId) <= 0.0001f) continue;
+            if (card == null || !affectedGroups.Contains(card.groupId)) continue;
             card.GenerateMesh();
             MeshFilter mf = card.GetComponent<MeshFilter>();
             if (mf != null && mf.mesh != null)
-                cleanVertices[card] = mf.mesh.vertices;
+                clean[card] = mf.mesh.vertices;
         }
 
-        foreach (HairCard card in cards)
+        Dictionary<int, HairCard> anchorByPost = new();
+        foreach (PostAffectorManager.PostAffector post in live)
         {
-            if (card == null) continue;
-            float strength = GetStrength(card.groupId);
-            if (strength <= 0.0001f) continue;
-            if (!nearestByCard.TryGetValue(card, out HairCard target) || target == null) continue;
-            if (!cleanVertices.TryGetValue(card, out Vector3[] sourceClean)) continue;
-            if (!cleanVertices.TryGetValue(target, out Vector3[] targetClean)) continue;
-            DeformTowardNearest(card, target, sourceClean, targetClean, strength);
+            HairCard anchor = FindAnchor(post, allCards);
+            if (anchor != null && clean.ContainsKey(anchor))
+                anchorByPost[post.id] = anchor;
+        }
+
+        foreach (HairCard card in allCards)
+        {
+            if (card == null || !clean.TryGetValue(card, out Vector3[] sourceClean)) continue;
+
+            List<(PostAffectorManager.PostAffector post, HairCard anchor, float influence)> influences = new();
+            foreach (PostAffectorManager.PostAffector post in live)
+            {
+                if (post.groupId != card.groupId) continue;
+                if (!anchorByPost.TryGetValue(post.id, out HairCard anchor) || anchor == null || anchor == card) continue;
+
+                float spatial = SpatialWeight(card, post);
+                float influence = spatial * Mathf.Clamp01(post.weight) * GetStrength(post.id);
+                if (influence > 0.0001f)
+                    influences.Add((post, anchor, Mathf.Clamp01(influence)));
+            }
+
+            if (influences.Count == 0) continue;
+            ApplyClump(card, sourceClean, clean, influences);
         }
     }
 
     void Resolve()
     {
-        if (viewer != null) return;
-        viewer = FindFirstObjectByType<ModelViewer>();
-        if (viewer == null) return;
+        if (posts == null)
+        {
+            posts = FindFirstObjectByType<PostAffectorManager>();
+            if (posts != null)
+            {
+                BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+                groupsField = typeof(PostAffectorManager).GetField("groups", flags);
+                activeIdField = typeof(PostAffectorManager).GetField("activeId", flags);
+            }
+        }
 
-        BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
-        hasSelectionField = typeof(ModelViewer).GetField("hasSelectionHotspot", flags);
-        createSliderMethod = typeof(ModelViewer).GetMethod("CreateSliderUI", flags);
+        if (viewer == null)
+        {
+            viewer = FindFirstObjectByType<ModelViewer>();
+            if (viewer != null)
+            {
+                BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+                hasSelectionField = typeof(ModelViewer).GetField("hasSelectionHotspot", flags);
+                createSliderMethod = typeof(ModelViewer).GetMethod("CreateSliderUI", flags);
+            }
+        }
     }
 
-    bool InLocalPostMode()
+    Dictionary<int, List<PostAffectorManager.PostAffector>> Groups()
+    {
+        return groupsField?.GetValue(posts) as Dictionary<int, List<PostAffectorManager.PostAffector>>;
+    }
+
+    IEnumerable<PostAffectorManager.PostAffector> AllPosts()
+    {
+        Dictionary<int, List<PostAffectorManager.PostAffector>> groups = Groups();
+        if (groups == null) yield break;
+        foreach (List<PostAffectorManager.PostAffector> list in groups.Values)
+            if (list != null)
+                foreach (PostAffectorManager.PostAffector post in list)
+                    if (post != null) yield return post;
+    }
+
+    PostAffectorManager.PostAffector ActivePost()
+    {
+        if (activeIdField == null) return null;
+        int id = activeIdField.GetValue(posts) is int value ? value : -1;
+        return id < 0 ? null : AllPosts().FirstOrDefault(p => p.id == id);
+    }
+
+    bool InPostMode()
     {
         return hasSelectionField != null && hasSelectionField.GetValue(viewer) is bool selected && selected;
     }
 
-    public float GetStrength(int groupId)
+    float GetStrength(int postId)
     {
-        return strengthByGroup.TryGetValue(groupId, out float value) ? value : 0f;
+        return strengthByPost.TryGetValue(postId, out float value) ? value : 0f;
     }
 
-    public void SetStrength(int groupId, float value)
+    void SetStrength(int postId, float value)
     {
-        value = Mathf.Clamp01(value);
-        float old = GetStrength(groupId);
-        strengthByGroup[groupId] = value;
+        strengthByPost[postId] = Mathf.Clamp01(value);
+    }
 
-        // Returning to zero must immediately restore ordinary generated meshes.
-        if (old > 0.0001f && value <= 0.0001f)
-        {
-            foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
-                if (card != null && card.groupId == groupId)
-                    card.GenerateMesh();
-        }
+    void SyncLivePosts()
+    {
+        HashSet<int> live = new(AllPosts().Select(p => p.id));
+        foreach (int id in live)
+            if (!strengthByPost.ContainsKey(id)) strengthByPost[id] = 0f;
+        foreach (int dead in strengthByPost.Keys.Where(id => !live.Contains(id)).ToArray())
+            strengthByPost.Remove(dead);
     }
 
     void MaintainUI()
     {
-        if (viewer.groomingSliderPanelGO == null || createSliderMethod == null || InLocalPostMode())
+        PostAffectorManager.PostAffector active = ActivePost();
+        if (viewer.groomingSliderPanelGO == null || createSliderMethod == null || !InPostMode() || active == null)
         {
             DestroyUI();
             return;
         }
 
-        int gid = viewer.currentGroupId;
-        if (sliderRow != null && uiGroupId != gid)
+        if (sliderRow != null && uiPostId != active.id)
             DestroyUI();
 
         if (sliderRow == null)
         {
-            uiGroupId = gid;
-            float current = GetStrength(gid);
-            UnityAction<float> changed = value => SetStrength(gid, value);
+            uiPostId = active.id;
+            float current = GetStrength(active.id);
+            int capturedId = active.id;
+            UnityAction<float> changed = value => SetStrength(capturedId, value);
             object[] args = { viewer.groomingSliderPanelGO.transform, "Clump", 0f, 1f, current, changed, null, 44f, 16 };
             sliderRow = createSliderMethod.Invoke(viewer, args) as GameObject;
             slider = args[6] as Slider;
-            PlaceSliderNearShapeControls();
+            PlaceSlider();
         }
 
-        float wanted = GetStrength(gid);
+        float wanted = GetStrength(active.id);
         if (slider != null && !Mathf.Approximately(slider.value, wanted))
             slider.SetValueWithoutNotify(wanted);
         UpdateLabel(wanted);
     }
 
-    void PlaceSliderNearShapeControls()
+    void PlaceSlider()
     {
         if (sliderRow == null || viewer.groomingSliderPanelGO == null) return;
         Transform panel = viewer.groomingSliderPanelGO.transform;
@@ -170,38 +221,34 @@ public class NearestCardClumpController : MonoBehaviour
         if (sliderRow != null) Destroy(sliderRow);
         sliderRow = null;
         slider = null;
-        uiGroupId = int.MinValue;
+        uiPostId = -1;
     }
 
-    void RebuildNearestMap(HairCard[] cards)
+    static HairCard FindAnchor(PostAffectorManager.PostAffector post, HairCard[] cards)
     {
-        nearestByCard.Clear();
-        foreach (IGrouping<int, HairCard> grouping in cards.Where(c => c != null).GroupBy(c => c.groupId))
+        HairCard best = null;
+        float bestD2 = float.PositiveInfinity;
+        foreach (HairCard card in cards)
         {
-            HairCard[] group = grouping.ToArray();
-            if (group.Length < 2) continue;
-
-            for (int i = 0; i < group.Length; i++)
+            if (card == null || card.groupId != post.groupId) continue;
+            float d2 = (RootWorld(card) - post.center).sqrMagnitude;
+            if (d2 < bestD2)
             {
-                HairCard source = group[i];
-                Vector3 sourceRoot = RootWorld(source);
-                HairCard best = null;
-                float bestD2 = float.PositiveInfinity;
-
-                for (int j = 0; j < group.Length; j++)
-                {
-                    if (i == j) continue;
-                    float d2 = (RootWorld(group[j]) - sourceRoot).sqrMagnitude;
-                    if (d2 < bestD2)
-                    {
-                        bestD2 = d2;
-                        best = group[j];
-                    }
-                }
-
-                if (best != null) nearestByCard[source] = best;
+                bestD2 = d2;
+                best = card;
             }
         }
+        return best;
+    }
+
+    static float SpatialWeight(HairCard card, PostAffectorManager.PostAffector post)
+    {
+        float distance = Vector3.Distance(RootWorld(card), post.center);
+        float radius = Mathf.Max(0.0001f, post.radius);
+        float falloff = Mathf.Max(0f, post.falloff);
+        if (distance <= radius) return 1f;
+        if (falloff <= 0.0001f || distance >= radius + falloff) return 0f;
+        return Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(radius + falloff, radius, distance));
     }
 
     static Vector3 RootWorld(HairCard card)
@@ -210,12 +257,15 @@ public class NearestCardClumpController : MonoBehaviour
         return root == Vector3.zero ? card.transform.position : root;
     }
 
-    static void DeformTowardNearest(HairCard source, HairCard target, Vector3[] sourceClean, Vector3[] targetClean, float strength)
+    static void ApplyClump(
+        HairCard source,
+        Vector3[] sourceClean,
+        Dictionary<HairCard, Vector3[]> clean,
+        List<(PostAffectorManager.PostAffector post, HairCard anchor, float influence)> influences)
     {
-        MeshFilter sourceMF = source.GetComponent<MeshFilter>();
-        if (sourceMF == null || sourceMF.mesh == null || sourceClean == null || targetClean == null) return;
+        MeshFilter mf = source.GetComponent<MeshFilter>();
+        if (mf == null || mf.mesh == null) return;
 
-        Mesh sourceMesh = sourceMF.mesh;
         Vector3[] vertices = (Vector3[])sourceClean.Clone();
         int rows = vertices.Length / 2;
         if (rows < 2) return;
@@ -223,28 +273,42 @@ public class NearestCardClumpController : MonoBehaviour
         for (int row = 1; row < rows; row++)
         {
             float t = (float)row / (rows - 1);
-            // Root remains planted; attraction ramps smoothly toward the tip.
-            float lengthFalloff = t * t * (3f - 2f * t);
-            float influence = Mathf.Clamp01(strength * lengthFalloff);
-            if (influence <= 0f) continue;
+            // Root is fixed; matching/magnetism grows along the strand toward the tip.
+            float alongLength = t * t * (3f - 2f * t);
 
-            int leftIndex = row * 2;
-            int rightIndex = leftIndex + 1;
-            Vector3 left = vertices[leftIndex];
-            Vector3 right = vertices[rightIndex];
+            int li = row * 2;
+            int ri = li + 1;
+            Vector3 left = vertices[li];
+            Vector3 right = vertices[ri];
             Vector3 ownCenter = (left + right) * 0.5f;
-            Vector3 targetWorld = SampleCentreWorld(target, targetClean, t);
-            Vector3 targetLocal = source.transform.InverseTransformPoint(targetWorld);
-            Vector3 newCenter = Vector3.Lerp(ownCenter, targetLocal, influence);
             Vector3 halfSpan = (right - left) * 0.5f;
 
-            vertices[leftIndex] = newCenter - halfSpan;
-            vertices[rightIndex] = newCenter + halfSpan;
+            Vector3 weightedTarget = Vector3.zero;
+            float total = 0f;
+            float combined = 0f;
+
+            foreach (var entry in influences)
+            {
+                if (!clean.TryGetValue(entry.anchor, out Vector3[] anchorClean)) continue;
+                float w = Mathf.Clamp01(entry.influence * alongLength);
+                if (w <= 0f) continue;
+                Vector3 anchorWorld = SampleCentreWorld(entry.anchor, anchorClean, t);
+                Vector3 anchorLocal = source.transform.InverseTransformPoint(anchorWorld);
+                weightedTarget += anchorLocal * w;
+                total += w;
+                combined = 1f - ((1f - combined) * (1f - w));
+            }
+
+            if (total <= 0f || combined <= 0f) continue;
+            Vector3 target = weightedTarget / total;
+            Vector3 newCenter = Vector3.Lerp(ownCenter, target, Mathf.Clamp01(combined));
+            vertices[li] = newCenter - halfSpan;
+            vertices[ri] = newCenter + halfSpan;
         }
 
-        sourceMesh.vertices = vertices;
-        sourceMesh.RecalculateNormals();
-        sourceMesh.RecalculateBounds();
+        mf.mesh.vertices = vertices;
+        mf.mesh.RecalculateNormals();
+        mf.mesh.RecalculateBounds();
     }
 
     static Vector3 SampleCentreWorld(HairCard card, Vector3[] vertices, float t)
