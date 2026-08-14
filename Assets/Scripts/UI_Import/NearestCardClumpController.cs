@@ -6,15 +6,15 @@ using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.UI;
 
-// Stateless POST clumping.
-// The card whose root is nearest the POST marker becomes that POST's anchor.
-// Other cards inside the POST radius/falloff magnetise toward the anchor centreline.
-// This is mesh-only: it never writes HairCard canonical state or selection weights.
+// POST clump is a deterministic pose, not a force.
+// While clump is non-zero we hold one unclumped mesh snapshot and always evaluate:
+// baseline -> anchorBaseline by (clump * POST spatial weight * strand-length weight).
+// No displayed clump result is ever used as the next input.
 [DefaultExecutionOrder(5000)]
 public class NearestCardClumpController : MonoBehaviour
 {
     private readonly Dictionary<int, float> strengthByPost = new();
-    private readonly HashSet<HairCard> clumpedLastFrame = new();
+    private readonly Dictionary<HairCard, Vector3[]> baselineVertices = new();
 
     private PostAffectorManager posts;
     private ModelViewer viewer;
@@ -26,6 +26,7 @@ public class NearestCardClumpController : MonoBehaviour
     private GameObject sliderRow;
     private Slider slider;
     private int uiPostId = -1;
+    private bool baselineActive;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
@@ -49,63 +50,85 @@ public class NearestCardClumpController : MonoBehaviour
         Resolve();
         if (viewer == null || posts == null) return;
 
-        // Hard non-accumulation rule: first restore every mesh touched last frame from
-        // the current evaluated HairCard parameters. This also guarantees that Clump=0
-        // and deleting a POST immediately return the ordinary groom result.
-        foreach (HairCard card in clumpedLastFrame.ToArray())
-        {
-            if (card != null) card.GenerateMesh();
-        }
-        clumpedLastFrame.Clear();
-
         List<PostAffectorManager.PostAffector> live = AllPosts()
             .Where(p => p != null && GetStrength(p.id) > 0.0001f)
             .ToList();
-        if (live.Count == 0) return;
 
         HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
+
+        if (live.Count == 0)
+        {
+            // Clump=0 means ordinary upstream groom/POST output again.
+            if (baselineActive)
+            {
+                foreach (HairCard card in baselineVertices.Keys.ToArray())
+                    if (card != null) card.GenerateMesh();
+                baselineVertices.Clear();
+                baselineActive = false;
+            }
+            return;
+        }
+
         HashSet<int> affectedGroups = new(live.Select(p => p.groupId));
 
-        // Freeze one clean, pre-clump snapshot for every card in participating groups.
-        // HairCard.GenerateMesh derives solely from the current evaluated groom values,
-        // so no displayed clump result is ever used as the next frame's input.
-        Dictionary<HairCard, Vector3[]> clean = new();
-        foreach (HairCard card in allCards)
+        // Start a clump session from exactly one clean, unclumped reference pose.
+        // This snapshot stays fixed while Clump is non-zero, so holding a slider value
+        // cannot move the cards any farther over time.
+        if (!baselineActive)
         {
-            if (card == null || !affectedGroups.Contains(card.groupId)) continue;
-            card.GenerateMesh();
-            MeshFilter mf = card.GetComponent<MeshFilter>();
-            if (mf != null && mf.mesh != null)
-                clean[card] = (Vector3[])mf.mesh.vertices.Clone();
+            baselineVertices.Clear();
+            foreach (HairCard card in allCards)
+            {
+                if (card == null || !affectedGroups.Contains(card.groupId)) continue;
+                card.GenerateMesh();
+                MeshFilter mf = card.GetComponent<MeshFilter>();
+                if (mf != null && mf.mesh != null)
+                    baselineVertices[card] = (Vector3[])mf.mesh.vertices.Clone();
+            }
+            baselineActive = true;
         }
+        else
+        {
+            // Cards added while clumping get their own clean baseline once.
+            foreach (HairCard card in allCards)
+            {
+                if (card == null || !affectedGroups.Contains(card.groupId) || baselineVertices.ContainsKey(card)) continue;
+                card.GenerateMesh();
+                MeshFilter mf = card.GetComponent<MeshFilter>();
+                if (mf != null && mf.mesh != null)
+                    baselineVertices[card] = (Vector3[])mf.mesh.vertices.Clone();
+            }
+        }
+
+        // Restore the immutable baseline before evaluating this frame's slider value.
+        foreach (var pair in baselineVertices.ToArray())
+            RestoreVertices(pair.Key, pair.Value);
 
         Dictionary<int, HairCard> anchorByPost = new();
         foreach (PostAffectorManager.PostAffector post in live)
         {
             HairCard anchor = FindAnchor(post, allCards);
-            if (anchor != null && clean.ContainsKey(anchor))
+            if (anchor != null && baselineVertices.ContainsKey(anchor))
                 anchorByPost[post.id] = anchor;
         }
 
         foreach (HairCard card in allCards)
         {
-            if (card == null || !clean.TryGetValue(card, out Vector3[] sourceClean)) continue;
+            if (card == null || !baselineVertices.TryGetValue(card, out Vector3[] sourceBase)) continue;
 
-            List<(PostAffectorManager.PostAffector post, HairCard anchor, float influence)> influences = new();
+            List<(HairCard anchor, float influence)> influences = new();
             foreach (PostAffectorManager.PostAffector post in live)
             {
                 if (post.groupId != card.groupId) continue;
                 if (!anchorByPost.TryGetValue(post.id, out HairCard anchor) || anchor == null || anchor == card) continue;
 
-                float spatial = SpatialWeight(card, post);
-                float influence = spatial * Mathf.Clamp01(post.weight) * GetStrength(post.id);
+                float influence = SpatialWeight(card, post) * Mathf.Clamp01(post.weight) * GetStrength(post.id);
                 if (influence > 0.0001f)
-                    influences.Add((post, anchor, Mathf.Clamp01(influence)));
+                    influences.Add((anchor, Mathf.Clamp01(influence)));
             }
 
-            if (influences.Count == 0) continue;
-            ApplyClump(card, sourceClean, clean, influences);
-            clumpedLastFrame.Add(card);
+            if (influences.Count > 0)
+                ApplyFixedLerp(card, sourceBase, influences);
         }
     }
 
@@ -168,7 +191,16 @@ public class NearestCardClumpController : MonoBehaviour
 
     void SetStrength(int postId, float value)
     {
-        strengthByPost[postId] = Mathf.Clamp01(value);
+        value = Mathf.Clamp01(value);
+        float previous = GetStrength(postId);
+        strengthByPost[postId] = value;
+
+        // A new 0 -> non-zero drag must capture a fresh upstream pose.
+        if (previous <= 0.0001f && value > 0.0001f && !strengthByPost.Any(kv => kv.Key != postId && kv.Value > 0.0001f))
+        {
+            baselineVertices.Clear();
+            baselineActive = false;
+        }
     }
 
     void SyncLivePosts()
@@ -178,6 +210,14 @@ public class NearestCardClumpController : MonoBehaviour
             if (!strengthByPost.ContainsKey(id)) strengthByPost[id] = 0f;
         foreach (int dead in strengthByPost.Keys.Where(id => !live.Contains(id)).ToArray())
             strengthByPost.Remove(dead);
+
+        if (!strengthByPost.Values.Any(v => v > 0.0001f) && baselineActive)
+        {
+            foreach (HairCard card in baselineVertices.Keys.ToArray())
+                if (card != null) card.GenerateMesh();
+            baselineVertices.Clear();
+            baselineActive = false;
+        }
     }
 
     void MaintainUI()
@@ -207,7 +247,9 @@ public class NearestCardClumpController : MonoBehaviour
         float wanted = GetStrength(active.id);
         if (slider != null && !Mathf.Approximately(slider.value, wanted))
             slider.SetValueWithoutNotify(wanted);
-        UpdateLabel(wanted);
+
+        TextMeshProUGUI label = sliderRow != null ? sliderRow.GetComponentInChildren<TextMeshProUGUI>(true) : null;
+        if (label != null) label.text = "Clump: " + wanted.ToString("F3");
     }
 
     void PlaceSlider()
@@ -218,13 +260,6 @@ public class NearestCardClumpController : MonoBehaviour
         if (anchor == null) anchor = panel.Find("Bend Angle_Row");
         if (anchor != null)
             sliderRow.transform.SetSiblingIndex(Mathf.Min(anchor.GetSiblingIndex() + 1, panel.childCount - 1));
-    }
-
-    void UpdateLabel(float value)
-    {
-        if (sliderRow == null) return;
-        TextMeshProUGUI label = sliderRow.GetComponentInChildren<TextMeshProUGUI>(true);
-        if (label != null) label.text = "Clump: " + value.ToString("F3");
     }
 
     void DestroyUI()
@@ -243,11 +278,7 @@ public class NearestCardClumpController : MonoBehaviour
         {
             if (card == null || card.groupId != post.groupId) continue;
             float d2 = (RootWorld(card) - post.center).sqrMagnitude;
-            if (d2 < bestD2)
-            {
-                bestD2 = d2;
-                best = card;
-            }
+            if (d2 < bestD2) { bestD2 = d2; best = card; }
         }
         return best;
     }
@@ -268,53 +299,59 @@ public class NearestCardClumpController : MonoBehaviour
         return root == Vector3.zero ? card.transform.position : root;
     }
 
-    static void ApplyClump(
-        HairCard source,
-        Vector3[] sourceClean,
-        Dictionary<HairCard, Vector3[]> clean,
-        List<(PostAffectorManager.PostAffector post, HairCard anchor, float influence)> influences)
+    static void RestoreVertices(HairCard card, Vector3[] baseline)
+    {
+        if (card == null || baseline == null) return;
+        MeshFilter mf = card.GetComponent<MeshFilter>();
+        if (mf == null || mf.mesh == null || mf.mesh.vertexCount != baseline.Length) return;
+        mf.mesh.vertices = (Vector3[])baseline.Clone();
+        mf.mesh.RecalculateNormals();
+        mf.mesh.RecalculateBounds();
+    }
+
+    void ApplyFixedLerp(HairCard source, Vector3[] sourceBase, List<(HairCard anchor, float influence)> influences)
     {
         MeshFilter mf = source.GetComponent<MeshFilter>();
-        if (mf == null || mf.mesh == null) return;
+        if (mf == null || mf.mesh == null || sourceBase == null) return;
 
-        Vector3[] vertices = (Vector3[])sourceClean.Clone();
+        Vector3[] vertices = (Vector3[])sourceBase.Clone();
         int rows = vertices.Length / 2;
         if (rows < 2) return;
 
         for (int row = 1; row < rows; row++)
         {
             float t = (float)row / (rows - 1);
-            // Root is fixed; matching/magnetism grows along the strand toward the tip.
             float alongLength = t * t * (3f - 2f * t);
-
             int li = row * 2;
             int ri = li + 1;
-            Vector3 left = vertices[li];
-            Vector3 right = vertices[ri];
-            Vector3 ownCenter = (left + right) * 0.5f;
+
+            Vector3 left = sourceBase[li];
+            Vector3 right = sourceBase[ri];
+            Vector3 baselineCenter = (left + right) * 0.5f;
             Vector3 halfSpan = (right - left) * 0.5f;
 
             Vector3 weightedTarget = Vector3.zero;
-            float total = 0f;
+            float targetWeight = 0f;
             float combined = 0f;
 
             foreach (var entry in influences)
             {
-                if (!clean.TryGetValue(entry.anchor, out Vector3[] anchorClean)) continue;
+                if (!baselineVertices.TryGetValue(entry.anchor, out Vector3[] anchorBase)) continue;
                 float w = Mathf.Clamp01(entry.influence * alongLength);
                 if (w <= 0f) continue;
-                Vector3 anchorWorld = SampleCentreWorld(entry.anchor, anchorClean, t);
+
+                Vector3 anchorWorld = SampleCentreWorld(entry.anchor, anchorBase, t);
                 Vector3 anchorLocal = source.transform.InverseTransformPoint(anchorWorld);
                 weightedTarget += anchorLocal * w;
-                total += w;
+                targetWeight += w;
                 combined = 1f - ((1f - combined) * (1f - w));
             }
 
-            if (total <= 0f || combined <= 0f) continue;
-            Vector3 target = weightedTarget / total;
-            Vector3 newCenter = Vector3.Lerp(ownCenter, target, Mathf.Clamp01(combined));
-            vertices[li] = newCenter - halfSpan;
-            vertices[ri] = newCenter + halfSpan;
+            if (targetWeight <= 0f || combined <= 0f) continue;
+            Vector3 target = weightedTarget / targetWeight;
+            Vector3 center = Vector3.Lerp(baselineCenter, target, Mathf.Clamp01(combined));
+            vertices[li] = center - halfSpan;
+            vertices[ri] = center + halfSpan;
         }
 
         mf.mesh.vertices = vertices;
