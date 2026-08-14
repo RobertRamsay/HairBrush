@@ -4,15 +4,15 @@ using UnityEngine;
 using UnityEngine.UI;
 
 // Keeps Menu navigation reversible and makes cancelled file dialogs true no-ops.
-// RuntimeNavigationProjectIO historically clears cards/UI before opening Load Model;
-// this authority rebinds that button to ModelViewer's transactional LoadModel path.
+// Uses the authored RESUME button in the menu rather than creating runtime UI.
 [DefaultExecutionOrder(9800)]
 public class MenuSessionSafety : MonoBehaviour
 {
     private ModelViewer viewer;
     private Button boundLoadButton;
-    private GameObject resumeButton;
+    private Button resumeButton;
     private float nextScan;
+    private bool resumeInitialised;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
@@ -32,7 +32,7 @@ public class MenuSessionSafety : MonoBehaviour
         if (viewer == null) return;
 
         BindSafeLoadModel();
-        EnsureResumeButton();
+        BindAuthoredResumeButton();
         UpdateResumeVisibility();
     }
 
@@ -51,55 +51,25 @@ public class MenuSessionSafety : MonoBehaviour
         });
     }
 
-    void EnsureResumeButton()
+    void BindAuthoredResumeButton()
     {
         if (resumeButton != null || viewer.uiContainer == null) return;
 
-        Transform parent = viewer.loadButton != null && viewer.loadButton.transform.parent != null
-            ? viewer.loadButton.transform.parent
-            : viewer.uiContainer.transform;
-
-        Transform existing = parent.Find("ResumeGroomButton_Runtime");
-        if (existing != null)
+        foreach (Button button in viewer.uiContainer.GetComponentsInChildren<Button>(true))
         {
-            resumeButton = existing.gameObject;
-            Button existingButton = resumeButton.GetComponent<Button>();
-            if (existingButton != null)
-            {
-                existingButton.onClick.RemoveAllListeners();
-                existingButton.onClick.AddListener(ResumeGroom);
-            }
-            return;
+            if (button == null) continue;
+            TextMeshProUGUI label = button.GetComponentInChildren<TextMeshProUGUI>(true);
+            if (label == null || label.text.Trim().ToUpperInvariant() != "RESUME") continue;
+
+            resumeButton = button;
+            resumeButton.onClick.RemoveAllListeners();
+            resumeButton.onClick.AddListener(ResumeGroom);
+
+            // Authored button should never be visible on the initial menu before a session exists.
+            resumeButton.gameObject.SetActive(false);
+            resumeInitialised = true;
+            break;
         }
-
-        resumeButton = new GameObject(
-            "ResumeGroomButton_Runtime",
-            typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
-        resumeButton.transform.SetParent(parent, false);
-
-        RectTransform rect = resumeButton.GetComponent<RectTransform>();
-        rect.sizeDelta = new Vector2(0f, 48f);
-        LayoutElement layout = resumeButton.GetComponent<LayoutElement>();
-        layout.preferredHeight = 48f;
-        layout.minHeight = 48f;
-        resumeButton.GetComponent<Image>().color = new Color(.20f, .50f, .82f, 1f);
-
-        GameObject textGO = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
-        textGO.transform.SetParent(resumeButton.transform, false);
-        RectTransform textRect = textGO.GetComponent<RectTransform>();
-        textRect.anchorMin = Vector2.zero;
-        textRect.anchorMax = Vector2.one;
-        textRect.offsetMin = Vector2.zero;
-        textRect.offsetMax = Vector2.zero;
-        TextMeshProUGUI text = textGO.GetComponent<TextMeshProUGUI>();
-        text.text = "RESUME GROOM";
-        text.fontSize = 16f;
-        text.fontStyle = FontStyles.Bold;
-        text.alignment = TextAlignmentOptions.Center;
-        text.color = Color.white;
-        text.raycastTarget = false;
-
-        resumeButton.GetComponent<Button>().onClick.AddListener(ResumeGroom);
     }
 
     void UpdateResumeVisibility()
@@ -107,7 +77,11 @@ public class MenuSessionSafety : MonoBehaviour
         if (resumeButton == null) return;
         bool hasSession = GetLoadedModel() != null || FindObjectsByType<HairCard>(FindObjectsSortMode.None).Length > 0;
         bool menuOpen = viewer.uiContainer != null && viewer.uiContainer.activeInHierarchy;
-        resumeButton.SetActive(hasSession && menuOpen);
+        bool shouldShow = hasSession && menuOpen;
+
+        if (!resumeInitialised || resumeButton.gameObject.activeSelf != shouldShow)
+            resumeButton.gameObject.SetActive(shouldShow);
+        resumeInitialised = true;
     }
 
     void ResumeGroom()
@@ -143,7 +117,6 @@ public class MenuSessionSafety : MonoBehaviour
             if (mr != null) mr.enabled = true;
         }
 
-        // Restore ModelViewer's normal grooming interaction path as well as visibility.
         viewer.ToggleGroomingMode(true);
     }
 
