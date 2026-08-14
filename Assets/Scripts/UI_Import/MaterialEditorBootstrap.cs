@@ -11,6 +11,9 @@ public class MaterialEditorBootstrap : MonoBehaviour
     private MaterialEditorManager editor;
     private bool initialised;
     private float nextScan;
+    private bool workspaceStateKnown;
+    private bool lastWorkspaceVisible;
+    private Transform lastWorkspaceCanvas;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void Spawn()
@@ -39,7 +42,19 @@ public class MaterialEditorBootstrap : MonoBehaviour
         if (texturePanel != null) canvas = texturePanel.transform.root;
         else if (viewer.groomingSliderPanelGO != null) canvas = viewer.groomingSliderPanelGO.transform.root;
 
-        if (canvas != null) editor.SetWorkspaceVisible(textureEditorOpen, canvas);
+        if (canvas == null) return;
+
+        // SetWorkspaceVisible refreshes the material/property rows. Calling it on every
+        // polling pass destroys and recreates the LOAD buttons under the pointer, which
+        // makes them flicker and causes clicks to be lost. Only notify the editor when
+        // visibility or the owning canvas actually changes.
+        if (!workspaceStateKnown || textureEditorOpen != lastWorkspaceVisible || canvas != lastWorkspaceCanvas)
+        {
+            editor.SetWorkspaceVisible(textureEditorOpen, canvas);
+            workspaceStateKnown = true;
+            lastWorkspaceVisible = textureEditorOpen;
+            lastWorkspaceCanvas = canvas;
+        }
     }
 
     private void InitialiseEditor()
@@ -55,6 +70,7 @@ public class MaterialEditorBootstrap : MonoBehaviour
 
         editor.Init(viewer, template);
         initialised = true;
+        workspaceStateKnown = false;
     }
 
     private static GameObject FindNamed(string name)
