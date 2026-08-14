@@ -65,7 +65,7 @@ public class MenuSessionSafety : MonoBehaviour
             resumeButton.onClick.RemoveAllListeners();
             resumeButton.onClick.AddListener(ResumeGroom);
 
-            // Authored button should never be visible on the initial menu before a session exists.
+            // The authored button can also be disabled in the scene; keep this as a runtime guard.
             resumeButton.gameObject.SetActive(false);
             resumeInitialised = true;
             break;
@@ -88,7 +88,8 @@ public class MenuSessionSafety : MonoBehaviour
     {
         if (viewer == null) return;
 
-        if (viewer.uiContainer != null) viewer.uiContainer.SetActive(false);
+        // Leave every alternate workspace first. ToggleGroomingMode alone only changes one bool.
+        SetViewerField("isTextureEditorMode", false);
 
         GameObject model = GetLoadedModel();
         if (model != null)
@@ -98,32 +99,65 @@ public class MenuSessionSafety : MonoBehaviour
                 if (renderer != null) renderer.enabled = true;
         }
 
-        if (viewer.groomingSliderPanelGO != null)
-            viewer.groomingSliderPanelGO.SetActive(true);
-        else
-        {
-            GameObject groom = FindNamed("GroomingPanel");
-            if (groom != null) groom.SetActive(true);
-        }
-
-        GameObject groups = FindNamed("GroupManagerPanel");
-        if (groups != null) groups.SetActive(true);
-
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
         {
             if (card == null) continue;
             card.gameObject.SetActive(true);
-            MeshRenderer mr = card.GetComponent<MeshRenderer>();
-            if (mr != null) mr.enabled = true;
+            Renderer renderer = card.GetComponent<Renderer>();
+            if (renderer != null) renderer.enabled = true;
         }
 
+        // Re-enter through the same setup path used after a successful model load.
+        viewer.OnModelLoaded();
+
+        GameObject groom = viewer.groomingSliderPanelGO != null
+            ? viewer.groomingSliderPanelGO
+            : FindNamed("GroomingPanel");
+        if (groom == null)
+        {
+            viewer.BuildRuntimeGroomingUI();
+            groom = viewer.groomingSliderPanelGO;
+        }
+        if (groom != null) groom.SetActive(true);
+
+        GameObject groups = FindNamed("GroupManagerPanel");
+        if (groups == null)
+        {
+            InvokeViewer("BuildGroupManagementUI");
+            groups = FindNamed("GroupManagerPanel");
+        }
+        if (groups != null) groups.SetActive(true);
+
+        // Restore the selected group through ModelViewer's normal group-selection authority.
+        MethodInfo selectGroup = typeof(ModelViewer).GetMethod(
+            "SelectGroup", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+        if (selectGroup != null)
+            selectGroup.Invoke(viewer, new object[] { viewer.currentGroupId });
+        else
+            FindFirstObjectByType<GroomRootStateAuthority>()?.RestoreRootToViewer(viewer.currentGroupId);
+
         viewer.ToggleGroomingMode(true);
+
+        // Hide the menu last, after the editor has been made live again.
+        if (viewer.uiContainer != null) viewer.uiContainer.SetActive(false);
     }
 
     GameObject GetLoadedModel()
     {
         FieldInfo field = typeof(ModelViewer).GetField("loadedModel", BindingFlags.Instance | BindingFlags.NonPublic);
         return field?.GetValue(viewer) as GameObject;
+    }
+
+    void SetViewerField(string name, object value)
+    {
+        FieldInfo field = typeof(ModelViewer).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+        field?.SetValue(viewer, value);
+    }
+
+    void InvokeViewer(string name)
+    {
+        MethodInfo method = typeof(ModelViewer).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+        method?.Invoke(viewer, null);
     }
 
     static GameObject FindNamed(string name)
