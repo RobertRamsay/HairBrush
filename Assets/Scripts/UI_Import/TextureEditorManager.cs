@@ -14,8 +14,13 @@ public class TextureEditorManager : MonoBehaviour
 
     public void SetPanelActive(bool active, Transform parentCanvas, System.Action onSwitchToGroom)
     {
-        if (textureSliderPanelGO == null && active) BuildTextureEditorUI(parentCanvas, onSwitchToGroom);
-        else if (textureSliderPanelGO != null) textureSliderPanelGO.SetActive(active);
+        if (textureSliderPanelGO == null && active)
+            BuildTextureEditorUI(parentCanvas, onSwitchToGroom);
+        else if (textureSliderPanelGO != null)
+            textureSliderPanelGO.SetActive(active);
+
+        if (active && textureSliderPanelGO != null)
+            textureSliderPanelGO.transform.SetAsLastSibling();
 
         if (active)
         {
@@ -25,15 +30,24 @@ public class TextureEditorManager : MonoBehaviour
                 texturePreviewPlane.name = "HairTexturePreviewPlane";
                 texturePreviewPlane.transform.position = new Vector3(0f, 0f, 1.5f);
                 texturePreviewPlane.transform.localScale = new Vector3(0.6f, 1.2f, 1.0f);
+
                 MeshFilter meshFilter = texturePreviewPlane.GetComponent<MeshFilter>();
                 if (meshFilter != null && meshFilter.sharedMesh != null)
-                    meshFilter.sharedMesh.uv = new Vector2[] { new Vector2(0,0), new Vector2(1,0), new Vector2(0,1), new Vector2(1,1) };
+                    meshFilter.sharedMesh.uv = new Vector2[]
+                    {
+                        new Vector2(0,0), new Vector2(1,0),
+                        new Vector2(0,1), new Vector2(1,1)
+                    };
+
                 MeshRenderer mr = texturePreviewPlane.GetComponent<MeshRenderer>();
                 if (hairCardMaterial != null) mr.sharedMaterial = hairCardMaterial;
             }
             else texturePreviewPlane.SetActive(true);
         }
-        else if (texturePreviewPlane != null) texturePreviewPlane.SetActive(false);
+        else if (texturePreviewPlane != null)
+        {
+            texturePreviewPlane.SetActive(false);
+        }
     }
 
     public void SetPreviewMaterial(Material material)
@@ -47,57 +61,127 @@ public class TextureEditorManager : MonoBehaviour
         }
     }
 
-    void BuildTextureEditorUI(Transform parentCanvas, System.Action onSwitchToGroom)
+    private void BuildTextureEditorUI(Transform parentCanvas, System.Action onSwitchToGroom)
     {
-        GameObject panelGO = new GameObject("TextureEditorPanel", typeof(RectTransform), typeof(Canvas), typeof(GraphicRaycaster), typeof(Image));
+        // Stay on the existing root Canvas. Nested canvases/raycasters caused pointer-order problems.
+        GameObject panelGO = new GameObject("TextureEditorPanel", typeof(RectTransform), typeof(Image));
         panelGO.transform.SetParent(parentCanvas, false);
-
-        Canvas localCanvas = panelGO.GetComponent<Canvas>();
-        localCanvas.overrideSorting = true;
-        localCanvas.sortingOrder = 200;
+        panelGO.transform.SetAsLastSibling();
 
         RectTransform panelRect = panelGO.GetComponent<RectTransform>();
-        panelRect.anchorMin = new Vector2(1, 0); panelRect.anchorMax = new Vector2(1, 1);
-        panelRect.pivot = new Vector2(1, 0.5f); panelRect.sizeDelta = new Vector2(560, 0); panelRect.anchoredPosition = new Vector2(-10, 0);
+        panelRect.anchorMin = new Vector2(1, 0);
+        panelRect.anchorMax = new Vector2(1, 1);
+        panelRect.pivot = new Vector2(1, 0.5f);
+        panelRect.sizeDelta = new Vector2(560, 0);
+        panelRect.anchoredPosition = new Vector2(-10, 0);
+
         Image panelImage = panelGO.GetComponent<Image>();
         panelImage.color = new Color(0.15f, 0.15f, 0.15f, 0.85f);
         panelImage.raycastTarget = false;
 
         VerticalLayoutGroup layout = panelGO.AddComponent<VerticalLayoutGroup>();
-        layout.padding = new RectOffset(15,15,12,12); layout.spacing = 6;
-        layout.childControlWidth = true; layout.childControlHeight = false; layout.childForceExpandHeight = false;
+        layout.padding = new RectOffset(15, 15, 12, 12);
+        layout.spacing = 6;
+        layout.childControlWidth = true;
+        layout.childControlHeight = false;
+        layout.childForceExpandHeight = false;
         textureSliderPanelGO = panelGO;
 
-        GameObject tabRowGO = new GameObject("PanelTabRow", typeof(RectTransform), typeof(LayoutElement));
-        tabRowGO.transform.SetParent(panelGO.transform, false);
-        tabRowGO.GetComponent<LayoutElement>().preferredHeight = 45f;
-        HorizontalLayoutGroup hLayout = tabRowGO.AddComponent<HorizontalLayoutGroup>();
-        hLayout.spacing = 8; hLayout.childControlWidth = true; hLayout.childControlHeight = true; hLayout.childForceExpandHeight = false;
+        // Only the destination mode is a button. Current mode is a label, not a redundant button.
+        GameObject topRow = new GameObject("ModeRow", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
+        topRow.transform.SetParent(panelGO.transform, false);
+        topRow.GetComponent<LayoutElement>().preferredHeight = 42f;
 
-        GameObject groomTabGO = CreateTab(tabRowGO.transform, "Groom Mode", new Color(0.25f,0.25f,0.25f));
-        groomTabGO.GetComponent<Button>().onClick.AddListener(() => ExitToGroom(onSwitchToGroom));
-        CreateTab(tabRowGO.transform, "Texture Editor", new Color(0.2f,0.5f,0.8f));
+        HorizontalLayoutGroup rowLayout = topRow.GetComponent<HorizontalLayoutGroup>();
+        rowLayout.spacing = 8f;
+        rowLayout.childControlWidth = true;
+        rowLayout.childControlHeight = true;
+        rowLayout.childForceExpandHeight = false;
 
-        // Keep tabs last in local hierarchy so they also win raycast ordering within this canvas.
-        tabRowGO.transform.SetAsLastSibling();
+        GameObject groomButton = CreateModeButton(topRow.transform, "GROOM MODE");
+        groomButton.GetComponent<Button>().onClick.AddListener(() => ExitToGroom(onSwitchToGroom));
+        CreateModeLabel(topRow.transform, "TEXTURE EDITOR");
     }
 
     private void ExitToGroom(System.Action callback)
     {
-        callback?.Invoke();
+        // Do the authoritative state change first so this never depends on callback timing.
         if (textureSliderPanelGO != null) textureSliderPanelGO.SetActive(false);
         if (texturePreviewPlane != null) texturePreviewPlane.SetActive(false);
         FindFirstObjectByType<MaterialEditorManager>()?.HidePanel();
 
         ModelViewer viewer = FindFirstObjectByType<ModelViewer>();
-        if (viewer == null) return;
-        FieldInfo textureMode = typeof(ModelViewer).GetField("isTextureEditorMode", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-        textureMode?.SetValue(viewer, false);
-        viewer.OnModelLoaded();
-        viewer.ToggleGroomingMode(true);
-        if (viewer.groomingSliderPanelGO != null) viewer.groomingSliderPanelGO.SetActive(true);
-        GameObject groups = FindNamed("GroupManagerPanel");
-        if (groups != null) groups.SetActive(true);
+        if (viewer != null)
+        {
+            FieldInfo textureMode = typeof(ModelViewer).GetField(
+                "isTextureEditorMode",
+                BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+            textureMode?.SetValue(viewer, false);
+
+            viewer.OnModelLoaded();
+            viewer.ToggleGroomingMode(true);
+
+            if (viewer.groomingSliderPanelGO != null)
+                viewer.groomingSliderPanelGO.SetActive(true);
+
+            GameObject groups = FindNamed("GroupManagerPanel");
+            if (groups != null) groups.SetActive(true);
+        }
+
+        callback?.Invoke();
+    }
+
+    private static GameObject CreateModeButton(Transform parent, string label)
+    {
+        GameObject go = new GameObject("GroomModeButton", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
+        go.transform.SetParent(parent, false);
+
+        Image image = go.GetComponent<Image>();
+        image.color = new Color(0.20f, 0.50f, 0.82f, 1f);
+        image.raycastTarget = true;
+
+        Button button = go.GetComponent<Button>();
+        button.interactable = true;
+        ColorBlock colors = button.colors;
+        colors.normalColor = Color.white;
+        colors.highlightedColor = new Color(1f, 1f, 1f, 0.92f);
+        colors.pressedColor = new Color(0.85f, 0.85f, 0.85f, 1f);
+        button.colors = colors;
+
+        AddCenteredLabel(go.transform, label, 14f, Color.white);
+        return go;
+    }
+
+    private static void CreateModeLabel(Transform parent, string label)
+    {
+        GameObject go = new GameObject("TextureModeLabel", typeof(RectTransform), typeof(Image), typeof(LayoutElement));
+        go.transform.SetParent(parent, false);
+
+        Image image = go.GetComponent<Image>();
+        image.color = new Color(0.22f, 0.22f, 0.22f, 1f);
+        image.raycastTarget = false;
+
+        AddCenteredLabel(go.transform, label, 14f, new Color(0.65f, 0.82f, 1f, 1f));
+    }
+
+    private static void AddCenteredLabel(Transform parent, string label, float fontSize, Color color)
+    {
+        GameObject textGO = new GameObject("Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
+        textGO.transform.SetParent(parent, false);
+
+        RectTransform rect = textGO.GetComponent<RectTransform>();
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.one;
+        rect.offsetMin = Vector2.zero;
+        rect.offsetMax = Vector2.zero;
+
+        TMPro.TextMeshProUGUI tmp = textGO.GetComponent<TMPro.TextMeshProUGUI>();
+        tmp.text = label;
+        tmp.fontSize = fontSize;
+        tmp.fontStyle = TMPro.FontStyles.Bold;
+        tmp.alignment = TMPro.TextAlignmentOptions.Center;
+        tmp.color = color;
+        tmp.raycastTarget = false;
     }
 
     private static GameObject FindNamed(string name)
@@ -105,21 +189,5 @@ public class TextureEditorManager : MonoBehaviour
         foreach (Transform t in FindObjectsByType<Transform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
             if (t != null && t.name == name) return t.gameObject;
         return null;
-    }
-
-    private static GameObject CreateTab(Transform parent, string label, Color color)
-    {
-        GameObject go = new GameObject(label.Replace(" ", "") + "TabButton", typeof(RectTransform), typeof(Image), typeof(Button));
-        go.transform.SetParent(parent, false);
-        Image img = go.GetComponent<Image>(); img.color = color; img.raycastTarget = true;
-        Button button = go.GetComponent<Button>(); button.interactable = true;
-
-        GameObject textGO = new GameObject("Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
-        textGO.transform.SetParent(go.transform, false);
-        RectTransform rect = textGO.GetComponent<RectTransform>();
-        rect.anchorMin = Vector2.zero; rect.anchorMax = Vector2.one; rect.offsetMin = Vector2.zero; rect.offsetMax = Vector2.zero;
-        TMPro.TextMeshProUGUI tmp = textGO.GetComponent<TMPro.TextMeshProUGUI>();
-        tmp.text = label; tmp.fontSize = 16; tmp.fontStyle = TMPro.FontStyles.Bold; tmp.alignment = TMPro.TextAlignmentOptions.Center; tmp.color = Color.white; tmp.raycastTarget = false;
-        return go;
     }
 }
