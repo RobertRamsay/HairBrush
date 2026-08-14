@@ -97,6 +97,7 @@ public class MaterialEditorManager : MonoBehaviour
         materials.Add(CreateEntry("Mat " + (materials.Count + 1), sourceMaterial));
         selectedMaterialIndex = materials.Count - 1;
         RefreshPanel();
+        UpdatePreviewForSelectedMaterial();
     }
 
     private void AssignSelectedToCurrentGroup()
@@ -105,6 +106,7 @@ public class MaterialEditorManager : MonoBehaviour
         groupMaterial[viewer.currentGroupId] = selectedMaterialIndex;
         SyncViewerMaterialToCurrentGroup();
         ApplyAssignments();
+        UpdatePreviewForSelectedMaterial();
         RefreshPanel();
     }
 
@@ -112,12 +114,14 @@ public class MaterialEditorManager : MonoBehaviour
     {
         if (index < 0 || index >= materials.Count) return;
         selectedMaterialIndex = index;
+        UpdatePreviewForSelectedMaterial();
         RefreshPanel();
     }
 
     private void BuildUI(Transform parentCanvas)
     {
-        panelGO = new GameObject("TextureMaterialPanel", typeof(RectTransform), typeof(Image), typeof(GraphicRaycaster));
+        // Root Canvas already owns raycasting; do not add another GraphicRaycaster here.
+        panelGO = new GameObject("TextureMaterialPanel", typeof(RectTransform), typeof(Image));
         panelGO.transform.SetParent(parentCanvas, false);
         RectTransform rect = panelGO.GetComponent<RectTransform>();
         rect.anchorMin = new Vector2(0f, 0f); rect.anchorMax = new Vector2(0f, 1f);
@@ -134,7 +138,6 @@ public class MaterialEditorManager : MonoBehaviour
         layout.childAlignment = TextAnchor.UpperLeft;
 
         CreateHeader(panelGO.transform, "MATERIALS", 20f);
-
         GameObject listRow = new GameObject("MaterialButtons", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
         listRow.transform.SetParent(panelGO.transform, false);
         listRow.GetComponent<LayoutElement>().preferredHeight = 26f;
@@ -222,26 +225,56 @@ public class MaterialEditorManager : MonoBehaviour
 #if UNITY_EDITOR
         if (selectedMaterialIndex < 0 || selectedMaterialIndex >= materials.Count) return;
         HairMaterialEntry entry = materials[selectedMaterialIndex];
+
         string path = EditorUtility.OpenFilePanel("Load texture", "", "png,jpg,jpeg,tga");
         if (string.IsNullOrEmpty(path)) return;
 
-        byte[] bytes = File.ReadAllBytes(path);
+        byte[] bytes;
+        try { bytes = File.ReadAllBytes(path); }
+        catch (Exception ex) { Debug.LogError("Could not read texture file: " + ex.Message); return; }
+
         Texture2D texture = new Texture2D(2, 2, TextureFormat.RGBA32, true, !normalMap);
         texture.name = Path.GetFileNameWithoutExtension(path);
-        if (!texture.LoadImage(bytes, false)) { Destroy(texture); return; }
+        if (!texture.LoadImage(bytes, false))
+        {
+            Destroy(texture);
+            Debug.LogError("Could not decode texture: " + path);
+            return;
+        }
+
         texture.wrapMode = TextureWrapMode.Clamp;
         texture.filterMode = FilterMode.Bilinear;
 
-        if (entry.material != null && entry.material.HasProperty(propertyName))
+        if (entry.material == null || !entry.material.HasProperty(propertyName))
         {
-            entry.material.SetTexture(propertyName, texture);
-            if (propertyName == AlbedoProperty) entry.albedoPath = path;
-            else if (propertyName == NormalProperty) entry.normalPath = path;
-            else if (propertyName == OpacityProperty) entry.opacityPath = path;
-            ApplyAssignments();
-            RefreshPanel();
+            Destroy(texture);
+            Debug.LogError("Selected hair shader has no texture property " + propertyName);
+            return;
         }
+
+        entry.material.SetTexture(propertyName, texture);
+        if (propertyName == AlbedoProperty) entry.albedoPath = path;
+        else if (propertyName == NormalProperty) entry.normalPath = path;
+        else if (propertyName == OpacityProperty) entry.opacityPath = path;
+
+        // If this material is assigned to the current group, update the actual hair immediately.
+        if (groupMaterial.TryGetValue(viewer.currentGroupId, out int assigned) && assigned == selectedMaterialIndex)
+        {
+            viewer.hairCardMaterial = entry.material;
+            ApplyAssignments();
+        }
+
+        // Always preview the material currently being edited, even before assigning it.
+        UpdatePreviewForSelectedMaterial();
+        RefreshPanel();
 #endif
+    }
+
+    private void UpdatePreviewForSelectedMaterial()
+    {
+        if (selectedMaterialIndex < 0 || selectedMaterialIndex >= materials.Count) return;
+        TextureEditorManager textureEditor = FindFirstObjectByType<TextureEditorManager>();
+        textureEditor?.SetPreviewMaterial(materials[selectedMaterialIndex].material);
     }
 
     private void SyncViewerMaterialToCurrentGroup()
