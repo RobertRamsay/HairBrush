@@ -51,21 +51,39 @@ public class MenuSessionSafety : MonoBehaviour
     {
         if (resumeButton != null) return;
 
-        // Important: the authored RESUME object is intentionally inactive in the scene.
-        // Searching from uiContainer can miss it if the inactive button sits outside that subtree,
-        // so search every loaded Button including inactive objects.
+        // First bind the actual authored scene object by name. It is intentionally inactive.
+        foreach (Transform t in FindObjectsByType<Transform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            if (t == null || t.name != "Button_Resume") continue;
+            Button b = t.GetComponent<Button>();
+            if (b != null)
+            {
+                BindResume(b);
+                return;
+            }
+        }
+
+        // Fallback for renamed scene objects: support both TMP and legacy Text labels.
         foreach (Button button in FindObjectsByType<Button>(FindObjectsInactive.Include, FindObjectsSortMode.None))
         {
             if (button == null) continue;
-            TextMeshProUGUI label = button.GetComponentInChildren<TextMeshProUGUI>(true);
-            if (label == null || label.text.Trim().ToUpperInvariant() != "RESUME") continue;
-
-            resumeButton = button;
-            resumeButton.onClick.RemoveAllListeners();
-            resumeButton.onClick.AddListener(ResumeGroom);
-            resumeButton.gameObject.SetActive(false);
-            break;
+            bool isResume = false;
+            TextMeshProUGUI tmp = button.GetComponentInChildren<TextMeshProUGUI>(true);
+            if (tmp != null && tmp.text.Trim().ToUpperInvariant() == "RESUME") isResume = true;
+            Text legacy = button.GetComponentInChildren<Text>(true);
+            if (legacy != null && legacy.text.Trim().ToUpperInvariant() == "RESUME") isResume = true;
+            if (!isResume) continue;
+            BindResume(button);
+            return;
         }
+    }
+
+    void BindResume(Button button)
+    {
+        resumeButton = button;
+        resumeButton.onClick.RemoveAllListeners();
+        resumeButton.onClick.AddListener(ResumeGroom);
+        resumeButton.gameObject.SetActive(false);
     }
 
     void UpdateResumeVisibility()
