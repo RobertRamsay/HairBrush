@@ -12,7 +12,6 @@ public class MenuSessionSafety : MonoBehaviour
     private Button boundLoadButton;
     private Button resumeButton;
     private float nextScan;
-    private bool resumeInitialised;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
@@ -40,9 +39,6 @@ public class MenuSessionSafety : MonoBehaviour
     {
         if (viewer.loadButton == null || boundLoadButton == viewer.loadButton) return;
         boundLoadButton = viewer.loadButton;
-
-        // ModelViewer.LoadModel opens the picker first and returns immediately on Cancel.
-        // Only after a valid path is returned does it replace the model/session.
         boundLoadButton.onClick.RemoveAllListeners();
         boundLoadButton.onClick.AddListener(() =>
         {
@@ -53,9 +49,12 @@ public class MenuSessionSafety : MonoBehaviour
 
     void BindAuthoredResumeButton()
     {
-        if (resumeButton != null || viewer.uiContainer == null) return;
+        if (resumeButton != null) return;
 
-        foreach (Button button in viewer.uiContainer.GetComponentsInChildren<Button>(true))
+        // Important: the authored RESUME object is intentionally inactive in the scene.
+        // Searching from uiContainer can miss it if the inactive button sits outside that subtree,
+        // so search every loaded Button including inactive objects.
+        foreach (Button button in FindObjectsByType<Button>(FindObjectsInactive.Include, FindObjectsSortMode.None))
         {
             if (button == null) continue;
             TextMeshProUGUI label = button.GetComponentInChildren<TextMeshProUGUI>(true);
@@ -64,10 +63,7 @@ public class MenuSessionSafety : MonoBehaviour
             resumeButton = button;
             resumeButton.onClick.RemoveAllListeners();
             resumeButton.onClick.AddListener(ResumeGroom);
-
-            // The authored button can also be disabled in the scene; keep this as a runtime guard.
             resumeButton.gameObject.SetActive(false);
-            resumeInitialised = true;
             break;
         }
     }
@@ -77,18 +73,12 @@ public class MenuSessionSafety : MonoBehaviour
         if (resumeButton == null) return;
         bool hasSession = GetLoadedModel() != null || FindObjectsByType<HairCard>(FindObjectsSortMode.None).Length > 0;
         bool menuOpen = viewer.uiContainer != null && viewer.uiContainer.activeInHierarchy;
-        bool shouldShow = hasSession && menuOpen;
-
-        if (!resumeInitialised || resumeButton.gameObject.activeSelf != shouldShow)
-            resumeButton.gameObject.SetActive(shouldShow);
-        resumeInitialised = true;
+        resumeButton.gameObject.SetActive(hasSession && menuOpen);
     }
 
     void ResumeGroom()
     {
         if (viewer == null) return;
-
-        // Leave every alternate workspace first. ToggleGroomingMode alone only changes one bool.
         SetViewerField("isTextureEditorMode", false);
 
         GameObject model = GetLoadedModel();
@@ -107,12 +97,9 @@ public class MenuSessionSafety : MonoBehaviour
             if (renderer != null) renderer.enabled = true;
         }
 
-        // Re-enter through the same setup path used after a successful model load.
         viewer.OnModelLoaded();
 
-        GameObject groom = viewer.groomingSliderPanelGO != null
-            ? viewer.groomingSliderPanelGO
-            : FindNamed("GroomingPanel");
+        GameObject groom = viewer.groomingSliderPanelGO != null ? viewer.groomingSliderPanelGO : FindNamed("GroomingPanel");
         if (groom == null)
         {
             viewer.BuildRuntimeGroomingUI();
@@ -128,17 +115,11 @@ public class MenuSessionSafety : MonoBehaviour
         }
         if (groups != null) groups.SetActive(true);
 
-        // Restore the selected group through ModelViewer's normal group-selection authority.
-        MethodInfo selectGroup = typeof(ModelViewer).GetMethod(
-            "SelectGroup", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-        if (selectGroup != null)
-            selectGroup.Invoke(viewer, new object[] { viewer.currentGroupId });
-        else
-            FindFirstObjectByType<GroomRootStateAuthority>()?.RestoreRootToViewer(viewer.currentGroupId);
+        MethodInfo selectGroup = typeof(ModelViewer).GetMethod("SelectGroup", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+        if (selectGroup != null) selectGroup.Invoke(viewer, new object[] { viewer.currentGroupId });
+        else FindFirstObjectByType<GroomRootStateAuthority>()?.RestoreRootToViewer(viewer.currentGroupId);
 
         viewer.ToggleGroomingMode(true);
-
-        // Hide the menu last, after the editor has been made live again.
         if (viewer.uiContainer != null) viewer.uiContainer.SetActive(false);
     }
 
