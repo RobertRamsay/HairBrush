@@ -63,7 +63,6 @@ public class TextureEditorManager : MonoBehaviour
 
     private void BuildTextureEditorUI(Transform parentCanvas, System.Action onSwitchToGroom)
     {
-        // Stay on the existing root Canvas. Nested canvases/raycasters caused pointer-order problems.
         GameObject panelGO = new GameObject("TextureEditorPanel", typeof(RectTransform), typeof(Image));
         panelGO.transform.SetParent(parentCanvas, false);
         panelGO.transform.SetAsLastSibling();
@@ -87,25 +86,27 @@ public class TextureEditorManager : MonoBehaviour
         layout.childForceExpandHeight = false;
         textureSliderPanelGO = panelGO;
 
-        // Only the destination mode is a button. Current mode is a label, not a redundant button.
+        // Match the Groom panel's two-tab treatment: equal-width buttons in one row.
         GameObject topRow = new GameObject("ModeRow", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
         topRow.transform.SetParent(panelGO.transform, false);
-        topRow.GetComponent<LayoutElement>().preferredHeight = 42f;
+        topRow.GetComponent<LayoutElement>().preferredHeight = 64f;
 
         HorizontalLayoutGroup rowLayout = topRow.GetComponent<HorizontalLayoutGroup>();
         rowLayout.spacing = 8f;
         rowLayout.childControlWidth = true;
         rowLayout.childControlHeight = true;
+        rowLayout.childForceExpandWidth = true;
         rowLayout.childForceExpandHeight = false;
 
-        GameObject groomButton = CreateModeButton(topRow.transform, "GROOM MODE");
+        GameObject groomButton = CreateModeTab(topRow.transform, "Groom Mode", true);
         groomButton.GetComponent<Button>().onClick.AddListener(() => ExitToGroom(onSwitchToGroom));
-        CreateModeLabel(topRow.transform, "TEXTURE EDITOR");
+
+        GameObject textureTab = CreateModeTab(topRow.transform, "Texture Editor", false);
+        textureTab.GetComponent<Button>().interactable = false;
     }
 
     private void ExitToGroom(System.Action callback)
     {
-        // Do the authoritative state change first so this never depends on callback timing.
         if (textureSliderPanelGO != null) textureSliderPanelGO.SetActive(false);
         if (texturePreviewPlane != null) texturePreviewPlane.SetActive(false);
         FindFirstObjectByType<MaterialEditorManager>()?.HidePanel();
@@ -131,37 +132,32 @@ public class TextureEditorManager : MonoBehaviour
         callback?.Invoke();
     }
 
-    private static GameObject CreateModeButton(Transform parent, string label)
+    private static GameObject CreateModeTab(Transform parent, string label, bool clickable)
     {
-        GameObject go = new GameObject("GroomModeButton", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
+        GameObject go = new GameObject(label.Replace(" ", "") + "Tab", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
         go.transform.SetParent(parent, false);
 
+        LayoutElement le = go.GetComponent<LayoutElement>();
+        le.preferredHeight = 64f;
+        le.flexibleWidth = 1f;
+
         Image image = go.GetComponent<Image>();
-        image.color = new Color(0.20f, 0.50f, 0.82f, 1f);
-        image.raycastTarget = true;
+        image.color = clickable
+            ? new Color(0.20f, 0.50f, 0.82f, 1f)
+            : new Color(0.22f, 0.22f, 0.22f, 1f);
+        image.raycastTarget = clickable;
 
         Button button = go.GetComponent<Button>();
-        button.interactable = true;
+        button.interactable = clickable;
         ColorBlock colors = button.colors;
         colors.normalColor = Color.white;
         colors.highlightedColor = new Color(1f, 1f, 1f, 0.92f);
         colors.pressedColor = new Color(0.85f, 0.85f, 0.85f, 1f);
+        colors.disabledColor = Color.white;
         button.colors = colors;
 
-        AddCenteredLabel(go.transform, label, 14f, Color.white);
+        AddCenteredLabel(go.transform, label, 16f, Color.white);
         return go;
-    }
-
-    private static void CreateModeLabel(Transform parent, string label)
-    {
-        GameObject go = new GameObject("TextureModeLabel", typeof(RectTransform), typeof(Image), typeof(LayoutElement));
-        go.transform.SetParent(parent, false);
-
-        Image image = go.GetComponent<Image>();
-        image.color = new Color(0.22f, 0.22f, 0.22f, 1f);
-        image.raycastTarget = false;
-
-        AddCenteredLabel(go.transform, label, 14f, new Color(0.65f, 0.82f, 1f, 1f));
     }
 
     private static void AddCenteredLabel(Transform parent, string label, float fontSize, Color color)
