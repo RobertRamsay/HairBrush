@@ -41,12 +41,9 @@ public class MaterialEditorManager : MonoBehaviour
     {
         viewer = modelViewer;
         sourceMaterial = materialTemplate;
-
-        foreach (HairMaterialEntry e in materials)
-            if (e.material != null) Destroy(e.material);
+        foreach (HairMaterialEntry e in materials) if (e.material != null) Destroy(e.material);
         materials.Clear();
         groupMaterial.Clear();
-
         if (sourceMaterial != null)
         {
             materials.Add(CreateEntry("Mat 1", sourceMaterial));
@@ -61,7 +58,6 @@ public class MaterialEditorManager : MonoBehaviour
         if (viewer == null || materials.Count == 0) return;
         if (Time.unscaledTime < nextApplyScan) return;
         nextApplyScan = Time.unscaledTime + .2f;
-
         if (lastGroupId != viewer.currentGroupId)
         {
             lastGroupId = viewer.currentGroupId;
@@ -82,10 +78,7 @@ public class MaterialEditorManager : MonoBehaviour
             panelGO.SetActive(true);
             RefreshPanel();
         }
-        else if (panelGO != null)
-        {
-            panelGO.SetActive(false);
-        }
+        else if (panelGO != null) panelGO.SetActive(false);
     }
 
     public void TogglePanel(Transform parentCanvas) => SetWorkspaceVisible(panelGO == null || !panelGO.activeSelf, parentCanvas);
@@ -94,8 +87,7 @@ public class MaterialEditorManager : MonoBehaviour
 
     private HairMaterialEntry CreateEntry(string name, Material template)
     {
-        Material mat = new Material(template);
-        mat.name = name + "_Runtime";
+        Material mat = new Material(template); mat.name = name + "_Runtime";
         return new HairMaterialEntry { name = name, material = mat };
     }
 
@@ -111,60 +103,45 @@ public class MaterialEditorManager : MonoBehaviour
     {
         if (viewer == null || selectedMaterialIndex < 0 || selectedMaterialIndex >= materials.Count) return;
         groupMaterial[viewer.currentGroupId] = selectedMaterialIndex;
-        SyncViewerMaterialToCurrentGroup();
-        ApplyAssignments();
-        RefreshPanel();
+        SyncViewerMaterialToCurrentGroup(); ApplyAssignments(); RefreshPanel();
     }
 
     private void SelectMaterial(int index)
     {
         if (index < 0 || index >= materials.Count) return;
-        selectedMaterialIndex = index;
-        RefreshPanel();
+        selectedMaterialIndex = index; RefreshPanel();
     }
 
     private void BuildUI(Transform parentCanvas)
     {
         panelGO = new GameObject("TextureMaterialPanel", typeof(RectTransform), typeof(Image), typeof(GraphicRaycaster));
         panelGO.transform.SetParent(parentCanvas, false);
-
         RectTransform rect = panelGO.GetComponent<RectTransform>();
-        rect.anchorMin = new Vector2(0f, 0f);
-        rect.anchorMax = new Vector2(0f, 1f);
-        rect.pivot = new Vector2(0f, .5f);
-        rect.sizeDelta = new Vector2(300f, 0f);
-        rect.anchoredPosition = new Vector2(10f, 0f);
+        rect.anchorMin = new Vector2(0f, 0f); rect.anchorMax = new Vector2(0f, 1f);
+        rect.pivot = new Vector2(0f, .5f); rect.sizeDelta = new Vector2(250f, 0f); rect.anchoredPosition = new Vector2(10f, 0f);
         panelGO.GetComponent<Image>().color = new Color(.12f, .12f, .12f, .96f);
 
         VerticalLayoutGroup layout = panelGO.AddComponent<VerticalLayoutGroup>();
-        layout.padding = new RectOffset(12, 12, 12, 12);
-        layout.spacing = 8f;
-        layout.childControlWidth = true;
-        layout.childControlHeight = false;
+        layout.padding = new RectOffset(10, 10, 10, 10); layout.spacing = 3f;
+        layout.childControlWidth = true; layout.childControlHeight = false;
 
-        CreateHeader(panelGO.transform, "MATERIALS");
-
+        CreateHeader(panelGO.transform, "MATERIALS", 22f);
         GameObject listRow = new GameObject("MaterialButtons", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
-        listRow.transform.SetParent(panelGO.transform, false);
-        listRow.GetComponent<LayoutElement>().preferredHeight = 34f;
+        listRow.transform.SetParent(panelGO.transform, false); listRow.GetComponent<LayoutElement>().preferredHeight = 28f;
         HorizontalLayoutGroup rowLayout = listRow.GetComponent<HorizontalLayoutGroup>();
-        rowLayout.spacing = 5f;
-        rowLayout.childControlWidth = false;
-        rowLayout.childControlHeight = true;
+        rowLayout.spacing = 4f; rowLayout.childControlWidth = false; rowLayout.childControlHeight = true;
         materialListRoot = listRow.transform;
 
-        assignmentLabel = CreateSubLabel(panelGO.transform, "");
-        CreateActionButton(panelGO.transform, "ASSIGN TO GROUP", AssignSelectedToCurrentGroup, 32f);
-
-        CreateHeader(panelGO.transform, "MATERIAL PROPERTIES");
-        propertiesRoot = CreateContainer(panelGO.transform, "Properties", 285f).transform;
+        assignmentLabel = CreateSubLabel(panelGO.transform, "", 16f);
+        CreateActionButton(panelGO.transform, "ASSIGN", AssignSelectedToCurrentGroup, 26f);
+        CreateHeader(panelGO.transform, "PROPERTIES", 22f);
+        propertiesRoot = CreateContainer(panelGO.transform, "Properties", 230f).transform;
     }
 
     private void RefreshPanel()
     {
         if (panelGO == null || materials.Count == 0) return;
         selectedMaterialIndex = Mathf.Clamp(selectedMaterialIndex, 0, materials.Count - 1);
-
         if (materialListRoot != null)
         {
             ClearChildren(materialListRoot);
@@ -172,45 +149,43 @@ public class MaterialEditorManager : MonoBehaviour
             {
                 int capture = i;
                 string label = i == selectedMaterialIndex ? "[" + materials[i].name + "]" : materials[i].name;
-                CreateSmallButton(materialListRoot, label, () => SelectMaterial(capture), 62f);
+                CreateSmallButton(materialListRoot, label, () => SelectMaterial(capture), 52f);
             }
-            CreateSmallButton(materialListRoot, "+", AddNewMaterial, 34f);
+            CreateSmallButton(materialListRoot, "+", AddNewMaterial, 28f);
         }
 
         if (assignmentLabel != null)
         {
-            string assigned = groupMaterial.TryGetValue(viewer.currentGroupId, out int idx) && idx >= 0 && idx < materials.Count
-                ? materials[idx].name : "Mat 1";
-            assignmentLabel.text = "Group " + viewer.currentGroupId + ": " + assigned;
+            string assigned = groupMaterial.TryGetValue(viewer.currentGroupId, out int idx) && idx >= 0 && idx < materials.Count ? materials[idx].name : "Mat 1";
+            assignmentLabel.text = "Group " + viewer.currentGroupId + "  •  " + assigned;
         }
 
         if (propertiesRoot != null)
         {
             ClearChildren(propertiesRoot);
             HairMaterialEntry entry = materials[selectedMaterialIndex];
-            CreateSubLabel(propertiesRoot, entry.name + "  •  " + (entry.material != null && entry.material.shader != null ? entry.material.shader.name : "No Shader"));
+            CreateSubLabel(propertiesRoot, entry.name, 16f);
             CreateTextureRow(propertiesRoot, "Albedo", AlbedoProperty, false, entry.albedoPath);
             CreateTextureRow(propertiesRoot, "Normal", NormalProperty, true, entry.normalPath);
-            CreateTextureRow(propertiesRoot, "Opacity Mask", OpacityProperty, false, entry.opacityPath);
+            CreateTextureRow(propertiesRoot, "Opacity", OpacityProperty, false, entry.opacityPath);
         }
     }
 
     private void CreateTextureRow(Transform parent, string label, string propertyName, bool normalMap, string currentPath)
     {
-        GameObject row = new GameObject(label + "Row", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
-        row.transform.SetParent(parent, false);
-        row.GetComponent<LayoutElement>().preferredHeight = 78f;
-        VerticalLayoutGroup layout = row.GetComponent<VerticalLayoutGroup>();
-        layout.spacing = 3f;
-        layout.childControlWidth = true;
-        layout.childControlHeight = false;
+        GameObject row = new GameObject(label + "Row", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
+        row.transform.SetParent(parent, false); row.GetComponent<LayoutElement>().preferredHeight = 48f;
+        HorizontalLayoutGroup layout = row.GetComponent<HorizontalLayoutGroup>();
+        layout.spacing = 4f; layout.childControlWidth = false; layout.childControlHeight = true;
 
-        CreateSubLabel(row.transform, label);
+        GameObject textBlock = new GameObject("Info", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
+        textBlock.transform.SetParent(row.transform, false); textBlock.GetComponent<LayoutElement>().preferredWidth = 158f;
+        VerticalLayoutGroup textLayout = textBlock.GetComponent<VerticalLayoutGroup>();
+        textLayout.spacing = 0; textLayout.childControlHeight = false; textLayout.childControlWidth = true;
+        CreateSubLabel(textBlock.transform, label, 17f);
         string shown = string.IsNullOrEmpty(currentPath) ? GetCurrentTextureName(propertyName) : Path.GetFileName(currentPath);
-        TMPro.TextMeshProUGUI file = CreateSubLabel(row.transform, shown);
-        file.fontSize = 11f;
-        file.color = new Color(.75f, .75f, .75f);
-        CreateActionButton(row.transform, "LOAD", () => LoadTextureIntoSlot(propertyName, normalMap), 26f);
+        TMPro.TextMeshProUGUI file = CreateSubLabel(textBlock.transform, shown, 17f); file.fontSize = 10f; file.color = new Color(.72f,.72f,.72f);
+        CreateSmallButton(row.transform, "LOAD", () => LoadTextureIntoSlot(propertyName, normalMap), 50f);
     }
 
     private void LoadTextureIntoSlot(string propertyName, bool normalMap)
@@ -220,22 +195,18 @@ public class MaterialEditorManager : MonoBehaviour
         HairMaterialEntry entry = materials[selectedMaterialIndex];
         string path = EditorUtility.OpenFilePanel("Load texture", "", "png,jpg,jpeg,tga");
         if (string.IsNullOrEmpty(path)) return;
-
         byte[] bytes = File.ReadAllBytes(path);
         Texture2D texture = new Texture2D(2, 2, TextureFormat.RGBA32, true, !normalMap);
         texture.name = Path.GetFileNameWithoutExtension(path);
         if (!texture.LoadImage(bytes, false)) { Destroy(texture); return; }
-        texture.wrapMode = TextureWrapMode.Clamp;
-        texture.filterMode = FilterMode.Bilinear;
-
+        texture.wrapMode = TextureWrapMode.Clamp; texture.filterMode = FilterMode.Bilinear;
         if (entry.material != null && entry.material.HasProperty(propertyName))
         {
             entry.material.SetTexture(propertyName, texture);
             if (propertyName == AlbedoProperty) entry.albedoPath = path;
             else if (propertyName == NormalProperty) entry.normalPath = path;
             else if (propertyName == OpacityProperty) entry.opacityPath = path;
-            ApplyAssignments();
-            RefreshPanel();
+            ApplyAssignments(); RefreshPanel();
         }
 #endif
     }
@@ -256,102 +227,65 @@ public class MaterialEditorManager : MonoBehaviour
             int index = groupMaterial.TryGetValue(card.groupId, out int assigned) ? assigned : 0;
             if (index < 0 || index >= materials.Count) index = 0;
             MeshRenderer renderer = card.GetComponent<MeshRenderer>();
-            if (renderer != null && renderer.sharedMaterial != materials[index].material)
-                renderer.sharedMaterial = materials[index].material;
+            if (renderer != null && renderer.sharedMaterial != materials[index].material) renderer.sharedMaterial = materials[index].material;
         }
         SyncViewerMaterialToCurrentGroup();
     }
 
     private string GetCurrentTextureName(string propertyName)
     {
-        if (materials.Count == 0) return "None";
         HairMaterialEntry entry = materials[Mathf.Clamp(selectedMaterialIndex, 0, materials.Count - 1)];
         if (entry.material == null || !entry.material.HasProperty(propertyName)) return "Not available";
-        Texture texture = entry.material.GetTexture(propertyName);
-        return texture != null ? texture.name : "None";
+        Texture texture = entry.material.GetTexture(propertyName); return texture != null ? texture.name : "None";
     }
 
     private static GameObject CreateContainer(Transform parent, string name, float height)
     {
         GameObject go = new GameObject(name, typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
-        go.transform.SetParent(parent, false);
-        go.GetComponent<LayoutElement>().preferredHeight = height;
+        go.transform.SetParent(parent, false); go.GetComponent<LayoutElement>().preferredHeight = height;
         VerticalLayoutGroup layout = go.GetComponent<VerticalLayoutGroup>();
-        layout.spacing = 7f;
-        layout.childControlWidth = true;
-        layout.childControlHeight = false;
-        return go;
+        layout.spacing = 3f; layout.childControlWidth = true; layout.childControlHeight = false; return go;
     }
 
-    private static void ClearChildren(Transform root)
-    {
-        for (int i = root.childCount - 1; i >= 0; i--) Destroy(root.GetChild(i).gameObject);
-    }
+    private static void ClearChildren(Transform root) { for (int i = root.childCount - 1; i >= 0; i--) Destroy(root.GetChild(i).gameObject); }
 
-    private static void CreateHeader(Transform parent, string text)
+    private static void CreateHeader(Transform parent, string text, float height)
     {
         GameObject go = new GameObject(text, typeof(RectTransform), typeof(TMPro.TextMeshProUGUI), typeof(LayoutElement));
-        go.transform.SetParent(parent, false);
-        go.GetComponent<LayoutElement>().preferredHeight = 26f;
+        go.transform.SetParent(parent, false); go.GetComponent<LayoutElement>().preferredHeight = height;
         TMPro.TextMeshProUGUI tmp = go.GetComponent<TMPro.TextMeshProUGUI>();
-        tmp.text = text;
-        tmp.fontSize = 16f;
-        tmp.fontStyle = TMPro.FontStyles.Bold;
-        tmp.color = new Color(.35f, .75f, 1f);
-        tmp.alignment = TMPro.TextAlignmentOptions.MidlineLeft;
+        tmp.text = text; tmp.fontSize = 15f; tmp.fontStyle = TMPro.FontStyles.Bold; tmp.color = new Color(.35f,.75f,1f); tmp.alignment = TMPro.TextAlignmentOptions.MidlineLeft;
     }
 
-    private static TMPro.TextMeshProUGUI CreateSubLabel(Transform parent, string text)
+    private static TMPro.TextMeshProUGUI CreateSubLabel(Transform parent, string text, float height)
     {
         GameObject go = new GameObject("Label", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI), typeof(LayoutElement));
-        go.transform.SetParent(parent, false);
-        go.GetComponent<LayoutElement>().preferredHeight = 18f;
+        go.transform.SetParent(parent, false); go.GetComponent<LayoutElement>().preferredHeight = height;
         TMPro.TextMeshProUGUI tmp = go.GetComponent<TMPro.TextMeshProUGUI>();
-        tmp.text = text;
-        tmp.fontSize = 12f;
-        tmp.color = Color.white;
-        tmp.alignment = TMPro.TextAlignmentOptions.MidlineLeft;
-        return tmp;
+        tmp.text = text; tmp.fontSize = 11f; tmp.color = Color.white; tmp.alignment = TMPro.TextAlignmentOptions.MidlineLeft; tmp.enableWordWrapping = false; return tmp;
     }
 
     private static void CreateSmallButton(Transform parent, string label, UnityEngine.Events.UnityAction action, float width)
     {
         GameObject go = new GameObject(label + "Button", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
-        go.transform.SetParent(parent, false);
-        LayoutElement le = go.GetComponent<LayoutElement>();
-        le.preferredWidth = width;
-        le.minWidth = width;
-        go.GetComponent<Image>().color = new Color(.20f, .50f, .82f);
-        go.GetComponent<Button>().onClick.AddListener(action);
-        AddButtonText(go.transform, label, 11f);
+        go.transform.SetParent(parent, false); LayoutElement le = go.GetComponent<LayoutElement>(); le.preferredWidth = width; le.minWidth = width;
+        go.GetComponent<Image>().color = new Color(.20f,.50f,.82f); go.GetComponent<Button>().onClick.AddListener(action); AddButtonText(go.transform, label, 10f);
     }
 
     private static void CreateActionButton(Transform parent, string label, UnityEngine.Events.UnityAction action, float height)
     {
         GameObject go = new GameObject(label + "Button", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
-        go.transform.SetParent(parent, false);
-        go.GetComponent<Image>().color = new Color(.20f, .50f, .82f);
-        LayoutElement le = go.GetComponent<LayoutElement>();
-        le.minHeight = height;
-        le.preferredHeight = height;
-        go.GetComponent<Button>().onClick.AddListener(action);
-        AddButtonText(go.transform, label, 11f);
+        go.transform.SetParent(parent, false); go.GetComponent<Image>().color = new Color(.20f,.50f,.82f);
+        LayoutElement le = go.GetComponent<LayoutElement>(); le.minHeight = height; le.preferredHeight = height;
+        go.GetComponent<Button>().onClick.AddListener(action); AddButtonText(go.transform, label, 10f);
     }
 
     private static void AddButtonText(Transform parent, string label, float fontSize)
     {
-        GameObject textGO = new GameObject("Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
-        textGO.transform.SetParent(parent, false);
-        RectTransform rect = textGO.GetComponent<RectTransform>();
-        rect.anchorMin = Vector2.zero; rect.anchorMax = Vector2.one; rect.offsetMin = Vector2.zero; rect.offsetMax = Vector2.zero;
-        TMPro.TextMeshProUGUI tmp = textGO.GetComponent<TMPro.TextMeshProUGUI>();
-        tmp.text = label; tmp.fontSize = fontSize; tmp.fontStyle = TMPro.FontStyles.Bold;
-        tmp.alignment = TMPro.TextAlignmentOptions.Center; tmp.color = Color.white; tmp.raycastTarget = false;
+        GameObject textGO = new GameObject("Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI)); textGO.transform.SetParent(parent, false);
+        RectTransform rect = textGO.GetComponent<RectTransform>(); rect.anchorMin = Vector2.zero; rect.anchorMax = Vector2.one; rect.offsetMin = Vector2.zero; rect.offsetMax = Vector2.zero;
+        TMPro.TextMeshProUGUI tmp = textGO.GetComponent<TMPro.TextMeshProUGUI>(); tmp.text = label; tmp.fontSize = fontSize; tmp.fontStyle = TMPro.FontStyles.Bold; tmp.alignment = TMPro.TextAlignmentOptions.Center; tmp.color = Color.white; tmp.raycastTarget = false;
     }
 
-    private void OnDestroy()
-    {
-        foreach (HairMaterialEntry e in materials)
-            if (e.material != null) Destroy(e.material);
-    }
+    private void OnDestroy() { foreach (HairMaterialEntry e in materials) if (e.material != null) Destroy(e.material); }
 }
