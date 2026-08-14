@@ -6,15 +6,13 @@ using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.UI;
 
-// POST clump is a deterministic pose, not a force.
-// While clump is non-zero we hold one unclumped mesh snapshot and always evaluate:
-// baseline -> anchorBaseline by (clump * POST spatial weight * strand-length weight).
-// No displayed clump result is ever used as the next input.
+// Deterministic POST clump. Each frame we first force PostAffectorManager to rebuild the
+// current unclumped POST result, snapshot those vertices, then apply one fixed lerp toward
+// the anchor card. This keeps Clump non-accumulating while Bend/Twist/etc remain live.
 [DefaultExecutionOrder(5000)]
 public class NearestCardClumpController : MonoBehaviour
 {
     private readonly Dictionary<int, float> strengthByPost = new();
-    private readonly Dictionary<HairCard, Vector3[]> baselineVertices = new();
 
     private PostAffectorManager posts;
     private ModelViewer viewer;
@@ -22,11 +20,12 @@ public class NearestCardClumpController : MonoBehaviour
     private FieldInfo activeIdField;
     private FieldInfo hasSelectionField;
     private MethodInfo createSliderMethod;
+    private MethodInfo applyAllMethod;
 
     private GameObject sliderRow;
     private Slider slider;
     private int uiPostId = -1;
-    private bool baselineActive;
+    private bool hadClumpLastFrame;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
@@ -54,67 +53,43 @@ public class NearestCardClumpController : MonoBehaviour
             .Where(p => p != null && GetStrength(p.id) > 0.0001f)
             .ToList();
 
-        HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
+        // Whether clump is active or has just been turned off/deleted, begin from a fresh
+        // authoritative POST evaluation. This erases last frame's mesh-only clump result.
+        if (live.Count > 0 || hadClumpLastFrame)
+            applyAllMethod?.Invoke(posts, null);
 
         if (live.Count == 0)
         {
-            // Clump=0 means ordinary upstream groom/POST output again.
-            if (baselineActive)
-            {
-                foreach (HairCard card in baselineVertices.Keys.ToArray())
-                    if (card != null) card.GenerateMesh();
-                baselineVertices.Clear();
-                baselineActive = false;
-            }
+            hadClumpLastFrame = false;
             return;
         }
 
+        HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
         HashSet<int> affectedGroups = new(live.Select(p => p.groupId));
 
-        // Start a clump session from exactly one clean, unclumped reference pose.
-        // This snapshot stays fixed while Clump is non-zero, so holding a slider value
-        // cannot move the cards any farther over time.
-        if (!baselineActive)
+        // ApplyAll above has just regenerated the current Bend/Twist/Length/etc result.
+        // Freeze that clean result for THIS FRAME ONLY so anchors and neighbours all sample
+        // the same upstream pose and never sample already-clumped geometry.
+        Dictionary<HairCard, Vector3[]> clean = new();
+        foreach (HairCard card in allCards)
         {
-            baselineVertices.Clear();
-            foreach (HairCard card in allCards)
-            {
-                if (card == null || !affectedGroups.Contains(card.groupId)) continue;
-                card.GenerateMesh();
-                MeshFilter mf = card.GetComponent<MeshFilter>();
-                if (mf != null && mf.mesh != null)
-                    baselineVertices[card] = (Vector3[])mf.mesh.vertices.Clone();
-            }
-            baselineActive = true;
+            if (card == null || !affectedGroups.Contains(card.groupId)) continue;
+            MeshFilter mf = card.GetComponent<MeshFilter>();
+            if (mf != null && mf.mesh != null)
+                clean[card] = (Vector3[])mf.mesh.vertices.Clone();
         }
-        else
-        {
-            // Cards added while clumping get their own clean baseline once.
-            foreach (HairCard card in allCards)
-            {
-                if (card == null || !affectedGroups.Contains(card.groupId) || baselineVertices.ContainsKey(card)) continue;
-                card.GenerateMesh();
-                MeshFilter mf = card.GetComponent<MeshFilter>();
-                if (mf != null && mf.mesh != null)
-                    baselineVertices[card] = (Vector3[])mf.mesh.vertices.Clone();
-            }
-        }
-
-        // Restore the immutable baseline before evaluating this frame's slider value.
-        foreach (var pair in baselineVertices.ToArray())
-            RestoreVertices(pair.Key, pair.Value);
 
         Dictionary<int, HairCard> anchorByPost = new();
         foreach (PostAffectorManager.PostAffector post in live)
         {
             HairCard anchor = FindAnchor(post, allCards);
-            if (anchor != null && baselineVertices.ContainsKey(anchor))
+            if (anchor != null && clean.ContainsKey(anchor))
                 anchorByPost[post.id] = anchor;
         }
 
         foreach (HairCard card in allCards)
         {
-            if (card == null || !baselineVertices.TryGetValue(card, out Vector3[] sourceBase)) continue;
+            if (card == null || !clean.TryGetValue(card, out Vector3[] sourceClean)) continue;
 
             List<(HairCard anchor, float influence)> influences = new();
             foreach (PostAffectorManager.PostAffector post in live)
@@ -128,8 +103,10 @@ public class NearestCardClumpController : MonoBehaviour
             }
 
             if (influences.Count > 0)
-                ApplyFixedLerp(card, sourceBase, influences);
+                ApplyFixedLerp(card, sourceClean, clean, influences);
         }
+
+        hadClumpLastFrame = true;
     }
 
     void Resolve()
@@ -142,6 +119,7 @@ public class NearestCardClumpController : MonoBehaviour
                 BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
                 groupsField = typeof(PostAffectorManager).GetField("groups", flags);
                 activeIdField = typeof(PostAffectorManager).GetField("activeId", flags);
+                applyAllMethod = typeof(PostAffectorManager).GetMethod("ApplyAll", flags);
             }
         }
 
@@ -191,16 +169,7 @@ public class NearestCardClumpController : MonoBehaviour
 
     void SetStrength(int postId, float value)
     {
-        value = Mathf.Clamp01(value);
-        float previous = GetStrength(postId);
-        strengthByPost[postId] = value;
-
-        // A new 0 -> non-zero drag must capture a fresh upstream pose.
-        if (previous <= 0.0001f && value > 0.0001f && !strengthByPost.Any(kv => kv.Key != postId && kv.Value > 0.0001f))
-        {
-            baselineVertices.Clear();
-            baselineActive = false;
-        }
+        strengthByPost[postId] = Mathf.Clamp01(value);
     }
 
     void SyncLivePosts()
@@ -210,14 +179,6 @@ public class NearestCardClumpController : MonoBehaviour
             if (!strengthByPost.ContainsKey(id)) strengthByPost[id] = 0f;
         foreach (int dead in strengthByPost.Keys.Where(id => !live.Contains(id)).ToArray())
             strengthByPost.Remove(dead);
-
-        if (!strengthByPost.Values.Any(v => v > 0.0001f) && baselineActive)
-        {
-            foreach (HairCard card in baselineVertices.Keys.ToArray())
-                if (card != null) card.GenerateMesh();
-            baselineVertices.Clear();
-            baselineActive = false;
-        }
     }
 
     void MaintainUI()
@@ -299,22 +260,16 @@ public class NearestCardClumpController : MonoBehaviour
         return root == Vector3.zero ? card.transform.position : root;
     }
 
-    static void RestoreVertices(HairCard card, Vector3[] baseline)
-    {
-        if (card == null || baseline == null) return;
-        MeshFilter mf = card.GetComponent<MeshFilter>();
-        if (mf == null || mf.mesh == null || mf.mesh.vertexCount != baseline.Length) return;
-        mf.mesh.vertices = (Vector3[])baseline.Clone();
-        mf.mesh.RecalculateNormals();
-        mf.mesh.RecalculateBounds();
-    }
-
-    void ApplyFixedLerp(HairCard source, Vector3[] sourceBase, List<(HairCard anchor, float influence)> influences)
+    static void ApplyFixedLerp(
+        HairCard source,
+        Vector3[] sourceClean,
+        Dictionary<HairCard, Vector3[]> clean,
+        List<(HairCard anchor, float influence)> influences)
     {
         MeshFilter mf = source.GetComponent<MeshFilter>();
-        if (mf == null || mf.mesh == null || sourceBase == null) return;
+        if (mf == null || mf.mesh == null || sourceClean == null) return;
 
-        Vector3[] vertices = (Vector3[])sourceBase.Clone();
+        Vector3[] vertices = (Vector3[])sourceClean.Clone();
         int rows = vertices.Length / 2;
         if (rows < 2) return;
 
@@ -325,8 +280,8 @@ public class NearestCardClumpController : MonoBehaviour
             int li = row * 2;
             int ri = li + 1;
 
-            Vector3 left = sourceBase[li];
-            Vector3 right = sourceBase[ri];
+            Vector3 left = sourceClean[li];
+            Vector3 right = sourceClean[ri];
             Vector3 baselineCenter = (left + right) * 0.5f;
             Vector3 halfSpan = (right - left) * 0.5f;
 
@@ -336,11 +291,11 @@ public class NearestCardClumpController : MonoBehaviour
 
             foreach (var entry in influences)
             {
-                if (!baselineVertices.TryGetValue(entry.anchor, out Vector3[] anchorBase)) continue;
+                if (!clean.TryGetValue(entry.anchor, out Vector3[] anchorClean)) continue;
                 float w = Mathf.Clamp01(entry.influence * alongLength);
                 if (w <= 0f) continue;
 
-                Vector3 anchorWorld = SampleCentreWorld(entry.anchor, anchorBase, t);
+                Vector3 anchorWorld = SampleCentreWorld(entry.anchor, anchorClean, t);
                 Vector3 anchorLocal = source.transform.InverseTransformPoint(anchorWorld);
                 weightedTarget += anchorLocal * w;
                 targetWeight += w;
