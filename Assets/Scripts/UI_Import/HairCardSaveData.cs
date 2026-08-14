@@ -73,12 +73,9 @@ public class GroupMaterialSaveData
     public float falloff=.05f;
     public float weight=1f;
 
-    // POST-owned centreline clump. Point is measured in representative hair lengths
-    // along the affector's surface-normal ray; amount is the deformation strength.
+    // Legacy POST clump fields retained only so older project JSON still deserializes.
     public float clumpPoint=.9f;
     public float clumpAmount=0f;
-
-    // Legacy-only; retained for old JSON compatibility.
     public float clumpBaseline;
     public float clumpDelta;
     public List<VarianceChannelSaveData> localVariances=new();
@@ -147,11 +144,6 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
             foreach(GroupSaveData group in groups)
                 postVariance.PopulateSave(group.postAffectors);
 
-        PostClumpAffectorBridge postClump=UnityEngine.Object.FindFirstObjectByType<PostClumpAffectorBridge>();
-        if(postClump!=null&&groups!=null)
-            foreach(GroupSaveData group in groups)
-                postClump.PopulateSave(group.postAffectors);
-
         TextureUVRectWorkspace uvWorkspace=UnityEngine.Object.FindFirstObjectByType<TextureUVRectWorkspace>();
         if(uvWorkspace!=null)
             uvRects=uvWorkspace.ExportDefinitions();
@@ -183,7 +175,6 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
         PendingModifierRestore=this;
         PendingUVRectRestore=this;
         PendingGroupUVRestore=this;
-        PostClumpAffectorBridge.PendingRestore=this;
         MaterialProjectPersistenceBridge.PendingRestore=this;
         if(sourceVersion>=2)
             CanonicalProjectStateBridge.PendingCanonicalRestore=this;
