@@ -55,14 +55,21 @@ public class NearestCardClumpController : MonoBehaviour
         HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
         if (cards.Length == 0) return;
 
-        // Rebuild every card from the current evaluated groom parameters first. That makes
-        // this deformation non-accumulating even while POSTs/variance are changing values.
         bool anyClump = cards.Any(c => c != null && GetStrength(c.groupId) > 0.0001f);
         if (!anyClump) return;
 
+        // First rebuild every participating card from the current evaluated groom values.
+        // Then snapshot those clean meshes before deforming anything, so a card never
+        // samples an already-clumped neighbour in the same frame.
+        Dictionary<HairCard, Vector3[]> cleanVertices = new();
         foreach (HairCard card in cards)
-            if (card != null && GetStrength(card.groupId) > 0.0001f)
-                card.GenerateMesh();
+        {
+            if (card == null || GetStrength(card.groupId) <= 0.0001f) continue;
+            card.GenerateMesh();
+            MeshFilter mf = card.GetComponent<MeshFilter>();
+            if (mf != null && mf.mesh != null)
+                cleanVertices[card] = mf.mesh.vertices;
+        }
 
         foreach (HairCard card in cards)
         {
@@ -70,7 +77,9 @@ public class NearestCardClumpController : MonoBehaviour
             float strength = GetStrength(card.groupId);
             if (strength <= 0.0001f) continue;
             if (!nearestByCard.TryGetValue(card, out HairCard target) || target == null) continue;
-            DeformTowardNearest(card, target, strength);
+            if (!cleanVertices.TryGetValue(card, out Vector3[] sourceClean)) continue;
+            if (!cleanVertices.TryGetValue(target, out Vector3[] targetClean)) continue;
+            DeformTowardNearest(card, target, sourceClean, targetClean, strength);
         }
     }
 
@@ -90,12 +99,12 @@ public class NearestCardClumpController : MonoBehaviour
         return hasSelectionField != null && hasSelectionField.GetValue(viewer) is bool selected && selected;
     }
 
-    float GetStrength(int groupId)
+    public float GetStrength(int groupId)
     {
         return strengthByGroup.TryGetValue(groupId, out float value) ? value : 0f;
     }
 
-    void SetStrength(int groupId, float value)
+    public void SetStrength(int groupId, float value)
     {
         value = Mathf.Clamp01(value);
         float old = GetStrength(groupId);
@@ -201,14 +210,13 @@ public class NearestCardClumpController : MonoBehaviour
         return root == Vector3.zero ? card.transform.position : root;
     }
 
-    static void DeformTowardNearest(HairCard source, HairCard target, float strength)
+    static void DeformTowardNearest(HairCard source, HairCard target, Vector3[] sourceClean, Vector3[] targetClean, float strength)
     {
         MeshFilter sourceMF = source.GetComponent<MeshFilter>();
-        MeshFilter targetMF = target.GetComponent<MeshFilter>();
-        if (sourceMF == null || targetMF == null || sourceMF.mesh == null || targetMF.mesh == null) return;
+        if (sourceMF == null || sourceMF.mesh == null || sourceClean == null || targetClean == null) return;
 
         Mesh sourceMesh = sourceMF.mesh;
-        Vector3[] vertices = sourceMesh.vertices;
+        Vector3[] vertices = (Vector3[])sourceClean.Clone();
         int rows = vertices.Length / 2;
         if (rows < 2) return;
 
@@ -225,7 +233,7 @@ public class NearestCardClumpController : MonoBehaviour
             Vector3 left = vertices[leftIndex];
             Vector3 right = vertices[rightIndex];
             Vector3 ownCenter = (left + right) * 0.5f;
-            Vector3 targetWorld = SampleCentreWorld(target, targetMF.mesh, t);
+            Vector3 targetWorld = SampleCentreWorld(target, targetClean, t);
             Vector3 targetLocal = source.transform.InverseTransformPoint(targetWorld);
             Vector3 newCenter = Vector3.Lerp(ownCenter, targetLocal, influence);
             Vector3 halfSpan = (right - left) * 0.5f;
@@ -239,9 +247,8 @@ public class NearestCardClumpController : MonoBehaviour
         sourceMesh.RecalculateBounds();
     }
 
-    static Vector3 SampleCentreWorld(HairCard card, Mesh mesh, float t)
+    static Vector3 SampleCentreWorld(HairCard card, Vector3[] vertices, float t)
     {
-        Vector3[] vertices = mesh.vertices;
         int rows = vertices.Length / 2;
         if (rows <= 0) return card.transform.position;
         if (rows == 1) return card.transform.TransformPoint((vertices[0] + vertices[1]) * 0.5f);
