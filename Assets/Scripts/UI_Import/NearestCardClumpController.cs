@@ -14,6 +14,7 @@ using UnityEngine.UI;
 public class NearestCardClumpController : MonoBehaviour
 {
     private readonly Dictionary<int, float> strengthByPost = new();
+    private readonly HashSet<HairCard> clumpedLastFrame = new();
 
     private PostAffectorManager posts;
     private ModelViewer viewer;
@@ -48,6 +49,15 @@ public class NearestCardClumpController : MonoBehaviour
         Resolve();
         if (viewer == null || posts == null) return;
 
+        // Hard non-accumulation rule: first restore every mesh touched last frame from
+        // the current evaluated HairCard parameters. This also guarantees that Clump=0
+        // and deleting a POST immediately return the ordinary groom result.
+        foreach (HairCard card in clumpedLastFrame.ToArray())
+        {
+            if (card != null) card.GenerateMesh();
+        }
+        clumpedLastFrame.Clear();
+
         List<PostAffectorManager.PostAffector> live = AllPosts()
             .Where(p => p != null && GetStrength(p.id) > 0.0001f)
             .ToList();
@@ -56,9 +66,9 @@ public class NearestCardClumpController : MonoBehaviour
         HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
         HashSet<int> affectedGroups = new(live.Select(p => p.groupId));
 
-        // Rebuild from the POST-evaluated parameters, then freeze a clean snapshot.
-        // Every clump samples that snapshot, so there is no frame-to-frame accumulation
-        // and no chain reaction from already-clumped cards.
+        // Freeze one clean, pre-clump snapshot for every card in participating groups.
+        // HairCard.GenerateMesh derives solely from the current evaluated groom values,
+        // so no displayed clump result is ever used as the next frame's input.
         Dictionary<HairCard, Vector3[]> clean = new();
         foreach (HairCard card in allCards)
         {
@@ -66,7 +76,7 @@ public class NearestCardClumpController : MonoBehaviour
             card.GenerateMesh();
             MeshFilter mf = card.GetComponent<MeshFilter>();
             if (mf != null && mf.mesh != null)
-                clean[card] = mf.mesh.vertices;
+                clean[card] = (Vector3[])mf.mesh.vertices.Clone();
         }
 
         Dictionary<int, HairCard> anchorByPost = new();
@@ -95,6 +105,7 @@ public class NearestCardClumpController : MonoBehaviour
 
             if (influences.Count == 0) continue;
             ApplyClump(card, sourceClean, clean, influences);
+            clumpedLastFrame.Add(card);
         }
     }
 
