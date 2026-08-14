@@ -36,6 +36,22 @@ public class UVRectSaveData
     public float vMax;
 }
 
+[Serializable]
+public class HairMaterialSaveData
+{
+    public string name;
+    public string albedoPath;
+    public string normalPath;
+    public string opacityPath;
+}
+
+[Serializable]
+public class GroupMaterialSaveData
+{
+    public int groupId;
+    public int materialIndex;
+}
+
 // Legacy clump payloads remain in the schema so older JSON project files still deserialize cleanly.
 // No runtime group-clump system reads or writes these fields anymore.
 [Serializable] public class ClumpPointSaveData { public float posX,posY,posZ; public float normalX,normalY,normalZ; public float strength; }
@@ -104,6 +120,8 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
     public List<GroupSaveData> groups=new();
     public List<HairCardSaveData> hairCards=new();
     public List<UVRectSaveData> uvRects=new();
+    public List<HairMaterialSaveData> hairMaterials=new();
+    public List<GroupMaterialSaveData> groupMaterials=new();
     public float sliderLength;
     public float sliderWidth;
     public int sliderSegments;
@@ -143,6 +161,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
             foreach(GroupSaveData group in groups)
                 groupUV.PopulateGroupSave(group);
 
+        MaterialProjectPersistenceBridge.Capture(this);
         CanonicalProjectStateBridge.CanonicalizeForSave(this);
     }
 
@@ -165,6 +184,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
         PendingUVRectRestore=this;
         PendingGroupUVRestore=this;
         PostClumpAffectorBridge.PendingRestore=this;
+        MaterialProjectPersistenceBridge.PendingRestore=this;
         if(sourceVersion>=2)
             CanonicalProjectStateBridge.PendingCanonicalRestore=this;
     }
