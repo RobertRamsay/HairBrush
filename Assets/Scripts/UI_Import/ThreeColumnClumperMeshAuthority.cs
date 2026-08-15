@@ -72,7 +72,7 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
     static Vector3[] BuildCleanVertices(HairCard card)
     {
         const int columns = HairCard.CrossSectionColumns;
-        int segments = Mathf.Clamp(card.segments, 4, 36);
+        int segments = Mathf.Clamp(card.segments, 1, 36);
         Vector3[] vertices = new Vector3[(segments + 1) * columns];
         float segmentHeight = Mathf.Max(.001f, card.length) / segments;
         float halfWidth = Mathf.Max(.0005f, card.width) * .5f;
