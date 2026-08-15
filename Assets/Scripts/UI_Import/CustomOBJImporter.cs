@@ -4,12 +4,14 @@ using System.Collections.Generic;
 using System.Globalization;
 
 // Import metadata is kept on the model root so exported hair can be transformed back into
-// the exact coordinate space of the source OBJ (before recentering / normalization).
+// the exact coordinate space of the source OBJ (before handedness conversion, recentering
+// and normalization).
 public class ImportedOBJMetadata : MonoBehaviour
 {
     public Vector3 originalCenter;
     public float appliedScale = 1f;
     public string sourcePath;
+    public bool sourceXMirroredOnImport;
 }
 
 public static class CustomOBJImporter
@@ -22,7 +24,7 @@ public static class CustomOBJImporter
             return null;
         }
 
-        List<Vector3> vertices = new List<Vector3>();
+        List<Vector3> sourceVertices = new List<Vector3>();
         List<int> triangles = new List<int>();
 
         string[] lines = File.ReadAllLines(path);
@@ -39,7 +41,7 @@ public static class CustomOBJImporter
                 float x = float.Parse(parts[1], CultureInfo.InvariantCulture);
                 float y = float.Parse(parts[2], CultureInfo.InvariantCulture);
                 float z = float.Parse(parts[3], CultureInfo.InvariantCulture);
-                vertices.Add(new Vector3(x, y, z));
+                sourceVertices.Add(new Vector3(x, y, z));
             }
             else if (parts[0] == "f")
             {
@@ -51,22 +53,36 @@ public static class CustomOBJImporter
                     faceIndices.Add(vIndex);
                 }
 
+                // Import converts OBJ/right-handed coordinates to Unity by mirroring X.
+                // A reflection reverses winding, so reverse each generated triangle here to
+                // keep the source face orientation/normals intact in Unity.
                 for (int i = 1; i < faceIndices.Count - 1; i++)
                 {
                     triangles.Add(faceIndices[0]);
-                    triangles.Add(faceIndices[i]);
                     triangles.Add(faceIndices[i + 1]);
+                    triangles.Add(faceIndices[i]);
                 }
             }
         }
 
-        Vector3 center = Vector3.zero;
-        if (vertices.Count > 0)
+        Vector3 sourceCenter = Vector3.zero;
+        if (sourceVertices.Count > 0)
         {
-            Bounds tempBounds = new Bounds(vertices[0], Vector3.zero);
-            for (int i = 1; i < vertices.Count; i++) tempBounds.Encapsulate(vertices[i]);
-            center = tempBounds.center;
-            for (int i = 0; i < vertices.Count; i++) vertices[i] -= center;
+            Bounds sourceBounds = new Bounds(sourceVertices[0], Vector3.zero);
+            for (int i = 1; i < sourceVertices.Count; i++) sourceBounds.Encapsulate(sourceVertices[i]);
+            sourceCenter = sourceBounds.center;
+        }
+
+        // The ModelViewer keeps its existing 180-degree Y viewing orientation. Mirroring X
+        // here is the handedness conversion that cancels that orientation's apparent X flip,
+        // leaving the editor with the expected left/right layout while changing handedness on Z.
+        List<Vector3> vertices = new List<Vector3>(sourceVertices.Count);
+        Vector3 convertedCenter = new Vector3(-sourceCenter.x, sourceCenter.y, sourceCenter.z);
+        for (int i = 0; i < sourceVertices.Count; i++)
+        {
+            Vector3 source = sourceVertices[i];
+            Vector3 converted = new Vector3(-source.x, source.y, source.z);
+            vertices.Add(converted - convertedCenter);
         }
 
         Mesh mesh = new Mesh();
@@ -77,12 +93,13 @@ public static class CustomOBJImporter
         mesh.RecalculateBounds();
 
         GameObject go = new GameObject(Path.GetFileNameWithoutExtension(path));
-        go.transform.position = center;
+        go.transform.position = convertedCenter;
 
         ImportedOBJMetadata metadata = go.AddComponent<ImportedOBJMetadata>();
-        metadata.originalCenter = center;
+        metadata.originalCenter = sourceCenter;
         metadata.appliedScale = 1f;
         metadata.sourcePath = path;
+        metadata.sourceXMirroredOnImport = true;
 
         MeshFilter mf = go.AddComponent<MeshFilter>();
         MeshRenderer mr = go.AddComponent<MeshRenderer>();
@@ -98,7 +115,7 @@ public static class CustomOBJImporter
                 float scaleFactor = targetWidth / currentWidth;
                 go.transform.localScale = new Vector3(scaleFactor, scaleFactor, scaleFactor);
                 metadata.appliedScale = scaleFactor;
-                Debug.Log($"Auto-scaled and centered imported model. Original width: {currentWidth:F2}, applied scale factor: {scaleFactor:F4}");
+                Debug.Log($"Auto-scaled, centered and handedness-converted imported model. Original width: {currentWidth:F2}, applied scale factor: {scaleFactor:F4}");
             }
         }
 
