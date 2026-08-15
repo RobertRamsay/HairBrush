@@ -22,7 +22,7 @@ public class HairCard : MonoBehaviour
     [Header("Grooming Parameters")]
     public float width = 0.01f;
     public float length = 0.2f;
-    [Range(4, 36)] public int segments = 12;
+    [Range(1, 36)] public int segments = 12;
 
     [Header("Deformations")]
     public float bendAngle = 0f;
@@ -131,7 +131,7 @@ public class HairCard : MonoBehaviour
     {
         state.length = Mathf.Max(0.001f, state.length);
         state.width = Mathf.Max(0.0005f, state.width);
-        state.segments = Mathf.Clamp(state.segments, 4, 36);
+        state.segments = Mathf.Clamp(state.segments, 1, 36);
         state.depth = Mathf.Max(0f, state.depth);
         return state;
     }
@@ -291,7 +291,7 @@ public class HairCard : MonoBehaviour
 
     public void SetSegments(int newSegments)
     {
-        segments = Mathf.Clamp(newSegments, 4, 36);
+        segments = Mathf.Clamp(newSegments, 1, 36);
         CaptureCanonicalFromRendered();
         GenerateMesh();
     }
