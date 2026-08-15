@@ -2,10 +2,11 @@ using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
 
-// CLUMPER deforms the live HairCard mesh as a final display pass. When a clumper is removed,
-// there is no later clumper evaluation to overwrite that last deformed mesh, so explicitly
-// rebuild the affected group's cards from their current evaluated HairCard parameters.
-[DefaultExecutionOrder(5265)]
+// CLUMPER is a final live-mesh pass. Track the modifier dictionary itself rather than the
+// transient UI row so removal is detected regardless of which control destroyed/rebuilt the
+// row. When a group loses its CLUMPER, restore every HairCard in that group from the explicit
+// PRE_CLUMP layer snapshot. This is intentionally after all clumper mesh authorities.
+[DefaultExecutionOrder(5290)]
 public class ClumperRemovalMeshRestoreAuthority : MonoBehaviour
 {
     private GroupClumperManager manager;
@@ -32,36 +33,52 @@ public class ClumperRemovalMeshRestoreAuthority : MonoBehaviour
 
         if (!initialized)
         {
-            previousGroups.Clear();
-            foreach (int gid in byGroup.Keys) previousGroups.Add(gid);
+            SyncCurrent(byGroup);
             initialized = true;
             return;
         }
 
-        if (previousGroups.Count > 0)
+        List<int> removed = null;
+        foreach (int gid in previousGroups)
         {
-            List<int> removed = null;
-            foreach (int gid in previousGroups)
-            {
-                if (byGroup.ContainsKey(gid)) continue;
-                if (removed == null) removed = new List<int>();
-                removed.Add(gid);
-            }
-
-            if (removed != null)
-            {
-                HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
-                foreach (int gid in removed)
-                {
-                    foreach (HairCard card in cards)
-                    {
-                        if (card == null || card.groupId != gid) continue;
-                        card.GenerateMesh();
-                    }
-                }
-            }
+            if (byGroup.ContainsKey(gid)) continue;
+            if (removed == null) removed = new List<int>();
+            removed.Add(gid);
         }
 
+        if (removed != null)
+        {
+            foreach (int gid in removed)
+                RestoreWholeGroup(gid);
+        }
+
+        SyncCurrent(byGroup);
+    }
+
+    static void RestoreWholeGroup(int gid)
+    {
+        // First restore the evaluated state that existed immediately before CLUMPER.
+        // With POSTs this is SOURCE + POST; without POSTs it is the plain authored card.
+        ModifierEvaluationSnapshots.RestorePreClumpGroup(gid);
+
+        // Rebuild every mesh explicitly as a belt-and-braces step. CLUMPER only writes mesh
+        // vertices, so GenerateMesh guarantees no final-pass vertex deformation survives.
+        HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
+        int restored = 0;
+        foreach (HairCard card in cards)
+        {
+            if (card == null || card.groupId != gid) continue;
+            card.ClearClumpModifier();
+            card.GenerateMesh();
+            card.SetSelectionWeight(0f);
+            restored++;
+        }
+
+        Debug.Log("CLUMPER removed from group " + gid + ": restored " + restored + " HairCard meshes.");
+    }
+
+    void SyncCurrent(Dictionary<int, GroupClumperManager.GroupClumper> byGroup)
+    {
         previousGroups.Clear();
         foreach (int gid in byGroup.Keys) previousGroups.Add(gid);
     }
