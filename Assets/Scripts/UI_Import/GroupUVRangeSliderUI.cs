@@ -23,6 +23,10 @@ public class GroupUVRangeSliderUI : MonoBehaviour
     private DualIntRangeSlider rangeSlider;
     private int lastLow = int.MinValue;
     private int lastHigh = int.MinValue;
+    private int lastAvailableMin = int.MinValue;
+    private int lastAvailableMax = int.MinValue;
+    private bool lastInteractable;
+    private bool haveRangeState;
     private float nextScan;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -100,11 +104,16 @@ public class GroupUVRangeSliderUI : MonoBehaviour
         rangeSlider.onRangeChanged = OnRangeChanged;
         lastLow = int.MinValue;
         lastHigh = int.MinValue;
+        lastAvailableMin = int.MinValue;
+        lastAvailableMax = int.MinValue;
+        haveRangeState = false;
     }
 
     void SyncRange()
     {
         if (rangeSlider == null || minInput == null || maxInput == null || workspace == null) return;
+        if (rangeSlider.IsDragging) return;
+
         var rects = workspace.ExportDefinitions();
         if (rects == null || rects.Count == 0) return;
 
@@ -116,9 +125,21 @@ public class GroupUVRangeSliderUI : MonoBehaviour
         high = Mathf.Clamp(high, low, availableMax);
 
         bool interactable = minInput.interactable && maxInput.interactable;
+        bool changed = !haveRangeState ||
+                       availableMin != lastAvailableMin ||
+                       availableMax != lastAvailableMax ||
+                       low != lastLow ||
+                       high != lastHigh ||
+                       interactable != lastInteractable;
+        if (!changed) return;
+
         rangeSlider.Configure(availableMin, availableMax, low, high, interactable);
+        lastAvailableMin = availableMin;
+        lastAvailableMax = availableMax;
         lastLow = low;
         lastHigh = high;
+        lastInteractable = interactable;
+        haveRangeState = true;
     }
 
     void OnRangeChanged(int low, int high)
@@ -133,6 +154,7 @@ public class GroupUVRangeSliderUI : MonoBehaviour
 
         lastLow = low;
         lastHigh = high;
+        haveRangeState = true;
         nextScan = 0f;
     }
 }
@@ -159,6 +181,8 @@ public class DualIntRangeSlider : MonoBehaviour, IPointerDownHandler, IDragHandl
     private bool isInteractable = true;
     private int activeHandle; // -1 low, +1 high, 0 none
     private bool alternateOverlap;
+
+    public bool IsDragging => activeHandle != 0;
 
     public void BuildVisuals()
     {
