@@ -1,8 +1,11 @@
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 // Keeps the normal Groom/POST panel unchanged, but when GroupClumperManager creates
 // its ClumperControls block, present that block in a dedicated wheel-scrollable viewport.
+// Important: this is wheel-scroll ONLY. A ScrollRect parent can steal drag gestures from
+// horizontal sliders, so scrolling is handled explicitly and slider drags remain untouched.
 [DefaultExecutionOrder(5250)]
 public class ClumperControlsScrollFix : MonoBehaviour
 {
@@ -77,11 +80,9 @@ public class ClumperControlsScrollFix : MonoBehaviour
 
     void BuildHost(Transform panel)
     {
-        host = new GameObject("ClumperScrollHost", typeof(RectTransform), typeof(Image), typeof(ScrollRect), typeof(LayoutElement));
+        host = new GameObject("ClumperScrollHost", typeof(RectTransform), typeof(Image), typeof(LayoutElement), typeof(ClumperWheelScroll));
         host.transform.SetParent(panel, false);
 
-        // Critical: the Groom panel itself has a VerticalLayoutGroup. This scroll view is
-        // an overlay, not another row in that layout, otherwise it gets collapsed to 0 height.
         LayoutElement layoutElement = host.GetComponent<LayoutElement>();
         layoutElement.ignoreLayout = true;
 
@@ -93,7 +94,8 @@ public class ClumperControlsScrollFix : MonoBehaviour
 
         Image hostImage = host.GetComponent<Image>();
         hostImage.color = new Color(.08f, .09f, .11f, .98f);
-        hostImage.raycastTarget = true;
+        // The viewport receives wheel hits. The host itself should never steal slider drags.
+        hostImage.raycastTarget = false;
 
         GameObject viewportGO = new GameObject("Viewport", typeof(RectTransform), typeof(Image), typeof(RectMask2D));
         viewportGO.transform.SetParent(host.transform, false);
@@ -127,16 +129,10 @@ public class ClumperControlsScrollFix : MonoBehaviour
         outerFitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
         outerFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-        ScrollRect scroll = host.GetComponent<ScrollRect>();
-        scroll.viewport = viewport;
-        scroll.content = content;
-        scroll.horizontal = false;
-        scroll.vertical = true;
-        scroll.movementType = ScrollRect.MovementType.Clamped;
-        scroll.inertia = true;
-        scroll.decelerationRate = .12f;
-        scroll.scrollSensitivity = 32f;
-        scroll.verticalNormalizedPosition = 1f;
+        ClumperWheelScroll wheel = host.GetComponent<ClumperWheelScroll>();
+        wheel.viewport = viewport;
+        wheel.content = content;
+        wheel.sensitivity = 34f;
     }
 
     void DestroyHost()
@@ -144,5 +140,34 @@ public class ClumperControlsScrollFix : MonoBehaviour
         if (host != null) Destroy(host);
         host = null;
         content = null;
+    }
+}
+
+// Minimal scroll handler deliberately implementing ONLY wheel scrolling.
+// It never handles pointer down/begin-drag/drag, leaving those events to Slider.
+public class ClumperWheelScroll : MonoBehaviour, IScrollHandler
+{
+    public RectTransform viewport;
+    public RectTransform content;
+    public float sensitivity = 34f;
+
+    public void OnScroll(PointerEventData eventData)
+    {
+        if (viewport == null || content == null) return;
+        Canvas.ForceUpdateCanvases();
+
+        float viewportHeight = viewport.rect.height;
+        float contentHeight = LayoutUtility.GetPreferredHeight(content);
+        float maxOffset = Mathf.Max(0f, contentHeight - viewportHeight);
+        if (maxOffset <= 0f)
+        {
+            content.anchoredPosition = Vector2.zero;
+            return;
+        }
+
+        Vector2 pos = content.anchoredPosition;
+        pos.y = Mathf.Clamp(pos.y + (-eventData.scrollDelta.y * sensitivity), 0f, maxOffset);
+        content.anchoredPosition = pos;
+        eventData.Use();
     }
 }
