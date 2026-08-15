@@ -14,6 +14,7 @@ public class CanonicalProjectStateBridge : MonoBehaviour
 {
     public const int CurrentFormatVersion = 3;
     public static HairProjectSaveData PendingCanonicalRestore;
+    public static int CompletedRestoreGeneration { get; private set; }
 
     private HairProjectSaveData pending;
     private int settleFrames;
@@ -84,6 +85,7 @@ public class CanonicalProjectStateBridge : MonoBehaviour
 
         RestoreCanonicalState(pending);
         pending = null;
+        CompletedRestoreGeneration++;
     }
 
     void RestoreCanonicalState(HairProjectSaveData data)
