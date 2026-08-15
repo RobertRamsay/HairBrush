@@ -17,6 +17,7 @@ public class PlacementBrushModeAuthority : MonoBehaviour
     private FieldInfo groomingModeField;
     private FieldInfo textureModeField;
     private FieldInfo selectionModeField;
+    private FieldInfo selectionHotspotField;
     private FieldInfo loadedModelField;
     private MethodInfo pinHairCardMethod;
     private MethodInfo enterSelectionModeMethod;
@@ -39,6 +40,7 @@ public class PlacementBrushModeAuthority : MonoBehaviour
     private TextMeshProUGUI modeText;
     private Slider radiusSlider;
     private Slider falloffSlider;
+    private Slider boundSegmentsSlider;
 
     private LineRenderer brushPreview;
     private Material brushMaterial;
@@ -183,6 +185,7 @@ public class PlacementBrushModeAuthority : MonoBehaviour
         groomingModeField = t.GetField("isGroomingMode", flags);
         textureModeField = t.GetField("isTextureEditorMode", flags);
         selectionModeField = t.GetField("isSelectionMode", flags);
+        selectionHotspotField = t.GetField("hasSelectionHotspot", flags);
         loadedModelField = t.GetField("loadedModel", flags);
         pinHairCardMethod = t.GetMethod("PinHairCard", flags);
         enterSelectionModeMethod = t.GetMethod("EnterSelectionMode", flags);
@@ -296,8 +299,27 @@ public class PlacementBrushModeAuthority : MonoBehaviour
             slider.minValue = 1f;
             slider.maxValue = 36f;
             slider.wholeNumbers = true;
+
+            // ModelViewer's historic group-update callback still clamps this slider to 4.
+            // Bind after that callback and apply the true 1..36 value to the active group.
+            if (boundSegmentsSlider != slider)
+            {
+                boundSegmentsSlider = slider;
+                slider.onValueChanged.AddListener(ApplySegmentOverride);
+            }
             break;
         }
+    }
+
+    void ApplySegmentOverride(float value)
+    {
+        if (viewer == null || GetBool(selectionHotspotField)) return;
+        int target = Mathf.Clamp(Mathf.RoundToInt(value), 1, 36);
+        viewer.currentSegments = target;
+        HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
+        foreach (HairCard card in cards)
+            if (card != null && card.groupId == viewer.currentGroupId)
+                card.SetSegments(target);
     }
 
     void EnsureUI()
