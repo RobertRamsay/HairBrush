@@ -4,8 +4,9 @@ using UnityEngine.UI;
 
 // Keeps the normal Groom/POST panel unchanged, but when GroupClumperManager creates
 // its ClumperControls block, present that block in a dedicated wheel-scrollable viewport.
-// Important: this is wheel-scroll ONLY. A ScrollRect parent can steal drag gestures from
-// horizontal sliders, so scrolling is handled explicitly and slider drags remain untouched.
+// Important: this is wheel-scroll ONLY. No full-screen raycast graphic sits above the
+// controls: sliders/buttons receive pointer events directly, while wheel scrolling is
+// handled by the viewport only when it is actually the raycast target.
 [DefaultExecutionOrder(5250)]
 public class ClumperControlsScrollFix : MonoBehaviour
 {
@@ -80,7 +81,7 @@ public class ClumperControlsScrollFix : MonoBehaviour
 
     void BuildHost(Transform panel)
     {
-        host = new GameObject("ClumperScrollHost", typeof(RectTransform), typeof(Image), typeof(LayoutElement), typeof(ClumperWheelScroll));
+        host = new GameObject("ClumperScrollHost", typeof(RectTransform), typeof(LayoutElement));
         host.transform.SetParent(panel, false);
 
         LayoutElement layoutElement = host.GetComponent<LayoutElement>();
@@ -92,12 +93,9 @@ public class ClumperControlsScrollFix : MonoBehaviour
         hostRT.offsetMin = new Vector2(4f, 4f);
         hostRT.offsetMax = new Vector2(-4f, -4f);
 
-        Image hostImage = host.GetComponent<Image>();
-        hostImage.color = new Color(.08f, .09f, .11f, .98f);
-        // The viewport receives wheel hits. The host itself should never steal slider drags.
-        hostImage.raycastTarget = false;
-
-        GameObject viewportGO = new GameObject("Viewport", typeof(RectTransform), typeof(Image), typeof(RectMask2D));
+        // The viewport is behind the content. It catches wheel events only in empty space;
+        // child sliders/buttons are later in the hierarchy and therefore win raycasts.
+        GameObject viewportGO = new GameObject("Viewport", typeof(RectTransform), typeof(Image), typeof(RectMask2D), typeof(ClumperWheelScroll));
         viewportGO.transform.SetParent(host.transform, false);
         RectTransform viewport = viewportGO.GetComponent<RectTransform>();
         viewport.anchorMin = Vector2.zero;
@@ -129,7 +127,7 @@ public class ClumperControlsScrollFix : MonoBehaviour
         outerFitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
         outerFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-        ClumperWheelScroll wheel = host.GetComponent<ClumperWheelScroll>();
+        ClumperWheelScroll wheel = viewportGO.GetComponent<ClumperWheelScroll>();
         wheel.viewport = viewport;
         wheel.content = content;
         wheel.sensitivity = 34f;
