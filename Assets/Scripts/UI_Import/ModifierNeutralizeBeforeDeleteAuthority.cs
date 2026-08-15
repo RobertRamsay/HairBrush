@@ -156,9 +156,24 @@ public class ModifierDeleteNeutralizeHook : MonoBehaviour, IPointerDownHandler
         }
         if (target == null) return;
 
+        // POST has two sources for its live weight while selected: the affector's own weight
+        // and ModelViewer.selectionStrength. Pointer-down and pointer-up can be on different
+        // frames, so if only target.weight is cleared, MaintainActiveAuthoring() will copy the
+        // old viewer strength straight back into it before the click actually removes POST.
         target.weight = 0f;
+
+        FieldInfo activeIdField = typeof(PostAffectorManager).GetField("activeId", BindingFlags.Instance | BindingFlags.NonPublic);
+        int activeId = activeIdField != null && activeIdField.GetValue(postManager) is int value ? value : -1;
+        if (activeId == modifierId)
+        {
+            ModelViewer viewer = FindFirstObjectByType<ModelViewer>();
+            if (viewer != null) viewer.selectionStrength = 0f;
+        }
+
+        // Write the neutral POST result immediately. If pointer-up happens on a later frame,
+        // the selected POST remains at zero because selectionStrength was neutralized too.
         postApplyAllMethod.Invoke(postManager, null);
-        Debug.Log("POST pre-delete neutralized group " + groupId + ", modifier " + modifierId + ".");
+        Debug.Log("POST pre-delete neutralized group " + groupId + ", modifier " + modifierId + "; held at zero until deletion.");
     }
 
     static void WriteCleanThreeColumnMesh(HairCard card)
