@@ -168,6 +168,7 @@ public static class HairObjExporter
 
             for (int i = 0; i + 2 < triangles.Length; i += 3)
             {
+                sb.Append("f ");
                 AppendFaceVertex(sb, triangles[i], vertexBase, uvBase, normalBase, hasUV, hasNormals);
                 sb.Append(' ');
                 AppendFaceVertex(sb, triangles[i + 1], vertexBase, uvBase, normalBase, hasUV, hasNormals);
@@ -187,7 +188,7 @@ public static class HairObjExporter
     static void AppendFaceVertex(StringBuilder sb, int localIndex, int vertexBase, int uvBase, int normalBase, bool hasUV, bool hasNormals)
     {
         int v = vertexBase + localIndex;
-        sb.Append("f ").Append(v);
+        sb.Append(v);
         if (hasUV && hasNormals) sb.Append('/').Append(uvBase + localIndex).Append('/').Append(normalBase + localIndex);
         else if (hasUV) sb.Append('/').Append(uvBase + localIndex);
         else if (hasNormals) sb.Append("//").Append(normalBase + localIndex);
@@ -197,10 +198,6 @@ public static class HairObjExporter
     {
         if (space != ExportSpace.OriginalImportedOBJSpace || modelRoot == null || metadata == null)
             return world;
-
-        // ModelViewer deliberately puts the normalized/recentered imported model at world zero
-        // and rotates it 180 degrees. InverseTransformPoint reverses that editor transform and
-        // the import scale; adding the original source center reverses vertex recentering.
         return modelRoot.transform.InverseTransformPoint(world) + metadata.originalCenter;
     }
 
