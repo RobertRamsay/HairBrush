@@ -1,18 +1,20 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
-// Keeps the normal Groom/POST panel unchanged, but when GroupClumperManager creates
-// its ClumperControls block, present that block in a dedicated wheel-scrollable viewport.
-// Important: this is wheel-scroll ONLY. No full-screen raycast graphic sits above the
-// controls: sliders/buttons receive pointer events directly, while wheel scrolling is
-// handled by the viewport only when it is actually the raycast target.
+// When CLUMPER is active it owns the right panel exclusively. The ordinary Groom/POST
+// controls are temporarily hidden and restored exactly as they were when CLUMPER exits.
+// The clumper itself lives in a wheel-scrollable viewport, but slider/button pointer events
+// go directly to the controls rather than through a drag-stealing ScrollRect.
 [DefaultExecutionOrder(5250)]
 public class ClumperControlsScrollFix : MonoBehaviour
 {
     private ModelViewer viewer;
     private GameObject host;
     private RectTransform content;
+    private Transform boundPanel;
+    private readonly Dictionary<GameObject, bool> previousActive = new Dictionary<GameObject, bool>();
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
@@ -28,6 +30,7 @@ public class ClumperControlsScrollFix : MonoBehaviour
         if (viewer == null) viewer = FindFirstObjectByType<ModelViewer>();
         if (viewer == null || viewer.groomingSliderPanelGO == null)
         {
+            RestorePanel();
             DestroyHost();
             return;
         }
@@ -37,8 +40,15 @@ public class ClumperControlsScrollFix : MonoBehaviour
 
         if (controls == null)
         {
+            RestorePanel();
             if (host != null && (content == null || content.childCount == 0)) DestroyHost();
             return;
+        }
+
+        if (boundPanel != panel)
+        {
+            RestorePanel();
+            boundPanel = panel;
         }
 
         if (host == null) BuildHost(panel);
@@ -63,6 +73,7 @@ public class ClumperControlsScrollFix : MonoBehaviour
             fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
         }
 
+        HideNonClumperPanelChildren(panel);
         host.transform.SetAsLastSibling();
     }
 
@@ -79,9 +90,30 @@ public class ClumperControlsScrollFix : MonoBehaviour
         return null;
     }
 
+    void HideNonClumperPanelChildren(Transform panel)
+    {
+        for (int i = 0; i < panel.childCount; i++)
+        {
+            GameObject go = panel.GetChild(i).gameObject;
+            if (go == host) continue;
+            if (!previousActive.ContainsKey(go)) previousActive[go] = go.activeSelf;
+            if (go.activeSelf) go.SetActive(false);
+        }
+    }
+
+    void RestorePanel()
+    {
+        foreach (var kv in previousActive)
+        {
+            if (kv.Key != null) kv.Key.SetActive(kv.Value);
+        }
+        previousActive.Clear();
+        boundPanel = null;
+    }
+
     void BuildHost(Transform panel)
     {
-        host = new GameObject("ClumperScrollHost", typeof(RectTransform), typeof(LayoutElement));
+        host = new GameObject("ClumperScrollHost", typeof(RectTransform), typeof(LayoutElement), typeof(Image));
         host.transform.SetParent(panel, false);
 
         LayoutElement layoutElement = host.GetComponent<LayoutElement>();
@@ -93,8 +125,10 @@ public class ClumperControlsScrollFix : MonoBehaviour
         hostRT.offsetMin = new Vector2(4f, 4f);
         hostRT.offsetMax = new Vector2(-4f, -4f);
 
-        // The viewport is behind the content. It catches wheel events only in empty space;
-        // child sliders/buttons are later in the hierarchy and therefore win raycasts.
+        Image hostImage = host.GetComponent<Image>();
+        hostImage.color = new Color(.08f, .09f, .11f, .98f);
+        hostImage.raycastTarget = false;
+
         GameObject viewportGO = new GameObject("Viewport", typeof(RectTransform), typeof(Image), typeof(RectMask2D), typeof(ClumperWheelScroll));
         viewportGO.transform.SetParent(host.transform, false);
         RectTransform viewport = viewportGO.GetComponent<RectTransform>();
@@ -102,6 +136,7 @@ public class ClumperControlsScrollFix : MonoBehaviour
         viewport.anchorMax = Vector2.one;
         viewport.offsetMin = new Vector2(6f, 6f);
         viewport.offsetMax = new Vector2(-6f, -6f);
+
         Image viewportImage = viewportGO.GetComponent<Image>();
         viewportImage.color = new Color(0f, 0f, 0f, 0.001f);
         viewportImage.raycastTarget = true;
@@ -139,10 +174,13 @@ public class ClumperControlsScrollFix : MonoBehaviour
         host = null;
         content = null;
     }
+
+    void OnDestroy()
+    {
+        RestorePanel();
+    }
 }
 
-// Minimal scroll handler deliberately implementing ONLY wheel scrolling.
-// It never handles pointer down/begin-drag/drag, leaving those events to Slider.
 public class ClumperWheelScroll : MonoBehaviour, IScrollHandler
 {
     public RectTransform viewport;
