@@ -21,9 +21,17 @@ public static class HairObjExporter
         OriginalImportedOBJSpace
     }
 
+    // Runtime UI can occasionally deliver the same button action twice in the frame that a
+    // blocking native file dialog closes. Unity's frame counter does not advance while the
+    // dialog is open, so this cleanly suppresses the duplicate without delaying later exports.
+    static int lastInteractiveFrame = -1;
+
     public static void ExportInteractive()
     {
 #if UNITY_EDITOR
+        if (lastInteractiveFrame == Time.frameCount) return;
+        lastInteractiveFrame = Time.frameCount;
+
         HairCard[] cards = FindExportCards();
         if (cards.Length == 0)
         {
@@ -66,7 +74,8 @@ public static class HairObjExporter
         try
         {
             WriteOBJ(path, cards, space, modelRoot, metadata);
-            Debug.Log($"Exported {cards.Length} hair cards to: {path} ({space})");
+            int groupCount = cards.Select(c => c.groupId).Distinct().Count();
+            Debug.Log($"Exported {cards.Length} hair cards as {groupCount} grouped OBJ objects to: {path} ({space})");
         }
         catch (Exception ex)
         {
@@ -101,6 +110,7 @@ public static class HairObjExporter
         CultureInfo ci = CultureInfo.InvariantCulture;
         StringBuilder sb = new StringBuilder(Mathf.Max(8192, cards.Length * 1500));
         sb.AppendLine("# HairStrandDesigner2 hair-card export");
+        sb.AppendLine("# One OBJ object per Hair Group; cards inside each group are combined.");
         sb.AppendLine("# Space: " + space);
         if (space == ExportSpace.OriginalImportedOBJSpace && metadata != null)
         {
@@ -111,7 +121,6 @@ public static class HairObjExporter
         int vertexBase = 1;
         int uvBase = 1;
         int normalBase = 1;
-        int cardIndex = 0;
         int lastGroup = int.MinValue;
 
         foreach (HairCard card in cards)
@@ -127,13 +136,15 @@ public static class HairObjExporter
             bool hasUV = uvs != null && uvs.Length == vertices.Length;
             bool hasNormals = normals != null && normals.Length == vertices.Length;
 
+            // OBJ importers generally use 'o' as the object split boundary. Emit it only once
+            // per Hair Group, so every card belonging to that group imports as a single object.
             if (card.groupId != lastGroup)
             {
                 sb.AppendLine();
+                sb.AppendLine("o HairGroup_" + card.groupId);
                 sb.AppendLine("g HairGroup_" + card.groupId);
                 lastGroup = card.groupId;
             }
-            sb.AppendLine("o HairCard_" + card.groupId + "_" + cardIndex++);
 
             for (int i = 0; i < vertices.Length; i++)
             {
