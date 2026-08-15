@@ -6,8 +6,8 @@ using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
 // Owns card placement input so SHIFT can be a pure mode-cycle key instead of a held paint
-// modifier. Existing ModelViewer camera controls remain untouched; only its legacy grooming
-// input is suppressed for the frame and restored in LateUpdate.
+// modifier. Existing ModelViewer camera controls remain untouched; only its legacy placement
+// branch is suppressed for the frame while grooming itself stays enabled.
 [DefaultExecutionOrder(-5000)]
 public class PlacementBrushModeAuthority : MonoBehaviour
 {
@@ -31,7 +31,7 @@ public class PlacementBrushModeAuthority : MonoBehaviour
     private float nextActionTime;
     private float nextUIScan;
     private bool restorePending;
-    private bool restoreGroomingState;
+    private bool restoreSelectionState;
 
     private GameObject modeRow;
     private GameObject radiusRow;
@@ -69,12 +69,10 @@ public class PlacementBrushModeAuthority : MonoBehaviour
             EnsureSegmentMinimum();
         }
 
-        // ModelViewer used SHIFT as a held paint modifier. Suppress only that legacy grooming
-        // handler for this frame; its camera Update still runs normally.
         bool groomingEnabled = GetBool(groomingModeField);
-        restoreGroomingState = groomingEnabled;
-        restorePending = true;
-        if (groomingModeField != null) groomingModeField.SetValue(viewer, false);
+        bool selectionWasActive = GetBool(selectionModeField);
+        restoreSelectionState = selectionWasActive;
+        restorePending = false;
 
         if (!groomingEnabled || GetLoadedModel() == null || GetBool(textureModeField))
         {
@@ -89,6 +87,7 @@ public class PlacementBrushModeAuthority : MonoBehaviour
         {
             CycleMode();
             HideBrushPreview();
+            SuppressLegacyPlacement(selectionWasActive);
             return;
         }
 
@@ -103,29 +102,35 @@ public class PlacementBrushModeAuthority : MonoBehaviour
             return;
         }
 
-        // Preserve the original ALT group-pick gesture.
         if (alt && Mouse.current.leftButton.wasPressedThisFrame)
         {
             if (RaycastCursor(out RaycastHit hit)) SelectNearestGroup(hit.point);
             HideBrushPreview();
+            SuppressLegacyPlacement(selectionWasActive);
             return;
         }
 
-        // Preserve Ctrl+Click selection/POST handoff, but run it before PostAffectorManager.
         if (ctrl && Mouse.current.leftButton.wasPressedThisFrame)
         {
+            bool selected = false;
             if (RaycastCursor(out RaycastHit hit))
+            {
                 enterSelectionModeMethod?.Invoke(viewer, new object[] { hit.point, hit.normal });
+                selected = true;
+            }
             else
+            {
                 clearSelectionHotspotMethod?.Invoke(viewer, null);
+            }
+            SuppressLegacyPlacement(selected);
             HideBrushPreview();
             return;
         }
 
-        // TAB and SPACE belong to modifier interaction authorities, never placement.
-        if (tab || space || GetBool(selectionModeField))
+        if (tab || space || selectionWasActive)
         {
             HideBrushPreview();
+            SuppressLegacyPlacement(selectionWasActive);
             return;
         }
 
@@ -149,28 +154,41 @@ public class PlacementBrushModeAuthority : MonoBehaviour
                 break;
         }
 
-        if (!act || !hasSurface) return;
-        nextActionTime = Time.unscaledTime + ActionInterval;
-
-        switch (mode)
+        if (act && hasSurface)
         {
-            case PlacementMode.Place:
-            case PlacementMode.Paint:
-                PlaceCard(centerHit.point, centerHit.normal);
-                break;
-            case PlacementMode.Spray:
-                SprayOne(centerHit);
-                break;
-            case PlacementMode.Erase:
-                EraseAt(centerHit.point);
-                break;
+            nextActionTime = Time.unscaledTime + ActionInterval;
+            switch (mode)
+            {
+                case PlacementMode.Place:
+                case PlacementMode.Paint:
+                    PlaceCard(centerHit.point, centerHit.normal);
+                    break;
+                case PlacementMode.Spray:
+                    SprayOne(centerHit);
+                    break;
+                case PlacementMode.Erase:
+                    EraseAt(centerHit.point);
+                    break;
+            }
         }
+
+        // Block only ModelViewer's old placement branch for this frame. Grooming remains
+        // enabled, so normal card creation/state and modifier systems stay live.
+        SuppressLegacyPlacement(selectionWasActive);
+    }
+
+    void SuppressLegacyPlacement(bool stateToRestore)
+    {
+        if (viewer == null || selectionModeField == null) return;
+        restoreSelectionState = stateToRestore;
+        restorePending = true;
+        selectionModeField.SetValue(viewer, true);
     }
 
     void LateUpdate()
     {
-        if (!restorePending || viewer == null || groomingModeField == null) return;
-        groomingModeField.SetValue(viewer, restoreGroomingState);
+        if (!restorePending || viewer == null || selectionModeField == null) return;
+        selectionModeField.SetValue(viewer, restoreSelectionState);
         restorePending = false;
     }
 
@@ -299,9 +317,6 @@ public class PlacementBrushModeAuthority : MonoBehaviour
             slider.minValue = 1f;
             slider.maxValue = 36f;
             slider.wholeNumbers = true;
-
-            // ModelViewer's historic group-update callback still clamps this slider to 4.
-            // Bind after that callback and apply the true 1..36 value to the active group.
             if (boundSegmentsSlider != slider)
             {
                 boundSegmentsSlider = slider;
