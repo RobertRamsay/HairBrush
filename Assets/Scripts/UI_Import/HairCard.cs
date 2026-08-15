@@ -14,6 +14,11 @@ public class HairCard : MonoBehaviour
         public float uScale, vScale, uOffset, vOffset;
     }
 
+    // Native card cross-section: left edge / raised centre / right edge. The ridge height
+    // follows card width so narrow and wide cards keep the same shallow convex profile.
+    public const float CrossSectionRidgeRatio = 0.18f;
+    public const int CrossSectionColumns = 3;
+
     [Header("Grooming Parameters")]
     public float width = 0.01f;
     public float length = 0.2f;
@@ -48,13 +53,9 @@ public class HairCard : MonoBehaviour
     private float baseOffsetX, baseOffsetY, baseOffsetZ;
     private Material cardMaterial;
 
-    // Canonical state is the authored/root value. Modifier evaluation may change the
-    // public/rendered fields, but must never feed those evaluated values back into this state.
     private GroomState canonicalState;
     private bool hasCanonicalState;
 
-    // Clump is an upstream groom deformation: straight/length shape -> clump -> bend/twist -> card angle transform.
-    // It never overwrites the authored groom parameters above.
     private bool clumpActive;
     private Vector3 clumpSurfacePoint;
     private Vector3 clumpSurfaceNormal;
@@ -67,6 +68,7 @@ public class HairCard : MonoBehaviour
     public float GetOffsetZ() { return storedOffsetZ; }
     public Vector3 GetSpawnHitPoint() { return spawnHitPoint; }
     public Vector3 GetSurfaceNormal() { return surfaceNormal; }
+    public float GetCrossSectionRidgeHeight() { return Mathf.Max(.0005f, width) * flattenFactor * CrossSectionRidgeRatio; }
 
     public GroomState GetCanonicalState()
     {
@@ -191,8 +193,6 @@ public class HairCard : MonoBehaviour
         if (cardMaterial.HasProperty("_Color")) cardMaterial.SetColor("_Color", finalColor);
     }
 
-    // Authored/root write path. This always updates canonical state after resolving any
-    // selection weighting. Modifier managers must use ApplyEvaluatedState instead.
     public void SetParameters(float newLength, float newWidth, int newSegments, float newBend, float newTwist, float offsetX, float offsetY, float offsetZ, float newEmbedDepth, float strengthMultiplier = 1f, float newUScale = 1f, float newVScale = 1f, float newUOffset = 0f, float newVOffset = 0f)
     {
         if (selectionWeight > 0f)
@@ -299,12 +299,15 @@ public class HairCard : MonoBehaviour
     public void GenerateMesh()
     {
         if (mesh == null || segments < 1) return;
-        int numVertices = (segments + 1) * 2;
+
+        const int columns = CrossSectionColumns;
+        int numVertices = (segments + 1) * columns;
         baseVertices = new Vector3[numVertices];
         Vector2[] uvs = new Vector2[numVertices];
-        int[] triangles = new int[segments * 6];
+        int[] triangles = new int[segments * 12];
         float segmentHeight = length / segments;
         float halfWidth = width * 0.5f;
+        float ridgeHeight = GetCrossSectionRidgeHeight();
 
         for (int i = 0; i <= segments; i++)
         {
@@ -314,18 +317,17 @@ public class HairCard : MonoBehaviour
             float baseURight = uScale < 0f ? 0f : 1f;
             float finalULeft = baseULeft * Mathf.Abs(uScale) + uOffset;
             float finalURight = baseURight * Mathf.Abs(uScale) + uOffset;
+            float finalUCenter = (finalULeft + finalURight) * .5f;
 
-            // Hair textures are authored root-at-top / tip-at-bottom. In Unity UV space
-            // the top of the texture is V=1, so the card's native (+V scale) mapping is
-            // root V=1 -> tip V=0. A negative V scale remains an intentional vertical flip.
             float absVScale = Mathf.Abs(vScale);
             float baseV = (1f - t) * absVScale;
             if (vScale < 0f) baseV = absVScale - baseV;
             float finalV = baseV + vOffset;
-            int index = i * 2;
+            int index = i * columns;
             float currentWidth = halfWidth * flattenFactor;
 
             Vector3 left = new Vector3(-currentWidth, 0f, z);
+            Vector3 center = new Vector3(0f, ridgeHeight, z);
             Vector3 right = new Vector3(currentWidth, 0f, z);
 
             if (clumpActive && t > 0f)
@@ -334,33 +336,49 @@ public class HairCard : MonoBehaviour
                 Vector3 straightCenter = (left + right) * 0.5f;
                 Vector3 worldAxisPoint = clumpSurfacePoint + clumpSurfaceNormal * (length * t);
                 Vector3 targetCenter = transform.InverseTransformPoint(worldAxisPoint);
-                Vector3 center = Vector3.Lerp(straightCenter, targetCenter, influence);
-                Vector3 halfSpan = (right - left) * 0.5f;
-                left = center - halfSpan;
-                right = center + halfSpan;
+                Vector3 movedCenter = Vector3.Lerp(straightCenter, targetCenter, influence);
+                Vector3 delta = movedCenter - straightCenter;
+                left += delta;
+                center += delta;
+                right += delta;
             }
 
             Quaternion authoredRotation = Quaternion.Euler(bendAngle * (t * t), 0f, twistAngle * t);
             left = authoredRotation * left;
+            center = authoredRotation * center;
             right = authoredRotation * right;
 
             baseVertices[index] = left;
-            baseVertices[index + 1] = right;
+            baseVertices[index + 1] = center;
+            baseVertices[index + 2] = right;
             uvs[index] = new Vector2(finalULeft, finalV);
-            uvs[index + 1] = new Vector2(finalURight, finalV);
+            uvs[index + 1] = new Vector2(finalUCenter, finalV);
+            uvs[index + 2] = new Vector2(finalURight, finalV);
         }
 
         int triIndex = 0;
         for (int i = 0; i < segments; i++)
         {
-            int r = i * 2;
-            triangles[triIndex++] = r;
-            triangles[triIndex++] = r + 2;
-            triangles[triIndex++] = r + 1;
-            triangles[triIndex++] = r + 1;
-            triangles[triIndex++] = r + 2;
-            triangles[triIndex++] = r + 3;
+            int row = i * columns;
+            int next = row + columns;
+
+            // Left half of the convex strip.
+            triangles[triIndex++] = row;
+            triangles[triIndex++] = next;
+            triangles[triIndex++] = row + 1;
+            triangles[triIndex++] = row + 1;
+            triangles[triIndex++] = next;
+            triangles[triIndex++] = next + 1;
+
+            // Right half.
+            triangles[triIndex++] = row + 1;
+            triangles[triIndex++] = next + 1;
+            triangles[triIndex++] = row + 2;
+            triangles[triIndex++] = row + 2;
+            triangles[triIndex++] = next + 1;
+            triangles[triIndex++] = next + 2;
         }
+
         mesh.Clear();
         mesh.vertices = baseVertices;
         mesh.uv = uvs;
