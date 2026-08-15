@@ -3,16 +3,21 @@ using System.Linq;
 using System.Reflection;
 using UnityEngine;
 
-// GroupClumperManager historically rebuilt a 2-column clean strip internally. HairCard now
-// has a native 3-column convex cross-section (left / raised centre / right), so this final
-// mesh authority evaluates the same CLUMPER relationship against that topology and preserves
-// the ridge. It runs after GroupClumperManager; the legacy 2-column apply safely no-ops when
-// its vertex count does not match the new HairCard mesh.
+// Final CLUMPER mesh authority for HairCard's native 3-column convex topology.
+//
+// Important invariant: CLUMPER owns only the final mesh vertices. It never owns/bakes the
+// HairCard parameters. Every active CLUMPER group is therefore rebuilt from a clean card mesh
+// first on every LateUpdate, even when amount == 0. If amount > 0 the clump deformation is then
+// layered on top of that clean mesh. When a CLUMPER disappears, the affected group is explicitly
+// regenerated once from its current evaluated HairCard parameters. POST evaluates earlier in the
+// frame, so this naturally reveals POST state when POSTs remain, or authored state when they do not.
 [DefaultExecutionOrder(5255)]
 public class ThreeColumnClumperMeshAuthority : MonoBehaviour
 {
     private GroupClumperManager manager;
     private FieldInfo byGroupField;
+    private readonly HashSet<int> previousGroups = new HashSet<int>();
+    private bool initialized;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
@@ -29,19 +34,43 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         if (manager == null || byGroupField == null) return;
 
         var byGroup = byGroupField.GetValue(manager) as Dictionary<int, GroupClumperManager.GroupClumper>;
-        if (byGroup == null || byGroup.Count == 0) return;
+        if (byGroup == null) return;
 
         HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
-        if (allCards.Length == 0) return;
 
+        // If a group had a CLUMPER last frame and no longer has one now, clear the stranded
+        // final-pass vertices immediately. HairCard parameters are still the true source of
+        // truth, so GenerateMesh() restores the correct upstream result.
+        if (initialized && previousGroups.Count > 0 && allCards.Length > 0)
+        {
+            foreach (int gid in previousGroups)
+            {
+                if (byGroup.ContainsKey(gid)) continue;
+                RestoreRemovedGroup(gid, allCards);
+            }
+        }
+
+        previousGroups.Clear();
+        foreach (int gid in byGroup.Keys) previousGroups.Add(gid);
+        initialized = true;
+
+        if (byGroup.Count == 0 || allCards.Length == 0) return;
+
+        // Build a clean three-column mesh for EVERY card in every active CLUMPER group,
+        // regardless of amount. This is the key zero-strength behaviour: amount == 0 must
+        // actively write the clean mesh rather than simply skipping the final pass.
         Dictionary<HairCard, Vector3[]> clean = new Dictionary<HairCard, Vector3[]>();
         foreach (HairCard card in allCards)
         {
-            if (card == null || !byGroup.TryGetValue(card.groupId, out var clumper) || clumper == null || clumper.amount <= .0001f)
+            if (card == null || !byGroup.TryGetValue(card.groupId, out var clumper) || clumper == null)
                 continue;
-            clean[card] = BuildCleanVertices(card);
+
+            Vector3[] sourceClean = BuildCleanVertices(card);
+            clean[card] = sourceClean;
+            WriteVertices(card, sourceClean);
         }
 
+        // Zero amount intentionally stops here after the clean write above.
         foreach (var clumper in byGroup.Values)
         {
             if (clumper == null || clumper.amount <= .0001f || clumper.leaders == null || clumper.leaders.Count == 0)
@@ -61,12 +90,28 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         }
     }
 
+    static void RestoreRemovedGroup(int gid, HairCard[] cards)
+    {
+        int restored = 0;
+        foreach (HairCard card in cards)
+        {
+            if (card == null || card.groupId != gid) continue;
+            card.ClearClumpModifier();
+            card.GenerateMesh();
+            restored++;
+        }
+
+        Debug.Log("CLUMPER removed from group " + gid + ": final mesh authority restored " + restored + " HairCards from current upstream parameters.");
+    }
+
     void Resolve()
     {
         if (manager != null) return;
         manager = FindFirstObjectByType<GroupClumperManager>();
         if (manager == null) return;
         byGroupField = typeof(GroupClumperManager).GetField("byGroup", BindingFlags.Instance | BindingFlags.NonPublic);
+        initialized = false;
+        previousGroups.Clear();
     }
 
     static Vector3[] BuildCleanVertices(HairCard card)
@@ -92,6 +137,16 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         return vertices;
     }
 
+    static void WriteVertices(HairCard card, Vector3[] vertices)
+    {
+        MeshFilter mf = card.GetComponent<MeshFilter>();
+        if (mf == null || mf.mesh == null || vertices == null) return;
+        if (mf.mesh.vertexCount != vertices.Length) return;
+        mf.mesh.vertices = (Vector3[])vertices.Clone();
+        mf.mesh.RecalculateNormals();
+        mf.mesh.RecalculateBounds();
+    }
+
     static void ApplyClump(HairCard source, Vector3[] sourceClean, HairCard leader, Vector3[] leaderClean, float influence)
     {
         const int columns = HairCard.CrossSectionColumns;
@@ -115,7 +170,6 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
             Vector3 targetCenter = Vector3.Lerp(ownCenter, leaderLocal, w);
             Vector3 delta = targetCenter - ownCenter;
 
-            // Move the whole row as one cross-section. Width and centre ridge are preserved.
             vertices[index] = sourceClean[index] + delta;
             vertices[index + 1] = sourceClean[index + 1] + delta;
             vertices[index + 2] = sourceClean[index + 2] + delta;
