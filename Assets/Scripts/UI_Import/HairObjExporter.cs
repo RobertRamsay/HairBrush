@@ -41,7 +41,7 @@ public static class HairObjExporter
 
         int choice = EditorUtility.DisplayDialogComplex(
             "Export Hair OBJ",
-            "Which coordinate space should the hair use?\n\nMATCH ORIGINAL reverses the model's import recentering, normalization scale and editor orientation so the hair aligns with the original source OBJ.\n\nCURRENT SCALE exports exactly as the hair currently exists in the editor.",
+            "Which coordinate space should the hair use?\n\nMATCH ORIGINAL reverses the model's import handedness conversion, recentering, normalization scale and editor orientation so the hair aligns with the original source OBJ.\n\nCURRENT SCALE exports exactly as the hair currently exists in the editor.",
             "MATCH ORIGINAL",
             "CANCEL",
             "CURRENT SCALE");
@@ -116,12 +116,14 @@ public static class HairObjExporter
         {
             sb.AppendLine("# Source: " + metadata.sourcePath);
             sb.AppendLine("# Reversed import scale: " + metadata.appliedScale.ToString("R", ci));
+            sb.AppendLine("# Reversed import handedness: " + metadata.sourceXMirroredOnImport);
         }
 
         int vertexBase = 1;
         int uvBase = 1;
         int normalBase = 1;
         int lastGroup = int.MinValue;
+        bool reverseWindingForSource = space == ExportSpace.OriginalImportedOBJSpace && metadata != null && metadata.sourceXMirroredOnImport;
 
         foreach (HairCard card in cards)
         {
@@ -136,8 +138,6 @@ public static class HairObjExporter
             bool hasUV = uvs != null && uvs.Length == vertices.Length;
             bool hasNormals = normals != null && normals.Length == vertices.Length;
 
-            // OBJ importers generally use 'o' as the object split boundary. Emit it only once
-            // per Hair Group, so every card belonging to that group imports as a single object.
             if (card.groupId != lastGroup)
             {
                 sb.AppendLine();
@@ -170,7 +170,7 @@ public static class HairObjExporter
                 for (int i = 0; i < normals.Length; i++)
                 {
                     Vector3 worldNormal = card.transform.TransformDirection(normals[i]).normalized;
-                    Vector3 n = ConvertDirection(worldNormal, space, modelRoot).normalized;
+                    Vector3 n = ConvertDirection(worldNormal, space, modelRoot, metadata).normalized;
                     sb.Append("vn ").Append(n.x.ToString("R", ci)).Append(' ')
                       .Append(n.y.ToString("R", ci)).Append(' ')
                       .Append(n.z.ToString("R", ci)).AppendLine();
@@ -179,12 +179,16 @@ public static class HairObjExporter
 
             for (int i = 0; i + 2 < triangles.Length; i += 3)
             {
+                int a = triangles[i];
+                int b = reverseWindingForSource ? triangles[i + 2] : triangles[i + 1];
+                int c = reverseWindingForSource ? triangles[i + 1] : triangles[i + 2];
+
                 sb.Append("f ");
-                AppendFaceVertex(sb, triangles[i], vertexBase, uvBase, normalBase, hasUV, hasNormals);
+                AppendFaceVertex(sb, a, vertexBase, uvBase, normalBase, hasUV, hasNormals);
                 sb.Append(' ');
-                AppendFaceVertex(sb, triangles[i + 1], vertexBase, uvBase, normalBase, hasUV, hasNormals);
+                AppendFaceVertex(sb, b, vertexBase, uvBase, normalBase, hasUV, hasNormals);
                 sb.Append(' ');
-                AppendFaceVertex(sb, triangles[i + 2], vertexBase, uvBase, normalBase, hasUV, hasNormals);
+                AppendFaceVertex(sb, c, vertexBase, uvBase, normalBase, hasUV, hasNormals);
                 sb.AppendLine();
             }
 
@@ -209,13 +213,19 @@ public static class HairObjExporter
     {
         if (space != ExportSpace.OriginalImportedOBJSpace || modelRoot == null || metadata == null)
             return world;
-        return modelRoot.transform.InverseTransformPoint(world) + metadata.originalCenter;
+
+        Vector3 importedLocal = modelRoot.transform.InverseTransformPoint(world);
+        if (metadata.sourceXMirroredOnImport) importedLocal.x = -importedLocal.x;
+        return importedLocal + metadata.originalCenter;
     }
 
-    static Vector3 ConvertDirection(Vector3 worldDirection, ExportSpace space, GameObject modelRoot)
+    static Vector3 ConvertDirection(Vector3 worldDirection, ExportSpace space, GameObject modelRoot, ImportedOBJMetadata metadata)
     {
         if (space != ExportSpace.OriginalImportedOBJSpace || modelRoot == null)
             return worldDirection;
-        return modelRoot.transform.InverseTransformDirection(worldDirection);
+
+        Vector3 importedLocal = modelRoot.transform.InverseTransformDirection(worldDirection);
+        if (metadata != null && metadata.sourceXMirroredOnImport) importedLocal.x = -importedLocal.x;
+        return importedLocal;
     }
 }
