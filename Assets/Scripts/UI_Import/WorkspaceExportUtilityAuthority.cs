@@ -45,7 +45,6 @@ public class WorkspaceExportUtilityAuthority : MonoBehaviour
         Transform top = viewer.groomingSliderPanelGO.transform.Find("TopControlsRow");
         if (top == null) return;
 
-        // CLUMPER used to hide the ordinary groom panel. This row is explicitly persistent.
         if (!top.gameObject.activeSelf) top.gameObject.SetActive(true);
 
         Transform save = top.Find("SaveProjectButton");
@@ -96,13 +95,33 @@ public class WorkspaceExportUtilityAuthority : MonoBehaviour
             button.GetComponent<Button>().onClick.AddListener(HairObjExporter.ExportInteractive);
         }
 
-        // Three compact utilities fit the same 560px texture-editor panel cleanly.
+        // Texture mode has a 560px panel with horizontal padding + spacing. Let the three
+        // utilities share whatever width is actually available instead of forcing 165px each.
+        HorizontalLayoutGroup layout = row.GetComponent<HorizontalLayoutGroup>();
+        if (layout != null)
+        {
+            layout.childControlWidth = true;
+            layout.childForceExpandWidth = true;
+            layout.spacing = 8f;
+        }
+
         foreach (Transform child in row)
         {
             LayoutElement le = child.GetComponent<LayoutElement>();
-            if (le == null) continue;
-            le.minWidth = 160f;
-            le.preferredWidth = 165f;
+            if (le != null)
+            {
+                le.minWidth = 0f;
+                le.preferredWidth = 0f;
+                le.flexibleWidth = 1f;
+            }
+
+            TextMeshProUGUI text = child.GetComponentInChildren<TextMeshProUGUI>(true);
+            if (text != null)
+            {
+                text.enableWordWrapping = false;
+                text.overflowMode = TextOverflowModes.Ellipsis;
+                text.fontSize = 14f;
+            }
         }
     }
 
@@ -127,8 +146,9 @@ public class WorkspaceExportUtilityAuthority : MonoBehaviour
         if (addLayoutElement)
         {
             LayoutElement le = go.GetComponent<LayoutElement>();
-            le.minWidth = 160f;
-            le.preferredWidth = 165f;
+            le.minWidth = 0f;
+            le.preferredWidth = 0f;
+            le.flexibleWidth = 1f;
             le.preferredHeight = 64f;
         }
 
@@ -145,6 +165,8 @@ public class WorkspaceExportUtilityAuthority : MonoBehaviour
         text.fontStyle = FontStyles.Bold;
         text.alignment = TextAlignmentOptions.Center;
         text.color = Color.white;
+        text.enableWordWrapping = false;
+        text.overflowMode = TextOverflowModes.Ellipsis;
         text.raycastTarget = false;
         return go;
     }
