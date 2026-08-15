@@ -8,6 +8,7 @@ using UnityEngine.UI;
 
 // POST affectors are downstream structural modifiers, so the group root is read-only
 // while one exists. Variance remains part of the groom UI but is locked at the same time.
+// CLUMPER is itself a downstream modifier and must stay editable even when POSTs exist.
 [DefaultExecutionOrder(5000)]
 public class ModifierCoreLock : MonoBehaviour
 {
@@ -76,8 +77,6 @@ public class ModifierCoreLock : MonoBehaviour
             List<PostAffectorSaveData> items = postManager.ExportGroup(groupId);
             if (items == null || items.Count == 0) return false;
 
-            // Require a live row as well as manager state. This prevents a removed final POST
-            // from leaving a stale internal entry that keeps the group locked.
             RectTransform[] rows = FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             return rows.Any(r => r != null && r.name.StartsWith("PostAffector_" + groupId + "_", StringComparison.Ordinal));
         }
@@ -91,23 +90,27 @@ public class ModifierCoreLock : MonoBehaviour
     {
         if (boundPanel == null) return;
 
-        // A locked group means no groom parameter can be changed, including all variance rows.
         foreach (Slider slider in boundPanel.GetComponentsInChildren<Slider>(true))
-            if (slider != null) slider.interactable = !locked;
+        {
+            if (slider == null || IsInsideClumper(slider.transform)) continue;
+            slider.interactable = !locked;
+        }
 
         foreach (TMP_InputField input in boundPanel.GetComponentsInChildren<TMP_InputField>(true))
-            if (input != null) input.interactable = !locked;
+        {
+            if (input == null || IsInsideClumper(input.transform)) continue;
+            input.interactable = !locked;
+        }
 
-        // Variance randomize buttons mutate the groom too, so lock them with the sliders.
         foreach (Button button in boundPanel.GetComponentsInChildren<Button>(true))
         {
-            if (button == null || !IsVarianceButton(button)) continue;
+            if (button == null || IsInsideClumper(button.transform) || !IsVarianceButton(button)) continue;
             button.interactable = !locked;
         }
 
         foreach (Transform child in boundPanel.transform)
         {
-            if (child == null) continue;
+            if (child == null || child.name == "ClumperScrollHost" || child.name == "ClumperControls") continue;
             bool editableRow = child.name.EndsWith("_Row", StringComparison.Ordinal) ||
                                child.name.EndsWith("_VarianceRow", StringComparison.Ordinal);
             if (!editableRow) continue;
@@ -118,12 +121,29 @@ public class ModifierCoreLock : MonoBehaviour
 
         EnsureNotice();
         if (lockNotice == null) return;
-        lockNotice.SetActive(locked);
-        if (!locked) return;
+        lockNotice.SetActive(locked && !IsClumperVisible());
+        if (!locked || IsClumperVisible()) return;
 
         TextMeshProUGUI text = lockNotice.GetComponent<TextMeshProUGUI>();
         if (text != null)
             text.text = post ? "GROOM LOCKED — active: POST" : "GROOM LOCKED";
+    }
+
+    bool IsInsideClumper(Transform t)
+    {
+        while (t != null && t != boundPanel.transform)
+        {
+            if (t.name == "ClumperControls" || t.name == "ClumperScrollHost") return true;
+            t = t.parent;
+        }
+        return false;
+    }
+
+    bool IsClumperVisible()
+    {
+        if (boundPanel == null) return false;
+        Transform host = boundPanel.transform.Find("ClumperScrollHost");
+        return host != null && host.gameObject.activeInHierarchy;
     }
 
     bool IsVarianceButton(Button button)
