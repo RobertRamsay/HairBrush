@@ -57,6 +57,21 @@ public class GroupMaterialSaveData
 [Serializable] public class ClumpPointSaveData { public float posX,posY,posZ; public float normalX,normalY,normalZ; public float strength; }
 [Serializable] public class ClumpLayerSaveData { public bool enabled; public int pointCount=20; public int generationSeed; public float globalStrength=1f; public float brushRadius=.08f; public float brushStrength=.5f; public float brushFalloff=.5f; public float brushValue=1f; public int debugMode; public float curveEarly=.08f; public float curveMid=.65f; public float curveTip=1f; public List<ClumpPointSaveData> points=new(); }
 
+// Current CLUMPER is a downstream relationship modifier, not baked HairCard state.
+[Serializable]
+public class GroupClumperSaveData
+{
+    public bool enabled;
+    public int mode;
+    public float centerX,centerY,centerZ;
+    public float normalX,normalY,normalZ;
+    public float amount;
+    public int count=6;
+    public int seed=1;
+    public float radius=.05f;
+    public float falloff=.05f;
+}
+
 [Serializable] public class PostAffectorControlSaveData
 {
     public float length,width,segments,bend,twist,depth;
@@ -102,6 +117,7 @@ public class GroupMaterialSaveData
 
     public List<VarianceChannelSaveData> variances=new();
     public List<PostAffectorSaveData> postAffectors=new();
+    public GroupClumperSaveData clumper;
     // Legacy-only; retained for old JSON compatibility.
     public ClumpLayerSaveData clump;
 }
@@ -144,6 +160,8 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
             foreach(GroupSaveData group in groups)
                 postVariance.PopulateSave(group.postAffectors);
 
+        GroupClumperPersistenceBridge.Capture(this);
+
         TextureUVRectWorkspace uvWorkspace=UnityEngine.Object.FindFirstObjectByType<TextureUVRectWorkspace>();
         if(uvWorkspace!=null)
             uvRects=uvWorkspace.ExportDefinitions();
@@ -176,6 +194,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
         PendingUVRectRestore=this;
         PendingGroupUVRestore=this;
         MaterialProjectPersistenceBridge.PendingRestore=this;
+        GroupClumperPersistenceBridge.QueueRestore(this);
         if(sourceVersion>=2)
             CanonicalProjectStateBridge.PendingCanonicalRestore=this;
     }
