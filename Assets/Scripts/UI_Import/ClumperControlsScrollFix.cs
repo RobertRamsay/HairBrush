@@ -33,8 +33,6 @@ public class ClumperControlsScrollFix : MonoBehaviour
 
         if (controls == null)
         {
-            // The GroupClumperManager destroys/rebuilds its control block when modes change.
-            // If that happened, remove the old empty viewport and allow a fresh one next frame.
             if (host != null && (content == null || content.childCount == 0)) DestroyHost();
             return;
         }
@@ -55,7 +53,6 @@ public class ClumperControlsScrollFix : MonoBehaviour
                 rt.sizeDelta = new Vector2(0f, rt.sizeDelta.y);
             }
 
-            // Let the existing VerticalLayoutGroup determine the real content height.
             ContentSizeFitter fitter = controls.GetComponent<ContentSizeFitter>();
             if (fitter == null) fitter = controls.gameObject.AddComponent<ContentSizeFitter>();
             fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
@@ -80,8 +77,14 @@ public class ClumperControlsScrollFix : MonoBehaviour
 
     void BuildHost(Transform panel)
     {
-        host = new GameObject("ClumperScrollHost", typeof(RectTransform), typeof(Image), typeof(ScrollRect));
+        host = new GameObject("ClumperScrollHost", typeof(RectTransform), typeof(Image), typeof(ScrollRect), typeof(LayoutElement));
         host.transform.SetParent(panel, false);
+
+        // Critical: the Groom panel itself has a VerticalLayoutGroup. This scroll view is
+        // an overlay, not another row in that layout, otherwise it gets collapsed to 0 height.
+        LayoutElement layoutElement = host.GetComponent<LayoutElement>();
+        layoutElement.ignoreLayout = true;
+
         RectTransform hostRT = host.GetComponent<RectTransform>();
         hostRT.anchorMin = Vector2.zero;
         hostRT.anchorMax = Vector2.one;
