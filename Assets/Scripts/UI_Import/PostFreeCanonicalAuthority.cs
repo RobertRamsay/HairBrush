@@ -4,13 +4,22 @@ using System.Reflection;
 using UnityEngine;
 
 // Once a group has zero POST affectors, no POST-local cache should be allowed to keep
-// re-applying stale evaluated values. At the end of the frame, POST-free groups render
-// directly from each HairCard's own canonical authored state.
+// re-applying stale evaluated values. PostAffectorManager currently visits every HairCard
+// in LateUpdate and can recreate CardState entries even for groups that have no POSTs, so
+// this authority runs afterwards and makes POST-free an explicit lifecycle state:
+//   - remove the card from POST's per-card cache;
+//   - clear any residual card-level clump deformation;
+//   - render directly from canonical authored state;
+//   - clear selection weight.
+// This deliberately mirrors the hard refresh that a zero-strength CLUMPER performs. The
+// next POST therefore has to capture a genuinely fresh baseState for every existing card,
+// exactly as it does for a newly-created strand.
 [DefaultExecutionOrder(5000)]
 public class PostFreeCanonicalAuthority : MonoBehaviour
 {
     private PostAffectorManager manager;
     private FieldInfo groupsField;
+    private FieldInfo cardStatesField;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
@@ -27,6 +36,7 @@ public class PostFreeCanonicalAuthority : MonoBehaviour
         if (manager == null || groupsField == null) return;
 
         IDictionary groups = groupsField.GetValue(manager) as IDictionary;
+        IDictionary cachedStates = cardStatesField != null ? cardStatesField.GetValue(manager) as IDictionary : null;
         HashSet<int> groupsWithPosts = new HashSet<int>();
         if (groups != null)
         {
@@ -41,6 +51,17 @@ public class PostFreeCanonicalAuthority : MonoBehaviour
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
         {
             if (card == null || groupsWithPosts.Contains(card.groupId)) continue;
+
+            // Critical lifecycle rule: PostAffectorManager must not retain a CardState for a
+            // group with no POSTs. Otherwise its normal LateUpdate recreates an old-strand
+            // cache immediately after final-POST teardown, while newly-created strands start
+            // clean. Clearing here (after POST evaluation) keeps both populations identical.
+            if (cachedStates != null && cachedStates.Contains(card))
+                cachedStates.Remove(card);
+
+            // Match the known-good zero-CLUMPER refresh: remove any residual per-card clump
+            // state, then explicitly rebuild from the authored upstream state.
+            card.ClearClumpModifier();
             card.SetSelectionWeight(0f);
             card.ApplyEvaluatedState(card.GetCanonicalState());
         }
@@ -51,6 +72,10 @@ public class PostFreeCanonicalAuthority : MonoBehaviour
         if (manager != null) return;
         manager = FindFirstObjectByType<PostAffectorManager>();
         if (manager != null)
-            groupsField = typeof(PostAffectorManager).GetField("groups", BindingFlags.Instance | BindingFlags.NonPublic);
+        {
+            BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            groupsField = typeof(PostAffectorManager).GetField("groups", flags);
+            cardStatesField = typeof(PostAffectorManager).GetField("cardStates", flags);
+        }
     }
 }
