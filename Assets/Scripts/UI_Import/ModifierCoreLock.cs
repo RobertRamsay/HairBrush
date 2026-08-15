@@ -9,6 +9,8 @@ using UnityEngine.UI;
 // POST affectors are downstream structural modifiers, so the group root is read-only
 // while one exists. Variance remains part of the groom UI but is locked at the same time.
 // CLUMPER is itself a downstream modifier and must stay editable even when POSTs exist.
+// Predetermined UV routing is group metadata, not groom geometry, so its controls also
+// stay editable at the group root and must not oscillate against this lock.
 [DefaultExecutionOrder(5000)]
 public class ModifierCoreLock : MonoBehaviour
 {
@@ -92,25 +94,26 @@ public class ModifierCoreLock : MonoBehaviour
 
         foreach (Slider slider in boundPanel.GetComponentsInChildren<Slider>(true))
         {
-            if (slider == null || IsInsideClumper(slider.transform)) continue;
+            if (slider == null || IsInsideClumper(slider.transform) || IsInsideUVRouting(slider.transform)) continue;
             slider.interactable = !locked;
         }
 
         foreach (TMP_InputField input in boundPanel.GetComponentsInChildren<TMP_InputField>(true))
         {
-            if (input == null || IsInsideClumper(input.transform)) continue;
+            if (input == null || IsInsideClumper(input.transform) || IsInsideUVRouting(input.transform)) continue;
             input.interactable = !locked;
         }
 
         foreach (Button button in boundPanel.GetComponentsInChildren<Button>(true))
         {
-            if (button == null || IsInsideClumper(button.transform) || !IsVarianceButton(button)) continue;
+            if (button == null || IsInsideClumper(button.transform) || IsInsideUVRouting(button.transform) || !IsVarianceButton(button)) continue;
             button.interactable = !locked;
         }
 
         foreach (Transform child in boundPanel.transform)
         {
-            if (child == null || child.name == "ClumperScrollHost" || child.name == "ClumperControls") continue;
+            if (child == null || child.name == "ClumperScrollHost" || child.name == "ClumperControls" ||
+                child.name == "GroupUVMode_Row" || child.name == "GroupUVPredetermined_Row") continue;
             bool editableRow = child.name.EndsWith("_Row", StringComparison.Ordinal) ||
                                child.name.EndsWith("_VarianceRow", StringComparison.Ordinal);
             if (!editableRow) continue;
@@ -134,6 +137,17 @@ public class ModifierCoreLock : MonoBehaviour
         while (t != null && t != boundPanel.transform)
         {
             if (t.name == "ClumperControls" || t.name == "ClumperScrollHost") return true;
+            t = t.parent;
+        }
+        return false;
+    }
+
+    bool IsInsideUVRouting(Transform t)
+    {
+        while (t != null && t != boundPanel.transform)
+        {
+            if (t.name == "GroupUVMode_Row" || t.name == "GroupUVPredetermined_Row" || t.name == "UVRectRangeSlider")
+                return true;
             t = t.parent;
         }
         return false;
