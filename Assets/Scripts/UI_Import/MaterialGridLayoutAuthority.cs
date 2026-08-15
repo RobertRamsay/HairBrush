@@ -37,7 +37,7 @@ public class MaterialGridLayoutAuthority : MonoBehaviour
         Resolve();
         if (editor == null || materialButtons == null) return;
 
-        EnsureGridLayout();
+        if (!EnsureGridLayout()) return;
         UpdateGridHeightAndAddButton();
     }
 
@@ -69,13 +69,28 @@ public class MaterialGridLayoutAuthority : MonoBehaviour
             materials = materialsField.GetValue(editor) as IList;
     }
 
-    void EnsureGridLayout()
+    // Returns true only once the object is safely using GridLayoutGroup. Unity defers
+    // Destroy(Component) until end-of-frame, and a GameObject cannot hold two LayoutGroup
+    // components at once. Therefore conversion from the legacy HorizontalLayoutGroup must
+    // happen over two scans rather than destroy+add in the same frame.
+    bool EnsureGridLayout()
     {
+        if (materialButtons == null) return false;
+
         HorizontalLayoutGroup horizontal = materialButtons.GetComponent<HorizontalLayoutGroup>();
-        if (horizontal != null) Destroy(horizontal);
+        if (horizontal != null)
+        {
+            horizontal.enabled = false;
+            Destroy(horizontal);
+            return false;
+        }
 
         GridLayoutGroup grid = materialButtons.GetComponent<GridLayoutGroup>();
-        if (grid == null) grid = materialButtons.gameObject.AddComponent<GridLayoutGroup>();
+        if (grid == null)
+        {
+            grid = materialButtons.gameObject.AddComponent<GridLayoutGroup>();
+            if (grid == null) return false;
+        }
 
         RectTransform rect = materialButtons as RectTransform;
         float availableWidth = rect != null && rect.rect.width > 1f ? rect.rect.width : 230f;
@@ -88,10 +103,13 @@ public class MaterialGridLayoutAuthority : MonoBehaviour
         grid.startCorner = GridLayoutGroup.Corner.UpperLeft;
         grid.startAxis = GridLayoutGroup.Axis.Horizontal;
         grid.childAlignment = TextAnchor.UpperLeft;
+        return true;
     }
 
     void UpdateGridHeightAndAddButton()
     {
+        if (materialButtons == null) return;
+
         int count = materials != null ? materials.Count : Mathf.Max(0, materialButtons.childCount - 1);
         count = Mathf.Clamp(count, 0, MaxMaterials);
 
