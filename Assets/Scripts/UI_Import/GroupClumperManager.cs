@@ -231,7 +231,12 @@ public class GroupClumperManager : MonoBehaviour
 
     void RemoveClumper(int gid)
     {
-        byGroup.Remove(gid);
+        // A CLUMPER is a permanent stage once introduced to a group. Removing that stage
+        // invalidates later group/POST authoring, so "[-]" now neutralizes its canonical
+        // influence while keeping the modifier record and evaluation pipeline alive.
+        if (!byGroup.TryGetValue(gid, out GroupClumper clumper) || clumper == null) return;
+        clumper.amount = 0f;
+        Invalidate(clumper);
         if (selectedGroup == gid) selectedGroup = -1;
         DestroyControls();
         RebuildRowsSoon();
