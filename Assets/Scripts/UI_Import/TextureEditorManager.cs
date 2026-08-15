@@ -86,20 +86,33 @@ public class TextureEditorManager : MonoBehaviour
         layout.childForceExpandHeight = false;
         textureSliderPanelGO = panelGO;
 
-        // Texture mode shows only the destination mode: one centered GROOM MODE button.
+        // Texture mode keeps the same always-available project utility as Groom/Clumper.
+        // GROOM MODE remains the destination-mode button; SAVE PROJ is always beside it.
         GameObject topRow = new GameObject("ModeRow", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
         topRow.transform.SetParent(panelGO.transform, false);
         topRow.GetComponent<LayoutElement>().preferredHeight = 64f;
 
         HorizontalLayoutGroup rowLayout = topRow.GetComponent<HorizontalLayoutGroup>();
+        rowLayout.spacing = 8f;
         rowLayout.childControlWidth = false;
         rowLayout.childControlHeight = true;
         rowLayout.childForceExpandWidth = false;
         rowLayout.childForceExpandHeight = false;
         rowLayout.childAlignment = TextAnchor.MiddleCenter;
 
-        GameObject groomButton = CreateModeButton(topRow.transform, "GROOM MODE");
+        GameObject groomButton = CreateUtilityButton(topRow.transform, "GROOM MODE", 250f, new Color(0.20f, 0.50f, 0.82f, 1f));
         groomButton.GetComponent<Button>().onClick.AddListener(() => ExitToGroom(onSwitchToGroom));
+
+        GameObject saveButton = CreateUtilityButton(topRow.transform, "SAVE PROJ", 250f, new Color(0.20f, 0.50f, 0.30f, 1f));
+        saveButton.GetComponent<Button>().onClick.AddListener(InvokeSaveProject);
+    }
+
+    private void InvokeSaveProject()
+    {
+        ModelViewer viewer = FindFirstObjectByType<ModelViewer>();
+        if (viewer == null) return;
+        MethodInfo save = typeof(ModelViewer).GetMethod("SaveProject", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+        save?.Invoke(viewer, null);
     }
 
     private void ExitToGroom(System.Action callback)
@@ -129,18 +142,18 @@ public class TextureEditorManager : MonoBehaviour
         callback?.Invoke();
     }
 
-    private static GameObject CreateModeButton(Transform parent, string label)
+    private static GameObject CreateUtilityButton(Transform parent, string label, float width, Color color)
     {
-        GameObject go = new GameObject("ModeSwitchButton", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
+        GameObject go = new GameObject(label.Replace(" ", "") + "Button", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
         go.transform.SetParent(parent, false);
 
         LayoutElement le = go.GetComponent<LayoutElement>();
-        le.preferredWidth = 300f;
-        le.minWidth = 300f;
+        le.preferredWidth = width;
+        le.minWidth = width;
         le.preferredHeight = 64f;
 
         Image image = go.GetComponent<Image>();
-        image.color = new Color(0.20f, 0.50f, 0.82f, 1f);
+        image.color = color;
 
         Button button = go.GetComponent<Button>();
         ColorBlock colors = button.colors;
