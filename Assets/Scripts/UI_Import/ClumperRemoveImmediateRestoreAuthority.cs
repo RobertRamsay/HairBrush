@@ -3,8 +3,8 @@ using UnityEngine;
 using UnityEngine.UI;
 
 // Hooks the actual CLUMPER remove button so restoration happens synchronously after
-// GroupClumperManager removes the modifier. This avoids relying on a later dictionary
-// watcher and restores each affected card from its unclumped canonical GroomState.
+// GroupClumperManager removes the modifier. Restore the explicit PRE_CLUMP snapshot rather
+// than canonical state: if POSTs exist, their evaluated result must remain visible.
 [DefaultExecutionOrder(5270)]
 public class ClumperRemoveImmediateRestoreAuthority : MonoBehaviour
 {
@@ -41,22 +41,10 @@ public class ClumperRemoveImmediateRestoreAuthority : MonoBehaviour
                 if (button == null || button.gameObject.name != "[-]" || hooked.Contains(button)) continue;
                 hooked.Add(button);
                 int capturedGroup = gid;
-                button.onClick.AddListener(() => RestoreGroup(capturedGroup));
+                button.onClick.AddListener(() => ModifierEvaluationSnapshots.RestorePreClumpGroup(capturedGroup));
             }
         }
 
         hooked.RemoveWhere(b => b == null);
-    }
-
-    static void RestoreGroup(int gid)
-    {
-        HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
-        foreach (HairCard card in cards)
-        {
-            if (card == null || card.groupId != gid) continue;
-            HairCard.GroomState state = card.GetCanonicalState();
-            card.ApplyEvaluatedState(state);
-            card.SetSelectionWeight(0f);
-        }
     }
 }
