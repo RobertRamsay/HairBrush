@@ -1,11 +1,12 @@
 using TMPro;
 using UnityEngine;
 
-// Keeps the left-side grooming instructions in sync with the available modifier gestures.
+// Keeps the left-side grooming instructions in sync with the available modifier and placement gestures.
 [DefaultExecutionOrder(9500)]
 public class ClumperInstructionHintAuthority : MonoBehaviour
 {
-    private const string Hint = "TAB+CLICK on SURFACE to add a CLUMPER";
+    private const string ClumperHint = "TAB+CLICK on SURFACE to add a CLUMPER";
+    private const string PlacementHint = "SHIFT cycles PLACE / PAINT / SPRAY / ERASE";
     private float nextScan;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -26,31 +27,20 @@ public class ClumperInstructionHintAuthority : MonoBehaviour
         foreach (TextMeshProUGUI label in labels)
         {
             if (label == null || string.IsNullOrEmpty(label.text)) continue;
-            if (!label.text.Contains("CTRL+CLICK on SURFACE") || label.text.Contains(Hint)) continue;
+            if (!label.text.Contains("CTRL+CLICK on SURFACE")) continue;
 
-            string[] lines = label.text.Split('\n');
-            int insertAfter = -1;
-            for (int i = 0; i < lines.Length; i++)
+            bool changed = false;
+            if (!label.text.Contains(ClumperHint))
             {
-                if (lines[i].Contains("CTRL+CLICK on SURFACE"))
-                {
-                    insertAfter = i;
-                    break;
-                }
+                label.text += "\n" + ClumperHint;
+                changed = true;
             }
-
-            if (insertAfter < 0)
+            if (!label.text.Contains(PlacementHint))
             {
-                label.text += "\n" + Hint;
-                return;
+                label.text += "\n" + PlacementHint;
+                changed = true;
             }
-
-            string[] updated = new string[lines.Length + 1];
-            for (int i = 0; i <= insertAfter; i++) updated[i] = lines[i];
-            updated[insertAfter + 1] = Hint;
-            for (int i = insertAfter + 1; i < lines.Length; i++) updated[i + 1] = lines[i];
-            label.text = string.Join("\n", updated);
-            return;
+            if (changed) return;
         }
     }
 }
