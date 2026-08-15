@@ -2,19 +2,28 @@ using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
 
-// A CLUMPER must never be allowed to become the new baseline for a group.
-// Freeze two per-card snapshots ONCE, when the group first gains a CLUMPER:
-//   PRE_POST  = canonical/source state before any POST evaluation.
-//   POST      = currently rendered/evaluated state after POSTs, before CLUMPER mesh deformation.
-// Repositioning or editing the CLUMPER never refreshes these snapshots.
-// On removal, restore POST if POST modifiers still exist; otherwise restore PRE_POST.
-[DefaultExecutionOrder(5210)]
+// Freeze the exact per-card group state immediately before GroupClumperManager's LateUpdate
+// deforms mesh vertices. This is intentionally a one-shot assignment snapshot: changing
+// amount/radius/mode/repositioning never refreshes it.
+//
+// PRE_POST = canonical/source GroomState at CLUMPER assignment.
+// POST     = evaluated GroomState + exact mesh vertices at CLUMPER assignment, after POSTs
+//            have evaluated but before CLUMPER writes its final mesh pass.
+//
+// On removal: keep POST snapshot when POSTs still exist; otherwise restore PRE_POST.
+[DefaultExecutionOrder(5190)]
 public class ClumperAssignmentSnapshotAuthority : MonoBehaviour
 {
+    private sealed class FrozenCard
+    {
+        public HairCard.GroomState prePost;
+        public HairCard.GroomState post;
+        public Vector3[] postVertices;
+    }
+
     private sealed class FrozenGroup
     {
-        public readonly Dictionary<HairCard, HairCard.GroomState> prePost = new Dictionary<HairCard, HairCard.GroomState>();
-        public readonly Dictionary<HairCard, HairCard.GroomState> post = new Dictionary<HairCard, HairCard.GroomState>();
+        public readonly Dictionary<HairCard, FrozenCard> cards = new Dictionary<HairCard, FrozenCard>();
     }
 
     private readonly Dictionary<int, FrozenGroup> frozen = new Dictionary<int, FrozenGroup>();
@@ -33,7 +42,7 @@ public class ClumperAssignmentSnapshotAuthority : MonoBehaviour
         go.AddComponent<ClumperAssignmentSnapshotAuthority>();
     }
 
-    void Update()
+    void LateUpdate()
     {
         Resolve();
         if (clumperManager == null || clumpGroupsField == null) return;
@@ -41,13 +50,13 @@ public class ClumperAssignmentSnapshotAuthority : MonoBehaviour
         var active = clumpGroupsField.GetValue(clumperManager) as Dictionary<int, GroupClumperManager.GroupClumper>;
         if (active == null) return;
 
-        // Freeze a group exactly once, on the first frame the CLUMPER exists.
+        // GroupClumperManager.Update has already created/removed modifiers by this point,
+        // while its LateUpdate (order 5200) has not yet deformed this frame's meshes.
         foreach (int gid in active.Keys)
         {
             if (!frozen.ContainsKey(gid)) CaptureAssignment(gid);
         }
 
-        // Restore immediately when the manager no longer contains that group's CLUMPER.
         if (frozen.Count == 0) return;
         List<int> removed = null;
         foreach (int gid in frozen.Keys)
@@ -91,19 +100,19 @@ public class ClumperAssignmentSnapshotAuthority : MonoBehaviour
         {
             if (card == null || card.groupId != gid) continue;
 
-            // PRE_POST is the true authored source and must remain frozen for the lifetime
-            // of this CLUMPER.
-            snapshot.prePost[card] = card.GetCanonicalState();
+            MeshFilter mf = card.GetComponent<MeshFilter>();
+            Vector3[] vertices = mf != null && mf.mesh != null ? mf.mesh.vertices : null;
 
-            // At order 5210 the card still contains the POST-evaluated parameter state from
-            // the previous completed frame, while CLUMPER deformation itself only lives in
-            // mesh vertices. Reading parameters here therefore reconstructs the exact
-            // pre-clump displayed form without carrying clumped vertices into the snapshot.
-            snapshot.post[card] = ReadRendered(card);
+            snapshot.cards[card] = new FrozenCard
+            {
+                prePost = card.GetCanonicalState(),
+                post = ReadRendered(card),
+                postVertices = vertices != null ? (Vector3[])vertices.Clone() : null
+            };
         }
 
         frozen[gid] = snapshot;
-        Debug.Log("CLUMPER assigned to group " + gid + ": froze PRE_POST and POST states for " + snapshot.prePost.Count + " HairCards.");
+        Debug.Log("CLUMPER assigned to group " + gid + ": froze exact pre-clump mesh for " + snapshot.cards.Count + " HairCards.");
     }
 
     void RestoreAssignment(int gid)
@@ -113,36 +122,43 @@ public class ClumperAssignmentSnapshotAuthority : MonoBehaviour
         bool keepPosts = HasPostModifiers(gid);
         HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
         int restored = 0;
+        int exactMeshes = 0;
 
         foreach (HairCard card in cards)
         {
             if (card == null || card.groupId != gid) continue;
+            if (!snapshot.cards.TryGetValue(card, out FrozenCard saved)) continue;
 
-            HairCard.GroomState state;
+            // Remove CLUMPER-owned card state first. GroupClumperManager has already removed
+            // the group modifier from its dictionary, so its later LateUpdate cannot reapply it.
+            card.ClearClumpModifier();
+
             if (keepPosts)
             {
-                state = snapshot.post.TryGetValue(card, out HairCard.GroomState savedPost)
-                    ? savedPost
-                    : ReadRendered(card);
-                // POST is an evaluated layer. Never bake it back into canonical/source.
-                card.ApplyEvaluatedState(state);
+                // Restore evaluated parameters, then restore the exact mesh that was visible
+                // at assignment time. This bypasses any reconstruction ambiguity entirely.
+                card.ApplyEvaluatedState(saved.post);
+                MeshFilter mf = card.GetComponent<MeshFilter>();
+                if (mf != null && mf.mesh != null && saved.postVertices != null && mf.mesh.vertexCount == saved.postVertices.Length)
+                {
+                    mf.mesh.vertices = (Vector3[])saved.postVertices.Clone();
+                    mf.mesh.RecalculateNormals();
+                    mf.mesh.RecalculateBounds();
+                    exactMeshes++;
+                }
             }
             else
             {
-                state = snapshot.prePost.TryGetValue(card, out HairCard.GroomState savedSource)
-                    ? savedSource
-                    : card.GetCanonicalState();
-                card.SetCanonicalState(state, false);
-                card.ApplyEvaluatedState(state);
+                // No POSTs: return to the authored state that existed before any modifiers.
+                card.SetCanonicalState(saved.prePost, false);
+                card.ApplyEvaluatedState(saved.prePost);
             }
 
-            // Belt-and-braces: no old card-level clump state or final-pass vertices survive.
-            card.ClearClumpModifier();
-            card.GenerateMesh();
+            card.SetSelectionWeight(0f);
             restored++;
         }
 
-        Debug.Log("CLUMPER removed from group " + gid + ": restored " + restored + " HairCards from frozen " + (keepPosts ? "POST" : "PRE_POST") + " snapshot.");
+        Debug.Log("CLUMPER removed from group " + gid + ": restored " + restored + " HairCards; exact mesh restores=" + exactMeshes + "; layer=" + (keepPosts ? "POST" : "PRE_POST") + ".");
     }
 
     bool HasPostModifiers(int gid)
