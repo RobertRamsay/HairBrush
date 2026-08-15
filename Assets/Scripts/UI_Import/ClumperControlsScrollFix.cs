@@ -3,10 +3,10 @@ using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
-// When CLUMPER is active it owns the right panel exclusively. The ordinary Groom/POST
-// controls are temporarily hidden and restored exactly as they were when CLUMPER exits.
-// The clumper itself lives in a wheel-scrollable viewport, but slider/button pointer events
-// go directly to the controls rather than through a drag-stealing ScrollRect.
+// When CLUMPER is active it owns the editable portion of the right panel, while the
+// shared top utility rows (Texture Editor + Save/Reset) remain available. The clumper
+// itself lives in a wheel-scrollable viewport below those rows; slider/button pointer
+// events go directly to the controls rather than through a drag-stealing ScrollRect.
 [DefaultExecutionOrder(5250)]
 public class ClumperControlsScrollFix : MonoBehaviour
 {
@@ -15,6 +15,10 @@ public class ClumperControlsScrollFix : MonoBehaviour
     private RectTransform content;
     private Transform boundPanel;
     private readonly Dictionary<GameObject, bool> previousActive = new Dictionary<GameObject, bool>();
+
+    // Runtime grooming panel uses a 45px editor-tab row + 40px utility row, with panel
+    // padding/spacing around them. Leave enough room so CLUMPER starts cleanly below both.
+    private const float TopUtilityInset = 101f;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
@@ -74,6 +78,7 @@ public class ClumperControlsScrollFix : MonoBehaviour
         }
 
         HideNonClumperPanelChildren(panel);
+        KeepUtilityRowsVisible(panel);
         host.transform.SetAsLastSibling();
     }
 
@@ -90,15 +95,29 @@ public class ClumperControlsScrollFix : MonoBehaviour
         return null;
     }
 
+    static bool IsPersistentUtilityRow(GameObject go)
+    {
+        if (go == null) return false;
+        return go.name == "PanelTabRow" || go.name == "TopControlsRow";
+    }
+
     void HideNonClumperPanelChildren(Transform panel)
     {
         for (int i = 0; i < panel.childCount; i++)
         {
             GameObject go = panel.GetChild(i).gameObject;
-            if (go == host) continue;
+            if (go == host || IsPersistentUtilityRow(go)) continue;
             if (!previousActive.ContainsKey(go)) previousActive[go] = go.activeSelf;
             if (go.activeSelf) go.SetActive(false);
         }
+    }
+
+    void KeepUtilityRowsVisible(Transform panel)
+    {
+        Transform tabs = panel.Find("PanelTabRow");
+        if (tabs != null && !tabs.gameObject.activeSelf) tabs.gameObject.SetActive(true);
+        Transform top = panel.Find("TopControlsRow");
+        if (top != null && !top.gameObject.activeSelf) top.gameObject.SetActive(true);
     }
 
     void RestorePanel()
@@ -123,7 +142,7 @@ public class ClumperControlsScrollFix : MonoBehaviour
         hostRT.anchorMin = Vector2.zero;
         hostRT.anchorMax = Vector2.one;
         hostRT.offsetMin = new Vector2(4f, 4f);
-        hostRT.offsetMax = new Vector2(-4f, -4f);
+        hostRT.offsetMax = new Vector2(-4f, -TopUtilityInset);
 
         Image hostImage = host.GetComponent<Image>();
         hostImage.color = new Color(.08f, .09f, .11f, .98f);
