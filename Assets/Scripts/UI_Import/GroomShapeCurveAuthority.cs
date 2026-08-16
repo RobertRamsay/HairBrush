@@ -787,7 +787,7 @@ public class GroomCurveGraphInput : MonoBehaviour, IPointerClickHandler
     }
 }
 
-public class GroomCurvePointHandle : MonoBehaviour, IDragHandler, IPointerDownHandler
+public class GroomCurvePointHandle : MonoBehaviour, IDragHandler, IPointerDownHandler, IPointerClickHandler
 {
     private GroomShapeCurveEditor editor;
     private int keyIndex;
@@ -818,5 +818,12 @@ public class GroomCurvePointHandle : MonoBehaviour, IDragHandler, IPointerDownHa
             editor.RemoveKey(keyIndex);
             eventData.Use();
         }
+    }
+
+    public void OnPointerClick(PointerEventData eventData)
+    {
+        // Consume point clicks so they never bubble to the graph and accidentally create
+        // a second key underneath the handle the user was trying to select/drag.
+        if (eventData != null) eventData.Use();
     }
 }
