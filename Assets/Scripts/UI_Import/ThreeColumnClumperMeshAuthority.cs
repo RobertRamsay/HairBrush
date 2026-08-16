@@ -2,11 +2,22 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
-// Final native 3-column CLUMPER evaluator. Every frame begins from one clean mesh per card,
-// then all active clumper points are layered additively from that same clean source.
+// Final native 3-column CLUMPER evaluator.
+//
+// Every affected card is rebuilt from its current authored/evaluated parameters each frame:
+// vertices + UVs + topology are created deterministically, active clumpers deform only those
+// clean vertices, then the complete mesh is replaced. No previous CLUMPER output is ever read.
+// This makes amount=0 a true restore and prevents topology/UV changes from wedging the stage.
 [DefaultExecutionOrder(5255)]
 public class ThreeColumnClumperMeshAuthority : MonoBehaviour
 {
+    private sealed class CleanMeshData
+    {
+        public Vector3[] vertices;
+        public Vector2[] uvs;
+        public int[] triangles;
+    }
+
     private GroupClumperManager manager;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -30,15 +41,16 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         if (allCards.Length == 0) return;
 
         HashSet<int> groups = new HashSet<int>(clumpers.Select(c => c.groupId));
-        Dictionary<HairCard, Vector3[]> clean = new Dictionary<HairCard, Vector3[]>();
+        Dictionary<HairCard, CleanMeshData> clean = new Dictionary<HairCard, CleanMeshData>();
         Dictionary<HairCard, Vector3[]> working = new Dictionary<HairCard, Vector3[]>();
 
         foreach (HairCard card in allCards)
         {
             if (card == null || !groups.Contains(card.groupId)) continue;
-            Vector3[] source = BuildCleanVertices(card);
+            CleanMeshData source = BuildCleanMesh(card);
+            if (source == null || source.vertices == null) continue;
             clean[card] = source;
-            working[card] = (Vector3[])source.Clone();
+            working[card] = (Vector3[])source.vertices.Clone();
         }
 
         foreach (GroupClumperManager.GroupClumper clumper in clumpers.OrderBy(c => c.id))
@@ -51,7 +63,7 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
                 continue;
 
             HairCard[] groupCards = allCards.Where(c =>
-                c != null && c.groupId == clumper.groupId &&
+                c != null && c.groupId == clumper.groupId && clean.ContainsKey(c) &&
                 (!contiguous || SurfaceIslandScope.SameIsland(c, scopeIsland))).ToArray();
             if (groupCards.Length < 2) continue;
 
@@ -60,18 +72,24 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
 
             foreach (HairCard card in groupCards)
             {
-                if (!clean.TryGetValue(card, out Vector3[] sourceClean) || !working.TryGetValue(card, out Vector3[] current)) continue;
+                if (!clean.TryGetValue(card, out CleanMeshData sourceData) ||
+                    !working.TryGetValue(card, out Vector3[] current)) continue;
+
                 HairCard leader = FindAssignedLeader(card, leaders);
-                if (leader == null || leader == card || !clean.TryGetValue(leader, out Vector3[] leaderClean)) continue;
+                if (leader == null || leader == card ||
+                    !clean.TryGetValue(leader, out CleanMeshData leaderData)) continue;
 
                 float influence = Mathf.Clamp01(clumper.amount * ZoneWeight(card, clumper));
                 if (influence <= .0001f) continue;
-                ApplyClumpAdditive(card, current, sourceClean, leader, leaderClean, influence);
+                ApplyClumpAdditive(card, current, sourceData.vertices, leader, leaderData.vertices, influence);
             }
         }
 
         foreach (KeyValuePair<HairCard, Vector3[]> pair in working)
-            WriteVertices(pair.Key, pair.Value);
+        {
+            if (clean.TryGetValue(pair.Key, out CleanMeshData source))
+                WriteFullMesh(pair.Key, source, pair.Value);
+        }
     }
 
     static List<HairCard> BuildLeaders(GroupClumperManager.GroupClumper clumper, HairCard[] cards)
@@ -136,11 +154,17 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         return leaders;
     }
 
-    static Vector3[] BuildCleanVertices(HairCard card)
+    static CleanMeshData BuildCleanMesh(HairCard card)
     {
+        if (card == null) return null;
+
         const int columns = HairCard.CrossSectionColumns;
         int segments = Mathf.Clamp(card.segments, 1, 36);
-        Vector3[] vertices = new Vector3[(segments + 1) * columns];
+        int vertexCount = (segments + 1) * columns;
+        Vector3[] vertices = new Vector3[vertexCount];
+        Vector2[] uvs = new Vector2[vertexCount];
+        int[] triangles = new int[segments * 12];
+
         float segmentHeight = Mathf.Max(.001f, card.length) / segments;
         float halfWidth = Mathf.Max(.0005f, card.width) * .5f;
         float ridge = card.GetCrossSectionRidgeHeight();
@@ -152,11 +176,54 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
             float span = halfWidth * card.flattenFactor;
             Quaternion authored = card.GetLengthProfileRotation(t);
             int index = i * columns;
+
             vertices[index] = authored * new Vector3(-span, 0f, z);
             vertices[index + 1] = authored * new Vector3(0f, ridge, z);
             vertices[index + 2] = authored * new Vector3(span, 0f, z);
+
+            float baseULeft = card.uScale < 0f ? 1f : 0f;
+            float baseURight = card.uScale < 0f ? 0f : 1f;
+            float finalULeft = baseULeft * Mathf.Abs(card.uScale) + card.uOffset;
+            float finalURight = baseURight * Mathf.Abs(card.uScale) + card.uOffset;
+            float finalUCenter = (finalULeft + finalURight) * .5f;
+
+            float absVScale = Mathf.Abs(card.vScale);
+            float baseV = (1f - t) * absVScale;
+            if (card.vScale < 0f) baseV = absVScale - baseV;
+            float finalV = baseV + card.vOffset;
+
+            uvs[index] = new Vector2(finalULeft, finalV);
+            uvs[index + 1] = new Vector2(finalUCenter, finalV);
+            uvs[index + 2] = new Vector2(finalURight, finalV);
         }
-        return vertices;
+
+        int triIndex = 0;
+        for (int i = 0; i < segments; i++)
+        {
+            int row = i * columns;
+            int next = row + columns;
+
+            triangles[triIndex++] = row;
+            triangles[triIndex++] = next;
+            triangles[triIndex++] = row + 1;
+            triangles[triIndex++] = row + 1;
+            triangles[triIndex++] = next;
+            triangles[triIndex++] = next + 1;
+
+            triangles[triIndex++] = row + 1;
+            triangles[triIndex++] = next + 1;
+            triangles[triIndex++] = row + 2;
+            triangles[triIndex++] = row + 2;
+            triangles[triIndex++] = next + 1;
+            triangles[triIndex++] = next + 2;
+        }
+
+        return new CleanMeshData
+        {
+            vertices = vertices,
+            uvs = uvs,
+            triangles = triangles
+        };
     }
 
     static void ApplyClumpAdditive(HairCard source, Vector3[] current, Vector3[] sourceClean, HairCard leader, Vector3[] leaderClean, float influence)
@@ -182,13 +249,18 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         }
     }
 
-    static void WriteVertices(HairCard card, Vector3[] vertices)
+    static void WriteFullMesh(HairCard card, CleanMeshData source, Vector3[] vertices)
     {
-        MeshFilter mf = card.GetComponent<MeshFilter>();
-        if (mf == null || mf.mesh == null || vertices == null || mf.mesh.vertexCount != vertices.Length) return;
-        mf.mesh.vertices = vertices;
-        mf.mesh.RecalculateNormals();
-        mf.mesh.RecalculateBounds();
+        MeshFilter mf = card != null ? card.GetComponent<MeshFilter>() : null;
+        if (mf == null || mf.mesh == null || source == null || vertices == null) return;
+
+        Mesh mesh = mf.mesh;
+        mesh.Clear();
+        mesh.vertices = vertices;
+        mesh.uv = source.uvs;
+        mesh.triangles = source.triangles;
+        mesh.RecalculateNormals();
+        mesh.RecalculateBounds();
     }
 
     static Vector3 SampleCentreWorld(HairCard card, Vector3[] vertices, float t)
