@@ -1,15 +1,35 @@
+using System;
 using System.Collections.Generic;
+using System.Reflection;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
-// Small, non-structural UX layer for the left group panel. It deliberately updates
-// existing group rows in-place so it does not disturb POST row ordering or scroll layout.
+// Left group-panel presentation authority. Keeps POST/CLUMPER row structure untouched while
+// giving each Hair Group a compact, readable identity block:
+//
+//   GROUP 0              (unnamed)
+//   6 cards
+//   1,944 polys
+//
+// or, after the existing double-click rename gesture:
+//
+//   G0_Spike
+//   6 cards
+//   1,944 polys
+//
+// ModelViewer's private groupNames dictionary stores only the friendly suffix ("Spike"). The
+// numeric group id remains the real identity used by HairCards, POST, CLUMPER, UVs and saving.
 [DefaultExecutionOrder(9000)]
 public class GroupPanelPostHintStats : MonoBehaviour
 {
+    private const float HeaderHeight = 66f;
+    private const float HeaderControlHeight = 54f;
+
     private GameObject boundPanel;
     private TextMeshProUGUI hint;
+    private ModelViewer viewer;
+    private FieldInfo groupNamesField;
     private float nextScan;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -26,6 +46,8 @@ public class GroupPanelPostHintStats : MonoBehaviour
         if (Time.unscaledTime < nextScan) return;
         nextScan = Time.unscaledTime + .10f;
 
+        ResolveViewer();
+
         GameObject panel = GameObject.Find("GroupManagerPanel");
         if (panel == null)
         {
@@ -38,7 +60,15 @@ public class GroupPanelPostHintStats : MonoBehaviour
             Bind(panel);
 
         MaintainHintOrder(panel.transform);
-        UpdateGroupStats();
+        UpdateGroupHeaders();
+    }
+
+    void ResolveViewer()
+    {
+        if (viewer != null && groupNamesField != null) return;
+        viewer = FindFirstObjectByType<ModelViewer>();
+        if (viewer != null)
+            groupNamesField = typeof(ModelViewer).GetField("groupNames", BindingFlags.Instance | BindingFlags.NonPublic);
     }
 
     void Bind(GameObject panel)
@@ -98,7 +128,7 @@ public class GroupPanelPostHintStats : MonoBehaviour
             hint.transform.SetSiblingIndex(target);
     }
 
-    void UpdateGroupStats()
+    void UpdateGroupHeaders()
     {
         Dictionary<int, int> cardsByGroup = new();
         Dictionary<int, long> polysByGroup = new();
@@ -119,21 +149,126 @@ public class GroupPanelPostHintStats : MonoBehaviour
             polysByGroup[gid] = (polysByGroup.TryGetValue(gid, out long existing) ? existing : 0L) + polys;
         }
 
+        Dictionary<int, string> groupNames = GetGroupNames();
+
         foreach (RectTransform item in FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
         {
-            if (!item.name.StartsWith("GroupItem_")) continue;
+            if (item == null || !item.name.StartsWith("GroupItem_", StringComparison.Ordinal)) continue;
             if (!int.TryParse(item.name.Substring("GroupItem_".Length), out int gid)) continue;
 
             Transform labelButton = item.Find("LabelButton");
-            Transform countLabel = labelButton != null ? labelButton.Find("CardCountLabel") : null;
-            TextMeshProUGUI text = countLabel != null ? countLabel.GetComponent<TextMeshProUGUI>() : null;
-            if (text == null) continue;
+            if (labelButton == null) continue;
+
+            Transform nameLabel = labelButton.Find("Label");
+            Transform countLabel = labelButton.Find("CardCountLabel");
+            TextMeshProUGUI nameText = nameLabel != null ? nameLabel.GetComponent<TextMeshProUGUI>() : null;
+            TextMeshProUGUI statsText = countLabel != null ? countLabel.GetComponent<TextMeshProUGUI>() : null;
+            if (nameText == null || statsText == null) continue;
+
+            string friendly = string.Empty;
+            if (groupNames != null && groupNames.TryGetValue(gid, out string stored))
+            {
+                friendly = NormalizeFriendlyName(gid, stored);
+                if (!string.Equals(stored ?? string.Empty, friendly, StringComparison.Ordinal))
+                    groupNames[gid] = friendly;
+            }
 
             int cardCount = cardsByGroup.TryGetValue(gid, out int c) ? c : 0;
             long polyCount = polysByGroup.TryGetValue(gid, out long p) ? p : 0L;
             string cardWord = cardCount == 1 ? "card" : "cards";
             string polyWord = polyCount == 1 ? "poly" : "polys";
-            text.text = cardCount.ToString("N0") + " " + cardWord + "  •  " + polyCount.ToString("N0") + " " + polyWord;
+
+            nameText.text = string.IsNullOrWhiteSpace(friendly)
+                ? "GROUP " + gid
+                : "G" + gid + "_" + friendly;
+            statsText.text = cardCount.ToString("N0") + " " + cardWord + "\n" +
+                             polyCount.ToString("N0") + " " + polyWord;
+
+            ApplyHeaderLayout(item, labelButton, nameText, statsText);
         }
+    }
+
+    Dictionary<int, string> GetGroupNames()
+    {
+        ResolveViewer();
+        return viewer != null && groupNamesField != null
+            ? groupNamesField.GetValue(viewer) as Dictionary<int, string>
+            : null;
+    }
+
+    static string NormalizeFriendlyName(int gid, string stored)
+    {
+        string value = (stored ?? string.Empty).Trim();
+        if (value.Length == 0) return string.Empty;
+
+        string legacy = "Group " + gid;
+        if (string.Equals(value, legacy, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, legacy + " (Default)", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "Default", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "(Default)", StringComparison.OrdinalIgnoreCase))
+            return string.Empty;
+
+        string renderedPrefix = "G" + gid + "_";
+        if (value.StartsWith(renderedPrefix, StringComparison.OrdinalIgnoreCase))
+            value = value.Substring(renderedPrefix.Length).Trim();
+
+        return value;
+    }
+
+    static void ApplyHeaderLayout(
+        RectTransform item,
+        Transform labelButton,
+        TextMeshProUGUI nameText,
+        TextMeshProUGUI statsText)
+    {
+        item.sizeDelta = new Vector2(item.sizeDelta.x, HeaderHeight);
+
+        HorizontalLayoutGroup row = item.GetComponent<HorizontalLayoutGroup>();
+        if (row != null)
+        {
+            row.padding = new RectOffset(8, 8, 6, 6);
+            row.spacing = 5f;
+        }
+
+        RectTransform labelRect = labelButton as RectTransform;
+        if (labelRect != null)
+            labelRect.sizeDelta = new Vector2(labelRect.sizeDelta.x, HeaderControlHeight);
+
+        RectTransform titleRect = nameText.rectTransform;
+        titleRect.anchorMin = new Vector2(0f, 1f);
+        titleRect.anchorMax = new Vector2(1f, 1f);
+        titleRect.pivot = new Vector2(.5f, 1f);
+        titleRect.offsetMin = new Vector2(2f, -23f);
+        titleRect.offsetMax = new Vector2(-2f, -2f);
+        nameText.fontSize = 14f;
+        nameText.fontStyle = FontStyles.Bold;
+        nameText.alignment = TextAlignmentOptions.TopLeft;
+        nameText.color = Color.white;
+        nameText.textWrappingMode = TextWrappingModes.NoWrap;
+        nameText.overflowMode = TextOverflowModes.Ellipsis;
+        nameText.raycastTarget = false;
+
+        RectTransform statsRect = statsText.rectTransform;
+        statsRect.anchorMin = new Vector2(0f, 0f);
+        statsRect.anchorMax = new Vector2(1f, 0f);
+        statsRect.pivot = new Vector2(.5f, 0f);
+        statsRect.offsetMin = new Vector2(2f, 2f);
+        statsRect.offsetMax = new Vector2(-2f, 33f);
+        statsText.fontSize = 10.5f;
+        statsText.fontStyle = FontStyles.Normal;
+        statsText.alignment = TextAlignmentOptions.BottomLeft;
+        statsText.color = new Color(.82f, .82f, .82f, .95f);
+        statsText.textWrappingMode = TextWrappingModes.NoWrap;
+        statsText.overflowMode = TextOverflowModes.Ellipsis;
+        statsText.lineSpacing = -8f;
+        statsText.raycastTarget = false;
+
+        Transform uv = item.Find("GroupUVModeButton");
+        if (uv is RectTransform uvRect)
+            uvRect.sizeDelta = new Vector2(uvRect.sizeDelta.x, 48f);
+
+        Transform solo = item.Find("SoloButton");
+        if (solo is RectTransform soloRect)
+            soloRect.sizeDelta = new Vector2(soloRect.sizeDelta.x, 48f);
     }
 }
