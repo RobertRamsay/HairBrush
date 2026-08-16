@@ -10,8 +10,9 @@ using UnityEngine;
 // CLUMPER never owns or caches the authored HairCard shape. At the start of every LateUpdate
 // it asks each affected HairCard to regenerate its current upstream mesh, snapshots that exact
 // result for this frame, then layers every clumper point additively from the same clean source.
-// This keeps Length/Width/Segments/Bend/Twist/UVs/shape curves and POST edits live underneath
-// an existing clumper while preventing the clump result from feeding back into the next frame.
+// HairCard still contains a retired internal clump path, so the clean regeneration explicitly
+// clears that legacy state first; otherwise old clump vertices can be regenerated and then have
+// the current CLUMPER applied on top, producing frame-to-frame accumulation.
 [DefaultExecutionOrder(5255)]
 public class ThreeColumnClumperMeshAuthority : MonoBehaviour
 {
@@ -86,14 +87,15 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
             WriteVertices(pair.Key, pair.Value);
     }
 
-    // HairCard.GenerateMesh is the authoritative full upstream mesh builder. Calling it here
-    // deliberately resets last frame's mesh-only Clumper output before we snapshot this frame.
-    // It also refreshes topology and UVs, so a live Segments/UV/curve/POST edit cannot be hidden
-    // by a stale final-pass mesh.
+    // HairCard still exposes its original single-card clump modifier. The current GroupClumper
+    // pipeline supersedes it, but stale legacy state can survive on a card. ClearClumpModifier()
+    // both retires that state and regenerates the complete current HairCard mesh (topology, UVs,
+    // POST-evaluated parameters and shape curves), giving this final pass a deterministic clean
+    // source that can never contain last frame's CLUMPER result.
     static Vector3[] CaptureCurrentUpstreamVertices(HairCard card)
     {
         if (card == null) return null;
-        card.GenerateMesh();
+        card.ClearClumpModifier();
 
         MeshFilter mf = card.GetComponent<MeshFilter>();
         if (mf == null || mf.mesh == null || mf.mesh.vertexCount < HairCard.CrossSectionColumns)
@@ -172,11 +174,9 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         for (int row = 1; row < rows; row++)
         {
             float t = (float)row / (rows - 1);
-            float along = t * t * (3f - 2f * t);
-            float w = Mathf.Clamp01(influence * along);
-            if (w <= .0001f) continue;
-
+            float w = influence * Mathf.SmoothStep(0f, 1f, t);
             int index = row * columns;
+
             Vector3 ownCenter = (sourceClean[index] + sourceClean[index + 2]) * .5f;
             Vector3 leaderWorld = SampleCentreWorld(leader, leaderClean, t);
             Vector3 leaderLocal = source.transform.InverseTransformPoint(leaderWorld);
@@ -205,6 +205,7 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         int a = Mathf.Clamp(Mathf.FloorToInt(rowF), 0, rows - 1);
         int b = Mathf.Min(a + 1, rows - 1);
         float f = rowF - a;
+
         Vector3 ca = (vertices[a * columns] + vertices[a * columns + 2]) * .5f;
         Vector3 cb = (vertices[b * columns] + vertices[b * columns + 2]) * .5f;
         return card.transform.TransformPoint(Vector3.Lerp(ca, cb, f));
@@ -227,12 +228,12 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
     static float ZoneWeight(HairCard card, GroupClumperManager.GroupClumper clumper)
     {
         if (clumper.mode == GroupClumperManager.ClumpMode.DispersedEvenly) return 1f;
-        float d = Vector3.Distance(RootWorld(card), clumper.center);
-        float radius = Mathf.Max(.001f, clumper.radius);
-        float outer = radius + Mathf.Max(0f, clumper.falloff);
-        if (d <= radius) return 1f;
-        if (clumper.falloff <= .000001f || d >= outer) return 0f;
-        return Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(outer, radius, d));
+        float distance = Vector3.Distance(RootWorld(card), clumper.center);
+        if (distance <= clumper.radius) return 1f;
+        if (clumper.falloff <= .0001f) return 0f;
+        float outer = clumper.radius + clumper.falloff;
+        if (distance >= outer) return 0f;
+        return Mathf.SmoothStep(1f, 0f, (distance - clumper.radius) / clumper.falloff);
     }
 
     static Vector3 RootWorld(HairCard card)
