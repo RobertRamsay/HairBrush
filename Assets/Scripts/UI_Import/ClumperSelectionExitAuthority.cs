@@ -10,6 +10,7 @@ public class ClumperSelectionExitAuthority : MonoBehaviour
 {
     private GroupClumperManager clumper;
     private FieldInfo selectedGroupField;
+    private FieldInfo selectedClumperIdField;
     private MethodInfo destroyControlsMethod;
     private GameObject lastSelected;
     private int lastCtrlExitFrame = -1;
@@ -26,10 +27,10 @@ public class ClumperSelectionExitAuthority : MonoBehaviour
     void Update()
     {
         Resolve();
-        if (clumper == null || selectedGroupField == null) return;
+        if (clumper == null || selectedClumperIdField == null) return;
 
-        int active = selectedGroupField.GetValue(clumper) is int value ? value : -1;
-        if (active < 0) return;
+        int activeId = selectedClumperIdField.GetValue(clumper) is int id ? id : -1;
+        if (activeId < 0) return;
 
         // Ctrl+Click is POST authoring, regardless of which modifier currently owns the
         // right panel. Exit CLUMPER before ModelViewer/PostAffectorManager process the click.
@@ -53,8 +54,7 @@ public class ClumperSelectionExitAuthority : MonoBehaviour
             Inside(selected.transform, "ClumperScrollHost"))
             return;
 
-        // Only editor-mode rows should switch ownership. Ordinary slider interaction and
-        // unrelated UI should not unexpectedly close the clumper panel.
+        // Group-root and POST rows explicitly take ownership away from CLUMPER.
         if (Inside(selected.transform, "GroupItem_") || Inside(selected.transform, "PostAffector_"))
             ExitClumper();
     }
@@ -67,11 +67,13 @@ public class ClumperSelectionExitAuthority : MonoBehaviour
 
         BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
         selectedGroupField = typeof(GroupClumperManager).GetField("selectedGroup", flags);
+        selectedClumperIdField = typeof(GroupClumperManager).GetField("selectedClumperId", flags);
         destroyControlsMethod = typeof(GroupClumperManager).GetMethod("DestroyControls", flags);
     }
 
     void ExitClumper()
     {
+        selectedClumperIdField?.SetValue(clumper, -1);
         selectedGroupField?.SetValue(clumper, -1);
         destroyControlsMethod?.Invoke(clumper, null);
 
