@@ -198,6 +198,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
             foreach(GroupSaveData group in groups)
                 groupUV.PopulateGroupSave(group);
 
+        GroomShapeCurveAuthority.Capture(this);
         MaterialProjectPersistenceBridge.Capture(this);
         CanonicalProjectStateBridge.CanonicalizeForSave(this);
     }
@@ -220,6 +221,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
         PendingModifierRestore=this;
         PendingUVRectRestore=this;
         PendingGroupUVRestore=this;
+        GroomShapeCurveAuthority.QueueRestore(this);
         MaterialProjectPersistenceBridge.PendingRestore=this;
         GroupClumperPersistenceBridge.QueueRestore(this);
         if(sourceVersion>=2)
