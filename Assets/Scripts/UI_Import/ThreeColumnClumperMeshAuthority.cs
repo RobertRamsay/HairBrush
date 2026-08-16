@@ -150,7 +150,7 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
             float t = (float)i / segments;
             float z = i * segmentHeight;
             float span = halfWidth * card.flattenFactor;
-            Quaternion authored = Quaternion.Euler(card.bendAngle * (t * t), 0f, card.twistAngle * t);
+            Quaternion authored = card.GetLengthProfileRotation(t);
             int index = i * columns;
             vertices[index] = authored * new Vector3(-span, 0f, z);
             vertices[index + 1] = authored * new Vector3(0f, ridge, z);
