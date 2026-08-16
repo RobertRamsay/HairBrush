@@ -115,6 +115,7 @@ public class GroupPanelPostHintStats : MonoBehaviour
                     "Click UV:ADJ/PRE for UV Mode\n" +
                     "Double Click Group name to rename it.\n" +
                     "Click in space to come out of mode\n" +
+                    "Right Click to remove a group\n" +
                     "SPACE + Click to reposition Modifier";
         hint.fontSize = 11f;
         hint.fontStyle = FontStyles.Bold;
