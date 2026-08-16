@@ -9,6 +9,7 @@ using UnityEngine.UI;
 [DefaultExecutionOrder(9520)]
 public class InlineGroomShapeCurveEditorAuthority : MonoBehaviour
 {
+    private const float ProfileRowHeight = 27f;
     private const float InlineHeight = 340f;
 
     private ModelViewer viewer;
@@ -30,19 +31,34 @@ public class InlineGroomShapeCurveEditorAuthority : MonoBehaviour
         Resolve();
         if (panel == null) return;
 
+        // GroomingPanel's legacy VerticalLayoutGroup does not control child heights.
+        // Shape profile rows were therefore visually 27px tall while their RectTransforms
+        // still occupied Unity's default ~100px, leaving a large invisible band underneath.
+        // Keep their real layout height equal to the visible row height.
+        bool profileLayoutChanged = TightenProfileRows();
+
         GroomShapeCurveEditor editor = FindFirstObjectByType<GroomShapeCurveEditor>();
         if (editor == null)
         {
             attachedEditor = null;
             attachedRoot = null;
+            if (profileLayoutChanged) RebuildPanelLayout();
             return;
         }
 
         Transform row = panel.transform.Find("ShapeCurve_" + editor.Channel + "_Row");
-        if (row == null) return;
+        if (row == null)
+        {
+            if (profileLayoutChanged) RebuildPanelLayout();
+            return;
+        }
 
         RectTransform root = editor.GetComponent<RectTransform>();
-        if (root == null) return;
+        if (root == null)
+        {
+            if (profileLayoutChanged) RebuildPanelLayout();
+            return;
+        }
 
         bool newlyAttached = attachedEditor != editor || root.parent != panel.transform;
         if (root.parent != panel.transform)
@@ -71,20 +87,71 @@ public class InlineGroomShapeCurveEditorAuthority : MonoBehaviour
         attachedEditor = editor;
         attachedRoot = root;
 
-        if (newlyAttached)
+        if (newlyAttached || profileLayoutChanged)
         {
-            RectTransform panelRect = panel.GetComponent<RectTransform>();
-            Canvas.ForceUpdateCanvases();
-            if (panelRect != null) LayoutRebuilder.ForceRebuildLayoutImmediate(panelRect);
-            Canvas.ForceUpdateCanvases();
+            RebuildPanelLayout();
 
             // The graph was first drawn at popup dimensions. Redraw once after the inline
             // layout has established its narrower panel width so line/point positions match.
-            editor.RefreshAll();
-
-            GroomingPanelWheelScroll wheel = panel.GetComponent<GroomingPanelWheelScroll>();
-            if (wheel != null) wheel.RefreshClamp();
+            if (newlyAttached) editor.RefreshAll();
         }
+    }
+
+    bool TightenProfileRows()
+    {
+        bool changed = false;
+        changed |= TightenProfileRow("ShapeCurve_Bend_Row");
+        changed |= TightenProfileRow("ShapeCurve_X_Row");
+        changed |= TightenProfileRow("ShapeCurve_Y_Row");
+        changed |= TightenProfileRow("ShapeCurve_Z_Row");
+        return changed;
+    }
+
+    bool TightenProfileRow(string rowName)
+    {
+        Transform found = panel.transform.Find(rowName);
+        RectTransform rect = found as RectTransform;
+        if (rect == null) return false;
+
+        bool changed = !Mathf.Approximately(rect.sizeDelta.y, ProfileRowHeight);
+        if (changed)
+            rect.sizeDelta = new Vector2(rect.sizeDelta.x, ProfileRowHeight);
+
+        LayoutElement element = rect.GetComponent<LayoutElement>();
+        if (element == null)
+        {
+            element = rect.gameObject.AddComponent<LayoutElement>();
+            changed = true;
+        }
+
+        if (!Mathf.Approximately(element.minHeight, ProfileRowHeight))
+        {
+            element.minHeight = ProfileRowHeight;
+            changed = true;
+        }
+        if (!Mathf.Approximately(element.preferredHeight, ProfileRowHeight))
+        {
+            element.preferredHeight = ProfileRowHeight;
+            changed = true;
+        }
+        if (!Mathf.Approximately(element.flexibleHeight, 0f))
+        {
+            element.flexibleHeight = 0f;
+            changed = true;
+        }
+
+        return changed;
+    }
+
+    void RebuildPanelLayout()
+    {
+        RectTransform panelRect = panel != null ? panel.GetComponent<RectTransform>() : null;
+        Canvas.ForceUpdateCanvases();
+        if (panelRect != null) LayoutRebuilder.ForceRebuildLayoutImmediate(panelRect);
+        Canvas.ForceUpdateCanvases();
+
+        GroomingPanelWheelScroll wheel = panel != null ? panel.GetComponent<GroomingPanelWheelScroll>() : null;
+        if (wheel != null) wheel.RefreshClamp();
     }
 
     void Resolve()
