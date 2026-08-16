@@ -1,23 +1,13 @@
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 using UnityEngine;
 
-// Final CLUMPER mesh authority for HairCard's native 3-column convex topology.
-//
-// Important invariant: CLUMPER owns only the final mesh vertices. It never owns/bakes the
-// HairCard parameters. Every active CLUMPER group is therefore rebuilt from a clean card mesh
-// first on every LateUpdate, even when amount == 0. If amount > 0 the clump deformation is then
-// layered on top of that clean mesh. When a CLUMPER disappears, the affected group is explicitly
-// regenerated once from its current evaluated HairCard parameters. POST evaluates earlier in the
-// frame, so this naturally reveals POST state when POSTs remain, or authored state when they do not.
+// Final native 3-column CLUMPER evaluator. Every frame begins from one clean mesh per card,
+// then all active clumper points are layered additively from that same clean source.
 [DefaultExecutionOrder(5255)]
 public class ThreeColumnClumperMeshAuthority : MonoBehaviour
 {
     private GroupClumperManager manager;
-    private FieldInfo byGroupField;
-    private readonly HashSet<int> previousGroups = new HashSet<int>();
-    private bool initialized;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
@@ -30,106 +20,120 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
 
     void LateUpdate()
     {
-        Resolve();
-        if (manager == null || byGroupField == null) return;
+        if (manager == null) manager = FindFirstObjectByType<GroupClumperManager>();
+        if (manager == null) return;
 
-        var byGroup = byGroupField.GetValue(manager) as Dictionary<int, GroupClumperManager.GroupClumper>;
-        if (byGroup == null) return;
+        List<GroupClumperManager.GroupClumper> clumpers = manager.GetAllClumpers();
+        if (clumpers.Count == 0) return;
 
         HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
+        if (allCards.Length == 0) return;
 
-        if (initialized && previousGroups.Count > 0 && allCards.Length > 0)
-        {
-            foreach (int gid in previousGroups)
-            {
-                if (byGroup.ContainsKey(gid)) continue;
-                RestoreRemovedGroup(gid, allCards);
-            }
-        }
-
-        previousGroups.Clear();
-        foreach (int gid in byGroup.Keys) previousGroups.Add(gid);
-        initialized = true;
-
-        if (byGroup.Count == 0 || allCards.Length == 0) return;
-
+        HashSet<int> groups = new HashSet<int>(clumpers.Select(c => c.groupId));
         Dictionary<HairCard, Vector3[]> clean = new Dictionary<HairCard, Vector3[]>();
+        Dictionary<HairCard, Vector3[]> working = new Dictionary<HairCard, Vector3[]>();
+
         foreach (HairCard card in allCards)
         {
-            if (card == null || !byGroup.TryGetValue(card.groupId, out var clumper) || clumper == null)
-                continue;
-
-            Vector3[] sourceClean = BuildCleanVertices(card);
-            clean[card] = sourceClean;
-            WriteVertices(card, sourceClean);
+            if (card == null || !groups.Contains(card.groupId)) continue;
+            Vector3[] source = BuildCleanVertices(card);
+            clean[card] = source;
+            working[card] = (Vector3[])source.Clone();
         }
 
-        foreach (var clumper in byGroup.Values)
+        foreach (GroupClumperManager.GroupClumper clumper in clumpers.OrderBy(c => c.id))
         {
-            if (clumper == null || clumper.amount <= .0001f)
-                continue;
+            if (clumper == null || clumper.amount <= .0001f) continue;
 
             bool contiguous = SurfaceIslandScope.IsClumperContiguous(clumper.groupId);
             int scopeIsland = -1;
             if (contiguous && !SurfaceIslandScope.TryGetIslandAtWorldPoint(clumper.center, clumper.normal, out scopeIsland))
-            {
-                // Fail closed: a CONTIG modifier that cannot resolve its clicked island must
-                // never silently fall back to affecting disconnected geometry.
                 continue;
-            }
 
             HairCard[] groupCards = allCards.Where(c =>
-                c != null &&
-                c.groupId == clumper.groupId &&
+                c != null && c.groupId == clumper.groupId &&
                 (!contiguous || SurfaceIslandScope.SameIsland(c, scopeIsland))).ToArray();
-
             if (groupCards.Length < 2) continue;
 
-            // GroupClumperManager owns topology/seed selection. In contiguous mode, discard
-            // leaders from other mesh islands. If its global selection produced none on the
-            // active island, choose the nearest eligible card as a deterministic local leader.
-            List<HairCard> eligibleLeaders = clumper.leaders == null
-                ? new List<HairCard>()
-                : clumper.leaders.Where(l => l != null && groupCards.Contains(l)).ToList();
-
-            if (eligibleLeaders.Count == 0)
-                eligibleLeaders.Add(groupCards.OrderBy(c => (RootWorld(c) - clumper.center).sqrMagnitude).First());
+            List<HairCard> leaders = BuildLeaders(clumper, groupCards);
+            if (leaders.Count == 0) continue;
 
             foreach (HairCard card in groupCards)
             {
-                if (!clean.TryGetValue(card, out Vector3[] sourceClean)) continue;
-                HairCard leader = FindAssignedLeader(card, eligibleLeaders);
+                if (!clean.TryGetValue(card, out Vector3[] sourceClean) || !working.TryGetValue(card, out Vector3[] current)) continue;
+                HairCard leader = FindAssignedLeader(card, leaders);
                 if (leader == null || leader == card || !clean.TryGetValue(leader, out Vector3[] leaderClean)) continue;
 
                 float influence = Mathf.Clamp01(clumper.amount * ZoneWeight(card, clumper));
                 if (influence <= .0001f) continue;
-                ApplyClump(card, sourceClean, leader, leaderClean, influence);
+                ApplyClumpAdditive(card, current, sourceClean, leader, leaderClean, influence);
             }
         }
+
+        foreach (KeyValuePair<HairCard, Vector3[]> pair in working)
+            WriteVertices(pair.Key, pair.Value);
     }
 
-    static void RestoreRemovedGroup(int gid, HairCard[] cards)
+    static List<HairCard> BuildLeaders(GroupClumperManager.GroupClumper clumper, HairCard[] cards)
     {
-        int restored = 0;
-        foreach (HairCard card in cards)
+        List<HairCard> leaders = new List<HairCard>();
+        if (cards == null || cards.Length == 0) return leaders;
+        int wanted = clumper.mode == GroupClumperManager.ClumpMode.Singular ? 1 : Mathf.Clamp(clumper.count, 1, cards.Length);
+        System.Random rng = new System.Random(clumper.seed);
+
+        if (clumper.mode == GroupClumperManager.ClumpMode.Singular)
         {
-            if (card == null || card.groupId != gid) continue;
-            card.ClearClumpModifier();
-            card.GenerateMesh();
-            restored++;
+            leaders.Add(cards.OrderBy(c => (RootWorld(c) - clumper.center).sqrMagnitude).First());
+            return leaders;
         }
 
-        Debug.Log("CLUMPER removed from group " + gid + ": final mesh authority restored " + restored + " HairCards from current upstream parameters.");
-    }
+        if (clumper.mode == GroupClumperManager.ClumpMode.DispersedEvenly)
+        {
+            HairCard first = cards[Mathf.Abs(clumper.seed) % cards.Length];
+            leaders.Add(first);
+            while (leaders.Count < wanted)
+            {
+                HairCard best = null;
+                float bestScore = float.NegativeInfinity;
+                foreach (HairCard candidate in cards)
+                {
+                    if (leaders.Contains(candidate)) continue;
+                    float nearestD2 = leaders.Min(l => (RootWorld(candidate) - RootWorld(l)).sqrMagnitude);
+                    float score = nearestD2 + (float)rng.NextDouble() * .000001f;
+                    if (score > bestScore) { bestScore = score; best = candidate; }
+                }
+                if (best == null) break;
+                leaders.Add(best);
+            }
+            return leaders;
+        }
 
-    void Resolve()
-    {
-        if (manager != null) return;
-        manager = FindFirstObjectByType<GroupClumperManager>();
-        if (manager == null) return;
-        byGroupField = typeof(GroupClumperManager).GetField("byGroup", BindingFlags.Instance | BindingFlags.NonPublic);
-        initialized = false;
-        previousGroups.Clear();
+        List<HairCard> pool = cards.ToList();
+        float outer = Mathf.Max(.001f, clumper.radius + clumper.falloff);
+        while (leaders.Count < wanted && pool.Count > 0)
+        {
+            float total = 0f;
+            float[] weights = new float[pool.Count];
+            for (int i = 0; i < pool.Count; i++)
+            {
+                float d = Vector3.Distance(RootWorld(pool[i]), clumper.center);
+                float normalized = Mathf.Clamp01(d / outer);
+                float w = Mathf.Pow(1f - normalized, 2f) + .015f;
+                weights[i] = w;
+                total += w;
+            }
+            double pick = rng.NextDouble() * total;
+            float acc = 0f;
+            int chosen = pool.Count - 1;
+            for (int i = 0; i < pool.Count; i++)
+            {
+                acc += weights[i];
+                if (pick <= acc) { chosen = i; break; }
+            }
+            leaders.Add(pool[chosen]);
+            pool.RemoveAt(chosen);
+        }
+        return leaders;
     }
 
     static Vector3[] BuildCleanVertices(HairCard card)
@@ -155,25 +159,11 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         return vertices;
     }
 
-    static void WriteVertices(HairCard card, Vector3[] vertices)
-    {
-        MeshFilter mf = card.GetComponent<MeshFilter>();
-        if (mf == null || mf.mesh == null || vertices == null) return;
-        if (mf.mesh.vertexCount != vertices.Length) return;
-        mf.mesh.vertices = (Vector3[])vertices.Clone();
-        mf.mesh.RecalculateNormals();
-        mf.mesh.RecalculateBounds();
-    }
-
-    static void ApplyClump(HairCard source, Vector3[] sourceClean, HairCard leader, Vector3[] leaderClean, float influence)
+    static void ApplyClumpAdditive(HairCard source, Vector3[] current, Vector3[] sourceClean, HairCard leader, Vector3[] leaderClean, float influence)
     {
         const int columns = HairCard.CrossSectionColumns;
-        MeshFilter mf = source.GetComponent<MeshFilter>();
-        if (mf == null || mf.mesh == null || sourceClean == null || leaderClean == null) return;
-        if (mf.mesh.vertexCount != sourceClean.Length || sourceClean.Length % columns != 0) return;
-
-        Vector3[] vertices = (Vector3[])sourceClean.Clone();
-        int rows = vertices.Length / columns;
+        if (current == null || sourceClean == null || leaderClean == null || current.Length != sourceClean.Length) return;
+        int rows = current.Length / columns;
         for (int row = 1; row < rows; row++)
         {
             float t = (float)row / (rows - 1);
@@ -185,14 +175,17 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
             Vector3 ownCenter = (sourceClean[index] + sourceClean[index + 2]) * .5f;
             Vector3 leaderWorld = SampleCentreWorld(leader, leaderClean, t);
             Vector3 leaderLocal = source.transform.InverseTransformPoint(leaderWorld);
-            Vector3 targetCenter = Vector3.Lerp(ownCenter, leaderLocal, w);
-            Vector3 delta = targetCenter - ownCenter;
-
-            vertices[index] = sourceClean[index] + delta;
-            vertices[index + 1] = sourceClean[index + 1] + delta;
-            vertices[index + 2] = sourceClean[index + 2] + delta;
+            Vector3 delta = (leaderLocal - ownCenter) * w;
+            current[index] += delta;
+            current[index + 1] += delta;
+            current[index + 2] += delta;
         }
+    }
 
+    static void WriteVertices(HairCard card, Vector3[] vertices)
+    {
+        MeshFilter mf = card.GetComponent<MeshFilter>();
+        if (mf == null || mf.mesh == null || vertices == null || mf.mesh.vertexCount != vertices.Length) return;
         mf.mesh.vertices = vertices;
         mf.mesh.RecalculateNormals();
         mf.mesh.RecalculateBounds();
@@ -203,7 +196,6 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         const int columns = HairCard.CrossSectionColumns;
         int rows = vertices.Length / columns;
         if (rows <= 0) return card.transform.position;
-
         float rowF = Mathf.Clamp01(t) * (rows - 1);
         int a = Mathf.Clamp(Mathf.FloorToInt(rowF), 0, rows - 1);
         int b = Mathf.Min(a + 1, rows - 1);
@@ -215,7 +207,6 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
 
     static HairCard FindAssignedLeader(HairCard card, List<HairCard> leaders)
     {
-        if (leaders == null || leaders.Count == 0) return null;
         Vector3 p = RootWorld(card);
         HairCard best = null;
         float bestD2 = float.PositiveInfinity;
@@ -223,11 +214,7 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         {
             if (leader == null) continue;
             float d2 = (RootWorld(leader) - p).sqrMagnitude;
-            if (d2 < bestD2)
-            {
-                bestD2 = d2;
-                best = leader;
-            }
+            if (d2 < bestD2) { bestD2 = d2; best = leader; }
         }
         return best;
     }
