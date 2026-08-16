@@ -61,6 +61,9 @@ public class GroupMaterialSaveData
 [Serializable]
 public class GroupClumperSaveData
 {
+    // Runtime identity is persisted so row ordering remains stable after reload. Older
+    // single-clumper project files deserialize this as 0 and receive a fresh unique ID.
+    public int id;
     public bool enabled;
     public int mode;
     public float centerX,centerY,centerZ;
@@ -117,7 +120,12 @@ public class GroupClumperSaveData
 
     public List<VarianceChannelSaveData> variances=new();
     public List<PostAffectorSaveData> postAffectors=new();
+
+    // Current multi-CLUMPER payload. The single clumper field is retained as a legacy
+    // fallback and is populated with the first point when saving for graceful compatibility.
+    public List<GroupClumperSaveData> clumpers=new();
     public GroupClumperSaveData clumper;
+
     // Legacy-only; retained for old JSON compatibility.
     public ClumpLayerSaveData clump;
 }
