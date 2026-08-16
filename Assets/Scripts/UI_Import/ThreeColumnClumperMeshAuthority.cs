@@ -174,9 +174,11 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         for (int row = 1; row < rows; row++)
         {
             float t = (float)row / (rows - 1);
-            float w = influence * Mathf.SmoothStep(0f, 1f, t);
-            int index = row * columns;
+            float along = t * t * (3f - 2f * t);
+            float w = Mathf.Clamp01(influence * along);
+            if (w <= .0001f) continue;
 
+            int index = row * columns;
             Vector3 ownCenter = (sourceClean[index] + sourceClean[index + 2]) * .5f;
             Vector3 leaderWorld = SampleCentreWorld(leader, leaderClean, t);
             Vector3 leaderLocal = source.transform.InverseTransformPoint(leaderWorld);
@@ -205,7 +207,6 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         int a = Mathf.Clamp(Mathf.FloorToInt(rowF), 0, rows - 1);
         int b = Mathf.Min(a + 1, rows - 1);
         float f = rowF - a;
-
         Vector3 ca = (vertices[a * columns] + vertices[a * columns + 2]) * .5f;
         Vector3 cb = (vertices[b * columns] + vertices[b * columns + 2]) * .5f;
         return card.transform.TransformPoint(Vector3.Lerp(ca, cb, f));
@@ -228,12 +229,12 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
     static float ZoneWeight(HairCard card, GroupClumperManager.GroupClumper clumper)
     {
         if (clumper.mode == GroupClumperManager.ClumpMode.DispersedEvenly) return 1f;
-        float distance = Vector3.Distance(RootWorld(card), clumper.center);
-        if (distance <= clumper.radius) return 1f;
-        if (clumper.falloff <= .0001f) return 0f;
-        float outer = clumper.radius + clumper.falloff;
-        if (distance >= outer) return 0f;
-        return Mathf.SmoothStep(1f, 0f, (distance - clumper.radius) / clumper.falloff);
+        float d = Vector3.Distance(RootWorld(card), clumper.center);
+        float radius = Mathf.Max(.001f, clumper.radius);
+        float outer = radius + Mathf.Max(0f, clumper.falloff);
+        if (d <= radius) return 1f;
+        if (clumper.falloff <= .000001f || d >= outer) return 0f;
+        return Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(outer, radius, d));
     }
 
     static Vector3 RootWorld(HairCard card)
