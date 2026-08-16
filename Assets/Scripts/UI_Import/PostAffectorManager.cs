@@ -46,8 +46,10 @@ public class PostAffectorManager : MonoBehaviour
 
     private readonly Dictionary<int, List<PostAffector>> groups = new();
     private readonly Dictionary<HairCard, CardState> cardStates = new();
+    private readonly Dictionary<int, bool> predeterminedUVByGroup = new();
 
     private ModelViewer viewer;
+    private GroupPredeterminedUVController uvRouting;
     private FieldInfo hasSelectionField;
     private FieldInfo hitPointField;
     private FieldInfo hitNormalField;
@@ -57,6 +59,7 @@ public class PostAffectorManager : MonoBehaviour
     private int activeGroup = -1;
     private float nextUIScan;
     private int lastCreatedFrame = -1;
+    private int predeterminedUVCacheFrame = -1;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
@@ -236,6 +239,16 @@ public class PostAffectorManager : MonoBehaviour
             if (groups.TryGetValue(card.groupId, out List<PostAffector> list))
                 result = Add(result, EffectForCard(card, list));
 
+            // UV MODE is group routing, not a POST-local property. PREDETERMINED therefore
+            // hard-routes the final UVs from the card's canonical group assignment and ignores
+            // any older Adjustable UV delta stored inside POST. The delta is retained so it can
+            // become active again if the whole group is later switched back to ADJUSTABLE.
+            if (UsesPredeterminedUVs(card.groupId))
+            {
+                ControlState canonicalUV = ReadCanonical(card);
+                CopyUV(ref result, canonicalUV);
+            }
+
             WriteEvaluatedCard(card, result);
             state.lastFinal = result;
             state.hasFinal = true;
@@ -272,7 +285,46 @@ public class PostAffectorManager : MonoBehaviour
 
     void WriteCanonicalOnly(HairCard card, ControlState s)
     {
+        // While a POST is selected, preserve PREDETERMINED's per-card canonical rectangle.
+        // This prevents the legacy POST baseline cache from writing an old Adjustable UV state
+        // back into canonical data during active authoring.
+        if (UsesPredeterminedUVs(card.groupId))
+        {
+            ControlState canonicalUV = ReadCanonical(card);
+            CopyUV(ref s, canonicalUV);
+        }
         card.SetCanonicalState(ToGroomState(s), false);
+    }
+
+    bool UsesPredeterminedUVs(int groupId)
+    {
+        if (predeterminedUVCacheFrame != Time.frameCount)
+        {
+            predeterminedUVCacheFrame = Time.frameCount;
+            predeterminedUVByGroup.Clear();
+        }
+
+        if (predeterminedUVByGroup.TryGetValue(groupId, out bool cached)) return cached;
+
+        if (uvRouting == null) uvRouting = FindFirstObjectByType<GroupPredeterminedUVController>();
+        bool predetermined = false;
+        if (uvRouting != null)
+        {
+            GroupSaveData probe = new GroupSaveData { groupId = groupId };
+            uvRouting.PopulateGroupSave(probe);
+            predetermined = probe.usePredeterminedUVs;
+        }
+
+        predeterminedUVByGroup[groupId] = predetermined;
+        return predetermined;
+    }
+
+    static void CopyUV(ref ControlState target, ControlState source)
+    {
+        target.uScale = source.uScale;
+        target.vScale = source.vScale;
+        target.uOffset = source.uOffset;
+        target.vOffset = source.vOffset;
     }
 
     HairCard.GroomState ToGroomState(ControlState s)
@@ -599,6 +651,9 @@ public class PostAffectorManager : MonoBehaviour
         EnsureViewer();
         groups.Clear();
         cardStates.Clear();
+        predeterminedUVByGroup.Clear();
+        predeterminedUVCacheFrame = -1;
+        uvRouting = null;
         activeId = -1;
         activeGroup = -1;
         nextId = 1;
