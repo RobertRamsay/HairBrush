@@ -26,6 +26,18 @@ public class HairCardSaveData
 
 [Serializable] public class VarianceChannelSaveData { public string channel; public float amount; public int seed; }
 
+// Runtime AnimationCurve key payload used by the group-root Bend/X/Y/Z length profiles.
+// Curves are group-scoped because they shape the authored value (including POST/variance
+// evaluated values) consistently for every card in that Hair Group.
+[Serializable]
+public class GroomCurveKeySaveData
+{
+    public float time;
+    public float value;
+    public float inTangent;
+    public float outTangent;
+}
+
 [Serializable]
 public class UVRectSaveData
 {
@@ -109,6 +121,13 @@ public class GroupClumperSaveData
     public float vScale;
     public float uOffset;
     public float vOffset;
+
+    // Group-root 0..1 length profiles for the authored Bend/X/Y/Z angle values.
+    // Empty lists mean legacy/default behaviour: Bend=t^2 and X/Y/Z=1 throughout.
+    public List<GroomCurveKeySaveData> bendCurve=new();
+    public List<GroomCurveKeySaveData> xAngleCurve=new();
+    public List<GroomCurveKeySaveData> yAngleCurve=new();
+    public List<GroomCurveKeySaveData> zAngleCurve=new();
 
     // Group UV source. Adjustable keeps the legacy group U/V controls. Predetermined
     // chooses one authored Texture Editor rectangle per card using the inclusive ID range
