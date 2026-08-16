@@ -26,11 +26,16 @@ public class AngleLabelRepair : MonoBehaviour
         Repair(viewer.groomingSliderPanelGO.transform, "Offset Z_Row", "Angle Z_Row", "Angle Z");
     }
 
-    void Repair(Transform panel, string legacyName, string newName, string label)
+    void Repair(Transform panel, string stableRowName, string renamedRowName, string label)
     {
-        Transform row = panel.Find(newName) ?? panel.Find(legacyName);
+        // Keep the visible control labelled as Angle X/Y/Z, but preserve the original
+        // stable row object name. Grooming extensions (including the per-axis curve rows)
+        // key off these row identifiers, so renaming the GameObject made those controls
+        // impossible to attach even though the slider itself continued to work.
+        Transform row = panel.Find(stableRowName) ?? panel.Find(renamedRowName);
         if (row == null) return;
-        row.name = newName;
+        row.name = stableRowName;
+
         Slider slider = row.GetComponentInChildren<Slider>(true);
         TextMeshProUGUI text = row.GetComponentInChildren<TextMeshProUGUI>(true);
         if (slider != null) slider.gameObject.name = label + "_Slider";
