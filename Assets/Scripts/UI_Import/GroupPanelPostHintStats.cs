@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 // Left group-panel presentation authority. Keeps POST/CLUMPER row structure untouched while
@@ -234,6 +235,28 @@ public class GroupPanelPostHintStats : MonoBehaviour
         if (labelRect != null)
             labelRect.sizeDelta = new Vector2(labelRect.sizeDelta.x, HeaderControlHeight);
 
+        // LabelButton historically relied on its child TMP labels to provide the raycast
+        // surface. The tidy header deliberately makes those labels non-raycastable, so give
+        // the button its own invisible hit graphic. This restores both normal selection and
+        // ModelViewer's existing double-click-to-rename gesture without putting the text back
+        // in the event path.
+        Image labelHit = labelButton.GetComponent<Image>();
+        if (labelHit == null) labelHit = labelButton.gameObject.AddComponent<Image>();
+        labelHit.color = new Color(0f, 0f, 0f, 0f);
+        labelHit.raycastTarget = true;
+
+        Button labelControl = labelButton.GetComponent<Button>();
+        if (labelControl != null) labelControl.targetGraphic = labelHit;
+
+        // The coloured group strip itself should select too. Child controls (UV/SOLO) still
+        // receive their own pointer clicks first, while otherwise-empty header space forwards
+        // to the same LabelButton callback used by clicking the name.
+        Image itemHit = item.GetComponent<Image>();
+        if (itemHit != null) itemHit.raycastTarget = true;
+        GroupHeaderBackgroundClickProxy proxy = item.GetComponent<GroupHeaderBackgroundClickProxy>();
+        if (proxy == null) proxy = item.gameObject.AddComponent<GroupHeaderBackgroundClickProxy>();
+        proxy.labelButton = labelControl;
+
         RectTransform titleRect = nameText.rectTransform;
         titleRect.anchorMin = new Vector2(0f, 1f);
         titleRect.anchorMax = new Vector2(1f, 1f);
@@ -270,5 +293,21 @@ public class GroupPanelPostHintStats : MonoBehaviour
         Transform solo = item.Find("SoloButton");
         if (solo is RectTransform soloRect)
             soloRect.sizeDelta = new Vector2(soloRect.sizeDelta.x, 48f);
+    }
+}
+
+// The group row already has the green/grey Image that visually reads as the tab, but the
+// original interaction only lived on the narrower LabelButton. Forward clicks on otherwise
+// empty row space into that existing callback. UV and SOLO remain independent child Buttons.
+public class GroupHeaderBackgroundClickProxy : MonoBehaviour, IPointerClickHandler
+{
+    [NonSerialized] public Button labelButton;
+
+    public void OnPointerClick(PointerEventData eventData)
+    {
+        if (eventData == null || eventData.button != PointerEventData.InputButton.Left) return;
+        if (labelButton == null) return;
+        labelButton.onClick.Invoke();
+        eventData.Use();
     }
 }
