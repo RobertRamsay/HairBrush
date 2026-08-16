@@ -2,8 +2,16 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
-// Final native 3-column CLUMPER evaluator. Every frame begins from one clean mesh per card,
-// then all active clumper points are layered additively from that same clean source.
+// Final native 3-column CLUMPER evaluator.
+//
+// Pipeline invariant:
+//   canonical/group -> POST/local variance -> HairCard generated mesh -> CLUMPER final vertices.
+//
+// CLUMPER never owns or caches the authored HairCard shape. At the start of every LateUpdate
+// it asks each affected HairCard to regenerate its current upstream mesh, snapshots that exact
+// result for this frame, then layers every clumper point additively from the same clean source.
+// This keeps Length/Width/Segments/Bend/Twist/UVs/shape curves and POST edits live underneath
+// an existing clumper while preventing the clump result from feeding back into the next frame.
 [DefaultExecutionOrder(5255)]
 public class ThreeColumnClumperMeshAuthority : MonoBehaviour
 {
@@ -36,7 +44,10 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         foreach (HairCard card in allCards)
         {
             if (card == null || !groups.Contains(card.groupId)) continue;
-            Vector3[] source = BuildCleanVertices(card);
+
+            Vector3[] source = CaptureCurrentUpstreamVertices(card);
+            if (source == null || source.Length < HairCard.CrossSectionColumns) continue;
+
             clean[card] = source;
             working[card] = (Vector3[])source.Clone();
         }
@@ -52,6 +63,7 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
 
             HairCard[] groupCards = allCards.Where(c =>
                 c != null && c.groupId == clumper.groupId &&
+                clean.ContainsKey(c) &&
                 (!contiguous || SurfaceIslandScope.SameIsland(c, scopeIsland))).ToArray();
             if (groupCards.Length < 2) continue;
 
@@ -72,6 +84,22 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
 
         foreach (KeyValuePair<HairCard, Vector3[]> pair in working)
             WriteVertices(pair.Key, pair.Value);
+    }
+
+    // HairCard.GenerateMesh is the authoritative full upstream mesh builder. Calling it here
+    // deliberately resets last frame's mesh-only Clumper output before we snapshot this frame.
+    // It also refreshes topology and UVs, so a live Segments/UV/curve/POST edit cannot be hidden
+    // by a stale final-pass mesh.
+    static Vector3[] CaptureCurrentUpstreamVertices(HairCard card)
+    {
+        if (card == null) return null;
+        card.GenerateMesh();
+
+        MeshFilter mf = card.GetComponent<MeshFilter>();
+        if (mf == null || mf.mesh == null || mf.mesh.vertexCount < HairCard.CrossSectionColumns)
+            return null;
+
+        return (Vector3[])mf.mesh.vertices.Clone();
     }
 
     static List<HairCard> BuildLeaders(GroupClumperManager.GroupClumper clumper, HairCard[] cards)
@@ -134,29 +162,6 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
             pool.RemoveAt(chosen);
         }
         return leaders;
-    }
-
-    static Vector3[] BuildCleanVertices(HairCard card)
-    {
-        const int columns = HairCard.CrossSectionColumns;
-        int segments = Mathf.Clamp(card.segments, 1, 36);
-        Vector3[] vertices = new Vector3[(segments + 1) * columns];
-        float segmentHeight = Mathf.Max(.001f, card.length) / segments;
-        float halfWidth = Mathf.Max(.0005f, card.width) * .5f;
-        float ridge = card.GetCrossSectionRidgeHeight();
-
-        for (int i = 0; i <= segments; i++)
-        {
-            float t = (float)i / segments;
-            float z = i * segmentHeight;
-            float span = halfWidth * card.flattenFactor;
-            Quaternion authored = card.GetLengthProfileRotation(t);
-            int index = i * columns;
-            vertices[index] = authored * new Vector3(-span, 0f, z);
-            vertices[index + 1] = authored * new Vector3(0f, ridge, z);
-            vertices[index + 2] = authored * new Vector3(span, 0f, z);
-        }
-        return vertices;
     }
 
     static void ApplyClumpAdditive(HairCard source, Vector3[] current, Vector3[] sourceClean, HairCard leader, Vector3[] leaderClean, float influence)
