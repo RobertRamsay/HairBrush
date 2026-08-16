@@ -26,6 +26,12 @@ public class GroupPanelPostHintStats : MonoBehaviour
 {
     private const float HeaderHeight = 66f;
     private const float HeaderControlHeight = 54f;
+    private const float UtilityButtonHeight = 24f;
+    private const float UtilityButtonGap = 5f;
+    private const float UtilityRightInset = 8f;
+    private const float UtilityBottomInset = 6f;
+    private const float UVButtonWidth = 74f;
+    private const float SoloButtonWidth = 52f;
 
     private GameObject boundPanel;
     private TextMeshProUGUI hint;
@@ -224,16 +230,22 @@ public class GroupPanelPostHintStats : MonoBehaviour
     {
         item.sizeDelta = new Vector2(item.sizeDelta.x, HeaderHeight);
 
+        // This header needs two vertical lanes: the name gets the full top width while
+        // UV/SOLO occupy only the lower-right half. The original HorizontalLayoutGroup
+        // permanently reserved their width beside the name, so disable it and position the
+        // three header controls explicitly inside the existing GroupItem rect.
         HorizontalLayoutGroup row = item.GetComponent<HorizontalLayoutGroup>();
-        if (row != null)
-        {
-            row.padding = new RectOffset(8, 8, 6, 6);
-            row.spacing = 5f;
-        }
+        if (row != null) row.enabled = false;
 
         RectTransform labelRect = labelButton as RectTransform;
         if (labelRect != null)
-            labelRect.sizeDelta = new Vector2(labelRect.sizeDelta.x, HeaderControlHeight);
+        {
+            labelRect.anchorMin = Vector2.zero;
+            labelRect.anchorMax = Vector2.one;
+            labelRect.pivot = new Vector2(.5f, .5f);
+            labelRect.offsetMin = new Vector2(8f, 6f);
+            labelRect.offsetMax = new Vector2(-8f, -6f);
+        }
 
         // LabelButton historically relied on its child TMP labels to provide the raycast
         // surface. The tidy header deliberately makes those labels non-raycastable, so give
@@ -286,13 +298,25 @@ public class GroupPanelPostHintStats : MonoBehaviour
         statsText.lineSpacing = -8f;
         statsText.raycastTarget = false;
 
-        Transform uv = item.Find("GroupUVModeButton");
-        if (uv is RectTransform uvRect)
-            uvRect.sizeDelta = new Vector2(uvRect.sizeDelta.x, 48f);
-
         Transform solo = item.Find("SoloButton");
         if (solo is RectTransform soloRect)
-            soloRect.sizeDelta = new Vector2(soloRect.sizeDelta.x, 48f);
+        {
+            soloRect.anchorMin = new Vector2(1f, 0f);
+            soloRect.anchorMax = new Vector2(1f, 0f);
+            soloRect.pivot = new Vector2(1f, 0f);
+            soloRect.anchoredPosition = new Vector2(-UtilityRightInset, UtilityBottomInset);
+            soloRect.sizeDelta = new Vector2(SoloButtonWidth, UtilityButtonHeight);
+        }
+
+        Transform uv = item.Find("GroupUVModeButton");
+        if (uv is RectTransform uvRect)
+        {
+            uvRect.anchorMin = new Vector2(1f, 0f);
+            uvRect.anchorMax = new Vector2(1f, 0f);
+            uvRect.pivot = new Vector2(1f, 0f);
+            uvRect.anchoredPosition = new Vector2(-(UtilityRightInset + SoloButtonWidth + UtilityButtonGap), UtilityBottomInset);
+            uvRect.sizeDelta = new Vector2(UVButtonWidth, UtilityButtonHeight);
+        }
     }
 }
 
