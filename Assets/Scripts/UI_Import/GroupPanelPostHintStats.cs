@@ -32,6 +32,7 @@ public class GroupPanelPostHintStats : MonoBehaviour
     private const float UtilityBottomInset = 6f;
     private const float UVButtonWidth = 74f;
     private const float SoloButtonWidth = 52f;
+    private const float ControlsHintHeight = 100f;
 
     private GameObject boundPanel;
     private TextMeshProUGUI hint;
@@ -93,11 +94,11 @@ public class GroupPanelPostHintStats : MonoBehaviour
         go.transform.SetParent(panel.transform, false);
 
         LayoutElement layout = go.GetComponent<LayoutElement>();
-        layout.preferredHeight = 60f;
-        layout.minHeight = 60f;
+        layout.preferredHeight = ControlsHintHeight;
+        layout.minHeight = ControlsHintHeight;
 
         RectTransform rect = go.GetComponent<RectTransform>();
-        rect.sizeDelta = new Vector2(0f, 60f);
+        rect.sizeDelta = new Vector2(0f, ControlsHintHeight);
 
         hint = go.GetComponent<TextMeshProUGUI>();
         ApplyHintStyle();
@@ -108,7 +109,13 @@ public class GroupPanelPostHintStats : MonoBehaviour
     void ApplyHintStyle()
     {
         if (hint == null) return;
-        hint.text = "CTRL+CLICK on SURFACE to add a POST EFFECT\nSPACE+CLICK on SURFACE to move selected POST\nCTRL+CLICK in SPACE to deactivate";
+        hint.text = "CTRL + CLICK to ADD a POST Modifier\n" +
+                    "TAB + CLICK to ADD a CLUMP Modifier\n" +
+                    "SHIFT to Toggle brushing mode\n" +
+                    "Click UV:ADJ/PRE for UV Mode\n" +
+                    "Double Click Group name to rename it.\n" +
+                    "Click in space to come out of mode\n" +
+                    "SPACE + Click to reposition Modifier";
         hint.fontSize = 11f;
         hint.fontStyle = FontStyles.Bold;
         hint.alignment = TextAlignmentOptions.MidlineLeft;
@@ -119,10 +126,10 @@ public class GroupPanelPostHintStats : MonoBehaviour
         LayoutElement layout = hint.GetComponent<LayoutElement>();
         if (layout != null)
         {
-            layout.preferredHeight = 60f;
-            layout.minHeight = 60f;
+            layout.preferredHeight = ControlsHintHeight;
+            layout.minHeight = ControlsHintHeight;
         }
-        hint.rectTransform.sizeDelta = new Vector2(0f, 60f);
+        hint.rectTransform.sizeDelta = new Vector2(0f, ControlsHintHeight);
     }
 
     void MaintainHintOrder(Transform panel)
