@@ -113,6 +113,17 @@ public class GroupClumperSaveData
     public PostAffectorControlSaveData delta=new();
 }
 
+// PRE mode remains group-global, but a POST may locally choose a different predetermined
+// rectangle range/seed inside its influence. These records are keyed by the persisted POST id.
+[Serializable]
+public class PostPredeterminedUVSaveData
+{
+    public int postId;
+    public int minId=1;
+    public int maxId=1;
+    public int seed;
+}
+
 [Serializable] public class GroupSaveData
 {
     public int groupId;
@@ -139,6 +150,7 @@ public class GroupClumperSaveData
 
     public List<VarianceChannelSaveData> variances=new();
     public List<PostAffectorSaveData> postAffectors=new();
+    public List<PostPredeterminedUVSaveData> postPredeterminedUVs=new();
 
     // Current multi-CLUMPER payload. The single clumper field is retained as a legacy
     // fallback and is populated with the first point when saving for graceful compatibility.
@@ -187,6 +199,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
             foreach(GroupSaveData group in groups)
                 postVariance.PopulateSave(group.postAffectors);
 
+        PostPredeterminedUVAuthority.Capture(this);
         GroupClumperPersistenceBridge.Capture(this);
 
         TextureUVRectWorkspace uvWorkspace=UnityEngine.Object.FindFirstObjectByType<TextureUVRectWorkspace>();
@@ -221,6 +234,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
         PendingModifierRestore=this;
         PendingUVRectRestore=this;
         PendingGroupUVRestore=this;
+        PostPredeterminedUVAuthority.QueueRestore(this);
         GroomShapeCurveAuthority.QueueRestore(this);
         MaterialProjectPersistenceBridge.PendingRestore=this;
         GroupClumperPersistenceBridge.QueueRestore(this);
