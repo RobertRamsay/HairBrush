@@ -58,7 +58,10 @@ public class GroupRegistryFromCardsAuthority : MonoBehaviour
             if (ids.Add(id)) changed = true;
 
             HairCard representative = cards.FirstOrDefault(c => c != null && c.groupId == id);
-            if (names != null && !names.ContainsKey(id)) names[id] = id == 0 ? "Group 0 (Default)" : "Group " + id;
+            // groupNames stores only the optional friendly suffix. The left-panel renderer owns
+            // the numeric identity (GROUP n / Gn_Name), so recovery must not recreate legacy
+            // strings such as "Group 0 (Default)" inside the authored name field.
+            if (names != null && !names.ContainsKey(id)) names[id] = string.Empty;
             if (solo != null && !solo.ContainsKey(id)) solo[id] = false;
             if (uScales != null && !uScales.ContainsKey(id)) uScales[id] = representative != null ? representative.uScale : 1f;
             if (vScales != null && !vScales.ContainsKey(id)) vScales[id] = representative != null ? representative.vScale : 1f;
