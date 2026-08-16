@@ -38,9 +38,6 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
 
         HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
 
-        // If a group had a CLUMPER last frame and no longer has one now, clear the stranded
-        // final-pass vertices immediately. HairCard parameters are still the true source of
-        // truth, so GenerateMesh() restores the correct upstream result.
         if (initialized && previousGroups.Count > 0 && allCards.Length > 0)
         {
             foreach (int gid in previousGroups)
@@ -56,9 +53,6 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
 
         if (byGroup.Count == 0 || allCards.Length == 0) return;
 
-        // Build a clean three-column mesh for EVERY card in every active CLUMPER group,
-        // regardless of amount. This is the key zero-strength behaviour: amount == 0 must
-        // actively write the clean mesh rather than simply skipping the final pass.
         Dictionary<HairCard, Vector3[]> clean = new Dictionary<HairCard, Vector3[]>();
         foreach (HairCard card in allCards)
         {
@@ -70,17 +64,41 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
             WriteVertices(card, sourceClean);
         }
 
-        // Zero amount intentionally stops here after the clean write above.
         foreach (var clumper in byGroup.Values)
         {
-            if (clumper == null || clumper.amount <= .0001f || clumper.leaders == null || clumper.leaders.Count == 0)
+            if (clumper == null || clumper.amount <= .0001f)
                 continue;
 
-            HairCard[] groupCards = allCards.Where(c => c != null && c.groupId == clumper.groupId).ToArray();
+            bool contiguous = SurfaceIslandScope.IsClumperContiguous(clumper.groupId);
+            int scopeIsland = -1;
+            if (contiguous && !SurfaceIslandScope.TryGetIslandAtWorldPoint(clumper.center, clumper.normal, out scopeIsland))
+            {
+                // Fail closed: a CONTIG modifier that cannot resolve its clicked island must
+                // never silently fall back to affecting disconnected geometry.
+                continue;
+            }
+
+            HairCard[] groupCards = allCards.Where(c =>
+                c != null &&
+                c.groupId == clumper.groupId &&
+                (!contiguous || SurfaceIslandScope.SameIsland(c, scopeIsland))).ToArray();
+
+            if (groupCards.Length < 2) continue;
+
+            // GroupClumperManager owns topology/seed selection. In contiguous mode, discard
+            // leaders from other mesh islands. If its global selection produced none on the
+            // active island, choose the nearest eligible card as a deterministic local leader.
+            List<HairCard> eligibleLeaders = clumper.leaders == null
+                ? new List<HairCard>()
+                : clumper.leaders.Where(l => l != null && groupCards.Contains(l)).ToList();
+
+            if (eligibleLeaders.Count == 0)
+                eligibleLeaders.Add(groupCards.OrderBy(c => (RootWorld(c) - clumper.center).sqrMagnitude).First());
+
             foreach (HairCard card in groupCards)
             {
                 if (!clean.TryGetValue(card, out Vector3[] sourceClean)) continue;
-                HairCard leader = FindAssignedLeader(card, clumper.leaders);
+                HairCard leader = FindAssignedLeader(card, eligibleLeaders);
                 if (leader == null || leader == card || !clean.TryGetValue(leader, out Vector3[] leaderClean)) continue;
 
                 float influence = Mathf.Clamp01(clumper.amount * ZoneWeight(card, clumper));
@@ -197,6 +215,7 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
 
     static HairCard FindAssignedLeader(HairCard card, List<HairCard> leaders)
     {
+        if (leaders == null || leaders.Count == 0) return null;
         Vector3 p = RootWorld(card);
         HairCard best = null;
         float bestD2 = float.PositiveInfinity;
