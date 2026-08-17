@@ -14,6 +14,11 @@ public class MaterialEditorManager : MonoBehaviour
     private const string NormalProperty = "_Normal";
     private const string OpacityProperty = "_OpacityMask";
 
+    // HairBrush intentionally has one active hair material for the whole session. Multiple
+    // material entries are authoring presets/stages, never per-group assignments. Keeping the
+    // old dictionary with one reserved key lets existing project persistence migrate cleanly.
+    private const int GlobalMaterialKey = int.MinValue;
+
     [Serializable]
     private class HairMaterialEntry
     {
@@ -48,7 +53,7 @@ public class MaterialEditorManager : MonoBehaviour
         {
             materials.Add(CreateEntry("Mat 1", sourceMaterial));
             selectedMaterialIndex = 0;
-            groupMaterial[viewer.currentGroupId] = 0;
+            groupMaterial[GlobalMaterialKey] = 0;
             ApplyAssignments();
         }
     }
@@ -58,15 +63,13 @@ public class MaterialEditorManager : MonoBehaviour
         if (viewer == null || materials.Count == 0) return;
         if (Time.unscaledTime < nextApplyScan) return;
         nextApplyScan = Time.unscaledTime + .2f;
+
+        // Group selection no longer changes material state. Refresh only so any group-related
+        // workspace around this panel can change without accidentally changing the hair material.
         if (lastGroupId != viewer.currentGroupId)
         {
             lastGroupId = viewer.currentGroupId;
-            int previousSelected = selectedMaterialIndex;
-            if (groupMaterial.TryGetValue(lastGroupId, out int index) && index >= 0 && index < materials.Count)
-                selectedMaterialIndex = index;
             SyncViewerMaterialToCurrentGroup();
-            if (previousSelected != selectedMaterialIndex)
-                UpdatePreviewForSelectedMaterial();
             RefreshPanel();
         }
         ApplyAssignments();
@@ -104,10 +107,14 @@ public class MaterialEditorManager : MonoBehaviour
         UpdatePreviewForSelectedMaterial();
     }
 
-    private void AssignSelectedToCurrentGroup()
+    private void AssignSelectedToAllGroups()
     {
         if (viewer == null || selectedMaterialIndex < 0 || selectedMaterialIndex >= materials.Count) return;
-        groupMaterial[viewer.currentGroupId] = selectedMaterialIndex;
+
+        // A material choice is session-global by design. Clear any legacy per-group mappings so
+        // there is only one source of truth from this point onward.
+        groupMaterial.Clear();
+        groupMaterial[GlobalMaterialKey] = selectedMaterialIndex;
         SyncViewerMaterialToCurrentGroup();
         ApplyAssignments();
         UpdatePreviewForSelectedMaterial();
@@ -120,6 +127,13 @@ public class MaterialEditorManager : MonoBehaviour
         selectedMaterialIndex = index;
         UpdatePreviewForSelectedMaterial();
         RefreshPanel();
+    }
+
+    private int GetGlobalMaterialIndex()
+    {
+        if (materials.Count == 0) return -1;
+        int index = groupMaterial.TryGetValue(GlobalMaterialKey, out int assigned) ? assigned : 0;
+        return Mathf.Clamp(index, 0, materials.Count - 1);
     }
 
     private void BuildUI(Transform parentCanvas)
@@ -154,7 +168,7 @@ public class MaterialEditorManager : MonoBehaviour
         materialListRoot = listRow.transform;
 
         assignmentLabel = CreateSubLabel(panelGO.transform, "", 16f);
-        CreateActionButton(panelGO.transform, "ASSIGN", AssignSelectedToCurrentGroup, 24f);
+        CreateActionButton(panelGO.transform, "APPLY ALL", AssignSelectedToAllGroups, 24f);
         CreateHeader(panelGO.transform, "PROPERTIES", 20f);
         propertiesRoot = CreateContainer(panelGO.transform, "Properties", 180f).transform;
     }
@@ -178,8 +192,9 @@ public class MaterialEditorManager : MonoBehaviour
 
         if (assignmentLabel != null)
         {
-            string assigned = groupMaterial.TryGetValue(viewer.currentGroupId, out int idx) && idx >= 0 && idx < materials.Count ? materials[idx].name : "Mat 1";
-            assignmentLabel.text = "Group " + viewer.currentGroupId + "  •  " + assigned;
+            int assignedIndex = GetGlobalMaterialIndex();
+            string assigned = assignedIndex >= 0 ? materials[assignedIndex].name : "Mat 1";
+            assignmentLabel.text = "ALL GROUPS  •  " + assigned;
         }
 
         if (propertiesRoot != null)
@@ -263,14 +278,14 @@ public class MaterialEditorManager : MonoBehaviour
         else if (propertyName == NormalProperty) entry.normalPath = path;
         else if (propertyName == OpacityProperty) entry.opacityPath = path;
 
-        // If this material is assigned to the current group, update the actual hair immediately.
-        if (groupMaterial.TryGetValue(viewer.currentGroupId, out int assigned) && assigned == selectedMaterialIndex)
+        // Edits to the active global material must update every existing card immediately.
+        if (GetGlobalMaterialIndex() == selectedMaterialIndex)
         {
             viewer.hairCardMaterial = entry.material;
             ApplyAssignments();
         }
 
-        // Always preview the material currently being edited, even before assigning it.
+        // Always preview the material currently being edited, even before applying it globally.
         UpdatePreviewForSelectedMaterial();
         RefreshPanel();
 #endif
@@ -283,26 +298,30 @@ public class MaterialEditorManager : MonoBehaviour
         textureEditor?.SetPreviewMaterial(materials[selectedMaterialIndex].material);
     }
 
+    // Kept under its historical method name because project restore invokes ApplyAssignments via
+    // reflection. Viewer material is now global; currentGroupId is deliberately irrelevant.
     private void SyncViewerMaterialToCurrentGroup()
     {
         if (viewer == null || materials.Count == 0) return;
-        int index = groupMaterial.TryGetValue(viewer.currentGroupId, out int assigned) ? assigned : 0;
-        if (index < 0 || index >= materials.Count) index = 0;
+        int index = GetGlobalMaterialIndex();
+        if (index < 0) return;
         viewer.hairCardMaterial = materials[index].material;
     }
 
     private void ApplyAssignments()
     {
         if (viewer == null || materials.Count == 0) return;
+        int index = GetGlobalMaterialIndex();
+        if (index < 0) return;
+        Material active = materials[index].material;
+
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
         {
-            int index = groupMaterial.TryGetValue(card.groupId, out int assigned) ? assigned : 0;
-            if (index < 0 || index >= materials.Count) index = 0;
             MeshRenderer renderer = card.GetComponent<MeshRenderer>();
-            if (renderer != null && renderer.sharedMaterial != materials[index].material)
-                renderer.sharedMaterial = materials[index].material;
+            if (renderer != null && renderer.sharedMaterial != active)
+                renderer.sharedMaterial = active;
         }
-        SyncViewerMaterialToCurrentGroup();
+        viewer.hairCardMaterial = active;
     }
 
     private string GetCurrentTextureName(string propertyName)
