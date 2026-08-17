@@ -60,6 +60,11 @@ public class MaterialUVRectAuthority : MonoBehaviour
         if (authority == null) return false;
         authority.Resolve();
         if (authority.editor == null) return false;
+
+        // Never expose the previous project's material atlas while the material list is being
+        // rebuilt. Returning true+empty tells PRE consumers to wait rather than fall back global.
+        if (pendingRestore != null) return true;
+
         authority.SyncMaterialGeneration();
         authority.SyncWorkspaceSelection();
         rects = authority.GetRectsForMaterial(authority.GetMaterialIndexForGroup(groupId));
@@ -73,6 +78,7 @@ public class MaterialUVRectAuthority : MonoBehaviour
         if (authority == null) return false;
         authority.Resolve();
         if (authority.editor == null) return false;
+        if (pendingRestore != null) return true;
         authority.SyncMaterialGeneration();
         authority.SyncWorkspaceSelection();
         int selected = authority.GetSelectedMaterialIndex();
@@ -83,6 +89,7 @@ public class MaterialUVRectAuthority : MonoBehaviour
     // AUTO can commit immediately instead of waiting one Update for signature polling.
     public static void StoreSelectedWorkspaceNow()
     {
+        if (pendingRestore != null) return;
         MaterialUVRectAuthority authority = FindFirstObjectByType<MaterialUVRectAuthority>();
         if (authority == null) return;
         authority.Resolve();
@@ -181,7 +188,7 @@ public class MaterialUVRectAuthority : MonoBehaviour
 
     void SyncWorkspaceSelection()
     {
-        if (workspace == null) return;
+        if (workspace == null || pendingRestore != null) return;
         int selected = GetSelectedMaterialIndex();
         if (selected < 0) return;
 
@@ -193,7 +200,7 @@ public class MaterialUVRectAuthority : MonoBehaviour
             // the old global workspace as this material's starting set rather than erasing it.
             List<UVRectSaveData> current = workspace.ExportDefinitions();
             if (rectsByMaterial.TryGetValue(selected, out List<UVRectSaveData> stored) &&
-                stored.Count == 0 && current.Count > 0 && pendingRestore == null)
+                stored.Count == 0 && current.Count > 0)
                 rectsByMaterial[selected] = Clone(current);
             else
                 ImportMaterialIntoWorkspace(selected);
