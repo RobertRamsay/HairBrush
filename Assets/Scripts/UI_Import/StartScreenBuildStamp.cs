@@ -48,7 +48,8 @@ public class StartScreenBuildStamp : MonoBehaviour
             TextMeshProUGUI[] labels = canvas.GetComponentsInChildren<TextMeshProUGUI>(true);
             foreach (TextMeshProUGUI label in labels)
             {
-                string text = label != null ? label.text : string.Empty;
+                if (label == null) continue;
+                string text = label.text ?? string.Empty;
                 if (text.IndexOf("HAIRBRUSH", StringComparison.OrdinalIgnoreCase) >= 0) score += 5;
                 if (text.IndexOf("NEW", StringComparison.OrdinalIgnoreCase) >= 0) score += 2;
                 if (text.IndexOf("LOAD", StringComparison.OrdinalIgnoreCase) >= 0) score += 2;
@@ -77,10 +78,19 @@ public class StartScreenBuildStamp : MonoBehaviour
 
     void BuildStamp(Transform parent)
     {
+        if (parent == null) return;
+
         stampObject = new GameObject(ObjectName, typeof(RectTransform), typeof(CanvasRenderer), typeof(TextMeshProUGUI));
         stampObject.transform.SetParent(parent, false);
 
         RectTransform rect = stampObject.GetComponent<RectTransform>();
+        if (rect == null)
+        {
+            Destroy(stampObject);
+            stampObject = null;
+            return;
+        }
+
         rect.anchorMin = new Vector2(0f, 0f);
         rect.anchorMax = new Vector2(1f, 0f);
         rect.pivot = new Vector2(0.5f, 0f);
@@ -88,6 +98,13 @@ public class StartScreenBuildStamp : MonoBehaviour
         rect.sizeDelta = new Vector2(-24f, 24f);
 
         TextMeshProUGUI text = stampObject.GetComponent<TextMeshProUGUI>();
+        if (text == null)
+        {
+            Destroy(stampObject);
+            stampObject = null;
+            return;
+        }
+
         text.text = BuildLabel();
         text.fontSize = 11f;
         text.fontStyle = FontStyles.Normal;
