@@ -1,0 +1,160 @@
+diff --git a/Assets/Scripts/UI_Import/StatusToast.cs b/Assets/Scripts/UI_Import/StatusToast.cs
+new file mode 100644
+index 0000000..b510706
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/StatusToast.cs
+@@ -0,0 +1,96 @@
++using TMPro;
++using UnityEngine;
++using UnityEngine.UI;
++
++// Minimal on-screen status/error toast. Several I/O failures in this project only ever reached
++// Debug.LogError, which is invisible while an actual Player build is running - there's no console
++// to check, and the Player.log file isn't something most people know to go find mid-session. This
++// puts the same message on screen instead, so failures are diagnosable without leaving the app.
++public static class StatusToast
++{
++    private static StatusToastAuthority instance;
++
++    public static void Show(string message, bool isError = false)
++    {
++        Debug.Log((isError ? "[HairBrush ERROR] " : "[HairBrush] ") + message);
++        Ensure();
++        instance.Display(message, isError);
++    }
++
++    private static void Ensure()
++    {
++        if (instance != null) return;
++        instance = Object.FindFirstObjectByType<StatusToastAuthority>();
++        if (instance != null) return;
++        GameObject go = new GameObject("StatusToastAuthority");
++        Object.DontDestroyOnLoad(go);
++        instance = go.AddComponent<StatusToastAuthority>();
++    }
++}
++
++public class StatusToastAuthority : MonoBehaviour
++{
++    private Canvas canvas;
++    private TextMeshProUGUI label;
++    private Image background;
++    private float hideAt;
++
++    void Awake()
++    {
++        BuildUI();
++    }
++
++    void Update()
++    {
++        if (canvas == null) return;
++        if (canvas.gameObject.activeSelf && Time.unscaledTime >= hideAt)
++            canvas.gameObject.SetActive(false);
++    }
++
++    public void Display(string message, bool isError)
++    {
++        if (canvas == null) BuildUI();
++        label.text = message;
++        background.color = isError ? new Color(.55f, .16f, .16f, .92f) : new Color(.14f, .30f, .32f, .92f);
++        canvas.gameObject.SetActive(true);
++        hideAt = Time.unscaledTime + (isError ? 6f : 3f);
++    }
++
++    void BuildUI()
++    {
++        GameObject canvasGO = new GameObject("StatusToastCanvas", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
++        canvasGO.transform.SetParent(transform, false);
++        canvas = canvasGO.GetComponent<Canvas>();
++        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
++        canvas.sortingOrder = 5000;
++        CanvasScaler scaler = canvasGO.GetComponent<CanvasScaler>();
++        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
++        scaler.referenceResolution = new Vector2(1920f, 1080f);
++
++        GameObject panelGO = new GameObject("Panel", typeof(RectTransform), typeof(Image));
++        panelGO.transform.SetParent(canvasGO.transform, false);
++        RectTransform panelRect = panelGO.GetComponent<RectTransform>();
++        panelRect.anchorMin = new Vector2(.5f, 0f);
++        panelRect.anchorMax = new Vector2(.5f, 0f);
++        panelRect.pivot = new Vector2(.5f, 0f);
++        panelRect.anchoredPosition = new Vector2(0f, 40f);
++        panelRect.sizeDelta = new Vector2(760f, 56f);
++        background = panelGO.GetComponent<Image>();
++        background.color = new Color(.14f, .30f, .32f, .92f);
++
++        GameObject textGO = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
++        textGO.transform.SetParent(panelGO.transform, false);
++        RectTransform textRect = textGO.GetComponent<RectTransform>();
++        textRect.anchorMin = Vector2.zero;
++        textRect.anchorMax = Vector2.one;
++        textRect.offsetMin = new Vector2(16f, 4f);
++        textRect.offsetMax = new Vector2(-16f, -4f);
++        label = textGO.GetComponent<TextMeshProUGUI>();
++        label.alignment = TextAlignmentOptions.Center;
++        label.fontSize = 20f;
++        label.color = Color.white;
++        label.enableWordWrapping = true;
++
++        canvasGO.SetActive(false);
++    }
++}
+diff --git a/Assets/Scripts/UI_Import/StatusToast.cs.meta b/Assets/Scripts/UI_Import/StatusToast.cs.meta
+new file mode 100644
+index 0000000..1a557f2
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/StatusToast.cs.meta
+@@ -0,0 +1,11 @@
++fileFormatVersion: 2
++guid: a7ade776faab4cb7b1ad605c46d316f4
++MonoImporter:
++  externalObjects: {}
++  serializedVersion: 2
++  defaultReferences: []
++  executionOrder: 0
++  icon: {instanceID: 0}
++  userData: 
++  assetBundleName: 
++  assetBundleVariant: 
+--- a/Assets/Scripts/UI_Import/MaterialEditorManager.cs	2026-08-17 18:10:12.154840142 +0000
++++ b/Assets/Scripts/UI_Import/MaterialEditorManager.cs	2026-08-17 18:10:22.361741019 +0000
+@@ -256,7 +256,12 @@
+ 
+         byte[] bytes;
+         try { bytes = File.ReadAllBytes(path); }
+-        catch (Exception ex) { Debug.LogError("Could not read texture file: " + ex.Message); return; }
++        catch (Exception ex)
++        {
++            Debug.LogError("Could not read texture file: " + ex.Message);
++            StatusToast.Show("Couldn't read that file: " + ex.Message, true);
++            return;
++        }
+ 
+         Texture2D texture = new Texture2D(2, 2, TextureFormat.RGBA32, true, linear);
+         texture.name = Path.GetFileNameWithoutExtension(path);
+@@ -264,6 +269,7 @@
+         {
+             Destroy(texture);
+             Debug.LogError("Could not decode texture: " + path);
++            StatusToast.Show("Couldn't decode that image (unsupported format or corrupt file): " + Path.GetFileName(path), true);
+             return;
+         }
+ 
+@@ -274,6 +280,7 @@
+         {
+             Destroy(texture);
+             Debug.LogError("Selected hair shader has no texture property " + propertyName);
++            StatusToast.Show("Current shader has no " + propertyName + " texture slot.", true);
+             return;
+         }
+ 
+@@ -282,6 +289,8 @@
+         else if (propertyName == NormalProperty) entry.normalPath = path;
+         else if (propertyName == OpacityProperty) entry.opacityPath = path;
+ 
++        StatusToast.Show("Loaded " + Path.GetFileName(path));
++
+         // Edits to the active global material must update every existing card immediately.
+         if (GetGlobalMaterialIndex() == selectedMaterialIndex)
+         {

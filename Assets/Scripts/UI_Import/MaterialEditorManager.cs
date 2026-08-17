@@ -256,7 +256,12 @@ public class MaterialEditorManager : MonoBehaviour
 
         byte[] bytes;
         try { bytes = File.ReadAllBytes(path); }
-        catch (Exception ex) { Debug.LogError("Could not read texture file: " + ex.Message); return; }
+        catch (Exception ex)
+        {
+            Debug.LogError("Could not read texture file: " + ex.Message);
+            StatusToast.Show("Couldn't read that file: " + ex.Message, true);
+            return;
+        }
 
         Texture2D texture = new Texture2D(2, 2, TextureFormat.RGBA32, true, linear);
         texture.name = Path.GetFileNameWithoutExtension(path);
@@ -264,6 +269,7 @@ public class MaterialEditorManager : MonoBehaviour
         {
             Destroy(texture);
             Debug.LogError("Could not decode texture: " + path);
+            StatusToast.Show("Couldn't decode that image (unsupported format or corrupt file): " + Path.GetFileName(path), true);
             return;
         }
 
@@ -274,6 +280,7 @@ public class MaterialEditorManager : MonoBehaviour
         {
             Destroy(texture);
             Debug.LogError("Selected hair shader has no texture property " + propertyName);
+            StatusToast.Show("Current shader has no " + propertyName + " texture slot.", true);
             return;
         }
 
@@ -281,6 +288,8 @@ public class MaterialEditorManager : MonoBehaviour
         if (propertyName == AlbedoProperty) entry.albedoPath = path;
         else if (propertyName == NormalProperty) entry.normalPath = path;
         else if (propertyName == OpacityProperty) entry.opacityPath = path;
+
+        StatusToast.Show("Loaded " + Path.GetFileName(path));
 
         // Edits to the active global material must update every existing card immediately.
         if (GetGlobalMaterialIndex() == selectedMaterialIndex)
