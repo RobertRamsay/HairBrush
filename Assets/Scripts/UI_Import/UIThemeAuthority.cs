@@ -18,6 +18,7 @@ public class UIThemeAuthority : MonoBehaviour
     private float nextScan;
     private readonly HashSet<Button> styledButtons = new HashSet<Button>();
     private readonly HashSet<Slider> styledSliders = new HashSet<Slider>();
+    private readonly Dictionary<Button, bool> lastInteractable = new Dictionary<Button, bool>();
 
     // Row names confirmed to exist in the current grooming panel that read as the start of a
     // new section. Deliberately conservative - only known row names get a divider, nothing is
@@ -58,10 +59,22 @@ public class UIThemeAuthority : MonoBehaviour
             {
                 UITheme.StyleButton(button);
                 styledButtons.Add(button);
+                lastInteractable[button] = button.interactable;
+                UITheme.RefreshInteractable(button);
+                continue;
             }
-            // Cheap per-poll sync so a button disabled/re-enabled after its initial styling
-            // still shows the right dimmed/undimmed state.
-            UITheme.RefreshInteractable(button);
+
+            // Only touch a button's visuals again if its interactable state actually changed
+            // since the last poll. Reasserting identical values every poll was harmless in
+            // principle but gave every other authority that also restyles a button (several
+            // do) one more chance per second to visibly race this one - this removes that
+            // window entirely rather than relying on execution order alone.
+            bool current = button.interactable;
+            if (!lastInteractable.TryGetValue(button, out bool previous) || previous != current)
+            {
+                lastInteractable[button] = current;
+                UITheme.RefreshInteractable(button);
+            }
         }
     }
 

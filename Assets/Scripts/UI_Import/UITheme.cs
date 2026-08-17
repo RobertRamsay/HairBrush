@@ -134,11 +134,17 @@ public static class UITheme
     public static void TidyLabel(TextMeshProUGUI label)
     {
         if (label == null) return;
+
+        // Cap auto-sizing to shrink-only, bounded by whatever the label's own author picked -
+        // never grow past their intended size, and never touch enableWordWrapping here: some
+        // labels (e.g. GroomShapeCurveAuthority's popup buttons) are deliberately built to rely
+        // on wrapping to stay readable at a fixed narrow width, and forcing wrap off pushed them
+        // straight into the ellipsis fallback below instead of the two-line layout they need.
+        float original = label.fontSize;
         label.enableAutoSizing = true;
-        label.fontSizeMin = 9f;
-        label.fontSizeMax = Mathf.Max(label.fontSize, 14f);
+        label.fontSizeMin = Mathf.Min(9f, original);
+        label.fontSizeMax = original;
         label.overflowMode = TextOverflowModes.Ellipsis;
-        label.enableWordWrapping = false;
         label.margin = new Vector4(6f, 1f, 6f, 1f);
         if (label.color.a > 0f) label.color = TextBright;
     }
