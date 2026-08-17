@@ -4,10 +4,10 @@ using UnityEngine;
 
 // Final native 3-column CLUMPER evaluator.
 //
-// Every affected card is rebuilt from its current authored/evaluated parameters each frame:
-// vertices + UVs + topology are created deterministically, active clumpers deform only those
-// clean vertices, then the complete mesh is replaced. No previous CLUMPER output is ever read.
-// This makes amount=0 a true restore and prevents topology/UV changes from wedging the stage.
+// The expensive mesh rebuild is dirty-driven. Each CLUMPER group keeps a lightweight signature
+// of modifier settings + card source meshes/transforms. If that signature has not changed, the
+// already-derived clumped mesh is left untouched. HairCard cooperates by preserving an active
+// external CLUMPER override when another authority regenerates an identical clean source mesh.
 [DefaultExecutionOrder(5255)]
 public class ThreeColumnClumperMeshAuthority : MonoBehaviour
 {
@@ -19,6 +19,8 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
     }
 
     private GroupClumperManager manager;
+    private readonly Dictionary<int, int> lastGroupSignature = new Dictionary<int, int>();
+    private readonly HashSet<int> overriddenGroups = new HashSet<int>();
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
@@ -35,42 +37,99 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         if (manager == null) return;
 
         List<GroupClumperManager.GroupClumper> clumpers = manager.GetAllClumpers();
-        if (clumpers.Count == 0) return;
-
         HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
-        if (allCards.Length == 0) return;
 
-        HashSet<int> groups = new HashSet<int>(clumpers.Select(c => c.groupId));
+        if (clumpers.Count == 0)
+        {
+            RestoreRemovedGroups(allCards, new HashSet<int>());
+            lastGroupSignature.Clear();
+            return;
+        }
+
+        List<GroupClumperManager.GroupClumper> ordered = clumpers
+            .Where(c => c != null)
+            .OrderBy(c => c.id)
+            .ToList();
+        HashSet<int> groups = new HashSet<int>(ordered.Select(c => c.groupId));
+
+        RestoreRemovedGroups(allCards, groups);
+
+        foreach (int groupId in groups)
+        {
+            List<GroupClumperManager.GroupClumper> groupClumpers = ordered
+                .Where(c => c.groupId == groupId)
+                .ToList();
+            HairCard[] groupCards = allCards
+                .Where(c => c != null && c.groupId == groupId)
+                .ToArray();
+
+            int signature = ComputeGroupSignature(groupId, groupClumpers, groupCards);
+            if (lastGroupSignature.TryGetValue(groupId, out int previous) && previous == signature)
+                continue;
+
+            EvaluateGroup(groupId, groupClumpers, groupCards);
+            lastGroupSignature[groupId] = signature;
+        }
+
+        foreach (int stale in lastGroupSignature.Keys.Where(g => !groups.Contains(g)).ToArray())
+            lastGroupSignature.Remove(stale);
+    }
+
+    void RestoreRemovedGroups(HairCard[] allCards, HashSet<int> currentGroups)
+    {
+        foreach (int oldGroup in overriddenGroups.Where(g => !currentGroups.Contains(g)).ToArray())
+        {
+            foreach (HairCard card in allCards)
+            {
+                if (card == null || card.groupId != oldGroup) continue;
+                card.ClearExternalClumpOverride();
+                card.GenerateMesh();
+            }
+            overriddenGroups.Remove(oldGroup);
+            lastGroupSignature.Remove(oldGroup);
+        }
+    }
+
+    void EvaluateGroup(int groupId, List<GroupClumperManager.GroupClumper> clumpers, HairCard[] groupCards)
+    {
+        if (groupCards == null || groupCards.Length == 0)
+        {
+            overriddenGroups.Remove(groupId);
+            return;
+        }
+
         Dictionary<HairCard, CleanMeshData> clean = new Dictionary<HairCard, CleanMeshData>();
         Dictionary<HairCard, Vector3[]> working = new Dictionary<HairCard, Vector3[]>();
 
-        foreach (HairCard card in allCards)
+        foreach (HairCard card in groupCards)
         {
-            if (card == null || !groups.Contains(card.groupId)) continue;
+            if (card == null) continue;
             CleanMeshData source = BuildCleanMesh(card);
             if (source == null || source.vertices == null) continue;
             clean[card] = source;
             working[card] = (Vector3[])source.vertices.Clone();
         }
 
-        foreach (GroupClumperManager.GroupClumper clumper in clumpers.OrderBy(c => c.id))
+        bool anyActive = false;
+        foreach (GroupClumperManager.GroupClumper clumper in clumpers)
         {
             if (clumper == null || clumper.amount <= .0001f) continue;
+            anyActive = true;
 
             bool contiguous = SurfaceIslandScope.IsClumperContiguous(clumper.groupId);
             int scopeIsland = -1;
             if (contiguous && !SurfaceIslandScope.TryGetIslandAtWorldPoint(clumper.center, clumper.normal, out scopeIsland))
                 continue;
 
-            HairCard[] groupCards = allCards.Where(c =>
-                c != null && c.groupId == clumper.groupId && clean.ContainsKey(c) &&
+            HairCard[] scopedCards = groupCards.Where(c =>
+                c != null && clean.ContainsKey(c) &&
                 (!contiguous || SurfaceIslandScope.SameIsland(c, scopeIsland))).ToArray();
-            if (groupCards.Length < 2) continue;
+            if (scopedCards.Length < 2) continue;
 
-            List<HairCard> leaders = BuildLeaders(clumper, groupCards);
+            List<HairCard> leaders = BuildLeaders(clumper, scopedCards);
             if (leaders.Count == 0) continue;
 
-            foreach (HairCard card in groupCards)
+            foreach (HairCard card in scopedCards)
             {
                 if (!clean.TryGetValue(card, out CleanMeshData sourceData) ||
                     !working.TryGetValue(card, out Vector3[] current)) continue;
@@ -87,9 +146,79 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
 
         foreach (KeyValuePair<HairCard, Vector3[]> pair in working)
         {
-            if (clean.TryGetValue(pair.Key, out CleanMeshData source))
-                WriteFullMesh(pair.Key, source, pair.Value);
+            if (!clean.TryGetValue(pair.Key, out CleanMeshData source)) continue;
+
+            pair.Key.ClearExternalClumpOverride();
+            WriteFullMesh(pair.Key, source, pair.Value);
+            if (anyActive) pair.Key.MarkExternalClumpOverride();
         }
+
+        if (anyActive) overriddenGroups.Add(groupId);
+        else overriddenGroups.Remove(groupId);
+    }
+
+    static int ComputeGroupSignature(int groupId, List<GroupClumperManager.GroupClumper> clumpers, HairCard[] cards)
+    {
+        unchecked
+        {
+            int hash = 17;
+            hash = Mix(hash, groupId);
+            hash = Mix(hash, SurfaceIslandScope.IsClumperContiguous(groupId) ? 1 : 0);
+            hash = Mix(hash, clumpers != null ? clumpers.Count : 0);
+
+            if (clumpers != null)
+            {
+                foreach (GroupClumperManager.GroupClumper c in clumpers)
+                {
+                    if (c == null) continue;
+                    hash = Mix(hash, c.id);
+                    hash = Mix(hash, (int)c.mode);
+                    hash = Mix(hash, c.amount.GetHashCode());
+                    hash = Mix(hash, c.count);
+                    hash = Mix(hash, c.seed);
+                    hash = Mix(hash, c.radius.GetHashCode());
+                    hash = Mix(hash, c.falloff.GetHashCode());
+                    hash = Mix(hash, c.center.x.GetHashCode());
+                    hash = Mix(hash, c.center.y.GetHashCode());
+                    hash = Mix(hash, c.center.z.GetHashCode());
+                    hash = Mix(hash, c.normal.x.GetHashCode());
+                    hash = Mix(hash, c.normal.y.GetHashCode());
+                    hash = Mix(hash, c.normal.z.GetHashCode());
+                }
+            }
+
+            hash = Mix(hash, cards != null ? cards.Length : 0);
+            if (cards != null)
+            {
+                foreach (HairCard card in cards.OrderBy(c => c != null ? c.GetInstanceID() : 0))
+                {
+                    if (card == null) continue;
+                    hash = Mix(hash, card.GetInstanceID());
+                    hash = Mix(hash, card.GetGeneratedMeshSignature());
+
+                    Vector3 root = RootWorld(card);
+                    hash = Mix(hash, root.x.GetHashCode());
+                    hash = Mix(hash, root.y.GetHashCode());
+                    hash = Mix(hash, root.z.GetHashCode());
+
+                    Vector3 p = card.transform.position;
+                    Quaternion q = card.transform.rotation;
+                    hash = Mix(hash, p.x.GetHashCode());
+                    hash = Mix(hash, p.y.GetHashCode());
+                    hash = Mix(hash, p.z.GetHashCode());
+                    hash = Mix(hash, q.x.GetHashCode());
+                    hash = Mix(hash, q.y.GetHashCode());
+                    hash = Mix(hash, q.z.GetHashCode());
+                    hash = Mix(hash, q.w.GetHashCode());
+                }
+            }
+            return hash;
+        }
+    }
+
+    static int Mix(int hash, int value)
+    {
+        unchecked { return hash * 31 + value; }
     }
 
     static List<HairCard> BuildLeaders(GroupClumperManager.GroupClumper clumper, HairCard[] cards)
