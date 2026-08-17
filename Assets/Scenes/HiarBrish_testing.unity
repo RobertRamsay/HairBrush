@@ -156,7 +156,7 @@ MonoBehaviour:
   rotateSpeed: 1
   zoomSpeed: 100
   panSpeed: 0.01
-  hairCardMaterial: {fileID: 2100000, guid: d072ef0c54a403a4c85ac4c6ea7c8eb9, type: 2}
+  hairCardMaterial: {fileID: 2100000, guid: e72ccc8d6c8fc6747ac857c0a3498f2f, type: 2}
   lastPlacedCard: {fileID: 0}
   currentLength: 0.2
   currentWidth: 0.01
