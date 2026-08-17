@@ -39,7 +39,13 @@ public class GroupUVRandomButtonAuthority : MonoBehaviour
         Transform row = viewer.groomingSliderPanelGO.transform.Find("GroupUVPredetermined_Row");
         if (row == null) return;
 
-        TidyRow(row);
+        // TidyRow (fixed pixel widths) is deliberately no longer called here.
+        // GroupUVRangeSliderUIAuthority (LateUpdate, order 9620) now owns this row's layout
+        // with proportional anchors sized to the actual panel width, matching the approach
+        // that already works for POST. Since this script's LateUpdate runs later (order
+        // 14000), TidyRow's fixed sizeDelta values were being added on top of that proportional
+        // layout every frame and pushing the row past the panel edge - removing the call, not
+        // just changing the numbers, is what stops that for good.
 
         Button button = row.Find("GroupUVRandomSeedButton")?.GetComponent<Button>();
         if (button == null) return;

@@ -24,7 +24,7 @@ public static class UITheme
     public static readonly Color TrackDark = new Color(.12f, .14f, .16f, 1f);
     public static readonly Color FillCyan = new Color(.20f, .60f, .68f, 1f);
 
-    private const string BasePath = "Assets/UI_fgx/";
+    private const string BasePath = "Assets/UI_GFX/";
 
     private static Sprite normalSprite, hoverSprite, clickSprite, fineEdgeSprite, fineGlowSprite, dividerSprite;
     private static bool loaded;
