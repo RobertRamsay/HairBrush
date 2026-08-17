@@ -52,10 +52,36 @@ public class GroomShapeProfileButtonAuthority : MonoBehaviour
     void UpgradeRow(string rowName, GroomShapeCurveChannel channel)
     {
         Transform row = boundPanel != null ? boundPanel.transform.Find(rowName) : null;
-        if (row == null || row.Find("ProfileButton") != null) return;
+        if (row == null) return;
+
+        // The old generated row was laid out for the original wide panel (135px left inset,
+        // label + EDIT + RESET). At the compact 300px width that forces the controls outside
+        // the panel. The profile button is now the whole row and RESET lives inside the editor.
+        HorizontalLayoutGroup rowLayout = row.GetComponent<HorizontalLayoutGroup>();
+        if (rowLayout != null)
+        {
+            rowLayout.padding = new RectOffset(0, 0, 0, 0);
+            rowLayout.spacing = 0f;
+            rowLayout.childControlWidth = true;
+            rowLayout.childControlHeight = true;
+            rowLayout.childForceExpandWidth = true;
+            rowLayout.childForceExpandHeight = false;
+        }
 
         Transform oldLabel = row.Find("Label");
         Transform oldEdit = row.Find("EDIT CURVEButton");
+        Transform oldReset = row.Find("RESETButton");
+        Transform existingButton = row.Find("ProfileButton");
+
+        if (existingButton != null)
+        {
+            NormalizeProfileButton(existingButton.gameObject);
+            if (oldLabel != null) Destroy(oldLabel.gameObject);
+            if (oldEdit != null) Destroy(oldEdit.gameObject);
+            if (oldReset != null) Destroy(oldReset.gameObject);
+            return;
+        }
+
         string label = oldLabel != null && oldLabel.GetComponent<TextMeshProUGUI>() != null
             ? oldLabel.GetComponent<TextMeshProUGUI>().text
             : channel + " PROFILE";
@@ -63,12 +89,7 @@ public class GroomShapeProfileButtonAuthority : MonoBehaviour
         GameObject buttonGO = new GameObject("ProfileButton", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
         buttonGO.transform.SetParent(row, false);
         buttonGO.transform.SetSiblingIndex(0);
-
-        LayoutElement layout = buttonGO.GetComponent<LayoutElement>();
-        layout.preferredWidth = 268f;
-        layout.minWidth = 268f;
-        layout.preferredHeight = 25f;
-        layout.minHeight = 25f;
+        NormalizeProfileButton(buttonGO);
 
         Image image = buttonGO.GetComponent<Image>();
         image.color = new Color(.20f, .50f, .82f, 1f);
@@ -88,12 +109,40 @@ public class GroomShapeProfileButtonAuthority : MonoBehaviour
         TextMeshProUGUI text = textGO.GetComponent<TextMeshProUGUI>();
         text.text = label + "   EDIT";
         text.fontSize = 10f;
+        text.fontSizeMax = 10f;
+        text.fontSizeMin = 8f;
+        text.enableAutoSizing = true;
         text.fontStyle = FontStyles.Bold;
         text.alignment = TextAlignmentOptions.MidlineLeft;
         text.color = Color.white;
         text.raycastTarget = false;
+        text.enableWordWrapping = false;
+        text.overflowMode = TextOverflowModes.Ellipsis;
 
         if (oldLabel != null) Destroy(oldLabel.gameObject);
         if (oldEdit != null) Destroy(oldEdit.gameObject);
+        if (oldReset != null) Destroy(oldReset.gameObject);
+    }
+
+    static void NormalizeProfileButton(GameObject buttonGO)
+    {
+        if (buttonGO == null) return;
+        LayoutElement layout = buttonGO.GetComponent<LayoutElement>();
+        if (layout == null) layout = buttonGO.AddComponent<LayoutElement>();
+        layout.minWidth = 0f;
+        layout.preferredWidth = 0f;
+        layout.flexibleWidth = 1f;
+        layout.preferredHeight = 25f;
+        layout.minHeight = 25f;
+
+        TextMeshProUGUI text = buttonGO.GetComponentInChildren<TextMeshProUGUI>(true);
+        if (text != null)
+        {
+            text.fontSizeMax = 10f;
+            text.fontSizeMin = 8f;
+            text.enableAutoSizing = true;
+            text.enableWordWrapping = false;
+            text.overflowMode = TextOverflowModes.Ellipsis;
+        }
     }
 }
