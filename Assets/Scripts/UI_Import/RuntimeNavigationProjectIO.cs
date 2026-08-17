@@ -105,8 +105,12 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
 
     public void SaveProjectEnhanced()
     {
+        string path;
 #if UNITY_EDITOR
-        string path = EditorUtility.SaveFilePanel("Save Hair Project", "", "HairProject", "json");
+        path = EditorUtility.SaveFilePanel("Save Hair Project", "", "HairProject", "json");
+#else
+        path = RuntimeFileDialog.SaveFile("Save Hair Project", "HairBrush Projects\0*.json\0All Files\0*.*\0\0", "HairProject", "json");
+#endif
         if (string.IsNullOrEmpty(path)) return;
         HairProjectSaveData data = new HairProjectSaveData();
         data.modelPath = GetField<string>("currentModelPath");
@@ -138,13 +142,17 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
         }
         File.WriteAllText(path, JsonUtility.ToJson(data,true));
         Debug.Log("Project saved successfully to: "+path);
-#endif
     }
 
     public void LoadProjectEnhanced()
     {
+        string path;
 #if UNITY_EDITOR
-        string path=EditorUtility.OpenFilePanel("Open Hair Project","","json"); if(string.IsNullOrEmpty(path))return;
+        path = EditorUtility.OpenFilePanel("Open Hair Project", "", "json");
+#else
+        path = RuntimeFileDialog.OpenFile("Open Hair Project", "HairBrush Projects\0*.json\0All Files\0*.*\0\0", "json");
+#endif
+        if(string.IsNullOrEmpty(path))return;
         HairProjectSaveData data=JsonUtility.FromJson<HairProjectSaveData>(File.ReadAllText(path)); if(data==null)return;
         CleanupEditorUIAndCards();
 
@@ -153,6 +161,7 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
             SetField("currentModelPath",data.modelPath); GameObject old=GetField<GameObject>("loadedModel"); if(old!=null)Destroy(old);
             GameObject model=CustomOBJImporter.Load(data.modelPath); SetField("loadedModel",model);
             if(model!=null){model.transform.position=Vector3.zero;model.transform.eulerAngles=new Vector3(0,180,0);MeshRenderer[] rs=model.GetComponentsInChildren<MeshRenderer>();if(rs.Length>0){Bounds b=rs[0].bounds;for(int i=1;i<rs.Length;i++)b.Encapsulate(rs[i].bounds);if(viewer.cameraPivot!=null)viewer.cameraPivot.position=b.center;}}
+            else Debug.LogError("HairBrush: could not load model referenced by project - file not found at: " + data.modelPath);
         }
 
         viewer.currentLength=data.sliderLength;viewer.currentWidth=data.sliderWidth;viewer.currentSegments=data.sliderSegments;viewer.currentBend=data.sliderBend;viewer.currentTwist=data.sliderTwist;viewer.currentEmbedDepth=data.sliderEmbedDepth;viewer.currentOffsetX=data.sliderOffsetX;viewer.currentOffsetY=data.sliderOffsetY;viewer.currentOffsetZ=data.sliderOffsetZ;viewer.currentUScale=data.sliderUScale;viewer.currentVScale=data.sliderVScale;viewer.currentUOffset=data.sliderUOffset;viewer.currentVOffset=data.sliderVOffset;
@@ -180,7 +189,6 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
         foreach(GroupSaveData g in data.groups)modifiers?.RestoreGroup(g);
         RepairAngleControls(true);
         Debug.Log("Project loaded successfully from: "+path);
-#endif
     }
 
     void RepairAngleControls(bool forceValues=false)

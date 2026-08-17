@@ -243,11 +243,15 @@ public class MaterialEditorManager : MonoBehaviour
 
     private void LoadTextureIntoSlot(string propertyName, bool linear)
     {
-#if UNITY_EDITOR
         if (selectedMaterialIndex < 0 || selectedMaterialIndex >= materials.Count) return;
         HairMaterialEntry entry = materials[selectedMaterialIndex];
 
-        string path = EditorUtility.OpenFilePanel("Load texture", "", "png,jpg,jpeg,tga");
+        string path;
+#if UNITY_EDITOR
+        path = EditorUtility.OpenFilePanel("Load texture", "", "png,jpg,jpeg,tga");
+#else
+        path = RuntimeFileDialog.OpenFile("Load texture", "Images\0*.png;*.jpg;*.jpeg;*.tga\0All Files\0*.*\0\0", "png");
+#endif
         if (string.IsNullOrEmpty(path)) return;
 
         byte[] bytes;
@@ -288,7 +292,6 @@ public class MaterialEditorManager : MonoBehaviour
         // Always preview the material currently being edited, even before applying it globally.
         UpdatePreviewForSelectedMaterial();
         RefreshPanel();
-#endif
     }
 
     private void UpdatePreviewForSelectedMaterial()

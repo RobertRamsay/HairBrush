@@ -28,17 +28,26 @@ public static class HairObjExporter
 
     public static void ExportInteractive()
     {
-#if UNITY_EDITOR
         if (lastInteractiveFrame == Time.frameCount) return;
         lastInteractiveFrame = Time.frameCount;
 
         HairCard[] cards = FindExportCards();
         if (cards.Length == 0)
         {
+#if UNITY_EDITOR
             EditorUtility.DisplayDialog("Export Hair OBJ", "There are no hair cards to export.", "OK");
+#else
+            Debug.LogWarning("Export Hair OBJ: there are no hair cards to export.");
+#endif
             return;
         }
 
+        ExportSpace space;
+        ModelViewer viewer = UnityEngine.Object.FindFirstObjectByType<ModelViewer>();
+        GameObject modelRoot = GetLoadedModel(viewer);
+        ImportedOBJMetadata metadata = modelRoot != null ? modelRoot.GetComponent<ImportedOBJMetadata>() : null;
+
+#if UNITY_EDITOR
         int choice = EditorUtility.DisplayDialogComplex(
             "Export Hair OBJ",
             "Which coordinate space should the hair use?\n\nMATCH ORIGINAL reverses the model's import handedness conversion, recentering, normalization scale and editor orientation so the hair aligns with the original source OBJ.\n\nCURRENT SCALE exports exactly as the hair currently exists in the editor.",
@@ -47,11 +56,7 @@ public static class HairObjExporter
             "CURRENT SCALE");
 
         if (choice == 1) return;
-        ExportSpace space = choice == 0 ? ExportSpace.OriginalImportedOBJSpace : ExportSpace.CurrentEditorSpace;
-
-        ModelViewer viewer = UnityEngine.Object.FindFirstObjectByType<ModelViewer>();
-        GameObject modelRoot = GetLoadedModel(viewer);
-        ImportedOBJMetadata metadata = modelRoot != null ? modelRoot.GetComponent<ImportedOBJMetadata>() : null;
+        space = choice == 0 ? ExportSpace.OriginalImportedOBJSpace : ExportSpace.CurrentEditorSpace;
 
         if (space == ExportSpace.OriginalImportedOBJSpace && (modelRoot == null || metadata == null))
         {
@@ -63,12 +68,22 @@ public static class HairObjExporter
             if (!currentInstead) return;
             space = ExportSpace.CurrentEditorSpace;
         }
+#else
+        // The interactive space-choice dialog has no native Windows equivalent here, so a build
+        // always exports at the current scale - the space the hair actually looks like on screen.
+        space = ExportSpace.CurrentEditorSpace;
+#endif
 
         string defaultName = "HairCards.obj";
         if (metadata != null && !string.IsNullOrEmpty(metadata.sourcePath))
             defaultName = Path.GetFileNameWithoutExtension(metadata.sourcePath) + "_Hair.obj";
 
-        string path = EditorUtility.SaveFilePanel("Export Hair Cards OBJ", "", defaultName, "obj");
+        string path;
+#if UNITY_EDITOR
+        path = EditorUtility.SaveFilePanel("Export Hair Cards OBJ", "", defaultName, "obj");
+#else
+        path = RuntimeFileDialog.SaveFile("Export Hair Cards OBJ", "OBJ Files\0*.obj\0All Files\0*.*\0\0", defaultName, "obj");
+#endif
         if (string.IsNullOrEmpty(path)) return;
 
         try
@@ -80,11 +95,10 @@ public static class HairObjExporter
         catch (Exception ex)
         {
             Debug.LogException(ex);
+#if UNITY_EDITOR
             EditorUtility.DisplayDialog("Export Hair OBJ", "Export failed:\n" + ex.Message, "OK");
-        }
-#else
-        Debug.LogWarning("OBJ export currently uses the Unity Editor file browser.");
 #endif
+        }
     }
 
     static HairCard[] FindExportCards()
