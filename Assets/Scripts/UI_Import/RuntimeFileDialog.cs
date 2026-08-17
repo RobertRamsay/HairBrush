@@ -3,8 +3,8 @@ using System.Runtime.InteropServices;
 using System.Text;
 using UnityEngine;
 
-// Minimal native file picker for standalone Windows builds. Keeps HairBrush free of a
-// third-party file-browser package while using the normal Windows Explorer dialogs.
+// Native Windows file picker for standalone builds.
+// Uses the Win32 OPENFILENAMEW structure exactly as documented by Microsoft.
 public static class RuntimeFileDialog
 {
 #if UNITY_STANDALONE_WIN && !UNITY_EDITOR
@@ -16,46 +16,52 @@ public static class RuntimeFileDialog
     const int OFN_EXPLORER = 0x00080000;
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    class OpenFileName
+    struct OpenFileName
     {
-        public int lStructSize = Marshal.SizeOf(typeof(OpenFileName));
-        public IntPtr hwndOwner = IntPtr.Zero;
-        public IntPtr hInstance = IntPtr.Zero;
-        public string lpstrFilter = null;
-        public string lpstrCustomFilter = null;
-        public int nMaxCustFilter = 0;
-        public int nFilterIndex = 1;
-        public StringBuilder lpstrFile = new StringBuilder(4096);
-        public int nMaxFile = 4096;
-        public StringBuilder lpstrFileTitle = new StringBuilder(512);
-        public int nMaxFileTitle = 512;
-        public string lpstrInitialDir = null;
-        public string lpstrTitle = null;
-        public int Flags = 0;
-        public short nFileOffset = 0;
-        public short nFileExtension = 0;
-        public string lpstrDefExt = null;
-        public IntPtr lCustData = IntPtr.Zero;
-        public IntPtr lpfnHook = IntPtr.Zero;
-        public string lpTemplateName = null;
-        public IntPtr pvReserved = IntPtr.Zero;
-        public int dwReserved = 0;
-        public int FlagsEx = 0;
+        public int lStructSize;
+        public IntPtr hwndOwner;
+        public IntPtr hInstance;
+        [MarshalAs(UnmanagedType.LPWStr)] public string lpstrFilter;
+        public IntPtr lpstrCustomFilter;
+        public int nMaxCustFilter;
+        public int nFilterIndex;
+        public IntPtr lpstrFile;
+        public int nMaxFile;
+        public IntPtr lpstrFileTitle;
+        public int nMaxFileTitle;
+        [MarshalAs(UnmanagedType.LPWStr)] public string lpstrInitialDir;
+        [MarshalAs(UnmanagedType.LPWStr)] public string lpstrTitle;
+        public int Flags;
+        public short nFileOffset;
+        public short nFileExtension;
+        [MarshalAs(UnmanagedType.LPWStr)] public string lpstrDefExt;
+        public IntPtr lCustData;
+        public IntPtr lpfnHook;
+        public IntPtr lpTemplateName;
+        public IntPtr pvReserved;
+        public int dwReserved;
+        public int FlagsEx;
     }
 
-    [DllImport("comdlg32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    static extern bool GetOpenFileName([In, Out] OpenFileName ofn);
+    [DllImport("comdlg32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetOpenFileNameW", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool GetOpenFileName(ref OpenFileName ofn);
 
-    [DllImport("comdlg32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    static extern bool GetSaveFileName([In, Out] OpenFileName ofn);
+    [DllImport("comdlg32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetSaveFileNameW", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool GetSaveFileName(ref OpenFileName ofn);
+
+    [DllImport("comdlg32.dll", EntryPoint = "CommDlgExtendedError")]
+    static extern uint CommDlgExtendedError();
+
+    [DllImport("user32.dll")]
+    static extern IntPtr GetActiveWindow();
 #endif
 
     public static string OpenFile(string title, string filter, string defaultExtension = null)
     {
 #if UNITY_STANDALONE_WIN && !UNITY_EDITOR
-        OpenFileName dialog = NewDialog(title, filter, defaultExtension);
-        dialog.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY | OFN_NOCHANGEDIR;
-        return GetOpenFileName(dialog) ? dialog.lpstrFile.ToString() : string.Empty;
+        return ShowDialog(false, title, filter, string.Empty, defaultExtension);
 #else
         Debug.LogWarning("RuntimeFileDialog currently supports standalone Windows builds only.");
         return string.Empty;
@@ -65,10 +71,7 @@ public static class RuntimeFileDialog
     public static string SaveFile(string title, string filter, string defaultFileName, string defaultExtension)
     {
 #if UNITY_STANDALONE_WIN && !UNITY_EDITOR
-        OpenFileName dialog = NewDialog(title, filter, defaultExtension);
-        dialog.lpstrFile.Append(defaultFileName ?? string.Empty);
-        dialog.Flags = OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
-        return GetSaveFileName(dialog) ? dialog.lpstrFile.ToString() : string.Empty;
+        return ShowDialog(true, title, filter, defaultFileName ?? string.Empty, defaultExtension);
 #else
         Debug.LogWarning("RuntimeFileDialog currently supports standalone Windows builds only.");
         return string.Empty;
@@ -76,21 +79,84 @@ public static class RuntimeFileDialog
     }
 
 #if UNITY_STANDALONE_WIN && !UNITY_EDITOR
-    static OpenFileName NewDialog(string title, string filter, string defaultExtension)
+    static string ShowDialog(bool save, string title, string filter, string initialFile, string defaultExtension)
     {
-        return new OpenFileName
+        const int maxChars = 32768;
+        IntPtr fileBuffer = IntPtr.Zero;
+        IntPtr titleBuffer = IntPtr.Zero;
+
+        try
         {
-            lpstrTitle = title,
-            lpstrFilter = EnsureDoubleNull(filter),
-            lpstrDefExt = defaultExtension,
-            lpstrInitialDir = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
-        };
+            fileBuffer = Marshal.AllocHGlobal(maxChars * sizeof(char));
+            titleBuffer = Marshal.AllocHGlobal(1024 * sizeof(char));
+
+            // OPENFILENAME requires the first filename character to be NUL when no initial name is supplied.
+            for (int i = 0; i < maxChars; i++) Marshal.WriteInt16(fileBuffer, i * sizeof(char), 0);
+            for (int i = 0; i < 1024; i++) Marshal.WriteInt16(titleBuffer, i * sizeof(char), 0);
+
+            if (!string.IsNullOrEmpty(initialFile))
+            {
+                byte[] bytes = Encoding.Unicode.GetBytes(initialFile + "\0");
+                Marshal.Copy(bytes, 0, fileBuffer, Math.Min(bytes.Length, maxChars * sizeof(char)));
+            }
+
+            OpenFileName dialog = new OpenFileName
+            {
+                lStructSize = Marshal.SizeOf(typeof(OpenFileName)),
+                hwndOwner = GetActiveWindow(),
+                hInstance = IntPtr.Zero,
+                lpstrFilter = EnsureDoubleNull(filter),
+                lpstrCustomFilter = IntPtr.Zero,
+                nMaxCustFilter = 0,
+                nFilterIndex = 1,
+                lpstrFile = fileBuffer,
+                nMaxFile = maxChars,
+                lpstrFileTitle = titleBuffer,
+                nMaxFileTitle = 1024,
+                lpstrInitialDir = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                lpstrTitle = title,
+                Flags = OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR |
+                        (save ? OFN_OVERWRITEPROMPT : OFN_FILEMUSTEXIST | OFN_HIDEREADONLY),
+                nFileOffset = 0,
+                nFileExtension = 0,
+                lpstrDefExt = defaultExtension,
+                lCustData = IntPtr.Zero,
+                lpfnHook = IntPtr.Zero,
+                lpTemplateName = IntPtr.Zero,
+                pvReserved = IntPtr.Zero,
+                dwReserved = 0,
+                FlagsEx = 0
+            };
+
+            bool ok = save ? GetSaveFileName(ref dialog) : GetOpenFileName(ref dialog);
+            if (ok)
+                return Marshal.PtrToStringUni(fileBuffer) ?? string.Empty;
+
+            uint error = CommDlgExtendedError();
+            // Zero means the user cancelled. Any non-zero value is a real native dialog failure.
+            if (error != 0)
+                Debug.LogError("HairBrush Windows file dialog failed. CommDlgExtendedError=0x" + error.ToString("X"));
+
+            return string.Empty;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError("HairBrush Windows file dialog exception: " + ex);
+            return string.Empty;
+        }
+        finally
+        {
+            if (fileBuffer != IntPtr.Zero) Marshal.FreeHGlobal(fileBuffer);
+            if (titleBuffer != IntPtr.Zero) Marshal.FreeHGlobal(titleBuffer);
+        }
     }
 
     static string EnsureDoubleNull(string filter)
     {
         if (string.IsNullOrEmpty(filter)) return "All Files\0*.*\0\0";
-        return filter.EndsWith("\0\0", StringComparison.Ordinal) ? filter : filter.TrimEnd('\0') + "\0\0";
+        return filter.EndsWith("\0\0", StringComparison.Ordinal)
+            ? filter
+            : filter.TrimEnd('\0') + "\0\0";
     }
 #endif
 }
