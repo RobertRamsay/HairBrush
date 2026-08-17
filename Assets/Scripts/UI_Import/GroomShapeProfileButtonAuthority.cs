@@ -35,6 +35,7 @@ public class GroomShapeProfileButtonAuthority : MonoBehaviour
         UpgradeRow("ShapeCurve_X_Row", GroomShapeCurveChannel.X);
         UpgradeRow("ShapeCurve_Y_Row", GroomShapeCurveChannel.Y);
         UpgradeRow("ShapeCurve_Z_Row", GroomShapeCurveChannel.Z);
+        NormalizeOpenCurveEditor();
     }
 
     void Resolve()
@@ -144,5 +145,28 @@ public class GroomShapeProfileButtonAuthority : MonoBehaviour
             text.enableWordWrapping = false;
             text.overflowMode = TextOverflowModes.Ellipsis;
         }
+    }
+
+    // The curve editor is a fixed-size modal, but its long hint/title text still needs to be
+    // bounded explicitly so display scaling cannot push words into neighboring controls.
+    static void NormalizeOpenCurveEditor()
+    {
+        GameObject popup = GameObject.Find("GroomShapeCurveEditor");
+        if (popup == null) return;
+
+        NormalizePopupText(popup.transform.Find("Title")?.GetComponent<TextMeshProUGUI>(), 12f, 18f);
+        NormalizePopupText(popup.transform.Find("Hint")?.GetComponent<TextMeshProUGUI>(), 8f, 11f);
+        NormalizePopupText(popup.transform.Find("RESET DEFAULTButton/Text")?.GetComponent<TextMeshProUGUI>(), 8f, 11f);
+        NormalizePopupText(popup.transform.Find("CLOSEButton/Text")?.GetComponent<TextMeshProUGUI>(), 8f, 11f);
+    }
+
+    static void NormalizePopupText(TextMeshProUGUI text, float minSize, float maxSize)
+    {
+        if (text == null) return;
+        text.enableAutoSizing = true;
+        text.fontSizeMin = minSize;
+        text.fontSizeMax = maxSize;
+        text.enableWordWrapping = false;
+        text.overflowMode = TextOverflowModes.Ellipsis;
     }
 }
