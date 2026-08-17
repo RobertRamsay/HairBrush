@@ -122,6 +122,17 @@ public static class CustomOBJImporter
         mc.sharedMesh = null;
         mc.sharedMesh = mesh;
 
+        // A dedicated head material (with its own texture) can be provided at
+        // Resources/BodyShaderHead.mat - if present, imported models use it directly rather
+        // than the generic untextured fallback below. This is specifically for the base head
+        // model; a future pass can generalise this per-import once there's more than one.
+        Material headMaterial = Resources.Load<Material>("BodyShaderHead");
+        if (headMaterial != null)
+        {
+            mr.material = headMaterial;
+            return go;
+        }
+
         Shader defaultShader;
         if (UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline != null)
         {
