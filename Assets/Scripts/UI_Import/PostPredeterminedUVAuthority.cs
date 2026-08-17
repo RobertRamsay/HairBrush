@@ -9,9 +9,8 @@ using UnityEngine.UI;
 // PRE/ADJ is always a group-wide routing choice.
 //
 // In PRE mode a POST may optionally override only the predetermined rectangle range/seed
-// inside its spatial influence. The group stays PRE everywhere; cards outside the POST keep
-// the group range. In ADJ mode this authority does nothing because PostAffectorManager already
-// evaluates U/V Scale + Offset as normal localized POST channels.
+// inside its spatial influence. Rectangle IDs resolve against the atlas cuts belonging to the
+// material assigned to that card's group.
 [DefaultExecutionOrder(3450)]
 public class PostPredeterminedUVAuthority : MonoBehaviour
 {
@@ -157,8 +156,6 @@ public class PostPredeterminedUVAuthority : MonoBehaviour
             }
         }
 
-        // POST restore can settle a few frames after project JSON deserializes. Do not prune
-        // the newly restored per-POST UV records while those runtime POST objects are arriving.
         restoreGraceFrames = 120;
         emptyPostFrames = 0;
     }
@@ -194,10 +191,8 @@ public class PostPredeterminedUVAuthority : MonoBehaviour
         Dictionary<int, List<PostAffectorManager.PostAffector>> groups = GetGroups();
         if (groups == null || groups.Count == 0 || byPost.Count == 0 || groupUV == null) return;
 
-        List<UVRectSaveData> rects = GetAllRects();
-        if (rects.Count == 0) return;
-
         Dictionary<int, GroupSaveData> groupSettings = new Dictionary<int, GroupSaveData>();
+        Dictionary<int, List<UVRectSaveData>> rectsByGroup = new Dictionary<int, List<UVRectSaveData>>();
 
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
         {
@@ -210,6 +205,13 @@ public class PostPredeterminedUVAuthority : MonoBehaviour
             }
             if (group == null || !group.usePredeterminedUVs) continue;
 
+            if (!rectsByGroup.TryGetValue(card.groupId, out List<UVRectSaveData> rects))
+            {
+                rects = GetRectsForGroup(card.groupId);
+                rectsByGroup[card.groupId] = rects;
+            }
+            if (rects == null || rects.Count == 0) continue;
+
             PostAffectorManager.PostAffector chosen = null;
             LocalSettings chosenSettings = null;
             float bestWeight = 0f;
@@ -220,10 +222,6 @@ public class PostPredeterminedUVAuthority : MonoBehaviour
 
                 float weight = SpatialWeight(card, post) * Mathf.Clamp01(post.weight);
                 if (weight <= .000001f) continue;
-
-                // PRE ranges are discrete rather than continuously blendable. Use a stable
-                // per-card dither through the POST falloff so Weight/Radius/Falloff still give
-                // a soft population transition instead of switching an entire shell at once.
                 if (weight < StablePostThreshold(card, post)) continue;
 
                 if (chosen == null || weight > bestWeight + .000001f ||
@@ -280,11 +278,11 @@ public class PostPredeterminedUVAuthority : MonoBehaviour
 
     public void SetActiveRange(bool setMin, string value)
     {
-        if (!TryGetActiveContext(out int postId, out _, out int minId, out int maxId, out int seed)) return;
+        if (!TryGetActiveContext(out int postId, out int groupId, out int minId, out int maxId, out int seed)) return;
         if (!int.TryParse(value, out int parsed)) parsed = setMin ? minId : maxId;
         if (setMin) minId = parsed;
         else maxId = parsed;
-        NormalizeRange(ref minId, ref maxId);
+        NormalizeRange(groupId, ref minId, ref maxId);
         byPost[postId] = new LocalSettings { minId = minId, maxId = maxId, seed = seed };
     }
 
@@ -306,9 +304,9 @@ public class PostPredeterminedUVAuthority : MonoBehaviour
         };
     }
 
-    void NormalizeRange(ref int minId, ref int maxId)
+    void NormalizeRange(int groupId, ref int minId, ref int maxId)
     {
-        List<UVRectSaveData> rects = GetAllRects();
+        List<UVRectSaveData> rects = GetRectsForGroup(groupId);
         if (rects.Count == 0)
         {
             minId = Mathf.Max(1, minId);
@@ -336,8 +334,11 @@ public class PostPredeterminedUVAuthority : MonoBehaviour
         return probe;
     }
 
-    List<UVRectSaveData> GetAllRects()
+    List<UVRectSaveData> GetRectsForGroup(int groupId)
     {
+        if (MaterialUVRectAuthority.TryGetRectsForGroup(groupId, out List<UVRectSaveData> materialRects))
+            return materialRects.Where(rect => rect != null).OrderBy(rect => rect.id).ToList();
+
         if (workspace == null) workspace = FindFirstObjectByType<TextureUVRectWorkspace>();
         return workspace != null
             ? workspace.ExportDefinitions().Where(rect => rect != null).OrderBy(rect => rect.id).ToList()
@@ -548,8 +549,6 @@ public class PostPredeterminedUVUIAuthority : MonoBehaviour
 
         if (restoreGroupRow && hiddenGroupRow != null)
         {
-            // The group controller will set the exact correct active state on its next update.
-            // Restoring it here prevents a one-frame blank PRE section when leaving POST.
             hiddenGroupRow.gameObject.SetActive(true);
         }
         hiddenGroupRow = null;
