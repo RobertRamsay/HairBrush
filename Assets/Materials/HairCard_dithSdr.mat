@@ -119,7 +119,7 @@ Material:
     - _Metal: 0.33
     - _Metallic: 0.233
     - _Normal_G_Adj: 0.9
-    - _Normal_Power: 2.59
+    - _Normal_Power: 1.25
     - _OcclusionStrength: 1
     - _Parallax: 0.005
     - _QueueControl: 0
