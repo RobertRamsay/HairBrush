@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using TMPro;
@@ -100,6 +101,7 @@ public class GroupUVRangeSliderUI : MonoBehaviour
         hit.raycastTarget = true;
 
         rangeSlider = sliderGO.AddComponent<DualIntRangeSlider>();
+        rangeSlider.ShowTicks = true;
         rangeSlider.BuildVisuals();
         rangeSlider.onRangeChanged = OnRangeChanged;
         lastLow = int.MinValue;
@@ -111,14 +113,24 @@ public class GroupUVRangeSliderUI : MonoBehaviour
 
     void SyncRange()
     {
-        if (rangeSlider == null || minInput == null || maxInput == null || workspace == null) return;
+        if (rangeSlider == null || minInput == null || maxInput == null) return;
         if (rangeSlider.IsDragging) return;
 
-        var rects = workspace.ExportDefinitions();
+        List<UVRectSaveData> rects = null;
+        if (viewer != null && MaterialUVRectAuthority.TryGetRectsForGroup(viewer.currentGroupId, out List<UVRectSaveData> materialRects))
+            rects = materialRects?.Where(r => r != null).OrderBy(r => r.id).ToList();
+
+        if (rects == null)
+        {
+            if (workspace == null) workspace = FindFirstObjectByType<TextureUVRectWorkspace>();
+            rects = workspace != null
+                ? workspace.ExportDefinitions()?.Where(r => r != null).OrderBy(r => r.id).ToList()
+                : null;
+        }
         if (rects == null || rects.Count == 0) return;
 
-        int availableMin = rects.Where(r => r != null).Min(r => r.id);
-        int availableMax = rects.Where(r => r != null).Max(r => r.id);
+        int availableMin = rects.Min(r => r.id);
+        int availableMax = rects.Max(r => r.id);
         if (!int.TryParse(minInput.text, out int low)) low = availableMin;
         if (!int.TryParse(maxInput.text, out int high)) high = availableMax;
         low = Mathf.Clamp(low, availableMin, availableMax);
@@ -169,6 +181,7 @@ public class DualIntRangeSlider : MonoBehaviour, IPointerDownHandler, IDragHandl
     private RectTransform root;
     private RectTransform track;
     private RectTransform selected;
+    private RectTransform ticksRoot;
     private RectTransform lowHandle;
     private RectTransform highHandle;
     private TextMeshProUGUI lowText;
@@ -181,8 +194,28 @@ public class DualIntRangeSlider : MonoBehaviour, IPointerDownHandler, IDragHandl
     private bool isInteractable = true;
     private int activeHandle; // -1 low, +1 high, 0 none
     private bool alternateOverlap;
+    private bool showTicks = true;
+    private int ticksMin = int.MinValue;
+    private int ticksMax = int.MinValue;
 
     public bool IsDragging => activeHandle != 0;
+
+    public bool ShowTicks
+    {
+        get => showTicks;
+        set
+        {
+            if (showTicks == value) return;
+            showTicks = value;
+            ticksMin = int.MinValue;
+            ticksMax = int.MinValue;
+            if (ticksRoot != null)
+            {
+                ticksRoot.gameObject.SetActive(showTicks);
+                if (showTicks) RebuildTicks();
+            }
+        }
+    }
 
     public void BuildVisuals()
     {
@@ -207,6 +240,15 @@ public class DualIntRangeSlider : MonoBehaviour, IPointerDownHandler, IDragHandl
         selected.offsetMax = Vector2.zero;
         selectedGO.GetComponent<Image>().color = new Color(.20f, .50f, .80f, 1f);
         selectedGO.GetComponent<Image>().raycastTarget = false;
+
+        GameObject ticksGO = new GameObject("Ticks", typeof(RectTransform));
+        ticksGO.transform.SetParent(transform, false);
+        ticksRoot = ticksGO.GetComponent<RectTransform>();
+        ticksRoot.anchorMin = Vector2.zero;
+        ticksRoot.anchorMax = Vector2.one;
+        ticksRoot.offsetMin = new Vector2(10f, 0f);
+        ticksRoot.offsetMax = new Vector2(-10f, 0f);
+        ticksRoot.gameObject.SetActive(showTicks);
 
         lowHandle = CreateHandle("LowHandle", out lowText);
         highHandle = CreateHandle("HighHandle", out highText);
@@ -245,7 +287,51 @@ public class DualIntRangeSlider : MonoBehaviour, IPointerDownHandler, IDragHandl
         lowValue = Mathf.Clamp(low, minValue, maxValue);
         highValue = Mathf.Clamp(high, lowValue, maxValue);
         isInteractable = interactable;
+        RebuildTicks();
         RefreshVisuals();
+    }
+
+    void RebuildTicks()
+    {
+        if (ticksRoot == null) return;
+        ticksRoot.gameObject.SetActive(showTicks);
+        if (!showTicks) return;
+        if (ticksMin == minValue && ticksMax == maxValue && ticksRoot.childCount > 0) return;
+
+        ticksMin = minValue;
+        ticksMax = maxValue;
+        for (int i = ticksRoot.childCount - 1; i >= 0; i--)
+            Destroy(ticksRoot.GetChild(i).gameObject);
+
+        if (maxValue <= minValue)
+        {
+            AddTick(minValue, true);
+            return;
+        }
+
+        int span = maxValue - minValue;
+        int step = span <= 31 ? 1 : Mathf.CeilToInt(span / 31f);
+        for (int value = minValue; value < maxValue; value += step)
+            AddTick(value, value == minValue || (value - minValue) % 5 == 0);
+        AddTick(maxValue, true);
+    }
+
+    void AddTick(int value, bool major)
+    {
+        if (ticksRoot == null) return;
+        float n = ValueNormalized(value);
+        GameObject go = new GameObject("Tick_" + value, typeof(RectTransform), typeof(Image));
+        go.transform.SetParent(ticksRoot, false);
+        RectTransform rt = go.GetComponent<RectTransform>();
+        rt.anchorMin = rt.anchorMax = new Vector2(n, .5f);
+        rt.pivot = new Vector2(.5f, .5f);
+        rt.sizeDelta = new Vector2(major ? 2f : 1f, major ? 10f : 7f);
+        rt.anchoredPosition = Vector2.zero;
+        Image image = go.GetComponent<Image>();
+        image.color = major
+            ? new Color(.82f, .84f, .88f, .85f)
+            : new Color(.70f, .72f, .76f, .60f);
+        image.raycastTarget = false;
     }
 
     public void OnPointerDown(PointerEventData eventData)
@@ -314,7 +400,7 @@ public class DualIntRangeSlider : MonoBehaviour, IPointerDownHandler, IDragHandl
 
     float ValueNormalized(int value)
     {
-        return maxValue == minValue ? 0f : Mathf.InverseLerp(minValue, maxValue, value);
+        return maxValue == minValue ? .5f : Mathf.InverseLerp(minValue, maxValue, value);
     }
 
     int NormalizedValue(float n)
