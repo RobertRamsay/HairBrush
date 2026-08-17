@@ -5,8 +5,8 @@ using UnityEngine;
 using UnityEngine.UI;
 
 // Compact-layout companion for the existing PRE UV range controls.
-// GROUP keeps the original DualIntRangeSlider created by GroupUVRangeSliderUI.
-// POST gets the same two-handle slider instead of falling back to the old MIN -> MAX text row.
+// GROUP gets its own tighter mode/range layout for the 300px grooming panel.
+// POST deliberately keeps the layout that is already working well.
 // This class only owns layout/UX; the group/post UV authorities remain the data source of truth.
 [DefaultExecutionOrder(9620)]
 public class GroupUVRangeSliderUIAuthority : MonoBehaviour
@@ -33,6 +33,7 @@ public class GroupUVRangeSliderUIAuthority : MonoBehaviour
         Resolve();
         if (viewer == null || viewer.groomingSliderPanelGO == null) return;
 
+        CompactGroupModeRow();
         CompactGroupRow();
         CompactPostRow();
     }
@@ -42,6 +43,28 @@ public class GroupUVRangeSliderUIAuthority : MonoBehaviour
         if (viewer == null) viewer = FindFirstObjectByType<ModelViewer>();
         if (postAuthority == null) postAuthority = FindFirstObjectByType<PostPredeterminedUVAuthority>();
         if (workspace == null) workspace = FindFirstObjectByType<TextureUVRectWorkspace>();
+    }
+
+    void CompactGroupModeRow()
+    {
+        RectTransform row = viewer.groomingSliderPanelGO.transform.Find("GroupUVMode_Row") as RectTransform;
+        if (row == null) return;
+
+        PrepareRow(row, 34f);
+
+        Transform modeLabel = FindDirectText(row, "UV MODE");
+        Transform modeButton = row.Find("GroupUVModeButton");
+        Transform status = FindGroupStatusText(row);
+
+        // The authored widths here used to total more than 500px. At the compact panel width
+        // that made PREDETERMINED look like a giant button and pushed the status off-screen.
+        Place(modeLabel, 0.00f, 0.18f, 0.08f, 0.92f);
+        Place(modeButton, 0.19f, 0.62f, 0.08f, 0.92f);
+        Place(status, 0.64f, 1.00f, 0.08f, 0.92f);
+
+        MakeTextCompact(modeLabel, 9f, 12f);
+        MakeButtonTextCompact(modeButton, 9f, 11f);
+        MakeTextCompact(status, 8f, 10f);
     }
 
     void CompactGroupRow()
@@ -56,7 +79,7 @@ public class GroupUVRangeSliderUIAuthority : MonoBehaviour
         if (boundGroupRow != row)
             boundGroupRow = row;
 
-        PrepareRow(row);
+        PrepareRow(row, 58f);
 
         TMP_InputField minInput = row.Find("MINInput")?.GetComponent<TMP_InputField>();
         TMP_InputField maxInput = row.Find("MAXInput")?.GetComponent<TMP_InputField>();
@@ -67,21 +90,22 @@ public class GroupUVRangeSliderUIAuthority : MonoBehaviour
         Transform slider = row.Find("UVRectRangeSlider");
         Transform random = row.Find("GroupUVRandomSeedButton");
 
-        // The controller still reads/writes these hidden fields. They simply stop consuming UI space.
+        // MIN/MAX remain alive as the controller's state bridge; the visible two-thumb slider
+        // carries those values instead, leaving much more horizontal travel for card selection.
         if (minInput != null && minInput.gameObject.activeSelf) minInput.gameObject.SetActive(false);
         if (maxInput != null && maxInput.gameObject.activeSelf) maxInput.gameObject.SetActive(false);
         if (arrow != null && arrow.gameObject.activeSelf) arrow.gameObject.SetActive(false);
 
-        Place(rectLabel, 0.00f, 0.22f, 0.52f, 1.00f);
-        Place(slider,    0.22f, 1.00f, 0.52f, 1.00f);
-        Place(seedLabel, 0.00f, 0.18f, 0.00f, 0.48f);
-        if (seedInput != null) Place(seedInput.transform, 0.18f, 0.83f, 0.00f, 0.48f);
-        Place(random, 0.85f, 1.00f, 0.00f, 0.48f);
+        Place(rectLabel, 0.00f, 0.19f, 0.52f, 1.00f);
+        Place(slider, 0.19f, 1.00f, 0.52f, 1.00f);
+        Place(seedLabel, 0.00f, 0.16f, 0.00f, 0.46f);
+        if (seedInput != null) Place(seedInput.transform, 0.16f, 0.83f, 0.00f, 0.46f);
+        Place(random, 0.85f, 1.00f, 0.00f, 0.46f);
 
-        MakeTextCompact(rectLabel, 10f, 13f);
-        MakeTextCompact(seedLabel, 9f, 11f);
+        MakeTextCompact(rectLabel, 9f, 11f);
+        MakeTextCompact(seedLabel, 9f, 10f);
         MakeInputCompact(seedInput);
-        MakeButtonTextCompact(random);
+        MakeButtonTextCompact(random, 8f, 10f);
     }
 
     void CompactPostRow()
@@ -100,7 +124,7 @@ public class GroupUVRangeSliderUIAuthority : MonoBehaviour
             postSlider = null;
         }
 
-        PrepareRow(row);
+        PrepareRow(row, 62f);
 
         TMP_InputField minInput = row.Find("MINInput")?.GetComponent<TMP_InputField>();
         TMP_InputField maxInput = row.Find("MAXInput")?.GetComponent<TMP_InputField>();
@@ -138,8 +162,14 @@ public class GroupUVRangeSliderUIAuthority : MonoBehaviour
                 hit.raycastTarget = true;
 
                 postSlider = sliderGO.AddComponent<DualIntRangeSlider>();
+                postSlider.ShowTicks = false;
                 postSlider.BuildVisuals();
                 postSlider.onRangeChanged = OnPostRangeChanged;
+            }
+            else
+            {
+                // Preserve POST's existing uncluttered appearance; tick marks are a GROUP aid.
+                postSlider.ShowTicks = false;
             }
         }
 
@@ -190,7 +220,7 @@ public class GroupUVRangeSliderUIAuthority : MonoBehaviour
             : new List<UVRectSaveData>();
     }
 
-    static void PrepareRow(RectTransform row)
+    static void PrepareRow(RectTransform row, float height)
     {
         if (row == null) return;
 
@@ -199,9 +229,9 @@ public class GroupUVRangeSliderUIAuthority : MonoBehaviour
 
         LayoutElement element = row.GetComponent<LayoutElement>();
         if (element == null) element = row.gameObject.AddComponent<LayoutElement>();
-        element.minHeight = 62f;
-        element.preferredHeight = 62f;
-        row.sizeDelta = new Vector2(row.sizeDelta.x, 62f);
+        element.minHeight = height;
+        element.preferredHeight = height;
+        row.sizeDelta = new Vector2(row.sizeDelta.x, height);
     }
 
     static Transform FindDirectText(Transform row, string value)
@@ -211,6 +241,18 @@ public class GroupUVRangeSliderUIAuthority : MonoBehaviour
         {
             TextMeshProUGUI text = child.GetComponent<TextMeshProUGUI>();
             if (text != null && text.text == value) return child;
+        }
+        return null;
+    }
+
+    static Transform FindGroupStatusText(Transform row)
+    {
+        if (row == null) return null;
+        foreach (Transform child in row)
+        {
+            TMP_Text text = child.GetComponent<TMP_Text>();
+            if (text == null) continue;
+            if (text.text == "NO UV RECTS" || text.text.EndsWith(" UV RECTS")) return child;
         }
         return null;
     }
@@ -264,14 +306,14 @@ public class GroupUVRangeSliderUIAuthority : MonoBehaviour
         text.overflowMode = TextOverflowModes.Ellipsis;
     }
 
-    static void MakeButtonTextCompact(Transform button)
+    static void MakeButtonTextCompact(Transform button, float minSize = 8f, float maxSize = 11f)
     {
         if (button == null) return;
         TMP_Text text = button.GetComponentInChildren<TMP_Text>(true);
         if (text == null) return;
         text.enableAutoSizing = true;
-        text.fontSizeMin = 8f;
-        text.fontSizeMax = 11f;
+        text.fontSizeMin = minSize;
+        text.fontSizeMax = maxSize;
         text.enableWordWrapping = false;
         text.overflowMode = TextOverflowModes.Ellipsis;
     }
