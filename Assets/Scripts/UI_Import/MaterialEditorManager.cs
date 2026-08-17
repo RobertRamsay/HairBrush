@@ -145,7 +145,7 @@ public class MaterialEditorManager : MonoBehaviour
         panelGO.transform.SetParent(parentCanvas, false);
         RectTransform rect = panelGO.GetComponent<RectTransform>();
         rect.anchorMin = new Vector2(0f, 0f); rect.anchorMax = new Vector2(0f, 1f);
-        rect.pivot = new Vector2(0f, .5f); rect.sizeDelta = new Vector2(500f, 0f); rect.anchoredPosition = new Vector2(10f, 0f);
+        rect.pivot = new Vector2(0f, .5f); rect.sizeDelta = new Vector2(440f, 0f); rect.anchoredPosition = new Vector2(10f, 0f);
         panelGO.GetComponent<Image>().color = new Color(.12f, .12f, .12f, .96f);
 
         VerticalLayoutGroup layout = panelGO.AddComponent<VerticalLayoutGroup>();
@@ -218,7 +218,7 @@ public class MaterialEditorManager : MonoBehaviour
     {
         GameObject row = new GameObject(label + "Row", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
         row.transform.SetParent(parent, false);
-        row.GetComponent<LayoutElement>().preferredHeight = 62f;
+        row.GetComponent<LayoutElement>().preferredHeight = 54f;
         HorizontalLayoutGroup layout = row.GetComponent<HorizontalLayoutGroup>();
         layout.spacing = 4f;
         layout.childControlWidth = false;
@@ -228,8 +228,7 @@ public class MaterialEditorManager : MonoBehaviour
 
         GameObject textBlock = new GameObject("Info", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
         textBlock.transform.SetParent(row.transform, false);
-        textBlock.GetComponent<RectTransform>().sizeDelta = new Vector2(380f, 0f);
-        textBlock.GetComponent<LayoutElement>().preferredWidth = 380f;
+        textBlock.GetComponent<LayoutElement>().preferredWidth = 320f;
         VerticalLayoutGroup textLayout = textBlock.GetComponent<VerticalLayoutGroup>();
         textLayout.spacing = 0f;
         textLayout.childControlHeight = false;
@@ -260,7 +259,7 @@ public class MaterialEditorManager : MonoBehaviour
         GameObject row = new GameObject(label + "Row", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
         row.transform.SetParent(parent, false);
         row.GetComponent<LayoutElement>().preferredHeight = 32f;
-        HorizontalLayoutGroup layout = row.GetComponent<HorizontalLayoutGroup>();
+        HorizontalLayoutGroup layout = row.AddComponent<HorizontalLayoutGroup>();
         layout.spacing = 6f;
         layout.childControlWidth = false;
         layout.childControlHeight = true;
