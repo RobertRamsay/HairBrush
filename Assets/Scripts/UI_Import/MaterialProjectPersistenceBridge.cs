@@ -18,6 +18,8 @@ public class MaterialProjectPersistenceBridge : MonoBehaviour
     private const string AlbedoProperty = "_Albedo";
     private const string NormalProperty = "_Normal";
     private const string OpacityProperty = "_OpacityMask";
+    private const string SmoothProperty = "_Smooth";
+    private const string MetalProperty = "_Metal";
     private const int GlobalMaterialKey = int.MinValue;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -50,12 +52,15 @@ public class MaterialProjectPersistenceBridge : MonoBehaviour
             {
                 if (entry == null) continue;
                 Type et = entry.GetType();
+                Material entryMaterial = et.GetField("material")?.GetValue(entry) as Material;
                 data.hairMaterials.Add(new HairMaterialSaveData
                 {
                     name = et.GetField("name")?.GetValue(entry) as string,
                     albedoPath = et.GetField("albedoPath")?.GetValue(entry) as string,
                     normalPath = et.GetField("normalPath")?.GetValue(entry) as string,
-                    opacityPath = et.GetField("opacityPath")?.GetValue(entry) as string
+                    opacityPath = et.GetField("opacityPath")?.GetValue(entry) as string,
+                    smooth = entryMaterial != null && entryMaterial.HasProperty(SmoothProperty) ? entryMaterial.GetFloat(SmoothProperty) : 0.56f,
+                    metal = entryMaterial != null && entryMaterial.HasProperty(MetalProperty) ? entryMaterial.GetFloat(MetalProperty) : 0.33f
                 });
             }
         }
@@ -136,6 +141,8 @@ public class MaterialProjectPersistenceBridge : MonoBehaviour
                 TryRestoreTexture(entry, AlbedoProperty, "albedoPath", saved.albedoPath, false);
                 TryRestoreTexture(entry, NormalProperty, "normalPath", saved.normalPath, true);
                 TryRestoreTexture(entry, OpacityProperty, "opacityPath", saved.opacityPath, true);
+                TryRestoreFloat(entry, SmoothProperty, saved.smooth);
+                TryRestoreFloat(entry, MetalProperty, saved.metal);
             }
             materials.Add(entry);
         }
@@ -182,6 +189,15 @@ public class MaterialProjectPersistenceBridge : MonoBehaviour
                 return Mathf.Clamp(saved.materialIndex, 0, materialCount - 1);
 
         return 0;
+    }
+
+    private static void TryRestoreFloat(object entry, string propertyName, float value)
+    {
+        if (entry == null) return;
+        Type et = entry.GetType();
+        Material material = et.GetField("material")?.GetValue(entry) as Material;
+        if (material != null && material.HasProperty(propertyName))
+            material.SetFloat(propertyName, value);
     }
 
     private static void TryRestoreTexture(object entry, string propertyName, string pathFieldName, string path, bool linear)

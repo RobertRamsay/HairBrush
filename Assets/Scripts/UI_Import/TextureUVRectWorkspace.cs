@@ -18,6 +18,7 @@ public class TextureUVRectWorkspace : MonoBehaviour
 {
     private readonly List<UVRectSaveData> rectangles = new();
     private readonly Dictionary<int, LineRenderer> rectangleLines = new();
+    private readonly Dictionary<int, TextMeshPro> rectangleLabels = new();
 
     private ModelViewer viewer;
     private GameObject texturePanel;
@@ -319,8 +320,8 @@ public class TextureUVRectWorkspace : MonoBehaviour
         section = new GameObject("UVWorkspaceSection", typeof(RectTransform), typeof(LayoutElement), typeof(VerticalLayoutGroup));
         section.transform.SetParent(texturePanel.transform, false);
         LayoutElement sectionLayout = section.GetComponent<LayoutElement>();
-        sectionLayout.preferredHeight = 150f;
-        sectionLayout.minHeight = 150f;
+        sectionLayout.preferredHeight = 320f;
+        sectionLayout.minHeight = 320f;
         VerticalLayoutGroup vertical = section.GetComponent<VerticalLayoutGroup>();
         vertical.spacing = 4f;
         vertical.padding = new RectOffset(0, 0, 2, 2);
@@ -350,7 +351,7 @@ public class TextureUVRectWorkspace : MonoBehaviour
         AddButton(buttons.transform, "UNDO LAST", UndoLastRectangle);
         AddButton(buttons.transform, "CLEAR", ClearDefinitions);
 
-        summaryText = AddText(section.transform, "Summary", 10.5f, 56f, FontStyles.Normal);
+        summaryText = AddText(section.transform, "Summary", 10.5f, 226f, FontStyles.Normal);
         summaryText.gameObject.name = "Summary";
         summaryText.alignment = TextAlignmentOptions.TopLeft;
         summaryText.textWrappingMode = TextWrappingModes.Normal;
@@ -572,7 +573,39 @@ public class TextureUVRectWorkspace : MonoBehaviour
         }
 
         line.gameObject.SetActive(true);
-        UpdateLine(line, Rect.MinMaxRect(data.uMin, data.vMin, data.uMax, data.vMax));
+        Rect rect = Rect.MinMaxRect(data.uMin, data.vMin, data.uMax, data.vMax);
+        UpdateLine(line, rect);
+        UpdateRectangleLabel(data, rect);
+    }
+
+    // Small in-view number so the texture matches the numbered list below it. Sits just inside
+    // the rectangle's near (bottom-left) corner rather than centred, so it stays legible even on
+    // very thin/sliver rectangles where a centred label could spill outside the rect entirely.
+    void UpdateRectangleLabel(UVRectSaveData data, Rect rect)
+    {
+        if (!rectangleLabels.TryGetValue(data.id, out TextMeshPro label) || label == null)
+        {
+            GameObject go = new GameObject("UVRectLabel_" + data.id, typeof(TextMeshPro));
+            go.transform.SetParent(visualRoot.transform, false);
+            label = go.GetComponent<TextMeshPro>();
+            label.alignment = TextAlignmentOptions.Center;
+            label.fontSize = 3f;
+            label.color = Color.white;
+            label.outlineColor = Color.black;
+            label.outlineWidth = .2f;
+            label.enableWordWrapping = false;
+            label.raycastTarget = false;
+            rectangleLabels[data.id] = label;
+        }
+
+        label.text = data.id.ToString();
+        label.gameObject.SetActive(true);
+
+        float insetU = Mathf.Min(.02f, rect.width * .25f);
+        float insetV = Mathf.Min(.02f, rect.height * .25f);
+        Vector3 anchor = UVToWorld(new Vector2(rect.xMin + insetU, rect.yMin + insetV));
+        label.transform.position = anchor;
+        label.transform.rotation = previewPlane.transform.rotation;
     }
 
     void UpdateLine(LineRenderer line, Rect rect)
@@ -597,6 +630,9 @@ public class TextureUVRectWorkspace : MonoBehaviour
         foreach (LineRenderer line in rectangleLines.Values)
             if (line != null) Destroy(line.gameObject);
         rectangleLines.Clear();
+        foreach (TextMeshPro label in rectangleLabels.Values)
+            if (label != null) Destroy(label.gameObject);
+        rectangleLabels.Clear();
 
         if (previewPlane == null) return;
         foreach (UVRectSaveData data in rectangles)
@@ -613,6 +649,11 @@ public class TextureUVRectWorkspace : MonoBehaviour
             if (line != null) Destroy(line.gameObject);
             rectangleLines.Remove(last.id);
         }
+        if (last != null && rectangleLabels.TryGetValue(last.id, out TextMeshPro label))
+        {
+            if (label != null) Destroy(label.gameObject);
+            rectangleLabels.Remove(last.id);
+        }
         UpdateSummary();
     }
 
@@ -623,6 +664,9 @@ public class TextureUVRectWorkspace : MonoBehaviour
         foreach (LineRenderer line in rectangleLines.Values)
             if (line != null) Destroy(line.gameObject);
         rectangleLines.Clear();
+        foreach (TextMeshPro label in rectangleLabels.Values)
+            if (label != null) Destroy(label.gameObject);
+        rectangleLabels.Clear();
         UpdateSummary();
     }
 
@@ -696,9 +740,7 @@ public class TextureUVRectWorkspace : MonoBehaviour
         }
 
         List<UVRectSaveData> ordered = rectangles.OrderBy(r => r.id).ToList();
-        int start = Mathf.Max(0, ordered.Count - 4);
-        IEnumerable<UVRectSaveData> shown = ordered.Skip(start);
-        string rows = string.Join("\n", shown.Select(r =>
+        string rows = string.Join("\n", ordered.Select(r =>
             "#" + r.id + "  U " + r.uMin.ToString("F3") + "–" + r.uMax.ToString("F3") +
             "  V " + r.vMin.ToString("F3") + "–" + r.vMax.ToString("F3")));
         summaryText.text = "UV Rects: " + rectangles.Count + "\n" + rows;

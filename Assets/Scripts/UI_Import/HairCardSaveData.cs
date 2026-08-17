@@ -54,6 +54,8 @@ public class HairMaterialSaveData
     public string albedoPath;
     public string normalPath;
     public string opacityPath;
+    public float smooth = 0.56f;
+    public float metal = 0.33f;
 
     // Predetermined card atlas cuts belong to the material/texture set, not the project
     // workspace globally. Kept here so switching materials swaps both texture and cuts.

@@ -1,0 +1,321 @@
+--- a/Assets/Scripts/UI_Import/MaterialEditorManager.cs	2026-08-17 19:17:54.706135088 +0000
++++ b/Assets/Scripts/UI_Import/MaterialEditorManager.cs	2026-08-17 19:20:34.081750328 +0000
+@@ -13,6 +13,8 @@
+     private const string AlbedoProperty = "_Albedo";
+     private const string NormalProperty = "_Normal";
+     private const string OpacityProperty = "_OpacityMask";
++    private const string SmoothProperty = "_Smooth";
++    private const string MetalProperty = "_Metal";
+ 
+     // HairBrush intentionally has one active hair material for the whole session. Multiple
+     // material entries are authoring presets/stages, never per-group assignments. Keeping the
+@@ -143,7 +145,7 @@
+         panelGO.transform.SetParent(parentCanvas, false);
+         RectTransform rect = panelGO.GetComponent<RectTransform>();
+         rect.anchorMin = new Vector2(0f, 0f); rect.anchorMax = new Vector2(0f, 1f);
+-        rect.pivot = new Vector2(0f, .5f); rect.sizeDelta = new Vector2(250f, 0f); rect.anchoredPosition = new Vector2(10f, 0f);
++        rect.pivot = new Vector2(0f, .5f); rect.sizeDelta = new Vector2(440f, 0f); rect.anchoredPosition = new Vector2(10f, 0f);
+         panelGO.GetComponent<Image>().color = new Color(.12f, .12f, .12f, .96f);
+ 
+         VerticalLayoutGroup layout = panelGO.AddComponent<VerticalLayoutGroup>();
+@@ -170,7 +172,7 @@
+         assignmentLabel = CreateSubLabel(panelGO.transform, "", 16f);
+         CreateActionButton(panelGO.transform, "APPLY ALL", AssignSelectedToAllGroups, 24f);
+         CreateHeader(panelGO.transform, "PROPERTIES", 20f);
+-        propertiesRoot = CreateContainer(panelGO.transform, "Properties", 180f).transform;
++        propertiesRoot = CreateContainer(panelGO.transform, "Properties", 300f).transform;
+     }
+ 
+     private void RefreshPanel()
+@@ -207,6 +209,8 @@
+             CreateTextureRow(propertiesRoot, "Albedo", AlbedoProperty, false, entry.albedoPath);
+             CreateTextureRow(propertiesRoot, "Normal", NormalProperty, true, entry.normalPath);
+             CreateTextureRow(propertiesRoot, "Opacity Mask", OpacityProperty, true, entry.opacityPath);
++            CreateFloatSliderRow(propertiesRoot, "Smoothness", SmoothProperty, entry);
++            CreateFloatSliderRow(propertiesRoot, "Metallic", MetalProperty, entry);
+         }
+     }
+ 
+@@ -241,6 +245,104 @@
+         CreateSmallButton(row.transform, "LOAD", () => LoadTextureIntoSlot(propertyName, linear), 48f, 28f);
+     }
+ 
++    // Simple 0-1 float slider bound directly to a shader property on this entry's material.
++    // The material's own current value is the single source of truth - no separate field is
++    // kept on HairMaterialEntry, so there's nothing that can drift out of sync with it. Saving
++    // reads straight from the material via MaterialProjectPersistenceBridge.Capture.
++    private void CreateFloatSliderRow(Transform parent, string label, string propertyName, HairMaterialEntry entry)
++    {
++        GameObject row = new GameObject(label + "Row", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
++        row.transform.SetParent(parent, false);
++        row.GetComponent<LayoutElement>().preferredHeight = 32f;
++        HorizontalLayoutGroup layout = row.GetComponent<HorizontalLayoutGroup>();
++        layout.spacing = 6f;
++        layout.childControlWidth = false;
++        layout.childControlHeight = true;
++        layout.childForceExpandWidth = false;
++        layout.childForceExpandHeight = false;
++
++        GameObject labelGO = new GameObject("Label", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI), typeof(LayoutElement));
++        labelGO.transform.SetParent(row.transform, false);
++        labelGO.GetComponent<LayoutElement>().preferredWidth = 90f;
++        TMPro.TextMeshProUGUI labelTmp = labelGO.GetComponent<TMPro.TextMeshProUGUI>();
++        labelTmp.text = label;
++        labelTmp.fontSize = 12f;
++        labelTmp.color = Color.white;
++        labelTmp.alignment = TMPro.TextAlignmentOptions.MidlineLeft;
++        labelTmp.enableWordWrapping = false;
++
++        GameObject sliderGO = new GameObject(label + "Slider", typeof(RectTransform), typeof(Slider), typeof(LayoutElement));
++        sliderGO.transform.SetParent(row.transform, false);
++        sliderGO.GetComponent<LayoutElement>().preferredWidth = 180f;
++        Slider slider = sliderGO.GetComponent<Slider>();
++        slider.minValue = 0f;
++        slider.maxValue = 1f;
++
++        GameObject bgGO = new GameObject("Background", typeof(RectTransform), typeof(Image));
++        bgGO.transform.SetParent(sliderGO.transform, false);
++        RectTransform bgRect = bgGO.GetComponent<RectTransform>();
++        bgRect.anchorMin = new Vector2(0f, .3f); bgRect.anchorMax = new Vector2(1f, .7f);
++        bgRect.offsetMin = Vector2.zero; bgRect.offsetMax = Vector2.zero;
++        bgGO.GetComponent<Image>().color = new Color(.18f, .18f, .20f);
++
++        GameObject fillAreaGO = new GameObject("Fill Area", typeof(RectTransform));
++        fillAreaGO.transform.SetParent(sliderGO.transform, false);
++        RectTransform fillAreaRect = fillAreaGO.GetComponent<RectTransform>();
++        fillAreaRect.anchorMin = new Vector2(0f, .3f); fillAreaRect.anchorMax = new Vector2(1f, .7f);
++        fillAreaRect.offsetMin = Vector2.zero; fillAreaRect.offsetMax = Vector2.zero;
++
++        GameObject fillGO = new GameObject("Fill", typeof(RectTransform), typeof(Image));
++        fillGO.transform.SetParent(fillAreaGO.transform, false);
++        RectTransform fillRect = fillGO.GetComponent<RectTransform>();
++        fillRect.anchorMin = Vector2.zero; fillRect.anchorMax = Vector2.one;
++        fillRect.offsetMin = Vector2.zero; fillRect.offsetMax = Vector2.zero;
++        Image fillImage = fillGO.GetComponent<Image>();
++        fillImage.color = new Color(.30f, .65f, .70f);
++        slider.fillRect = fillRect;
++        slider.targetGraphic = fillImage;
++
++        GameObject handleAreaGO = new GameObject("Handle Slide Area", typeof(RectTransform));
++        handleAreaGO.transform.SetParent(sliderGO.transform, false);
++        RectTransform handleAreaRect = handleAreaGO.GetComponent<RectTransform>();
++        handleAreaRect.anchorMin = Vector2.zero; handleAreaRect.anchorMax = Vector2.one;
++        handleAreaRect.offsetMin = Vector2.zero; handleAreaRect.offsetMax = Vector2.zero;
++
++        GameObject handleGO = new GameObject("Handle", typeof(RectTransform), typeof(Image));
++        handleGO.transform.SetParent(handleAreaGO.transform, false);
++        handleGO.GetComponent<RectTransform>().sizeDelta = new Vector2(12f, 0f);
++        handleGO.GetComponent<Image>().color = Color.white;
++        slider.handleRect = handleGO.GetComponent<RectTransform>();
++        slider.targetGraphic = handleGO.GetComponent<Image>();
++
++        GameObject valueGO = new GameObject("Value", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI), typeof(LayoutElement));
++        valueGO.transform.SetParent(row.transform, false);
++        valueGO.GetComponent<LayoutElement>().preferredWidth = 40f;
++        TMPro.TextMeshProUGUI valueTmp = valueGO.GetComponent<TMPro.TextMeshProUGUI>();
++        valueTmp.fontSize = 11f;
++        valueTmp.color = new Color(.75f, .75f, .75f);
++        valueTmp.alignment = TMPro.TextAlignmentOptions.MidlineLeft;
++
++        float startValue = entry.material != null && entry.material.HasProperty(propertyName)
++            ? entry.material.GetFloat(propertyName) : .5f;
++        slider.SetValueWithoutNotify(startValue);
++        valueTmp.text = startValue.ToString("F2");
++
++        slider.onValueChanged.AddListener(v =>
++        {
++            valueTmp.text = v.ToString("F2");
++            if (entry.material != null && entry.material.HasProperty(propertyName))
++                entry.material.SetFloat(propertyName, v);
++
++            // Same rule texture loading uses: only push to rendered hair cards if this entry
++            // is the currently active global material.
++            if (GetGlobalMaterialIndex() == selectedMaterialIndex)
++            {
++                viewer.hairCardMaterial = entry.material;
++                ApplyAssignments();
++            }
++        });
++    }
++
+     private void LoadTextureIntoSlot(string propertyName, bool linear)
+     {
+         if (selectedMaterialIndex < 0 || selectedMaterialIndex >= materials.Count) return;
+--- a/Assets/Scripts/UI_Import/HairCardSaveData.cs	2026-08-17 19:19:26.623902055 +0000
++++ b/Assets/Scripts/UI_Import/HairCardSaveData.cs	2026-08-17 19:19:30.963038805 +0000
+@@ -54,6 +54,8 @@
+     public string albedoPath;
+     public string normalPath;
+     public string opacityPath;
++    public float smooth = 0.56f;
++    public float metal = 0.33f;
+ 
+     // Predetermined card atlas cuts belong to the material/texture set, not the project
+     // workspace globally. Kept here so switching materials swaps both texture and cuts.
+--- a/Assets/Scripts/UI_Import/MaterialProjectPersistenceBridge.cs	2026-08-17 19:19:26.626677697 +0000
++++ b/Assets/Scripts/UI_Import/MaterialProjectPersistenceBridge.cs	2026-08-17 19:19:51.092385983 +0000
+@@ -18,6 +18,8 @@
+     private const string AlbedoProperty = "_Albedo";
+     private const string NormalProperty = "_Normal";
+     private const string OpacityProperty = "_OpacityMask";
++    private const string SmoothProperty = "_Smooth";
++    private const string MetalProperty = "_Metal";
+     private const int GlobalMaterialKey = int.MinValue;
+ 
+     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+@@ -50,12 +52,15 @@
+             {
+                 if (entry == null) continue;
+                 Type et = entry.GetType();
++                Material entryMaterial = et.GetField("material")?.GetValue(entry) as Material;
+                 data.hairMaterials.Add(new HairMaterialSaveData
+                 {
+                     name = et.GetField("name")?.GetValue(entry) as string,
+                     albedoPath = et.GetField("albedoPath")?.GetValue(entry) as string,
+                     normalPath = et.GetField("normalPath")?.GetValue(entry) as string,
+-                    opacityPath = et.GetField("opacityPath")?.GetValue(entry) as string
++                    opacityPath = et.GetField("opacityPath")?.GetValue(entry) as string,
++                    smooth = entryMaterial != null && entryMaterial.HasProperty(SmoothProperty) ? entryMaterial.GetFloat(SmoothProperty) : 0.56f,
++                    metal = entryMaterial != null && entryMaterial.HasProperty(MetalProperty) ? entryMaterial.GetFloat(MetalProperty) : 0.33f
+                 });
+             }
+         }
+@@ -136,6 +141,8 @@
+                 TryRestoreTexture(entry, AlbedoProperty, "albedoPath", saved.albedoPath, false);
+                 TryRestoreTexture(entry, NormalProperty, "normalPath", saved.normalPath, true);
+                 TryRestoreTexture(entry, OpacityProperty, "opacityPath", saved.opacityPath, true);
++                TryRestoreFloat(entry, SmoothProperty, saved.smooth);
++                TryRestoreFloat(entry, MetalProperty, saved.metal);
+             }
+             materials.Add(entry);
+         }
+@@ -184,6 +191,15 @@
+         return 0;
+     }
+ 
++    private static void TryRestoreFloat(object entry, string propertyName, float value)
++    {
++        if (entry == null) return;
++        Type et = entry.GetType();
++        Material material = et.GetField("material")?.GetValue(entry) as Material;
++        if (material != null && material.HasProperty(propertyName))
++            material.SetFloat(propertyName, value);
++    }
++
+     private static void TryRestoreTexture(object entry, string propertyName, string pathFieldName, string path, bool linear)
+     {
+         // Missing references deliberately mean: keep the default texture inherited from sourceMaterial.
+--- a/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs	2026-08-17 19:21:42.030074945 +0000
++++ b/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs	2026-08-17 19:22:30.028251718 +0000
+@@ -18,6 +18,7 @@
+ {
+     private readonly List<UVRectSaveData> rectangles = new();
+     private readonly Dictionary<int, LineRenderer> rectangleLines = new();
++    private readonly Dictionary<int, TextMeshPro> rectangleLabels = new();
+ 
+     private ModelViewer viewer;
+     private GameObject texturePanel;
+@@ -319,8 +320,8 @@
+         section = new GameObject("UVWorkspaceSection", typeof(RectTransform), typeof(LayoutElement), typeof(VerticalLayoutGroup));
+         section.transform.SetParent(texturePanel.transform, false);
+         LayoutElement sectionLayout = section.GetComponent<LayoutElement>();
+-        sectionLayout.preferredHeight = 150f;
+-        sectionLayout.minHeight = 150f;
++        sectionLayout.preferredHeight = 320f;
++        sectionLayout.minHeight = 320f;
+         VerticalLayoutGroup vertical = section.GetComponent<VerticalLayoutGroup>();
+         vertical.spacing = 4f;
+         vertical.padding = new RectOffset(0, 0, 2, 2);
+@@ -350,7 +351,7 @@
+         AddButton(buttons.transform, "UNDO LAST", UndoLastRectangle);
+         AddButton(buttons.transform, "CLEAR", ClearDefinitions);
+ 
+-        summaryText = AddText(section.transform, "Summary", 10.5f, 56f, FontStyles.Normal);
++        summaryText = AddText(section.transform, "Summary", 10.5f, 226f, FontStyles.Normal);
+         summaryText.gameObject.name = "Summary";
+         summaryText.alignment = TextAlignmentOptions.TopLeft;
+         summaryText.textWrappingMode = TextWrappingModes.Normal;
+@@ -572,7 +573,39 @@
+         }
+ 
+         line.gameObject.SetActive(true);
+-        UpdateLine(line, Rect.MinMaxRect(data.uMin, data.vMin, data.uMax, data.vMax));
++        Rect rect = Rect.MinMaxRect(data.uMin, data.vMin, data.uMax, data.vMax);
++        UpdateLine(line, rect);
++        UpdateRectangleLabel(data, rect);
++    }
++
++    // Small in-view number so the texture matches the numbered list below it. Sits just inside
++    // the rectangle's near (bottom-left) corner rather than centred, so it stays legible even on
++    // very thin/sliver rectangles where a centred label could spill outside the rect entirely.
++    void UpdateRectangleLabel(UVRectSaveData data, Rect rect)
++    {
++        if (!rectangleLabels.TryGetValue(data.id, out TextMeshPro label) || label == null)
++        {
++            GameObject go = new GameObject("UVRectLabel_" + data.id, typeof(TextMeshPro));
++            go.transform.SetParent(visualRoot.transform, false);
++            label = go.GetComponent<TextMeshPro>();
++            label.alignment = TextAlignmentOptions.Center;
++            label.fontSize = 3f;
++            label.color = Color.white;
++            label.outlineColor = Color.black;
++            label.outlineWidth = .2f;
++            label.enableWordWrapping = false;
++            label.raycastTarget = false;
++            rectangleLabels[data.id] = label;
++        }
++
++        label.text = data.id.ToString();
++        label.gameObject.SetActive(true);
++
++        float insetU = Mathf.Min(.02f, rect.width * .25f);
++        float insetV = Mathf.Min(.02f, rect.height * .25f);
++        Vector3 anchor = UVToWorld(new Vector2(rect.xMin + insetU, rect.yMin + insetV));
++        label.transform.position = anchor;
++        label.transform.rotation = previewPlane.transform.rotation;
+     }
+ 
+     void UpdateLine(LineRenderer line, Rect rect)
+@@ -597,6 +630,9 @@
+         foreach (LineRenderer line in rectangleLines.Values)
+             if (line != null) Destroy(line.gameObject);
+         rectangleLines.Clear();
++        foreach (TextMeshPro label in rectangleLabels.Values)
++            if (label != null) Destroy(label.gameObject);
++        rectangleLabels.Clear();
+ 
+         if (previewPlane == null) return;
+         foreach (UVRectSaveData data in rectangles)
+@@ -613,6 +649,11 @@
+             if (line != null) Destroy(line.gameObject);
+             rectangleLines.Remove(last.id);
+         }
++        if (last != null && rectangleLabels.TryGetValue(last.id, out TextMeshPro label))
++        {
++            if (label != null) Destroy(label.gameObject);
++            rectangleLabels.Remove(last.id);
++        }
+         UpdateSummary();
+     }
+ 
+@@ -623,6 +664,9 @@
+         foreach (LineRenderer line in rectangleLines.Values)
+             if (line != null) Destroy(line.gameObject);
+         rectangleLines.Clear();
++        foreach (TextMeshPro label in rectangleLabels.Values)
++            if (label != null) Destroy(label.gameObject);
++        rectangleLabels.Clear();
+         UpdateSummary();
+     }
+ 
+@@ -696,9 +740,7 @@
+         }
+ 
+         List<UVRectSaveData> ordered = rectangles.OrderBy(r => r.id).ToList();
+-        int start = Mathf.Max(0, ordered.Count - 4);
+-        IEnumerable<UVRectSaveData> shown = ordered.Skip(start);
+-        string rows = string.Join("\n", shown.Select(r =>
++        string rows = string.Join("\n", ordered.Select(r =>
+             "#" + r.id + "  U " + r.uMin.ToString("F3") + "–" + r.uMax.ToString("F3") +
+             "  V " + r.vMin.ToString("F3") + "–" + r.vMax.ToString("F3")));
+         summaryText.text = "UV Rects: " + rectangles.Count + "\n" + rows;

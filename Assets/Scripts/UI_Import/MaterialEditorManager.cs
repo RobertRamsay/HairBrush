@@ -13,6 +13,8 @@ public class MaterialEditorManager : MonoBehaviour
     private const string AlbedoProperty = "_Albedo";
     private const string NormalProperty = "_Normal";
     private const string OpacityProperty = "_OpacityMask";
+    private const string SmoothProperty = "_Smooth";
+    private const string MetalProperty = "_Metal";
 
     // HairBrush intentionally has one active hair material for the whole session. Multiple
     // material entries are authoring presets/stages, never per-group assignments. Keeping the
@@ -143,7 +145,7 @@ public class MaterialEditorManager : MonoBehaviour
         panelGO.transform.SetParent(parentCanvas, false);
         RectTransform rect = panelGO.GetComponent<RectTransform>();
         rect.anchorMin = new Vector2(0f, 0f); rect.anchorMax = new Vector2(0f, 1f);
-        rect.pivot = new Vector2(0f, .5f); rect.sizeDelta = new Vector2(250f, 0f); rect.anchoredPosition = new Vector2(10f, 0f);
+        rect.pivot = new Vector2(0f, .5f); rect.sizeDelta = new Vector2(440f, 0f); rect.anchoredPosition = new Vector2(10f, 0f);
         panelGO.GetComponent<Image>().color = new Color(.12f, .12f, .12f, .96f);
 
         VerticalLayoutGroup layout = panelGO.AddComponent<VerticalLayoutGroup>();
@@ -170,7 +172,7 @@ public class MaterialEditorManager : MonoBehaviour
         assignmentLabel = CreateSubLabel(panelGO.transform, "", 16f);
         CreateActionButton(panelGO.transform, "APPLY ALL", AssignSelectedToAllGroups, 24f);
         CreateHeader(panelGO.transform, "PROPERTIES", 20f);
-        propertiesRoot = CreateContainer(panelGO.transform, "Properties", 180f).transform;
+        propertiesRoot = CreateContainer(panelGO.transform, "Properties", 300f).transform;
     }
 
     private void RefreshPanel()
@@ -207,6 +209,8 @@ public class MaterialEditorManager : MonoBehaviour
             CreateTextureRow(propertiesRoot, "Albedo", AlbedoProperty, false, entry.albedoPath);
             CreateTextureRow(propertiesRoot, "Normal", NormalProperty, true, entry.normalPath);
             CreateTextureRow(propertiesRoot, "Opacity Mask", OpacityProperty, true, entry.opacityPath);
+            CreateFloatSliderRow(propertiesRoot, "Smoothness", SmoothProperty, entry);
+            CreateFloatSliderRow(propertiesRoot, "Metallic", MetalProperty, entry);
         }
     }
 
@@ -239,6 +243,104 @@ public class MaterialEditorManager : MonoBehaviour
         file.overflowMode = TMPro.TextOverflowModes.Ellipsis;
 
         CreateSmallButton(row.transform, "LOAD", () => LoadTextureIntoSlot(propertyName, linear), 48f, 28f);
+    }
+
+    // Simple 0-1 float slider bound directly to a shader property on this entry's material.
+    // The material's own current value is the single source of truth - no separate field is
+    // kept on HairMaterialEntry, so there's nothing that can drift out of sync with it. Saving
+    // reads straight from the material via MaterialProjectPersistenceBridge.Capture.
+    private void CreateFloatSliderRow(Transform parent, string label, string propertyName, HairMaterialEntry entry)
+    {
+        GameObject row = new GameObject(label + "Row", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
+        row.transform.SetParent(parent, false);
+        row.GetComponent<LayoutElement>().preferredHeight = 32f;
+        HorizontalLayoutGroup layout = row.GetComponent<HorizontalLayoutGroup>();
+        layout.spacing = 6f;
+        layout.childControlWidth = false;
+        layout.childControlHeight = true;
+        layout.childForceExpandWidth = false;
+        layout.childForceExpandHeight = false;
+
+        GameObject labelGO = new GameObject("Label", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI), typeof(LayoutElement));
+        labelGO.transform.SetParent(row.transform, false);
+        labelGO.GetComponent<LayoutElement>().preferredWidth = 90f;
+        TMPro.TextMeshProUGUI labelTmp = labelGO.GetComponent<TMPro.TextMeshProUGUI>();
+        labelTmp.text = label;
+        labelTmp.fontSize = 12f;
+        labelTmp.color = Color.white;
+        labelTmp.alignment = TMPro.TextAlignmentOptions.MidlineLeft;
+        labelTmp.enableWordWrapping = false;
+
+        GameObject sliderGO = new GameObject(label + "Slider", typeof(RectTransform), typeof(Slider), typeof(LayoutElement));
+        sliderGO.transform.SetParent(row.transform, false);
+        sliderGO.GetComponent<LayoutElement>().preferredWidth = 180f;
+        Slider slider = sliderGO.GetComponent<Slider>();
+        slider.minValue = 0f;
+        slider.maxValue = 1f;
+
+        GameObject bgGO = new GameObject("Background", typeof(RectTransform), typeof(Image));
+        bgGO.transform.SetParent(sliderGO.transform, false);
+        RectTransform bgRect = bgGO.GetComponent<RectTransform>();
+        bgRect.anchorMin = new Vector2(0f, .3f); bgRect.anchorMax = new Vector2(1f, .7f);
+        bgRect.offsetMin = Vector2.zero; bgRect.offsetMax = Vector2.zero;
+        bgGO.GetComponent<Image>().color = new Color(.18f, .18f, .20f);
+
+        GameObject fillAreaGO = new GameObject("Fill Area", typeof(RectTransform));
+        fillAreaGO.transform.SetParent(sliderGO.transform, false);
+        RectTransform fillAreaRect = fillAreaGO.GetComponent<RectTransform>();
+        fillAreaRect.anchorMin = new Vector2(0f, .3f); fillAreaRect.anchorMax = new Vector2(1f, .7f);
+        fillAreaRect.offsetMin = Vector2.zero; fillAreaRect.offsetMax = Vector2.zero;
+
+        GameObject fillGO = new GameObject("Fill", typeof(RectTransform), typeof(Image));
+        fillGO.transform.SetParent(fillAreaGO.transform, false);
+        RectTransform fillRect = fillGO.GetComponent<RectTransform>();
+        fillRect.anchorMin = Vector2.zero; fillRect.anchorMax = Vector2.one;
+        fillRect.offsetMin = Vector2.zero; fillRect.offsetMax = Vector2.zero;
+        Image fillImage = fillGO.GetComponent<Image>();
+        fillImage.color = new Color(.30f, .65f, .70f);
+        slider.fillRect = fillRect;
+        slider.targetGraphic = fillImage;
+
+        GameObject handleAreaGO = new GameObject("Handle Slide Area", typeof(RectTransform));
+        handleAreaGO.transform.SetParent(sliderGO.transform, false);
+        RectTransform handleAreaRect = handleAreaGO.GetComponent<RectTransform>();
+        handleAreaRect.anchorMin = Vector2.zero; handleAreaRect.anchorMax = Vector2.one;
+        handleAreaRect.offsetMin = Vector2.zero; handleAreaRect.offsetMax = Vector2.zero;
+
+        GameObject handleGO = new GameObject("Handle", typeof(RectTransform), typeof(Image));
+        handleGO.transform.SetParent(handleAreaGO.transform, false);
+        handleGO.GetComponent<RectTransform>().sizeDelta = new Vector2(12f, 0f);
+        handleGO.GetComponent<Image>().color = Color.white;
+        slider.handleRect = handleGO.GetComponent<RectTransform>();
+        slider.targetGraphic = handleGO.GetComponent<Image>();
+
+        GameObject valueGO = new GameObject("Value", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI), typeof(LayoutElement));
+        valueGO.transform.SetParent(row.transform, false);
+        valueGO.GetComponent<LayoutElement>().preferredWidth = 40f;
+        TMPro.TextMeshProUGUI valueTmp = valueGO.GetComponent<TMPro.TextMeshProUGUI>();
+        valueTmp.fontSize = 11f;
+        valueTmp.color = new Color(.75f, .75f, .75f);
+        valueTmp.alignment = TMPro.TextAlignmentOptions.MidlineLeft;
+
+        float startValue = entry.material != null && entry.material.HasProperty(propertyName)
+            ? entry.material.GetFloat(propertyName) : .5f;
+        slider.SetValueWithoutNotify(startValue);
+        valueTmp.text = startValue.ToString("F2");
+
+        slider.onValueChanged.AddListener(v =>
+        {
+            valueTmp.text = v.ToString("F2");
+            if (entry.material != null && entry.material.HasProperty(propertyName))
+                entry.material.SetFloat(propertyName, v);
+
+            // Same rule texture loading uses: only push to rendered hair cards if this entry
+            // is the currently active global material.
+            if (GetGlobalMaterialIndex() == selectedMaterialIndex)
+            {
+                viewer.hairCardMaterial = entry.material;
+                ApplyAssignments();
+            }
+        });
     }
 
     private void LoadTextureIntoSlot(string propertyName, bool linear)
