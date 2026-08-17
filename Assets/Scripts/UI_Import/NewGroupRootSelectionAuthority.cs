@@ -1,28 +1,44 @@
+using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using UnityEngine;
 using UnityEngine.EventSystems;
 
 // A freshly-created Hair Group always starts in root/group authoring context.
 // This covers every creation path (the + GROUP button and stroke/dialog group creation):
-// leave POST/CLUMPER editing first, then select the new group's normal root controls.
+// leave POST/CLUMPER editing first, purge any recycled group-ID state, then select the
+// new group's normal root controls. Empty + GROUP groups also reset every groom slider.
 [DefaultExecutionOrder(5270)]
 public class NewGroupRootSelectionAuthority : MonoBehaviour
 {
     private ModelViewer viewer;
     private PostAffectorManager posts;
     private GroupClumperManager clumpers;
+    private GroomRootStateAuthority rootState;
+    private GroomVarianceController variance;
+    private GroupPredeterminedUVController uvRouting;
+    private GroomShapeCurveAuthority curves;
 
     private FieldInfo allGroupIdsField;
     private MethodInfo selectGroupMethod;
     private MethodInfo clearSelectionMethod;
+    private MethodInfo resetAllSlidersMethod;
 
     private FieldInfo postActiveIdField;
     private FieldInfo postActiveGroupField;
+    private FieldInfo postGroupsField;
 
     private FieldInfo clumperSelectedGroupField;
     private FieldInfo clumperSelectedIdField;
+    private FieldInfo clumperGroupsField;
     private MethodInfo clumperDestroyControlsMethod;
+
+    private FieldInfo rootStatesField;
+    private FieldInfo varianceSettingsField;
+    private FieldInfo varianceLastGroupField;
+    private FieldInfo uvSettingsField;
+    private MethodInfo closeCurvePopupMethod;
 
     private readonly HashSet<int> previousGroups = new HashSet<int>();
     private bool initialized;
@@ -80,6 +96,7 @@ public class NewGroupRootSelectionAuthority : MonoBehaviour
                 allGroupIdsField = typeof(ModelViewer).GetField("allGroupIds", f);
                 selectGroupMethod = typeof(ModelViewer).GetMethod("SelectGroup", f);
                 clearSelectionMethod = typeof(ModelViewer).GetMethod("ClearSelectionHotspot", f);
+                resetAllSlidersMethod = typeof(ModelViewer).GetMethod("ResetAllSliders", f);
             }
         }
 
@@ -91,6 +108,7 @@ public class NewGroupRootSelectionAuthority : MonoBehaviour
                 BindingFlags f = BindingFlags.Instance | BindingFlags.NonPublic;
                 postActiveIdField = typeof(PostAffectorManager).GetField("activeId", f);
                 postActiveGroupField = typeof(PostAffectorManager).GetField("activeGroup", f);
+                postGroupsField = typeof(PostAffectorManager).GetField("groups", f);
             }
         }
 
@@ -102,8 +120,41 @@ public class NewGroupRootSelectionAuthority : MonoBehaviour
                 BindingFlags f = BindingFlags.Instance | BindingFlags.NonPublic;
                 clumperSelectedGroupField = typeof(GroupClumperManager).GetField("selectedGroup", f);
                 clumperSelectedIdField = typeof(GroupClumperManager).GetField("selectedClumperId", f);
+                clumperGroupsField = typeof(GroupClumperManager).GetField("byGroup", f);
                 clumperDestroyControlsMethod = typeof(GroupClumperManager).GetMethod("DestroyControls", f);
             }
+        }
+
+        if (rootState == null)
+        {
+            rootState = FindFirstObjectByType<GroomRootStateAuthority>();
+            if (rootState != null)
+                rootStatesField = typeof(GroomRootStateAuthority).GetField("roots", BindingFlags.Instance | BindingFlags.NonPublic);
+        }
+
+        if (variance == null)
+        {
+            variance = FindFirstObjectByType<GroomVarianceController>();
+            if (variance != null)
+            {
+                BindingFlags f = BindingFlags.Instance | BindingFlags.NonPublic;
+                varianceSettingsField = typeof(GroomVarianceController).GetField("groupSettings", f);
+                varianceLastGroupField = typeof(GroomVarianceController).GetField("lastGroupId", f);
+            }
+        }
+
+        if (uvRouting == null)
+        {
+            uvRouting = FindFirstObjectByType<GroupPredeterminedUVController>();
+            if (uvRouting != null)
+                uvSettingsField = typeof(GroupPredeterminedUVController).GetField("settingsByGroup", BindingFlags.Instance | BindingFlags.NonPublic);
+        }
+
+        if (curves == null)
+        {
+            curves = FindFirstObjectByType<GroomShapeCurveAuthority>();
+            if (curves != null)
+                closeCurvePopupMethod = typeof(GroomShapeCurveAuthority).GetMethod("ClosePopup", BindingFlags.Instance | BindingFlags.NonPublic);
         }
     }
 
@@ -126,16 +177,20 @@ public class NewGroupRootSelectionAuthority : MonoBehaviour
 
     void EnterFreshGroupRoot(int gid)
     {
+        // Stroke-created groups already contain the cards that were just authored. They still
+        // need recycled metadata purged, but resetting the scalar sliders would rewrite those
+        // new cards. Empty + GROUP groups should instead receive the exact factory defaults.
+        bool hasCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None)
+            .Any(card => card != null && card.groupId == gid);
+
         // Release ModelViewer's localized selection/hotspot first so normal group sliders
         // cannot inherit a POST-local edit context.
         clearSelectionMethod?.Invoke(viewer, null);
         viewer.selectionStrength = 0f;
 
-        // POST records remain intact on their owning old groups; only editor ownership exits.
+        // Leave modifier editing before clearing any recycled records for this numeric ID.
         postActiveIdField?.SetValue(posts, -1);
         postActiveGroupField?.SetValue(posts, -1);
-
-        // Likewise, leave CLUMPER editing without deleting/neutralizing any existing clumper.
         clumperSelectedGroupField?.SetValue(clumpers, -1);
         clumperSelectedIdField?.SetValue(clumpers, -1);
         clumperDestroyControlsMethod?.Invoke(clumpers, null);
@@ -143,9 +198,21 @@ public class NewGroupRootSelectionAuthority : MonoBehaviour
         GameObject host = GameObject.Find("ClumperScrollHost");
         if (host != null) Destroy(host);
 
+        ResetStoredGroupState(gid);
+
         // Use ModelViewer's own group-selection path so UV/base values, group highlight and
         // all standard group controls are refreshed exactly as if the root had been clicked.
         selectGroupMethod?.Invoke(viewer, new object[] { gid });
+
+        if (!hasCards)
+        {
+            // ResetAllSliders ends by touching lastPlacedCard, so detach the previous group's
+            // last-card pointer before invoking it. With an empty new group its slider callbacks
+            // are then harmless and update both the backing values and visible labels cleanly.
+            viewer.lastPlacedCard = null;
+            resetAllSlidersMethod?.Invoke(viewer, null);
+            selectGroupMethod?.Invoke(viewer, new object[] { gid });
+        }
 
         if (EventSystem.current != null)
         {
@@ -153,5 +220,34 @@ public class NewGroupRootSelectionAuthority : MonoBehaviour
             Transform label = row != null ? row.transform.Find("LabelButton") : null;
             EventSystem.current.SetSelectedGameObject(label != null ? label.gameObject : null);
         }
+    }
+
+    void ResetStoredGroupState(int gid)
+    {
+        // A numeric group ID may have existed earlier in this session. Remove every known
+        // group-keyed cache so reusing that number behaves exactly like a never-used group.
+        closeCurvePopupMethod?.Invoke(curves, null);
+        RemoveGroupEntry(rootStatesField, rootState, gid);
+        RemoveGroupEntry(varianceSettingsField, variance, gid);
+        RemoveGroupEntry(uvSettingsField, uvRouting, gid);
+        RemoveGroupEntry(postGroupsField, posts, gid);
+        RemoveGroupEntry(clumperGroupsField, clumpers, gid);
+
+        // Force the variance UI to re-read the now-default setting on its next Update.
+        varianceLastGroupField?.SetValue(variance, int.MinValue);
+
+        SurfaceIslandScope.SetClumperContiguous(gid, false);
+
+        GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.Bend);
+        GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.X);
+        GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.Y);
+        GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.Z);
+    }
+
+    static void RemoveGroupEntry(FieldInfo field, object owner, int gid)
+    {
+        IDictionary dictionary = field?.GetValue(owner) as IDictionary;
+        if (dictionary != null && dictionary.Contains(gid))
+            dictionary.Remove(gid);
     }
 }
