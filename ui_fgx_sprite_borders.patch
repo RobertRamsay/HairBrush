@@ -1,0 +1,115 @@
+--- a/Assets/UI_fgx/HB_9sliceSolid.png.meta	2026-08-17 12:23:55.108575976 +0000
++++ b/Assets/UI_fgx/HB_9sliceSolid.png.meta	2026-08-17 12:24:01.050176840 +0000
+@@ -43,13 +43,13 @@
+   nPOTScale: 0
+   lightmap: 0
+   compressionQuality: 50
+-  spriteMode: 2
++  spriteMode: 1
+   spriteExtrude: 1
+   spriteMeshType: 1
+   alignment: 0
+   spritePivot: {x: 0.5, y: 0.5}
+   spritePixelsToUnits: 100
+-  spriteBorder: {x: 0, y: 0, z: 0, w: 0}
++  spriteBorder: {x: 24, y: 24, z: 24, w: 24}
+   spriteGenerateFallbackPhysicsShape: 1
+   alphaUsage: 1
+   alphaIsTransparency: 1
+--- a/Assets/UI_fgx/HB_9sliceSolidHov.png.meta	2026-08-17 12:23:55.110034727 +0000
++++ b/Assets/UI_fgx/HB_9sliceSolidHov.png.meta	2026-08-17 12:24:01.056259781 +0000
+@@ -43,13 +43,13 @@
+   nPOTScale: 0
+   lightmap: 0
+   compressionQuality: 50
+-  spriteMode: 2
++  spriteMode: 1
+   spriteExtrude: 1
+   spriteMeshType: 1
+   alignment: 0
+   spritePivot: {x: 0.5, y: 0.5}
+   spritePixelsToUnits: 100
+-  spriteBorder: {x: 0, y: 0, z: 0, w: 0}
++  spriteBorder: {x: 24, y: 24, z: 24, w: 24}
+   spriteGenerateFallbackPhysicsShape: 1
+   alphaUsage: 1
+   alphaIsTransparency: 1
+--- a/Assets/UI_fgx/HB_9sliceSolidClick.png.meta	2026-08-17 12:23:55.109138524 +0000
++++ b/Assets/UI_fgx/HB_9sliceSolidClick.png.meta	2026-08-17 12:24:01.060982493 +0000
+@@ -43,13 +43,13 @@
+   nPOTScale: 0
+   lightmap: 0
+   compressionQuality: 50
+-  spriteMode: 2
++  spriteMode: 1
+   spriteExtrude: 1
+   spriteMeshType: 1
+   alignment: 0
+   spritePivot: {x: 0.5, y: 0.5}
+   spritePixelsToUnits: 100
+-  spriteBorder: {x: 0, y: 0, z: 0, w: 0}
++  spriteBorder: {x: 24, y: 24, z: 24, w: 24}
+   spriteGenerateFallbackPhysicsShape: 1
+   alphaUsage: 1
+   alphaIsTransparency: 1
+--- a/Assets/UI_fgx/HB_9slice_FineEdge.png.meta	2026-08-17 12:23:55.110786742 +0000
++++ b/Assets/UI_fgx/HB_9slice_FineEdge.png.meta	2026-08-17 12:24:01.065309287 +0000
+@@ -43,13 +43,13 @@
+   nPOTScale: 0
+   lightmap: 0
+   compressionQuality: 50
+-  spriteMode: 2
++  spriteMode: 1
+   spriteExtrude: 1
+   spriteMeshType: 1
+   alignment: 0
+   spritePivot: {x: 0.5, y: 0.5}
+   spritePixelsToUnits: 100
+-  spriteBorder: {x: 0, y: 0, z: 0, w: 0}
++  spriteBorder: {x: 10, y: 10, z: 10, w: 10}
+   spriteGenerateFallbackPhysicsShape: 1
+   alphaUsage: 1
+   alphaIsTransparency: 1
+--- a/Assets/UI_fgx/HB_9slice_FineGlow.png.meta	2026-08-17 12:23:55.111475956 +0000
++++ b/Assets/UI_fgx/HB_9slice_FineGlow.png.meta	2026-08-17 12:24:01.069567816 +0000
+@@ -43,13 +43,13 @@
+   nPOTScale: 0
+   lightmap: 0
+   compressionQuality: 50
+-  spriteMode: 2
++  spriteMode: 1
+   spriteExtrude: 1
+   spriteMeshType: 1
+   alignment: 0
+   spritePivot: {x: 0.5, y: 0.5}
+   spritePixelsToUnits: 100
+-  spriteBorder: {x: 0, y: 0, z: 0, w: 0}
++  spriteBorder: {x: 10, y: 10, z: 10, w: 10}
+   spriteGenerateFallbackPhysicsShape: 1
+   alphaUsage: 1
+   alphaIsTransparency: 1
+--- a/Assets/UI_fgx/Divider.png.meta	2026-08-17 12:23:55.104231261 +0000
++++ b/Assets/UI_fgx/Divider.png.meta	2026-08-17 12:24:01.077932117 +0000
+@@ -43,18 +43,18 @@
+   nPOTScale: 1
+   lightmap: 0
+   compressionQuality: 50
+-  spriteMode: 0
++  spriteMode: 1
+   spriteExtrude: 1
+   spriteMeshType: 1
+   alignment: 0
+   spritePivot: {x: 0.5, y: 0.5}
+   spritePixelsToUnits: 100
+-  spriteBorder: {x: 0, y: 0, z: 0, w: 0}
++  spriteBorder: {x: 20, y: 0, z: 20, w: 0}
+   spriteGenerateFallbackPhysicsShape: 1
+   alphaUsage: 1
+-  alphaIsTransparency: 0
++  alphaIsTransparency: 1
+   spriteTessellationDetail: -1
+-  textureType: 0
++  textureType: 8
+   textureShape: 1
+   singleChannelComponent: 0
+   flipbookRows: 1
