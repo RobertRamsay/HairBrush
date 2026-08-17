@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -8,7 +9,9 @@ using UnityEngine.InputSystem;
 // modifier authoring gestures (Ctrl/Shift/Space/Tab).
 //
 // Run before ModelViewer's default Update so the legacy localized-selection state is cleared
-// before ModelViewer decides whether this click is allowed to place cards.
+// before ModelViewer decides whether this click is allowed to place cards. Because this runs
+// very early, do a fresh EventSystem raycast at the current mouse position rather than relying
+// on IsPointerOverGameObject(), whose cached pointer state can still describe the previous frame.
 [DefaultExecutionOrder(-100)]
 public class ModifierEmptySpaceExitAuthority : MonoBehaviour
 {
@@ -28,6 +31,11 @@ public class ModifierEmptySpaceExitAuthority : MonoBehaviour
     private FieldInfo selectedClumperGroupField;
     private MethodInfo destroyClumperControlsMethod;
 
+    // If a later Update authority re-establishes POST/localized selection during the same
+    // click, repeat the exact teardown in LateUpdate. The click has already been classified
+    // as genuine empty space, so this cannot turn a model/UI click into a deselect.
+    private int plainSpaceExitFrame = -1;
+
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
     {
@@ -40,9 +48,26 @@ public class ModifierEmptySpaceExitAuthority : MonoBehaviour
     void Update()
     {
         Resolve();
-        if (viewer == null || viewer.mainCamera == null || Mouse.current == null) return;
-        if (!Mouse.current.leftButton.wasPressedThisFrame) return;
+        if (!IsPlainEmptySpaceClick()) return;
+
+        plainSpaceExitFrame = Time.frameCount;
+        CompleteExit();
+    }
+
+    void LateUpdate()
+    {
+        if (plainSpaceExitFrame != Time.frameCount) return;
+
+        Resolve();
         if (!HasActiveModifierOrLocalizedSelection()) return;
+        CompleteExit();
+    }
+
+    bool IsPlainEmptySpaceClick()
+    {
+        if (viewer == null || viewer.mainCamera == null || Mouse.current == null) return false;
+        if (!Mouse.current.leftButton.wasPressedThisFrame) return false;
+        if (!HasActiveModifierOrLocalizedSelection()) return false;
 
         // "Click in space" is deliberately a plain click. Modified clicks continue to own
         // POST creation/move, CLUMPER creation/move, placement, and the other groom gestures.
@@ -52,13 +77,31 @@ public class ModifierEmptySpaceExitAuthority : MonoBehaviour
              Keyboard.current.altKey.isPressed ||
              Keyboard.current.spaceKey.isPressed ||
              Keyboard.current.tabKey.isPressed))
-            return;
+            return false;
 
-        if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
+        if (PointerOverCurrentUI()) return false;
 
         Ray ray = viewer.mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
-        if (Physics.Raycast(ray, out _, Mathf.Infinity, ~0, QueryTriggerInteraction.Ignore)) return;
+        if (Physics.Raycast(ray, out _, Mathf.Infinity, ~0, QueryTriggerInteraction.Ignore)) return false;
 
+        return true;
+    }
+
+    bool PointerOverCurrentUI()
+    {
+        if (EventSystem.current == null || Mouse.current == null) return false;
+
+        PointerEventData pointer = new PointerEventData(EventSystem.current)
+        {
+            position = Mouse.current.position.ReadValue()
+        };
+        List<RaycastResult> hits = new List<RaycastResult>();
+        EventSystem.current.RaycastAll(pointer, hits);
+        return hits.Count > 0;
+    }
+
+    void CompleteExit()
+    {
         ExitPostAndLocalizedSelection();
         ExitClumper();
 
