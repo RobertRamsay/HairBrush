@@ -589,7 +589,7 @@ public class TextureUVRectWorkspace : MonoBehaviour
             go.transform.SetParent(visualRoot.transform, false);
             label = go.GetComponent<TextMeshPro>();
             label.alignment = TextAlignmentOptions.Center;
-            label.fontSize = 3f;
+            label.fontSize = .25f;
             label.color = Color.white;
             label.outlineColor = Color.black;
             label.outlineWidth = .2f;

@@ -145,7 +145,7 @@ public class MaterialEditorManager : MonoBehaviour
         panelGO.transform.SetParent(parentCanvas, false);
         RectTransform rect = panelGO.GetComponent<RectTransform>();
         rect.anchorMin = new Vector2(0f, 0f); rect.anchorMax = new Vector2(0f, 1f);
-        rect.pivot = new Vector2(0f, .5f); rect.sizeDelta = new Vector2(440f, 0f); rect.anchoredPosition = new Vector2(10f, 0f);
+        rect.pivot = new Vector2(0f, .5f); rect.sizeDelta = new Vector2(500f, 0f); rect.anchoredPosition = new Vector2(10f, 0f);
         panelGO.GetComponent<Image>().color = new Color(.12f, .12f, .12f, .96f);
 
         VerticalLayoutGroup layout = panelGO.AddComponent<VerticalLayoutGroup>();
@@ -218,7 +218,7 @@ public class MaterialEditorManager : MonoBehaviour
     {
         GameObject row = new GameObject(label + "Row", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
         row.transform.SetParent(parent, false);
-        row.GetComponent<LayoutElement>().preferredHeight = 46f;
+        row.GetComponent<LayoutElement>().preferredHeight = 62f;
         HorizontalLayoutGroup layout = row.GetComponent<HorizontalLayoutGroup>();
         layout.spacing = 4f;
         layout.childControlWidth = false;
@@ -228,7 +228,8 @@ public class MaterialEditorManager : MonoBehaviour
 
         GameObject textBlock = new GameObject("Info", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
         textBlock.transform.SetParent(row.transform, false);
-        textBlock.GetComponent<LayoutElement>().preferredWidth = 320f;
+        textBlock.GetComponent<RectTransform>().sizeDelta = new Vector2(380f, 0f);
+        textBlock.GetComponent<LayoutElement>().preferredWidth = 380f;
         VerticalLayoutGroup textLayout = textBlock.GetComponent<VerticalLayoutGroup>();
         textLayout.spacing = 0f;
         textLayout.childControlHeight = false;
@@ -237,10 +238,15 @@ public class MaterialEditorManager : MonoBehaviour
 
         CreateSubLabel(textBlock.transform, label, 16f);
         string currentName = string.IsNullOrEmpty(currentPath) ? GetCurrentTextureName(propertyName) : Path.GetFileName(currentPath);
-        TMPro.TextMeshProUGUI file = CreateSubLabel(textBlock.transform, "Current: " + currentName, 16f);
+        // Some filenames are long enough that no single-line column width is going to hold them
+        // at a readable size. Wrapping onto up to two lines instead of ellipsis-truncating means
+        // the full name is always visible regardless of length, rather than chasing an ever-wider
+        // column for whatever the longest name anyone loads turns out to be.
+        TMPro.TextMeshProUGUI file = CreateSubLabel(textBlock.transform, "Current: " + currentName, 32f);
         file.fontSize = 10f;
         file.color = new Color(.72f, .72f, .72f);
-        file.overflowMode = TMPro.TextOverflowModes.Ellipsis;
+        file.enableWordWrapping = true;
+        file.overflowMode = TMPro.TextOverflowModes.Truncate;
 
         CreateSmallButton(row.transform, "LOAD", () => LoadTextureIntoSlot(propertyName, linear), 48f, 28f);
     }
@@ -273,6 +279,8 @@ public class MaterialEditorManager : MonoBehaviour
 
         GameObject sliderGO = new GameObject(label + "Slider", typeof(RectTransform), typeof(Slider), typeof(LayoutElement));
         sliderGO.transform.SetParent(row.transform, false);
+        RectTransform sliderRect = sliderGO.GetComponent<RectTransform>();
+        sliderRect.sizeDelta = new Vector2(180f, 17f);
         sliderGO.GetComponent<LayoutElement>().preferredWidth = 180f;
         Slider slider = sliderGO.GetComponent<Slider>();
         slider.minValue = 0f;
@@ -293,13 +301,15 @@ public class MaterialEditorManager : MonoBehaviour
 
         GameObject fillGO = new GameObject("Fill", typeof(RectTransform), typeof(Image));
         fillGO.transform.SetParent(fillAreaGO.transform, false);
-        RectTransform fillRect = fillGO.GetComponent<RectTransform>();
-        fillRect.anchorMin = Vector2.zero; fillRect.anchorMax = Vector2.one;
-        fillRect.offsetMin = Vector2.zero; fillRect.offsetMax = Vector2.zero;
-        Image fillImage = fillGO.GetComponent<Image>();
-        fillImage.color = new Color(.30f, .65f, .70f);
-        slider.fillRect = fillRect;
-        slider.targetGraphic = fillImage;
+        fillGO.GetComponent<Image>().color = new Color(.30f, .65f, .70f);
+        // Slider drives progress by resizing this rect's anchors itself each frame - it must
+        // start as a zero-size point anchor at the origin, not a full stretch anchor. Using a
+        // stretch anchor here (my original mistake) is what silently broke drag interaction:
+        // the Slider's internal anchor math assumes this exact convention.
+        slider.fillRect = fillGO.GetComponent<RectTransform>();
+        slider.fillRect.anchorMin = Vector2.zero;
+        slider.fillRect.anchorMax = Vector2.zero;
+        slider.fillRect.sizeDelta = Vector2.zero;
 
         GameObject handleAreaGO = new GameObject("Handle Slide Area", typeof(RectTransform));
         handleAreaGO.transform.SetParent(sliderGO.transform, false);
@@ -309,10 +319,9 @@ public class MaterialEditorManager : MonoBehaviour
 
         GameObject handleGO = new GameObject("Handle", typeof(RectTransform), typeof(Image));
         handleGO.transform.SetParent(handleAreaGO.transform, false);
-        handleGO.GetComponent<RectTransform>().sizeDelta = new Vector2(12f, 0f);
         handleGO.GetComponent<Image>().color = Color.white;
         slider.handleRect = handleGO.GetComponent<RectTransform>();
-        slider.targetGraphic = handleGO.GetComponent<Image>();
+        slider.handleRect.sizeDelta = new Vector2(18f, 0f);
 
         GameObject valueGO = new GameObject("Value", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI), typeof(LayoutElement));
         valueGO.transform.SetParent(row.transform, false);
