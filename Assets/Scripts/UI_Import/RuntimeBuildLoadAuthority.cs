@@ -192,7 +192,6 @@ public class RuntimeBuildLoadAuthority : MonoBehaviour
         {
             foreach (GroupSaveData g in saveData.groups)
             {
-                if (g == null) continue;
                 allGroupIds?.Add(g.groupId);
                 if (groupNames != null) groupNames[g.groupId] = g.groupName;
                 if (groupUScales != null) groupUScales[g.groupId] = g.uScale != 0f ? g.uScale : 1f;
@@ -216,7 +215,6 @@ public class RuntimeBuildLoadAuthority : MonoBehaviour
         {
             foreach (HairCardSaveData cData in saveData.hairCards)
             {
-                if (cData == null) continue;
                 GameObject cardGO = new GameObject("HairCard_Strip", typeof(MeshFilter), typeof(MeshRenderer), typeof(HairCard));
                 HairCard card = cardGO.GetComponent<HairCard>();
                 card.transform.position = new Vector3(cData.posX, cData.posY, cData.posZ);
