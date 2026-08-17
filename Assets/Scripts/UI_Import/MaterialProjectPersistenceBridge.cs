@@ -18,6 +18,7 @@ public class MaterialProjectPersistenceBridge : MonoBehaviour
     private const string AlbedoProperty = "_Albedo";
     private const string NormalProperty = "_Normal";
     private const string OpacityProperty = "_OpacityMask";
+    private const int GlobalMaterialKey = int.MinValue;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void Spawn()
@@ -59,6 +60,8 @@ public class MaterialProjectPersistenceBridge : MonoBehaviour
             }
         }
 
+        // New sessions contain exactly one reserved assignment entry: the active material for
+        // every hair group. The old schema is retained so project JSON remains backwards-readable.
         if (groupsField?.GetValue(editor) is IDictionary groups)
         {
             foreach (DictionaryEntry pair in groups)
@@ -140,30 +143,45 @@ public class MaterialProjectPersistenceBridge : MonoBehaviour
         if (materials.Count == 0)
             materials.Add(createEntry.Invoke(editor, new object[] { "Mat 1", source }));
 
+        int globalIndex = ResolveSavedGlobalMaterialIndex(data, materials.Count);
         if (groupsField?.GetValue(editor) is IDictionary groups)
         {
             groups.Clear();
-            if (data.groupMaterials != null)
-            {
-                foreach (GroupMaterialSaveData saved in data.groupMaterials)
-                {
-                    if (saved == null) continue;
-                    int index = Mathf.Clamp(saved.materialIndex, 0, materials.Count - 1);
-                    groups[saved.groupId] = index;
-                }
-            }
-
-            ModelViewer viewer = FindFirstObjectByType<ModelViewer>();
-            int selected = 0;
-            if (viewer != null && groups.Contains(viewer.currentGroupId))
-                selected = (int)groups[viewer.currentGroupId];
-            selectedField?.SetValue(editor, Mathf.Clamp(selected, 0, materials.Count - 1));
+            groups[GlobalMaterialKey] = globalIndex;
         }
-        else selectedField?.SetValue(editor, 0);
+        selectedField?.SetValue(editor, globalIndex);
 
         apply?.Invoke(editor, null);
         preview?.Invoke(editor, null);
         refresh?.Invoke(editor, null);
+    }
+
+    private static int ResolveSavedGlobalMaterialIndex(HairProjectSaveData data, int materialCount)
+    {
+        if (materialCount <= 0) return 0;
+        if (data?.groupMaterials == null || data.groupMaterials.Count == 0) return 0;
+
+        // Current saves have one reserved global record.
+        foreach (GroupMaterialSaveData saved in data.groupMaterials)
+            if (saved != null && saved.groupId == GlobalMaterialKey)
+                return Mathf.Clamp(saved.materialIndex, 0, materialCount - 1);
+
+        // Legacy projects could assign a different material per group. That no longer has a
+        // representable meaning, so promote the material of the currently restored group when
+        // possible; otherwise use the first saved assignment deterministically.
+        ModelViewer viewer = FindFirstObjectByType<ModelViewer>();
+        if (viewer != null)
+        {
+            foreach (GroupMaterialSaveData saved in data.groupMaterials)
+                if (saved != null && saved.groupId == viewer.currentGroupId)
+                    return Mathf.Clamp(saved.materialIndex, 0, materialCount - 1);
+        }
+
+        foreach (GroupMaterialSaveData saved in data.groupMaterials)
+            if (saved != null)
+                return Mathf.Clamp(saved.materialIndex, 0, materialCount - 1);
+
+        return 0;
     }
 
     private static void TryRestoreTexture(object entry, string propertyName, string pathFieldName, string path, bool linear)
