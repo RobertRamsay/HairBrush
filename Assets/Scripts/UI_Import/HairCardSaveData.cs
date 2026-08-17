@@ -26,9 +26,8 @@ public class HairCardSaveData
 
 [Serializable] public class VarianceChannelSaveData { public string channel; public float amount; public int seed; }
 
-// Runtime AnimationCurve key payload used by the group-root Bend/X/Y/Z length profiles.
-// Curves are group-scoped because they shape the authored value (including POST/variance
-// evaluated values) consistently for every card in that Hair Group.
+// Runtime AnimationCurve key payload used by both group-root and POST-local Bend/X/Y/Z
+// length profiles. Ownership is determined by the containing GroupSaveData/PostAffectorSaveData.
 [Serializable]
 public class GroomCurveKeySaveData
 {
@@ -102,6 +101,14 @@ public class GroupClumperSaveData
     public float radius=.03f;
     public float falloff=.05f;
     public float weight=1f;
+
+    // Each POST owns a private snapshot of the four shape profiles. Empty lists identify a
+    // legacy project; PostShapeCurveBridge then copies the restored group curve once so the
+    // old project keeps its exact pre-local-curve appearance before the POST diverges.
+    public List<GroomCurveKeySaveData> bendCurve=new();
+    public List<GroomCurveKeySaveData> xAngleCurve=new();
+    public List<GroomCurveKeySaveData> yAngleCurve=new();
+    public List<GroomCurveKeySaveData> zAngleCurve=new();
 
     // Legacy POST clump fields retained only so older project JSON still deserializes.
     public float clumpPoint=.9f;
@@ -211,7 +218,12 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
             foreach(GroupSaveData group in groups)
                 groupUV.PopulateGroupSave(group);
 
+        // The existing curve editor presents a POST's private curves through the group
+        // registry while that POST is selected. Swap the actual group root back in only for
+        // group serialization, then restore the selected POST immediately afterward.
+        PostShapeCurveBridge.BeginProjectCapture(this);
         GroomShapeCurveAuthority.Capture(this);
+        PostShapeCurveBridge.EndProjectCapture();
         MaterialProjectPersistenceBridge.Capture(this);
         CanonicalProjectStateBridge.CanonicalizeForSave(this);
     }
@@ -236,6 +248,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
         PendingGroupUVRestore=this;
         PostPredeterminedUVAuthority.QueueRestore(this);
         GroomShapeCurveAuthority.QueueRestore(this);
+        PostShapeCurveBridge.QueueRestore(this);
         MaterialProjectPersistenceBridge.PendingRestore=this;
         GroupClumperPersistenceBridge.QueueRestore(this);
         if(sourceVersion>=2)

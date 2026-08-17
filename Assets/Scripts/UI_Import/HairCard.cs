@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.InputSystem;
@@ -12,6 +13,16 @@ public class HairCard : MonoBehaviour
         public int segments;
         public float x, y, z;
         public float uScale, vScale, uOffset, vOffset;
+    }
+
+    // A POST keeps its authored scalar delta, but its Bend/X/Y/Z contribution can have a
+    // different root-to-tip profile from both the group root and the other POSTs. The manager's
+    // scalar evaluator remains untouched; this transient list only carries profile provenance
+    // into mesh generation so those additive deltas are shaped independently per row.
+    public struct PostShapeProfileContribution
+    {
+        public int postId;
+        public float bend, x, y, z;
     }
 
     // Native card cross-section: left edge / raised centre / right edge. The ridge height
@@ -55,6 +66,7 @@ public class HairCard : MonoBehaviour
 
     private GroomState canonicalState;
     private bool hasCanonicalState;
+    private readonly List<PostShapeProfileContribution> postShapeProfileContributions = new List<PostShapeProfileContribution>();
 
     private bool clumpActive;
     private Vector3 clumpSurfacePoint;
@@ -70,24 +82,56 @@ public class HairCard : MonoBehaviour
     public Vector3 GetSurfaceNormal() { return surfaceNormal; }
     public float GetCrossSectionRidgeHeight() { return Mathf.Max(.0005f, width) * flattenFactor * CrossSectionRidgeRatio; }
 
+    public void ClearPostShapeProfileContributions()
+    {
+        postShapeProfileContributions.Clear();
+    }
+
+    public void AddPostShapeProfileContribution(int postId, float bend, float x, float y, float z)
+    {
+        if (Mathf.Abs(bend) + Mathf.Abs(x) + Mathf.Abs(y) + Mathf.Abs(z) <= .000001f) return;
+        postShapeProfileContributions.Add(new PostShapeProfileContribution
+        {
+            postId = postId,
+            bend = bend,
+            x = x,
+            y = y,
+            z = z
+        });
+    }
+
     // Local per-row rotation which, after the GameObject's existing full X/Y/Z transform,
-    // yields the requested root-to-tip angle profile. Keeping the GameObject transform intact
-    // preserves every existing placement/raycast contract while the mesh counter-rotates from
-    // that full offset toward the independently curved X/Y/Z values.
+    // yields the requested root-to-tip angle profile. The scalar result is still the normal
+    // canonical + POST evaluation. Each POST contribution then replaces only its share of the
+    // group profile with that POST's own profile, preserving additive/spatial weighting exactly.
     public Quaternion GetLengthProfileRotation(float t)
     {
         t = Mathf.Clamp01(t);
-        float bendMultiplier = GroomShapeCurveRegistry.Evaluate(groupId, GroomShapeCurveChannel.Bend, t);
-        float xMultiplier = GroomShapeCurveRegistry.Evaluate(groupId, GroomShapeCurveChannel.X, t);
-        float yMultiplier = GroomShapeCurveRegistry.Evaluate(groupId, GroomShapeCurveChannel.Y, t);
-        float zMultiplier = GroomShapeCurveRegistry.Evaluate(groupId, GroomShapeCurveChannel.Z, t);
+        float bendMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.Bend, t);
+        float xMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.X, t);
+        float yMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.Y, t);
+        float zMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.Z, t);
+
+        float profiledBend = bendAngle * bendMultiplier;
+        float profiledX = storedOffsetX * xMultiplier;
+        float profiledY = storedOffsetY * yMultiplier;
+        float profiledZ = storedOffsetZ * zMultiplier;
+
+        foreach (PostShapeProfileContribution contribution in postShapeProfileContributions)
+        {
+            profiledBend += contribution.bend *
+                (PostShapeCurveBridge.EvaluatePost(contribution.postId, GroomShapeCurveChannel.Bend, t) - bendMultiplier);
+            profiledX += contribution.x *
+                (PostShapeCurveBridge.EvaluatePost(contribution.postId, GroomShapeCurveChannel.X, t) - xMultiplier);
+            profiledY += contribution.y *
+                (PostShapeCurveBridge.EvaluatePost(contribution.postId, GroomShapeCurveChannel.Y, t) - yMultiplier);
+            profiledZ += contribution.z *
+                (PostShapeCurveBridge.EvaluatePost(contribution.postId, GroomShapeCurveChannel.Z, t) - zMultiplier);
+        }
 
         Quaternion fullOffset = Quaternion.Euler(storedOffsetX, storedOffsetY, storedOffsetZ);
-        Quaternion curvedOffset = Quaternion.Euler(
-            storedOffsetX * xMultiplier,
-            storedOffsetY * yMultiplier,
-            storedOffsetZ * zMultiplier);
-        Quaternion bendAndTwist = Quaternion.Euler(bendAngle * bendMultiplier, 0f, twistAngle * t);
+        Quaternion curvedOffset = Quaternion.Euler(profiledX, profiledY, profiledZ);
+        Quaternion bendAndTwist = Quaternion.Euler(profiledBend, 0f, twistAngle * t);
 
         return Quaternion.Inverse(fullOffset) * curvedOffset * bendAndTwist;
     }
