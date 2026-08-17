@@ -1,0 +1,34 @@
+--- a/Assets/Scripts/UI_Import/MaterialEditorBootstrap.cs	2026-08-17 18:44:09.214743044 +0000
++++ b/Assets/Scripts/UI_Import/MaterialEditorBootstrap.cs	2026-08-17 18:44:18.805402135 +0000
+@@ -1,9 +1,5 @@
+ using UnityEngine;
+ 
+-#if UNITY_EDITOR
+-using UnityEditor;
+-#endif
+-
+ [DefaultExecutionOrder(9100)]
+ public class MaterialEditorBootstrap : MonoBehaviour
+ {
+@@ -62,13 +58,14 @@
+         editor = viewer.GetComponent<MaterialEditorManager>();
+         if (editor == null) editor = viewer.gameObject.AddComponent<MaterialEditorManager>();
+ 
+-        Material template = null;
+-#if UNITY_EDITOR
+-        template = AssetDatabase.LoadAssetAtPath<Material>("Assets/Materials/HairCard_dithSdr.mat");
+-#endif
+-        if (template == null) template = viewer.hairCardMaterial;
+-
+-        editor.Init(viewer, template);
++        // Previously loaded a "canonical" material via AssetDatabase in the Editor only, falling
++        // back to viewer.hairCardMaterial in a build - AssetDatabase doesn't exist in a Player,
++        // so that fallback was silently what a build always used, and it ran this early (before
++        // any project load) that it was still whatever placeholder ModelViewer started with, not
++        // the intended Amplify-shader material. viewer.hairCardMaterial is already the correctly
++        // wired reference used everywhere hair cards actually render, so just use it directly and
++        // consistently in both the Editor and a build - no reason for these to differ.
++        editor.Init(viewer, viewer.hairCardMaterial);
+         initialised = true;
+         workspaceStateKnown = false;
+     }
