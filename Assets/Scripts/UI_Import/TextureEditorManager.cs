@@ -4,6 +4,10 @@ using System.Reflection;
 
 public class TextureEditorManager : MonoBehaviour
 {
+    private const float MaterialPanelWidth = 300f;
+    private const float MaterialTextureInfoWidth = 220f;
+    private const float MaterialSliderWidth = 125f;
+
     private GameObject textureSliderPanelGO;
     private GameObject texturePreviewPlane;
     private Material hairCardMaterial;
@@ -11,6 +15,12 @@ public class TextureEditorManager : MonoBehaviour
     public int currentTextureGroupId = 0;
 
     public void Init(Material mat) { hairCardMaterial = mat; }
+
+    private void LateUpdate()
+    {
+        if (textureSliderPanelGO == null || !textureSliderPanelGO.activeInHierarchy) return;
+        ApplyMaterialWorkspaceLayout();
+    }
 
     public void SetPanelActive(bool active, Transform parentCanvas, System.Action onSwitchToGroom)
     {
@@ -43,6 +53,9 @@ public class TextureEditorManager : MonoBehaviour
                 if (hairCardMaterial != null) mr.sharedMaterial = hairCardMaterial;
             }
             else texturePreviewPlane.SetActive(true);
+
+            CenterPreviewPlaneOnCamera();
+            ApplyMaterialWorkspaceLayout();
         }
         else if (texturePreviewPlane != null)
         {
@@ -58,6 +71,72 @@ public class TextureEditorManager : MonoBehaviour
         {
             MeshRenderer mr = texturePreviewPlane.GetComponent<MeshRenderer>();
             if (mr != null) mr.sharedMaterial = material;
+        }
+    }
+
+    private void CenterPreviewPlaneOnCamera()
+    {
+        if (texturePreviewPlane == null) return;
+
+        Camera previewCamera = Camera.main;
+        if (previewCamera == null)
+        {
+            ModelViewer viewer = FindFirstObjectByType<ModelViewer>();
+            if (viewer != null) previewCamera = viewer.mainCamera;
+        }
+        if (previewCamera == null) return;
+
+        // The texture quad used to assume world X/Y zero was the centre of the screen. After
+        // grooming camera pan/orbit that is no longer true, so texture mode could open with the
+        // atlas visibly pushed to one side. Keep its current camera-space depth, but put it on
+        // the camera's centre ray and face it squarely at the camera every time texture mode opens.
+        float depth = Vector3.Dot(
+            texturePreviewPlane.transform.position - previewCamera.transform.position,
+            previewCamera.transform.forward);
+        if (depth <= previewCamera.nearClipPlane)
+            depth = Mathf.Max(1.5f, previewCamera.nearClipPlane + 0.1f);
+
+        texturePreviewPlane.transform.position = previewCamera.ViewportToWorldPoint(new Vector3(0.5f, 0.5f, depth));
+        texturePreviewPlane.transform.rotation = previewCamera.transform.rotation;
+    }
+
+    private void ApplyMaterialWorkspaceLayout()
+    {
+        GameObject materialPanel = FindNamed("TextureMaterialPanel");
+        if (materialPanel == null || !materialPanel.activeInHierarchy) return;
+
+        RectTransform panelRect = materialPanel.GetComponent<RectTransform>();
+        if (panelRect != null)
+            panelRect.sizeDelta = new Vector2(MaterialPanelWidth, panelRect.sizeDelta.y);
+
+        // Match the 300 px Groom Groups panel. The old 320 px filename column and 180 px
+        // sliders were themselves wider than the new panel interior, so compact those known
+        // controls as part of the workspace layout while preserving two-line filename wrapping.
+        Transform properties = materialPanel.transform.Find("Properties");
+        if (properties == null) return;
+
+        foreach (Transform child in properties)
+        {
+            if (child == null) continue;
+
+            Transform info = child.Find("Info");
+            if (info != null)
+            {
+                LayoutElement infoLayout = info.GetComponent<LayoutElement>();
+                if (infoLayout != null) infoLayout.preferredWidth = MaterialTextureInfoWidth;
+            }
+
+            Transform sliderTransform = child.Find("SmoothnessSlider");
+            if (sliderTransform == null) sliderTransform = child.Find("MetallicSlider");
+            if (sliderTransform != null)
+            {
+                LayoutElement sliderLayout = sliderTransform.GetComponent<LayoutElement>();
+                if (sliderLayout != null) sliderLayout.preferredWidth = MaterialSliderWidth;
+
+                RectTransform sliderRect = sliderTransform.GetComponent<RectTransform>();
+                if (sliderRect != null)
+                    sliderRect.sizeDelta = new Vector2(MaterialSliderWidth, sliderRect.sizeDelta.y);
+            }
         }
     }
 
