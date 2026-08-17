@@ -54,6 +54,10 @@ public class HairMaterialSaveData
     public string albedoPath;
     public string normalPath;
     public string opacityPath;
+
+    // Predetermined card atlas cuts belong to the material/texture set, not the project
+    // workspace globally. Kept here so switching materials swaps both texture and cuts.
+    public List<UVRectSaveData> uvRects=new();
 }
 
 [Serializable]
@@ -178,6 +182,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
     public string modelPath;
     public List<GroupSaveData> groups=new();
     public List<HairCardSaveData> hairCards=new();
+    // Legacy/global mirror kept for backwards compatibility with pre per-material projects.
     public List<UVRectSaveData> uvRects=new();
     public List<HairMaterialSaveData> hairMaterials=new();
     public List<GroupMaterialSaveData> groupMaterials=new();
@@ -225,6 +230,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
         GroomShapeCurveAuthority.Capture(this);
         PostShapeCurveBridge.EndProjectCapture();
         MaterialProjectPersistenceBridge.Capture(this);
+        MaterialUVRectAuthority.Capture(this);
         CanonicalProjectStateBridge.CanonicalizeForSave(this);
     }
 
@@ -250,6 +256,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
         GroomShapeCurveAuthority.QueueRestore(this);
         PostShapeCurveBridge.QueueRestore(this);
         MaterialProjectPersistenceBridge.PendingRestore=this;
+        MaterialUVRectAuthority.QueueRestore(this);
         GroupClumperPersistenceBridge.QueueRestore(this);
         if(sourceVersion>=2)
             CanonicalProjectStateBridge.PendingCanonicalRestore=this;
