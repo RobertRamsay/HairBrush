@@ -18,6 +18,7 @@ public class ModifierEmptySpaceExitAuthority : MonoBehaviour
     private FieldInfo hasSelectionField;
     private FieldInfo hitPointField;
     private FieldInfo hitNormalField;
+    private MethodInfo clearSelectionMethod;
 
     private FieldInfo selectedClumperIdField;
     private FieldInfo selectedClumperGroupField;
@@ -103,6 +104,7 @@ public class ModifierEmptySpaceExitAuthority : MonoBehaviour
         hasSelectionField = type.GetField("hasSelectionHotspot", flags);
         hitPointField = type.GetField("selectionHitPoint", flags);
         hitNormalField = type.GetField("selectionHitNormal", flags);
+        clearSelectionMethod = type.GetMethod("ClearSelectionHotspot", flags);
     }
 
     bool HasActiveModifier()
@@ -121,7 +123,15 @@ public class ModifierEmptySpaceExitAuthority : MonoBehaviour
 
         postActiveIdField.SetValue(posts, -1);
         postActiveGroupField?.SetValue(posts, -1);
-        hasSelectionField?.SetValue(viewer, false);
+
+        // Match ModelViewer's original Ctrl+click-in-empty-space teardown exactly. Clearing
+        // only the hotspot leaves isSelectionMode enabled, which blocks normal hair placement
+        // after a plain click exits POST editing.
+        if (clearSelectionMethod != null)
+            clearSelectionMethod.Invoke(viewer, null);
+        else
+            hasSelectionField?.SetValue(viewer, false);
+
         hitPointField?.SetValue(viewer, Vector3.zero);
         hitNormalField?.SetValue(viewer, Vector3.zero);
     }
