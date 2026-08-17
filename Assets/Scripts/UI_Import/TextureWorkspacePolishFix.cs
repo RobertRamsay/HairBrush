@@ -13,10 +13,10 @@ public class TextureWorkspacePolishFix : MonoBehaviour
 {
     private const float MaterialPanelWidth = 300f;
     private const float TextureInfoWidth = 220f;
-    private const float SliderLabelWidth = 74f;
-    private const float SliderWidth = 126f;
-    private const float SliderValueWidth = 34f;
-    private const float SliderHeight = 17f;
+    private const float SliderWidth = 216f;
+    private const float SliderValueWidth = 44f;
+    private const float SliderHeight = 18f;
+    private const float SliderRowHeight = 54f;
 
     private GameObject texturePanel;
     private GameObject materialPanel;
@@ -86,9 +86,9 @@ public class TextureWorkspacePolishFix : MonoBehaviour
         {
             if (row == null) continue;
 
-            // Texture filenames stay on one line and auto-size just enough to show the complete
-            // basename. The LOAD button keeps its fixed width, so the left panel can remain as
-            // compact as the Groom Groups panel without ellipsis or two-line wrapping.
+            // Keep the complete texture filename on one line, but make it substantially more
+            // readable than the previous tiny fit. Auto-sizing is only allowed to reduce from
+            // the larger target when a particularly long basename genuinely needs it.
             Transform info = row.Find("Info");
             if (info != null)
             {
@@ -105,8 +105,9 @@ public class TextureWorkspacePolishFix : MonoBehaviour
                     tmp.enableWordWrapping = false;
                     tmp.overflowMode = TextOverflowModes.Overflow;
                     tmp.enableAutoSizing = true;
-                    tmp.fontSizeMax = 10f;
-                    tmp.fontSizeMin = 5f;
+                    tmp.fontSize = 18f;
+                    tmp.fontSizeMax = 18f;
+                    tmp.fontSizeMin = 10f;
                     tmp.margin = Vector4.zero;
                 }
             }
@@ -115,16 +116,36 @@ public class TextureWorkspacePolishFix : MonoBehaviour
             if (sliderTransform == null) sliderTransform = row.Find("MetallicSlider");
             if (sliderTransform == null) continue;
 
+            // These material properties read much better as a compact two-line block:
+            // property name on the first line, then the actual control directly underneath.
+            // Disable the original one-line HorizontalLayoutGroup and position its existing
+            // children explicitly inside the 280 px content width of the 300 px side panel.
             HorizontalLayoutGroup rowLayout = row.GetComponent<HorizontalLayoutGroup>();
-            if (rowLayout != null)
-                rowLayout.childAlignment = TextAnchor.MiddleLeft;
+            if (rowLayout != null) rowLayout.enabled = false;
 
-            Transform label = row.Find("Label");
-            LayoutElement labelLayout = label != null ? label.GetComponent<LayoutElement>() : null;
-            if (labelLayout != null)
+            LayoutElement rowElement = row.GetComponent<LayoutElement>();
+            if (rowElement != null)
             {
-                labelLayout.preferredWidth = SliderLabelWidth;
-                labelLayout.minWidth = SliderLabelWidth;
+                rowElement.preferredHeight = SliderRowHeight;
+                rowElement.minHeight = SliderRowHeight;
+            }
+
+            RectTransform labelRect = row.Find("Label") as RectTransform;
+            if (labelRect != null)
+            {
+                labelRect.anchorMin = new Vector2(0f, 1f);
+                labelRect.anchorMax = new Vector2(1f, 1f);
+                labelRect.pivot = new Vector2(0f, 1f);
+                labelRect.anchoredPosition = Vector2.zero;
+                labelRect.sizeDelta = new Vector2(0f, 22f);
+
+                LayoutElement labelLayout = labelRect.GetComponent<LayoutElement>();
+                if (labelLayout != null)
+                {
+                    labelLayout.preferredWidth = -1f;
+                    labelLayout.minWidth = -1f;
+                    labelLayout.preferredHeight = 22f;
+                }
             }
 
             LayoutElement sliderLayout = sliderTransform.GetComponent<LayoutElement>();
@@ -132,22 +153,36 @@ public class TextureWorkspacePolishFix : MonoBehaviour
             {
                 sliderLayout.preferredWidth = SliderWidth;
                 sliderLayout.minWidth = SliderWidth;
-                // This was the missing piece: with childControlHeight enabled and no preferred
-                // height, Unity collapsed the actual slider bar to zero while the value survived.
                 sliderLayout.preferredHeight = SliderHeight;
                 sliderLayout.minHeight = SliderHeight;
             }
 
             RectTransform sliderRect = sliderTransform.GetComponent<RectTransform>();
             if (sliderRect != null)
-                sliderRect.sizeDelta = new Vector2(SliderWidth, SliderHeight);
-
-            Transform value = row.Find("Value");
-            LayoutElement valueLayout = value != null ? value.GetComponent<LayoutElement>() : null;
-            if (valueLayout != null)
             {
-                valueLayout.preferredWidth = SliderValueWidth;
-                valueLayout.minWidth = SliderValueWidth;
+                sliderRect.anchorMin = new Vector2(0f, 1f);
+                sliderRect.anchorMax = new Vector2(0f, 1f);
+                sliderRect.pivot = new Vector2(0f, .5f);
+                sliderRect.anchoredPosition = new Vector2(0f, -36f);
+                sliderRect.sizeDelta = new Vector2(SliderWidth, SliderHeight);
+            }
+
+            RectTransform valueRect = row.Find("Value") as RectTransform;
+            if (valueRect != null)
+            {
+                valueRect.anchorMin = new Vector2(0f, 1f);
+                valueRect.anchorMax = new Vector2(0f, 1f);
+                valueRect.pivot = new Vector2(0f, .5f);
+                valueRect.anchoredPosition = new Vector2(SliderWidth + 8f, -36f);
+                valueRect.sizeDelta = new Vector2(SliderValueWidth, 22f);
+
+                LayoutElement valueLayout = valueRect.GetComponent<LayoutElement>();
+                if (valueLayout != null)
+                {
+                    valueLayout.preferredWidth = SliderValueWidth;
+                    valueLayout.minWidth = SliderValueWidth;
+                    valueLayout.preferredHeight = 22f;
+                }
             }
         }
     }
