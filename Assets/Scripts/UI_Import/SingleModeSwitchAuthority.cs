@@ -8,6 +8,7 @@ using UnityEngine.UI;
 [DefaultExecutionOrder(9400)]
 public class SingleModeSwitchAuthority : MonoBehaviour
 {
+    private const float CompactButtonWidth = 136f;
     private float nextScan;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -66,12 +67,12 @@ public class SingleModeSwitchAuthority : MonoBehaviour
             layout.spacing = 8f;
         }
 
-        StyleDestinationButton(textureTab, "TEXTURE MODE", new Color(.20f, .50f, .82f, 1f), 220f);
+        StyleDestinationButton(textureTab, "TEXTURE MODE", new Color(.20f, .50f, .82f, 1f), CompactButtonWidth);
 
         if (menuButton != null)
         {
             menuButton.gameObject.SetActive(true);
-            StyleDestinationButton(menuButton, "MENU", new Color(.24f, .30f, .38f, 1f), 220f);
+            StyleDestinationButton(menuButton, "MENU", new Color(.24f, .30f, .38f, 1f), CompactButtonWidth);
 
             // MENU is immediately to the left of TEXTURE MODE.
             int textureIndex = textureTab.GetSiblingIndex();
@@ -166,6 +167,9 @@ public class SingleModeSwitchAuthority : MonoBehaviour
             label.fontStyle = FontStyles.Bold;
             label.alignment = TextAlignmentOptions.Center;
             label.textWrappingMode = TextWrappingModes.NoWrap;
+            label.enableAutoSizing = true;
+            label.fontSizeMin = 10f;
+            label.fontSizeMax = 16f;
         }
     }
 
