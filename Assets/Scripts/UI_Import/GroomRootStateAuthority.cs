@@ -2,10 +2,10 @@ using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
 
-// Keeps the authored group-root controls separate from temporary POST authoring controls.
+// Keeps the authored group-root controls separate from temporary POST/CLUMPER authoring controls.
 // Runs before ModelViewer so a normal card placement always sees the root values, never
-// the last selected POST values. This is control-state only; card canonical data remains
-// owned by HairCard/PostAffectorManager.
+// the last selected modifier values. This is control-state only; card canonical data remains
+// owned by HairCard/PostAffectorManager/GroupClumperManager.
 [DefaultExecutionOrder(-1100)]
 public class GroomRootStateAuthority : MonoBehaviour
 {
@@ -20,6 +20,7 @@ public class GroomRootStateAuthority : MonoBehaviour
     private readonly Dictionary<int, RootState> roots = new();
     private ModelViewer viewer;
     private PostAffectorManager posts;
+    private GroupClumperManager clumpers;
     private FieldInfo hasSelectionField;
     private FieldInfo loadedModelField;
     private GameObject lastLoadedModel;
@@ -46,16 +47,16 @@ public class GroomRootStateAuthority : MonoBehaviour
             roots.Clear();
             wasSelected = false;
             // LoadProject has already populated the saved root controls by the next Update.
-            // New-model RESET may replace them later this frame; with no POST they will be
-            // captured again on the following frame.
+            // New-model RESET may replace them later this frame; with no modifier selected they
+            // will be captured again on the following frame.
             roots[viewer.currentGroupId] = ReadViewer();
         }
 
         int groupId = viewer.currentGroupId;
-        bool selected = HasSelection();
-        bool hasPost = GroupHasPost(groupId);
+        bool selected = HasSelection() || IsClumperSelectedForGroup(groupId);
+        bool hasModifier = GroupHasPost(groupId) || GroupHasClumper(groupId);
 
-        // A POST row can be removed or group-root can be selected after this component's
+        // A POST/CLUMPER row can be removed or group-root can be selected after this component's
         // previous Update. On the next frame restore the preserved root before deciding
         // whether the now-unlocked controls should become authoritative again.
         if (wasSelected && !selected && roots.TryGetValue(groupId, out RootState exitedRoot))
@@ -66,15 +67,17 @@ public class GroomRootStateAuthority : MonoBehaviour
 
         if (selected)
         {
+            // Modifier controls are never allowed to redefine the group's authored root/base.
             wasSelected = true;
             return;
         }
 
-        if (hasPost)
+        if (hasModifier)
         {
-            // POST controls temporarily borrow ModelViewer.current*. When POST authoring is
-            // over, force those fields back to the preserved root before ModelViewer handles
-            // placement or variance for this frame.
+            // POST/CLUMPER controls may temporarily borrow or coexist with ModelViewer.current*.
+            // When modifier authoring is over, force those fields back to the preserved root
+            // before ModelViewer handles placement or variance for this frame. This means
+            // adding more hairs to an existing modified group starts from its original base.
             RestoreRootToViewer(groupId);
         }
         else
@@ -101,6 +104,7 @@ public class GroomRootStateAuthority : MonoBehaviour
             }
         }
         if (posts == null) posts = FindFirstObjectByType<PostAffectorManager>();
+        if (clumpers == null) clumpers = FindFirstObjectByType<GroupClumperManager>();
     }
 
     bool HasSelection()
@@ -108,11 +112,23 @@ public class GroomRootStateAuthority : MonoBehaviour
         return hasSelectionField != null && viewer != null && hasSelectionField.GetValue(viewer) is bool b && b;
     }
 
+    bool IsClumperSelectedForGroup(int groupId)
+    {
+        if (clumpers == null) return false;
+        GroupClumperManager.GroupClumper selected = clumpers.GetSelectedClumper();
+        return selected != null && selected.groupId == groupId;
+    }
+
     bool GroupHasPost(int groupId)
     {
         if (posts == null) return false;
         List<PostAffectorSaveData> items = posts.ExportGroup(groupId);
         return items != null && items.Count > 0;
+    }
+
+    bool GroupHasClumper(int groupId)
+    {
+        return clumpers != null && clumpers.HasClumpers(groupId);
     }
 
     RootState ReadViewer()
