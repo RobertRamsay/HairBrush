@@ -2,13 +2,12 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
-// Groom workspace counterpart to TextureEditorManager's single destination button.
-// The authored/runtime Groom UI still builds a two-tab row; this authority collapses it
-// to one centered TEXTURE MODE button without touching the mode-switch callback itself.
+// Groom workspace header authority.
+// Keeps the right-side destination controls together and uses the old left MENU slot
+// for product/version branding instead of a navigation button.
 [DefaultExecutionOrder(9400)]
 public class SingleModeSwitchAuthority : MonoBehaviour
 {
-    private GameObject lastRow;
     private float nextScan;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -23,18 +22,38 @@ public class SingleModeSwitchAuthority : MonoBehaviour
     void Update()
     {
         if (Time.unscaledTime < nextScan) return;
-        nextScan = Time.unscaledTime + .25f;
+        nextScan = Time.unscaledTime + .15f;
 
         GameObject groomPanel = FindNamed("GroomingPanel");
-        if (groomPanel == null || !groomPanel.activeInHierarchy) return;
+        GameObject groupPanel = FindNamed("GroupManagerPanel");
+        if (groomPanel == null || groupPanel == null || !groomPanel.activeInHierarchy) return;
 
         Transform row = groomPanel.transform.Find("PanelTabRow");
         if (row == null) return;
-        if (lastRow == row.gameObject && row.childCount == 2 && !row.GetChild(0).gameObject.activeSelf) return;
 
         Transform groomTab = row.Find("GroomTabButton");
         Transform textureTab = row.Find("TexTabButton");
         if (textureTab == null) return;
+
+        // RuntimeNavigationProjectIO owns the MENU action. Move that exact button so its
+        // existing ReturnToMenu listener comes with it rather than duplicating navigation logic.
+        Transform menuButton = row.Find("WorkspaceMenuButton_Runtime");
+        if (menuButton == null)
+        {
+            Transform leftMenu = groupPanel.transform.Find("MenuButton_Runtime");
+            if (leftMenu != null && leftMenu.GetComponent<Button>() != null)
+            {
+                leftMenu.SetParent(row, false);
+                leftMenu.name = "WorkspaceMenuButton_Runtime";
+                menuButton = leftMenu;
+            }
+        }
+
+        // Once the real MENU button has moved, leave a branding header with the original
+        // runtime name. RuntimeNavigationProjectIO then sees the slot as occupied and does
+        // not recreate another MENU button on the left every scan.
+        if (menuButton != null)
+            EnsureBrandHeader(groupPanel.transform);
 
         if (groomTab != null) groomTab.gameObject.SetActive(false);
 
@@ -44,25 +63,110 @@ public class SingleModeSwitchAuthority : MonoBehaviour
             layout.childControlWidth = false;
             layout.childForceExpandWidth = false;
             layout.childAlignment = TextAnchor.MiddleCenter;
-            layout.spacing = 0f;
+            layout.spacing = 8f;
         }
 
-        LayoutElement le = textureTab.GetComponent<LayoutElement>();
-        if (le == null) le = textureTab.gameObject.AddComponent<LayoutElement>();
-        le.preferredWidth = 300f;
-        le.minWidth = 300f;
+        StyleDestinationButton(textureTab, "TEXTURE MODE", new Color(.20f, .50f, .82f, 1f), 220f);
+
+        if (menuButton != null)
+        {
+            menuButton.gameObject.SetActive(true);
+            StyleDestinationButton(menuButton, "MENU", new Color(.24f, .30f, .38f, 1f), 220f);
+
+            // MENU is immediately to the left of TEXTURE MODE.
+            int textureIndex = textureTab.GetSiblingIndex();
+            if (menuButton.GetSiblingIndex() != textureIndex - 1)
+                menuButton.SetSiblingIndex(Mathf.Max(0, textureIndex));
+        }
+    }
+
+    void EnsureBrandHeader(Transform groupPanel)
+    {
+        Transform existing = groupPanel.Find("MenuButton_Runtime");
+        if (existing != null)
+        {
+            // A real button here means RuntimeNavigationProjectIO recreated it between scans;
+            // leave it for the next pass to move rather than overlaying the branding.
+            if (existing.GetComponent<Button>() != null) return;
+            StyleBrandHeader(existing);
+            existing.SetSiblingIndex(0);
+            return;
+        }
+
+        GameObject header = new GameObject("MenuButton_Runtime", typeof(RectTransform), typeof(LayoutElement));
+        header.transform.SetParent(groupPanel, false);
+        RectTransform rect = header.GetComponent<RectTransform>();
+        rect.sizeDelta = new Vector2(0f, 44f);
+        LayoutElement le = header.GetComponent<LayoutElement>();
+        le.minHeight = 44f;
+        le.preferredHeight = 44f;
+        le.flexibleHeight = 0f;
+
+        AddBrandText(header.transform, "BrandTitle", "HAIRBRUSH - ALPHA 1.0", 15f, FontStyles.Bold,
+            new Color(.96f, .96f, .96f, 1f), new Vector2(0f, .45f), new Vector2(1f, 1f));
+        AddBrandText(header.transform, "BrandSubtitle", "by POLYTRICITY LTD 2026", 10f, FontStyles.Normal,
+            new Color(.72f, .76f, .82f, 1f), new Vector2(0f, 0f), new Vector2(1f, .46f));
+
+        header.transform.SetSiblingIndex(0);
+    }
+
+    static void AddBrandText(Transform parent, string name, string text, float size, FontStyles style,
+        Color color, Vector2 anchorMin, Vector2 anchorMax)
+    {
+        GameObject go = new GameObject(name, typeof(RectTransform), typeof(TextMeshProUGUI));
+        go.transform.SetParent(parent, false);
+        RectTransform rect = go.GetComponent<RectTransform>();
+        rect.anchorMin = anchorMin;
+        rect.anchorMax = anchorMax;
+        rect.offsetMin = Vector2.zero;
+        rect.offsetMax = Vector2.zero;
+
+        TextMeshProUGUI label = go.GetComponent<TextMeshProUGUI>();
+        label.text = text;
+        label.fontSize = size;
+        label.fontStyle = style;
+        label.alignment = TextAlignmentOptions.Center;
+        label.color = color;
+        label.textWrappingMode = TextWrappingModes.NoWrap;
+        label.overflowMode = TextOverflowModes.Overflow;
+        label.raycastTarget = false;
+    }
+
+    static void StyleBrandHeader(Transform header)
+    {
+        TextMeshProUGUI title = header.Find("BrandTitle")?.GetComponent<TextMeshProUGUI>();
+        if (title != null) title.text = "HAIRBRUSH - ALPHA 1.0";
+        TextMeshProUGUI subtitle = header.Find("BrandSubtitle")?.GetComponent<TextMeshProUGUI>();
+        if (subtitle != null) subtitle.text = "by POLYTRICITY LTD 2026";
+    }
+
+    static void StyleDestinationButton(Transform buttonTransform, string text, Color color, float width)
+    {
+        if (buttonTransform == null) return;
+
+        LayoutElement le = buttonTransform.GetComponent<LayoutElement>();
+        if (le == null) le = buttonTransform.gameObject.AddComponent<LayoutElement>();
+        le.preferredWidth = width;
+        le.minWidth = width;
         le.flexibleWidth = 0f;
 
-        Image image = textureTab.GetComponent<Image>();
-        if (image != null) image.color = new Color(.20f, .50f, .82f, 1f);
+        RectTransform rect = buttonTransform as RectTransform;
+        if (rect != null) rect.sizeDelta = new Vector2(width, rect.sizeDelta.y);
 
-        Button button = textureTab.GetComponent<Button>();
+        Image image = buttonTransform.GetComponent<Image>();
+        if (image != null) image.color = color;
+
+        Button button = buttonTransform.GetComponent<Button>();
         if (button != null) button.interactable = true;
 
-        TextMeshProUGUI label = textureTab.GetComponentInChildren<TextMeshProUGUI>(true);
-        if (label != null) label.text = "TEXTURE MODE";
-
-        lastRow = row.gameObject;
+        TextMeshProUGUI label = buttonTransform.GetComponentInChildren<TextMeshProUGUI>(true);
+        if (label != null)
+        {
+            label.text = text;
+            label.fontStyle = FontStyles.Bold;
+            label.alignment = TextAlignmentOptions.Center;
+            label.textWrappingMode = TextWrappingModes.NoWrap;
+        }
     }
 
     static GameObject FindNamed(string name)
