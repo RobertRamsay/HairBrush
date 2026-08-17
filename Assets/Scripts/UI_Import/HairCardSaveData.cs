@@ -26,6 +26,18 @@ public class HairCardSaveData
 
 [Serializable] public class VarianceChannelSaveData { public string channel; public float amount; public int seed; }
 
+// Runtime AnimationCurve key payload used by the group-root Bend/X/Y/Z length profiles.
+// Curves are group-scoped because they shape the authored value (including POST/variance
+// evaluated values) consistently for every card in that Hair Group.
+[Serializable]
+public class GroomCurveKeySaveData
+{
+    public float time;
+    public float value;
+    public float inTangent;
+    public float outTangent;
+}
+
 [Serializable]
 public class UVRectSaveData
 {
@@ -101,6 +113,17 @@ public class GroupClumperSaveData
     public PostAffectorControlSaveData delta=new();
 }
 
+// PRE mode remains group-global, but a POST may locally choose a different predetermined
+// rectangle range/seed inside its influence. These records are keyed by the persisted POST id.
+[Serializable]
+public class PostPredeterminedUVSaveData
+{
+    public int postId;
+    public int minId=1;
+    public int maxId=1;
+    public int seed;
+}
+
 [Serializable] public class GroupSaveData
 {
     public int groupId;
@@ -109,6 +132,13 @@ public class GroupClumperSaveData
     public float vScale;
     public float uOffset;
     public float vOffset;
+
+    // Group-root 0..1 length profiles for the authored Bend/X/Y/Z angle values.
+    // Empty lists mean legacy/default behaviour: Bend=t^2 and X/Y/Z=1 throughout.
+    public List<GroomCurveKeySaveData> bendCurve=new();
+    public List<GroomCurveKeySaveData> xAngleCurve=new();
+    public List<GroomCurveKeySaveData> yAngleCurve=new();
+    public List<GroomCurveKeySaveData> zAngleCurve=new();
 
     // Group UV source. Adjustable keeps the legacy group U/V controls. Predetermined
     // chooses one authored Texture Editor rectangle per card using the inclusive ID range
@@ -120,6 +150,7 @@ public class GroupClumperSaveData
 
     public List<VarianceChannelSaveData> variances=new();
     public List<PostAffectorSaveData> postAffectors=new();
+    public List<PostPredeterminedUVSaveData> postPredeterminedUVs=new();
 
     // Current multi-CLUMPER payload. The single clumper field is retained as a legacy
     // fallback and is populated with the first point when saving for graceful compatibility.
@@ -168,6 +199,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
             foreach(GroupSaveData group in groups)
                 postVariance.PopulateSave(group.postAffectors);
 
+        PostPredeterminedUVAuthority.Capture(this);
         GroupClumperPersistenceBridge.Capture(this);
 
         TextureUVRectWorkspace uvWorkspace=UnityEngine.Object.FindFirstObjectByType<TextureUVRectWorkspace>();
@@ -179,6 +211,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
             foreach(GroupSaveData group in groups)
                 groupUV.PopulateGroupSave(group);
 
+        GroomShapeCurveAuthority.Capture(this);
         MaterialProjectPersistenceBridge.Capture(this);
         CanonicalProjectStateBridge.CanonicalizeForSave(this);
     }
@@ -201,6 +234,8 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
         PendingModifierRestore=this;
         PendingUVRectRestore=this;
         PendingGroupUVRestore=this;
+        PostPredeterminedUVAuthority.QueueRestore(this);
+        GroomShapeCurveAuthority.QueueRestore(this);
         MaterialProjectPersistenceBridge.PendingRestore=this;
         GroupClumperPersistenceBridge.QueueRestore(this);
         if(sourceVersion>=2)

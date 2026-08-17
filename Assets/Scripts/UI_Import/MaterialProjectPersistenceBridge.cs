@@ -128,9 +128,11 @@ public class MaterialProjectPersistenceBridge : MonoBehaviour
 
             if (saved != null)
             {
+                // Texture2D's final constructor argument is "linear". Albedo is colour data,
+                // while normal/opacity are data textures and must stay linear.
                 TryRestoreTexture(entry, AlbedoProperty, "albedoPath", saved.albedoPath, false);
                 TryRestoreTexture(entry, NormalProperty, "normalPath", saved.normalPath, true);
-                TryRestoreTexture(entry, OpacityProperty, "opacityPath", saved.opacityPath, false);
+                TryRestoreTexture(entry, OpacityProperty, "opacityPath", saved.opacityPath, true);
             }
             materials.Add(entry);
         }
@@ -164,7 +166,7 @@ public class MaterialProjectPersistenceBridge : MonoBehaviour
         refresh?.Invoke(editor, null);
     }
 
-    private static void TryRestoreTexture(object entry, string propertyName, string pathFieldName, string path, bool normalMap)
+    private static void TryRestoreTexture(object entry, string propertyName, string pathFieldName, string path, bool linear)
     {
         // Missing references deliberately mean: keep the default texture inherited from sourceMaterial.
         if (entry == null || string.IsNullOrWhiteSpace(path) || !File.Exists(path))
@@ -177,7 +179,7 @@ public class MaterialProjectPersistenceBridge : MonoBehaviour
         try
         {
             byte[] bytes = File.ReadAllBytes(path);
-            Texture2D texture = new Texture2D(2, 2, TextureFormat.RGBA32, true, !normalMap);
+            Texture2D texture = new Texture2D(2, 2, TextureFormat.RGBA32, true, linear);
             texture.name = Path.GetFileNameWithoutExtension(path);
             if (!texture.LoadImage(bytes, false))
             {

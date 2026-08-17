@@ -70,6 +70,28 @@ public class HairCard : MonoBehaviour
     public Vector3 GetSurfaceNormal() { return surfaceNormal; }
     public float GetCrossSectionRidgeHeight() { return Mathf.Max(.0005f, width) * flattenFactor * CrossSectionRidgeRatio; }
 
+    // Local per-row rotation which, after the GameObject's existing full X/Y/Z transform,
+    // yields the requested root-to-tip angle profile. Keeping the GameObject transform intact
+    // preserves every existing placement/raycast contract while the mesh counter-rotates from
+    // that full offset toward the independently curved X/Y/Z values.
+    public Quaternion GetLengthProfileRotation(float t)
+    {
+        t = Mathf.Clamp01(t);
+        float bendMultiplier = GroomShapeCurveRegistry.Evaluate(groupId, GroomShapeCurveChannel.Bend, t);
+        float xMultiplier = GroomShapeCurveRegistry.Evaluate(groupId, GroomShapeCurveChannel.X, t);
+        float yMultiplier = GroomShapeCurveRegistry.Evaluate(groupId, GroomShapeCurveChannel.Y, t);
+        float zMultiplier = GroomShapeCurveRegistry.Evaluate(groupId, GroomShapeCurveChannel.Z, t);
+
+        Quaternion fullOffset = Quaternion.Euler(storedOffsetX, storedOffsetY, storedOffsetZ);
+        Quaternion curvedOffset = Quaternion.Euler(
+            storedOffsetX * xMultiplier,
+            storedOffsetY * yMultiplier,
+            storedOffsetZ * zMultiplier);
+        Quaternion bendAndTwist = Quaternion.Euler(bendAngle * bendMultiplier, 0f, twistAngle * t);
+
+        return Quaternion.Inverse(fullOffset) * curvedOffset * bendAndTwist;
+    }
+
     public GroomState GetCanonicalState()
     {
         if (!hasCanonicalState)
@@ -343,7 +365,7 @@ public class HairCard : MonoBehaviour
                 right += delta;
             }
 
-            Quaternion authoredRotation = Quaternion.Euler(bendAngle * (t * t), 0f, twistAngle * t);
+            Quaternion authoredRotation = GetLengthProfileRotation(t);
             left = authoredRotation * left;
             center = authoredRotation * center;
             right = authoredRotation * right;

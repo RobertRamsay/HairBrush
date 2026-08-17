@@ -183,13 +183,15 @@ public class MaterialEditorManager : MonoBehaviour
             ClearChildren(propertiesRoot);
             HairMaterialEntry entry = materials[selectedMaterialIndex];
             CreateSubLabel(propertiesRoot, entry.name, 15f);
+            // Texture2D's final constructor argument is "linear": colour/albedo must be false
+            // (sRGB), while normals and opacity masks are data textures and stay linear.
             CreateTextureRow(propertiesRoot, "Albedo", AlbedoProperty, false, entry.albedoPath);
             CreateTextureRow(propertiesRoot, "Normal", NormalProperty, true, entry.normalPath);
-            CreateTextureRow(propertiesRoot, "Opacity Mask", OpacityProperty, false, entry.opacityPath);
+            CreateTextureRow(propertiesRoot, "Opacity Mask", OpacityProperty, true, entry.opacityPath);
         }
     }
 
-    private void CreateTextureRow(Transform parent, string label, string propertyName, bool normalMap, string currentPath)
+    private void CreateTextureRow(Transform parent, string label, string propertyName, bool linear, string currentPath)
     {
         GameObject row = new GameObject(label + "Row", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
         row.transform.SetParent(parent, false);
@@ -217,10 +219,10 @@ public class MaterialEditorManager : MonoBehaviour
         file.color = new Color(.72f, .72f, .72f);
         file.overflowMode = TMPro.TextOverflowModes.Ellipsis;
 
-        CreateSmallButton(row.transform, "LOAD", () => LoadTextureIntoSlot(propertyName, normalMap), 48f, 28f);
+        CreateSmallButton(row.transform, "LOAD", () => LoadTextureIntoSlot(propertyName, linear), 48f, 28f);
     }
 
-    private void LoadTextureIntoSlot(string propertyName, bool normalMap)
+    private void LoadTextureIntoSlot(string propertyName, bool linear)
     {
 #if UNITY_EDITOR
         if (selectedMaterialIndex < 0 || selectedMaterialIndex >= materials.Count) return;
@@ -233,7 +235,7 @@ public class MaterialEditorManager : MonoBehaviour
         try { bytes = File.ReadAllBytes(path); }
         catch (Exception ex) { Debug.LogError("Could not read texture file: " + ex.Message); return; }
 
-        Texture2D texture = new Texture2D(2, 2, TextureFormat.RGBA32, true, !normalMap);
+        Texture2D texture = new Texture2D(2, 2, TextureFormat.RGBA32, true, linear);
         texture.name = Path.GetFileNameWithoutExtension(path);
         if (!texture.LoadImage(bytes, false))
         {
