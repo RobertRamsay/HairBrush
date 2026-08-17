@@ -5,19 +5,32 @@ using UnityEngine;
 using UnityEngine.UI;
 
 // Adds AUTO to the Texture UV Rect workspace. AUTO inspects the currently previewed
-// base-colour/albedo texture, finds occupied hair-card bands separated by background space,
-// and replaces the authored UV rectangles with padded deterministic boxes.
-//
-// Hair textures are usually made of many disconnected/anti-aliased strands, so this does
-// not use raw connected-components (which would identify individual hairs). Instead it
-// projects foreground occupancy into texture columns, joins only tiny <=4px gaps, then takes
-// the true vertical foreground bounds of each resulting atlas band. That matches the vertical
-// card-atlas convention while remaining tolerant of sparse wispy strands.
+// base-colour/albedo texture and recursively splits occupied atlas regions across meaningful
+// empty gutters on BOTH axes. This handles cards arranged side-by-side, stacked vertically,
+// and mixed layouts (for example one wide card above two narrower cards).
 [DefaultExecutionOrder(9250)]
 public class TextureUVRectAutoAuthority : MonoBehaviour
 {
     private const int PaddingPixels = 4;
     private const int MaxJoinedGapPixels = 4;
+    private const int MaxSplitDepth = 16;
+
+    private struct PixelBounds
+    {
+        public int xMin, xMax, yMin, yMax;
+        public int Width => xMax - xMin + 1;
+        public int Height => yMax - yMin + 1;
+        public bool Valid => xMax >= xMin && yMax >= yMin;
+    }
+
+    private struct GapCandidate
+    {
+        public bool valid;
+        public bool verticalSplit;
+        public int start;
+        public int end;
+        public float score;
+    }
 
     private TextureUVRectWorkspace workspace;
     private GameObject autoButton;
@@ -98,7 +111,7 @@ public class TextureUVRectAutoAuthority : MonoBehaviour
         List<UVRectSaveData> detected;
         try
         {
-            detected = DetectBands(readable);
+            detected = DetectRegions(readable);
         }
         finally
         {
@@ -113,7 +126,8 @@ public class TextureUVRectAutoAuthority : MonoBehaviour
         }
 
         workspace.ImportDefinitions(detected);
-        Debug.Log("UV AUTO: created " + detected.Count + " rectangle(s) with " + PaddingPixels + "px padding.");
+        MaterialUVRectAuthority.StoreSelectedWorkspaceNow();
+        Debug.Log("UV AUTO: created " + detected.Count + " rectangle(s) from horizontal/vertical gutters with " + PaddingPixels + "px padding.");
     }
 
     Texture GetPreviewBaseColourTexture()
@@ -128,8 +142,6 @@ public class TextureUVRectAutoAuthority : MonoBehaviour
         Material material = renderer != null ? renderer.sharedMaterial : null;
         if (material == null) return null;
 
-        // HairBrush's current hair material calls this slot _Albedo. Keep common URP/main
-        // aliases as fallbacks so AUTO also survives future shader/template changes.
         Texture texture = null;
         if (material.HasProperty("_Albedo")) texture = material.GetTexture("_Albedo");
         if (texture == null && material.HasProperty("_BaseMap")) texture = material.GetTexture("_BaseMap");
@@ -177,7 +189,7 @@ public class TextureUVRectAutoAuthority : MonoBehaviour
         }
     }
 
-    static List<UVRectSaveData> DetectBands(Texture2D texture)
+    static List<UVRectSaveData> DetectRegions(Texture2D texture)
     {
         int width = texture.width;
         int height = texture.height;
@@ -200,66 +212,33 @@ public class TextureUVRectAutoAuthority : MonoBehaviour
         }
         bool useAlpha = background.a < 96 && maxAlpha - minAlpha >= 40;
 
-        int[] hits = new int[width];
-        int[] columnMinY = new int[width];
-        int[] columnMaxY = new int[width];
-        for (int x = 0; x < width; x++)
-        {
-            columnMinY[x] = height;
-            columnMaxY[x] = -1;
-        }
+        bool[] foreground = new bool[pixels.Length];
+        for (int i = 0; i < pixels.Length; i++)
+            foreground[i] = IsForeground(pixels[i], background, useAlpha);
 
-        // One pass gathers both horizontal occupancy and each column's true vertical extent.
-        for (int y = 0; y < height; y++)
-        {
-            int row = y * width;
-            for (int x = 0; x < width; x++)
-            {
-                if (!IsForeground(pixels[row + x], background, useAlpha)) continue;
-                hits[x]++;
-                if (y < columnMinY[x]) columnMinY[x] = y;
-                if (y > columnMaxY[x]) columnMaxY[x] = y;
-            }
-        }
+        if (!TryFindOccupiedBounds(foreground, width, height, out PixelBounds root))
+            return new List<UVRectSaveData>();
 
-        // Requiring a handful of foreground pixels prevents isolated compression/noise specks
-        // in an otherwise empty column from joining two real cards together.
-        int minimumColumnHits = Mathf.Max(2, height / 1024);
-        bool[] occupied = new bool[width];
-        for (int x = 0; x < width; x++) occupied[x] = hits[x] >= minimumColumnHits;
+        List<PixelBounds> leaves = new List<PixelBounds>();
+        SplitRegion(foreground, width, height, root, leaves, 0);
 
-        JoinSmallHorizontalGaps(occupied, MaxJoinedGapPixels);
+        // Texture UV origin is bottom-left, but IDs are easier to reason about in atlas reading
+        // order: top-to-bottom, then left-to-right within a row.
+        leaves = leaves
+            .Where(bounds => bounds.Valid)
+            .OrderByDescending(bounds => bounds.yMax)
+            .ThenBy(bounds => bounds.xMin)
+            .ToList();
 
-        int minimumBandWidth = Mathf.Max(3, width / 2048);
         List<UVRectSaveData> result = new List<UVRectSaveData>();
         int id = 1;
-        int cursor = 0;
-        while (cursor < width)
+        foreach (PixelBounds leaf in leaves)
         {
-            while (cursor < width && !occupied[cursor]) cursor++;
-            if (cursor >= width) break;
-
-            int start = cursor;
-            while (cursor + 1 < width && occupied[cursor + 1]) cursor++;
-            int end = cursor;
-            cursor++;
-
-            if (end - start + 1 < minimumBandWidth) continue;
-
-            int minY = height;
-            int maxY = -1;
-            for (int x = start; x <= end; x++)
-            {
-                if (columnMaxY[x] < 0) continue;
-                if (columnMinY[x] < minY) minY = columnMinY[x];
-                if (columnMaxY[x] > maxY) maxY = columnMaxY[x];
-            }
-            if (maxY < minY) continue;
-
-            int xMin = Mathf.Max(0, start - PaddingPixels);
-            int xMaxExclusive = Mathf.Min(width, end + 1 + PaddingPixels);
-            int yMin = Mathf.Max(0, minY - PaddingPixels);
-            int yMaxExclusive = Mathf.Min(height, maxY + 1 + PaddingPixels);
+            int xMin = Mathf.Max(0, leaf.xMin - PaddingPixels);
+            int xMaxExclusive = Mathf.Min(width, leaf.xMax + 1 + PaddingPixels);
+            int yMin = Mathf.Max(0, leaf.yMin - PaddingPixels);
+            int yMaxExclusive = Mathf.Min(height, leaf.yMax + 1 + PaddingPixels);
+            if (xMaxExclusive <= xMin || yMaxExclusive <= yMin) continue;
 
             result.Add(new UVRectSaveData
             {
@@ -270,8 +249,172 @@ public class TextureUVRectAutoAuthority : MonoBehaviour
                 vMax = (float)yMaxExclusive / height
             });
         }
-
         return result;
+    }
+
+    static void SplitRegion(bool[] foreground, int width, int height, PixelBounds region, List<PixelBounds> leaves, int depth)
+    {
+        if (!TrimToForeground(foreground, width, height, region, out PixelBounds trimmed)) return;
+        if (depth >= MaxSplitDepth)
+        {
+            leaves.Add(trimmed);
+            return;
+        }
+
+        GapCandidate vertical = FindGap(foreground, width, height, trimmed, true);
+        GapCandidate horizontal = FindGap(foreground, width, height, trimmed, false);
+        GapCandidate best = !vertical.valid ? horizontal : !horizontal.valid ? vertical :
+            (vertical.score >= horizontal.score ? vertical : horizontal);
+
+        if (!best.valid)
+        {
+            leaves.Add(trimmed);
+            return;
+        }
+
+        if (best.verticalSplit)
+        {
+            PixelBounds left = new PixelBounds { xMin = trimmed.xMin, xMax = best.start - 1, yMin = trimmed.yMin, yMax = trimmed.yMax };
+            PixelBounds right = new PixelBounds { xMin = best.end + 1, xMax = trimmed.xMax, yMin = trimmed.yMin, yMax = trimmed.yMax };
+            SplitRegion(foreground, width, height, left, leaves, depth + 1);
+            SplitRegion(foreground, width, height, right, leaves, depth + 1);
+        }
+        else
+        {
+            PixelBounds bottom = new PixelBounds { xMin = trimmed.xMin, xMax = trimmed.xMax, yMin = trimmed.yMin, yMax = best.start - 1 };
+            PixelBounds top = new PixelBounds { xMin = trimmed.xMin, xMax = trimmed.xMax, yMin = best.end + 1, yMax = trimmed.yMax };
+            SplitRegion(foreground, width, height, bottom, leaves, depth + 1);
+            SplitRegion(foreground, width, height, top, leaves, depth + 1);
+        }
+    }
+
+    static GapCandidate FindGap(bool[] foreground, int width, int height, PixelBounds region, bool verticalSplit)
+    {
+        int axisLength = verticalSplit ? region.Width : region.Height;
+        int perpendicular = verticalSplit ? region.Height : region.Width;
+        if (axisLength < 7 || perpendicular < 1) return default;
+
+        int[] hits = new int[axisLength];
+        int totalForeground = 0;
+        if (verticalSplit)
+        {
+            for (int x = region.xMin; x <= region.xMax; x++)
+            {
+                int local = x - region.xMin;
+                for (int y = region.yMin; y <= region.yMax; y++)
+                {
+                    if (!foreground[y * width + x]) continue;
+                    hits[local]++;
+                    totalForeground++;
+                }
+            }
+        }
+        else
+        {
+            for (int y = region.yMin; y <= region.yMax; y++)
+            {
+                int local = y - region.yMin;
+                int row = y * width;
+                for (int x = region.xMin; x <= region.xMax; x++)
+                {
+                    if (!foreground[row + x]) continue;
+                    hits[local]++;
+                    totalForeground++;
+                }
+            }
+        }
+        if (totalForeground <= 0) return default;
+
+        int minimumAxisHits = Mathf.Max(1, perpendicular / 1024);
+        bool[] occupied = new bool[axisLength];
+        for (int i = 0; i < axisLength; i++) occupied[i] = hits[i] >= minimumAxisHits;
+        JoinSmallGaps(occupied, MaxJoinedGapPixels);
+
+        int[] prefix = new int[axisLength + 1];
+        for (int i = 0; i < axisLength; i++) prefix[i + 1] = prefix[i] + hits[i];
+
+        int minimumGap = Mathf.Max(MaxJoinedGapPixels + 1, axisLength / 512);
+        int minimumChildSpan = 3;
+        int minimumChildForeground = Mathf.Max(8, totalForeground / 40); // each side must own >=2.5% of this region
+
+        GapCandidate best = default;
+        int cursor = 0;
+        while (cursor < axisLength)
+        {
+            while (cursor < axisLength && occupied[cursor]) cursor++;
+            int start = cursor;
+            while (cursor < axisLength && !occupied[cursor]) cursor++;
+            int end = cursor - 1;
+            int gapLength = end - start + 1;
+            if (gapLength < minimumGap) continue;
+
+            int leftSpan = start;
+            int rightSpan = axisLength - (end + 1);
+            if (leftSpan < minimumChildSpan || rightSpan < minimumChildSpan) continue;
+
+            int leftForeground = prefix[start];
+            int rightForeground = prefix[axisLength] - prefix[end + 1];
+            if (leftForeground < minimumChildForeground || rightForeground < minimumChildForeground) continue;
+
+            float balance = Mathf.Min(leftForeground, rightForeground) / (float)Mathf.Max(1, Mathf.Max(leftForeground, rightForeground));
+            float score = gapLength / (float)axisLength + balance * .08f;
+            if (!best.valid || score > best.score)
+            {
+                best.valid = true;
+                best.verticalSplit = verticalSplit;
+                best.start = (verticalSplit ? region.xMin : region.yMin) + start;
+                best.end = (verticalSplit ? region.xMin : region.yMin) + end;
+                best.score = score;
+            }
+        }
+        return best;
+    }
+
+    static bool TryFindOccupiedBounds(bool[] foreground, int width, int height, out PixelBounds bounds)
+    {
+        bounds = new PixelBounds { xMin = width, xMax = -1, yMin = height, yMax = -1 };
+        for (int y = 0; y < height; y++)
+        {
+            int row = y * width;
+            for (int x = 0; x < width; x++)
+            {
+                if (!foreground[row + x]) continue;
+                if (x < bounds.xMin) bounds.xMin = x;
+                if (x > bounds.xMax) bounds.xMax = x;
+                if (y < bounds.yMin) bounds.yMin = y;
+                if (y > bounds.yMax) bounds.yMax = y;
+            }
+        }
+        return bounds.Valid;
+    }
+
+    static bool TrimToForeground(bool[] foreground, int width, int height, PixelBounds input, out PixelBounds trimmed)
+    {
+        trimmed = new PixelBounds
+        {
+            xMin = Mathf.Clamp(input.xMin, 0, width - 1),
+            xMax = Mathf.Clamp(input.xMax, 0, width - 1),
+            yMin = Mathf.Clamp(input.yMin, 0, height - 1),
+            yMax = Mathf.Clamp(input.yMax, 0, height - 1)
+        };
+        if (!trimmed.Valid) return false;
+
+        int minX = width, maxX = -1, minY = height, maxY = -1;
+        for (int y = trimmed.yMin; y <= trimmed.yMax; y++)
+        {
+            int row = y * width;
+            for (int x = trimmed.xMin; x <= trimmed.xMax; x++)
+            {
+                if (!foreground[row + x]) continue;
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+            }
+        }
+        if (maxX < minX || maxY < minY) return false;
+        trimmed = new PixelBounds { xMin = minX, xMax = maxX, yMin = minY, yMax = maxY };
+        return true;
     }
 
     static Color32 EstimateBackground(Color32[] pixels, int width, int height)
@@ -333,30 +476,26 @@ public class TextureUVRectAutoAuthority : MonoBehaviour
         int db = pixel.b - background.b;
         int distanceSq = dr * dr + dg * dg + db * db;
         int maxDelta = Mathf.Max(Mathf.Abs(dr), Mathf.Max(Mathf.Abs(dg), Mathf.Abs(db)));
-
-        // 14/255 max-channel difference plus a modest RGB distance rejects flat-space JPEG
-        // noise while still retaining dark purple/black-ish anti-aliased hair against a dark
-        // atlas background.
         return maxDelta >= 14 && distanceSq >= 300;
     }
 
-    static void JoinSmallHorizontalGaps(bool[] occupied, int maxGap)
+    static void JoinSmallGaps(bool[] occupied, int maxGap)
     {
         if (occupied == null || occupied.Length == 0 || maxGap <= 0) return;
 
-        int x = 0;
-        while (x < occupied.Length)
+        int cursor = 0;
+        while (cursor < occupied.Length)
         {
-            while (x < occupied.Length && occupied[x]) x++;
-            int gapStart = x;
-            while (x < occupied.Length && !occupied[x]) x++;
-            int gapEnd = x - 1;
+            while (cursor < occupied.Length && occupied[cursor]) cursor++;
+            int gapStart = cursor;
+            while (cursor < occupied.Length && !occupied[cursor]) cursor++;
+            int gapEnd = cursor - 1;
             int length = gapEnd - gapStart + 1;
 
-            bool boundedLeft = gapStart > 0 && occupied[gapStart - 1];
-            bool boundedRight = x < occupied.Length && occupied[x];
-            if (boundedLeft && boundedRight && length > 0 && length <= maxGap)
-                for (int fill = gapStart; fill <= gapEnd; fill++) occupied[fill] = true;
+            bool boundedBefore = gapStart > 0 && occupied[gapStart - 1];
+            bool boundedAfter = cursor < occupied.Length && occupied[cursor];
+            if (boundedBefore && boundedAfter && length > 0 && length <= maxGap)
+                for (int i = gapStart; i <= gapEnd; i++) occupied[i] = true;
         }
     }
 }
