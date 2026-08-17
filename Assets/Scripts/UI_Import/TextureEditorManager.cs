@@ -20,6 +20,7 @@ public class TextureEditorManager : MonoBehaviour
     {
         if (textureSliderPanelGO == null || !textureSliderPanelGO.activeInHierarchy) return;
         ApplyMaterialWorkspaceLayout();
+        CenterPreviewPlaneBetweenPanels();
     }
 
     public void SetPanelActive(bool active, Transform parentCanvas, System.Action onSwitchToGroom)
@@ -54,8 +55,8 @@ public class TextureEditorManager : MonoBehaviour
             }
             else texturePreviewPlane.SetActive(true);
 
-            CenterPreviewPlaneOnCamera();
             ApplyMaterialWorkspaceLayout();
+            CenterPreviewPlaneBetweenPanels();
         }
         else if (texturePreviewPlane != null)
         {
@@ -74,7 +75,7 @@ public class TextureEditorManager : MonoBehaviour
         }
     }
 
-    private void CenterPreviewPlaneOnCamera()
+    private void CenterPreviewPlaneBetweenPanels()
     {
         if (texturePreviewPlane == null) return;
 
@@ -86,17 +87,47 @@ public class TextureEditorManager : MonoBehaviour
         }
         if (previewCamera == null) return;
 
-        // The texture quad used to assume world X/Y zero was the centre of the screen. After
-        // grooming camera pan/orbit that is no longer true, so texture mode could open with the
-        // atlas visibly pushed to one side. Keep its current camera-space depth, but put it on
-        // the camera's centre ray and face it squarely at the camera every time texture mode opens.
+        // Texture mode is a three-column workspace: Materials | preview | UV controls.
+        // The atlas should sit in the centre of the free middle column, not in the centre
+        // of the whole screen. Read the actual rendered edges of both panels so this stays
+        // correct if panel widths, Canvas scaling, aspect ratio, or resolution change later.
+        float targetViewportX = 0.5f;
+        GameObject materialPanel = FindNamed("TextureMaterialPanel");
+        RectTransform leftRect = materialPanel != null ? materialPanel.GetComponent<RectTransform>() : null;
+        RectTransform rightRect = textureSliderPanelGO != null ? textureSliderPanelGO.GetComponent<RectTransform>() : null;
+
+        if (leftRect != null && rightRect != null && leftRect.gameObject.activeInHierarchy && rightRect.gameObject.activeInHierarchy)
+        {
+            Vector3[] leftCorners = new Vector3[4];
+            Vector3[] rightCorners = new Vector3[4];
+            leftRect.GetWorldCorners(leftCorners);
+            rightRect.GetWorldCorners(rightCorners);
+
+            float leftPanelRight = float.NegativeInfinity;
+            float rightPanelLeft = float.PositiveInfinity;
+            for (int i = 0; i < 4; i++)
+            {
+                float leftX = RectTransformUtility.WorldToScreenPoint(null, leftCorners[i]).x;
+                float rightX = RectTransformUtility.WorldToScreenPoint(null, rightCorners[i]).x;
+                if (leftX > leftPanelRight) leftPanelRight = leftX;
+                if (rightX < rightPanelLeft) rightPanelLeft = rightX;
+            }
+
+            if (rightPanelLeft > leftPanelRight)
+            {
+                float workspaceCenterX = (leftPanelRight + rightPanelLeft) * 0.5f;
+                targetViewportX = previewCamera.ScreenToViewportPoint(new Vector3(workspaceCenterX, Screen.height * 0.5f, 0f)).x;
+                targetViewportX = Mathf.Clamp01(targetViewportX);
+            }
+        }
+
         float depth = Vector3.Dot(
             texturePreviewPlane.transform.position - previewCamera.transform.position,
             previewCamera.transform.forward);
         if (depth <= previewCamera.nearClipPlane)
             depth = Mathf.Max(1.5f, previewCamera.nearClipPlane + 0.1f);
 
-        texturePreviewPlane.transform.position = previewCamera.ViewportToWorldPoint(new Vector3(0.5f, 0.5f, depth));
+        texturePreviewPlane.transform.position = previewCamera.ViewportToWorldPoint(new Vector3(targetViewportX, 0.5f, depth));
         texturePreviewPlane.transform.rotation = previewCamera.transform.rotation;
     }
 
