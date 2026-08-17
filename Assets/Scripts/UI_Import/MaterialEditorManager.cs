@@ -61,9 +61,12 @@ public class MaterialEditorManager : MonoBehaviour
         if (lastGroupId != viewer.currentGroupId)
         {
             lastGroupId = viewer.currentGroupId;
+            int previousSelected = selectedMaterialIndex;
             if (groupMaterial.TryGetValue(lastGroupId, out int index) && index >= 0 && index < materials.Count)
                 selectedMaterialIndex = index;
             SyncViewerMaterialToCurrentGroup();
+            if (previousSelected != selectedMaterialIndex)
+                UpdatePreviewForSelectedMaterial();
             RefreshPanel();
         }
         ApplyAssignments();
@@ -76,6 +79,7 @@ public class MaterialEditorManager : MonoBehaviour
             if (panelGO == null) BuildUI(parentCanvas);
             else if (panelGO.transform.parent != parentCanvas) panelGO.transform.SetParent(parentCanvas, false);
             panelGO.SetActive(true);
+            UpdatePreviewForSelectedMaterial();
             RefreshPanel();
         }
         else if (panelGO != null) panelGO.SetActive(false);
