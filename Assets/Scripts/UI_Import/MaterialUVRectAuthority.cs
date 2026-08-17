@@ -6,12 +6,13 @@ using UnityEngine;
 
 // Owns predetermined UV rectangles per hair material. The Texture UV workspace remains the
 // editor for one set at a time; switching material stores the outgoing cuts and loads the
-// incoming material's cuts. Group/PRE consumers ask this authority for the cuts belonging to
-// the material actually assigned to that group rather than reading one project-global list.
+// incoming material's cuts. All groups consume the cuts belonging to the one globally active
+// hair material, while each group remains free to choose its own PRE rectangle ID range/seed.
 [DefaultExecutionOrder(9180)]
 public class MaterialUVRectAuthority : MonoBehaviour
 {
     private static HairProjectSaveData pendingRestore;
+    private const int GlobalMaterialKey = int.MinValue;
 
     private readonly Dictionary<int, List<UVRectSaveData>> rectsByMaterial = new();
 
@@ -147,10 +148,12 @@ public class MaterialUVRectAuthority : MonoBehaviour
         IList materials = GetMaterials();
         if (materials == null || materials.Count == 0) return -1;
 
+        // Material assignment is global. The group id is intentionally ignored; it remains in
+        // this API because PRE callers are group-oriented and still own their own ID ranges.
         int index = 0;
-        if (groupMaterialField?.GetValue(editor) is IDictionary groups && groups.Contains(groupId))
+        if (groupMaterialField?.GetValue(editor) is IDictionary groups && groups.Contains(GlobalMaterialKey))
         {
-            object raw = groups[groupId];
+            object raw = groups[GlobalMaterialKey];
             if (raw is int assigned) index = assigned;
         }
         return Mathf.Clamp(index, 0, materials.Count - 1);
