@@ -9,9 +9,8 @@ using UnityEngine.UI;
 // Group-level UV source selector.
 // ADJUSTABLE uses the existing U/V Scale + Offset controls.
 // PREDETERMINED maps each card to one authored Texture Editor UV rectangle, chosen
-// deterministically from the group's inclusive rect-ID range and seed.
-// The source selector belongs to the right grooming/modifier panel; the left group list
-// remains navigation only.
+// deterministically from the group's inclusive rect-ID range and seed. Rectangle choices
+// come from the material assigned to that group, so every material can own a different atlas.
 [DefaultExecutionOrder(6000)]
 public class GroupPredeterminedUVController : MonoBehaviour
 {
@@ -146,8 +145,8 @@ public class GroupPredeterminedUVController : MonoBehaviour
         HairProjectSaveData pending = HairProjectSaveData.PendingGroupUVRestore;
         if (pending == null) return;
 
-        // Rectangle definitions restore in the texture workspace first. Do not apply group
-        // ranges against a previous project's rectangle set during the model-load handoff.
+        // Rectangle definitions restore in the texture/material authority first. Do not apply
+        // group ranges against a previous project's rectangle set during model-load handoff.
         if (HairProjectSaveData.PendingUVRectRestore != null) return;
 
         int expectedCards = pending.hairCards != null ? pending.hairCards.Count : 0;
@@ -167,7 +166,7 @@ public class GroupPredeterminedUVController : MonoBehaviour
                 settings.minId = group.uvRectMinId > 0 ? group.uvRectMinId : 1;
                 settings.maxId = group.uvRectMaxId > 0 ? group.uvRectMaxId : settings.minId;
                 settings.seed = group.uvRectSeed;
-                NormalizeRange(settings);
+                NormalizeRange(group.groupId, settings);
             }
         }
 
@@ -184,17 +183,15 @@ public class GroupPredeterminedUVController : MonoBehaviour
             BindRightPanel(viewer.groomingSliderPanelGO);
         if (modeRow == null) return;
 
-        GroupUVSettings settings = GetSettings(viewer.currentGroupId);
-        List<UVRectSaveData> rects = GetAllRects();
+        int groupId = viewer.currentGroupId;
+        GroupUVSettings settings = GetSettings(groupId);
+        List<UVRectSaveData> rects = GetRectsForGroup(groupId);
         bool haveRects = rects.Count > 0;
         bool editingPost = IsEditingPost();
 
         modeButtonText.text = settings.predetermined ? "PREDETERMINED" : "ADJUSTABLE";
         rectStatusText.text = haveRects ? rects.Count + " UV RECTS" : "NO UV RECTS";
 
-        // UV source/range is group routing metadata, not an authored groom slider. Keep it
-        // editable at the group root even when downstream POST modifiers exist. Only disable
-        // it while actively inside a POST-local edit context.
         modeButton.interactable = !editingPost && (haveRects || settings.predetermined);
 
         if (minInput != null)
@@ -215,8 +212,6 @@ public class GroupPredeterminedUVController : MonoBehaviour
         if (randomButton != null)
             randomButton.interactable = settings.predetermined && haveRects && !editingPost;
 
-        // PREDETERMINED is intentionally a complete base-UV source: no hidden group scale/
-        // offset survives underneath it. POST editing also cannot change those base UVs.
         SetRowActive(uScaleRow, !settings.predetermined);
         SetRowActive(vScaleRow, !settings.predetermined);
         SetRowActive(uOffsetRow, !settings.predetermined);
@@ -358,7 +353,7 @@ public class GroupPredeterminedUVController : MonoBehaviour
         GroupUVSettings settings = GetSettings(groupId);
         if (!settings.predetermined)
         {
-            List<UVRectSaveData> rects = GetAllRects();
+            List<UVRectSaveData> rects = GetRectsForGroup(groupId);
             if (rects.Count == 0) return;
 
             int min = rects.Min(r => r.id);
@@ -371,7 +366,7 @@ public class GroupPredeterminedUVController : MonoBehaviour
                 settings.maxId = max;
             }
 
-            NormalizeRange(settings);
+            NormalizeRange(groupId, settings);
             settings.predetermined = true;
             ClearAppliedForGroup(groupId);
             ApplyGroup(groupId, settings, rects);
@@ -395,7 +390,7 @@ public class GroupPredeterminedUVController : MonoBehaviour
         if (!int.TryParse(value, out int parsed)) parsed = isMin ? settings.minId : settings.maxId;
         if (isMin) settings.minId = parsed;
         else settings.maxId = parsed;
-        NormalizeRange(settings);
+        NormalizeRange(groupId, settings);
         ClearAppliedForGroup(groupId);
         ForceApplyGroup(groupId);
         nextUIScan = 0f;
@@ -422,10 +417,10 @@ public class GroupPredeterminedUVController : MonoBehaviour
         nextUIScan = 0f;
     }
 
-    void NormalizeRange(GroupUVSettings settings)
+    void NormalizeRange(int groupId, GroupUVSettings settings)
     {
         if (settings == null) return;
-        List<UVRectSaveData> rects = GetAllRects();
+        List<UVRectSaveData> rects = GetRectsForGroup(groupId);
         if (rects.Count == 0)
         {
             settings.minId = Mathf.Max(1, settings.minId);
@@ -447,13 +442,12 @@ public class GroupPredeterminedUVController : MonoBehaviour
 
     void ApplyPredeterminedAssignments()
     {
-        List<UVRectSaveData> allRects = GetAllRects();
-        if (allRects.Count == 0) return;
-
         foreach (KeyValuePair<int, GroupUVSettings> pair in settingsByGroup)
         {
             if (pair.Value == null || !pair.Value.predetermined) continue;
-            ApplyGroup(pair.Key, pair.Value, allRects);
+            List<UVRectSaveData> groupRects = GetRectsForGroup(pair.Key);
+            if (groupRects.Count == 0) continue;
+            ApplyGroup(pair.Key, pair.Value, groupRects);
         }
 
         HashSet<int> liveCardIds = new HashSet<int>(FindObjectsByType<HairCard>(FindObjectsSortMode.None)
@@ -466,7 +460,7 @@ public class GroupPredeterminedUVController : MonoBehaviour
     {
         GroupUVSettings settings = GetSettings(groupId);
         if (!settings.predetermined) return;
-        ApplyGroup(groupId, settings, GetAllRects());
+        ApplyGroup(groupId, settings, GetRectsForGroup(groupId));
         nextApplyScan = Time.unscaledTime + .10f;
     }
 
@@ -540,8 +534,13 @@ public class GroupPredeterminedUVController : MonoBehaviour
                 appliedSignatureByCard.Remove(card.GetInstanceID());
     }
 
-    List<UVRectSaveData> GetAllRects()
+    List<UVRectSaveData> GetRectsForGroup(int groupId)
     {
+        if (MaterialUVRectAuthority.TryGetRectsForGroup(groupId, out List<UVRectSaveData> materialRects))
+            return materialRects.Where(rect => rect != null).OrderBy(rect => rect.id).ToList();
+
+        // Compatibility fallback if the material authority is unavailable during an unusual
+        // bootstrap frame. An empty material list is NOT allowed to fall back globally.
         if (workspace == null) workspace = FindFirstObjectByType<TextureUVRectWorkspace>();
         return workspace != null
             ? workspace.ExportDefinitions().Where(rect => rect != null).OrderBy(rect => rect.id).ToList()
