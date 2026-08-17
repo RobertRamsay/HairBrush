@@ -7,6 +7,9 @@ using UnityEngine.UI;
 // shared top utility rows (Texture Editor + Save/Reset) remain available. The clumper
 // itself lives in a wheel-scrollable viewport below those rows; slider/button pointer
 // events go directly to the controls rather than through a drag-stealing ScrollRect.
+// The gap left for those utility rows is measured live each frame (see UpdateTopInset)
+// rather than assumed at a fixed pixel height, since that assumption drifting out of sync
+// with their real rendered height is what let this overlay start covering them.
 [DefaultExecutionOrder(5250)]
 public class ClumperControlsScrollFix : MonoBehaviour
 {
@@ -16,9 +19,8 @@ public class ClumperControlsScrollFix : MonoBehaviour
     private Transform boundPanel;
     private readonly Dictionary<GameObject, bool> previousActive = new Dictionary<GameObject, bool>();
 
-    // Runtime grooming panel uses a 45px editor-tab row + 40px utility row, with panel
-    // padding/spacing around them. Leave enough room so CLUMPER starts cleanly below both.
-    private const float TopUtilityInset = 101f;
+    // Fallback used only for the single frame before the utility rows can be measured.
+    private const float FallbackTopInset = 101f;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
@@ -79,7 +81,51 @@ public class ClumperControlsScrollFix : MonoBehaviour
 
         HideNonClumperPanelChildren(panel);
         KeepUtilityRowsVisible(panel);
+        UpdateTopInset(panel);
         host.transform.SetAsLastSibling();
+    }
+
+    // Measures the real current height of the persistent utility rows instead of assuming a
+    // fixed pixel figure - a hardcoded guess here is exactly what let the overlay drift out of
+    // sync with their actual rendered height and start covering the bottom of TopControlsRow.
+    void UpdateTopInset(Transform panel)
+    {
+        if (host == null) return;
+        RectTransform hostRT = host.transform as RectTransform;
+        if (hostRT == null) return;
+
+        Canvas.ForceUpdateCanvases();
+
+        float inset = 0f;
+        int visibleRows = 0;
+        Transform tabs = panel.Find("PanelTabRow");
+        if (tabs != null && tabs.gameObject.activeSelf)
+        {
+            inset += MeasuredHeight(tabs as RectTransform);
+            visibleRows++;
+        }
+        Transform top = panel.Find("TopControlsRow");
+        if (top != null && top.gameObject.activeSelf)
+        {
+            inset += MeasuredHeight(top as RectTransform);
+            visibleRows++;
+        }
+
+        VerticalLayoutGroup panelLayout = panel.GetComponent<VerticalLayoutGroup>();
+        if (panelLayout != null && visibleRows > 0)
+            inset += panelLayout.spacing * visibleRows + panelLayout.padding.top;
+
+        if (inset <= 0f) inset = FallbackTopInset;
+
+        hostRT.offsetMax = new Vector2(hostRT.offsetMax.x, -inset);
+    }
+
+    static float MeasuredHeight(RectTransform rect)
+    {
+        if (rect == null) return 0f;
+        float h = LayoutUtility.GetPreferredHeight(rect);
+        if (h <= .01f) h = rect.rect.height;
+        return Mathf.Max(0f, h);
     }
 
     Transform FindControls(Transform panel)
@@ -142,7 +188,7 @@ public class ClumperControlsScrollFix : MonoBehaviour
         hostRT.anchorMin = Vector2.zero;
         hostRT.anchorMax = Vector2.one;
         hostRT.offsetMin = new Vector2(4f, 4f);
-        hostRT.offsetMax = new Vector2(-4f, -TopUtilityInset);
+        hostRT.offsetMax = new Vector2(-4f, -FallbackTopInset);
 
         Image hostImage = host.GetComponent<Image>();
         hostImage.color = new Color(.08f, .09f, .11f, .98f);
