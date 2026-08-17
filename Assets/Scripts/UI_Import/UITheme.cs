@@ -1,15 +1,16 @@
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
-#if UNITY_EDITOR
-using UnityEditor;
-#endif
 
-// Central 9-slice skin + colour palette for the HairBrush UI. Loads the sliced sprites from
-// Assets/UI_fgx (folder name matches the current repo; rename this path if the folder is
-// renamed later) and exposes small static helpers that any authority script can call to
-// reskin whatever Buttons/Sliders it built, without every builder needing its own copy of
-// this logic. Colours below were sampled directly from the target mockup rather than guessed.
+// Central 9-slice skin + colour palette for the HairBrush UI. Loads the sliced sprites via
+// Resources.Load, which is the one loading mechanism that works identically in the Editor and
+// in an actual Player build - the previous AssetDatabase-based loader only ever worked in the
+// Editor (AssetDatabase doesn't exist in a build at all), so none of this skin ever rendered in
+// a build until now. The sprites live at Assets/Resources/UI_GFX/ - a build-safe duplicate of
+// Assets/UI_GFX/, kept in sync manually since Resources.Load requires that specific folder name.
+// Exposes small static helpers that any authority script can call to reskin whatever
+// Buttons/Sliders it built, without every builder needing its own copy of this logic. Colours
+// below were sampled directly from the target mockup rather than guessed.
 public static class UITheme
 {
     // --- Palette -----------------------------------------------------------------------
@@ -24,7 +25,7 @@ public static class UITheme
     public static readonly Color TrackDark = new Color(.12f, .14f, .16f, 1f);
     public static readonly Color FillCyan = new Color(.20f, .60f, .68f, 1f);
 
-    private const string BasePath = "Assets/UI_GFX/";
+    private const string ResourcesFolder = "UI_GFX/";
 
     private static Sprite normalSprite, hoverSprite, clickSprite, fineEdgeSprite, fineGlowSprite, dividerSprite;
     private static bool loaded;
@@ -42,22 +43,22 @@ public static class UITheme
         if (loaded) return normalSprite != null;
         loaded = true;
 
-#if UNITY_EDITOR
-        normalSprite = AssetDatabase.LoadAssetAtPath<Sprite>(BasePath + "HB_9sliceSolid.png");
-        hoverSprite = AssetDatabase.LoadAssetAtPath<Sprite>(BasePath + "HB_9sliceSolidHov.png");
-        clickSprite = AssetDatabase.LoadAssetAtPath<Sprite>(BasePath + "HB_9sliceSolidClick.png");
-        fineEdgeSprite = AssetDatabase.LoadAssetAtPath<Sprite>(BasePath + "HB_9slice_FineEdge.png");
-        fineGlowSprite = AssetDatabase.LoadAssetAtPath<Sprite>(BasePath + "HB_9slice_FineGlow.png");
-        dividerSprite = AssetDatabase.LoadAssetAtPath<Sprite>(BasePath + "Divider.png");
-#endif
+        normalSprite = Resources.Load<Sprite>(ResourcesFolder + "HB_9sliceSolid");
+        hoverSprite = Resources.Load<Sprite>(ResourcesFolder + "HB_9sliceSolidHov");
+        clickSprite = Resources.Load<Sprite>(ResourcesFolder + "HB_9sliceSolidClick");
+        fineEdgeSprite = Resources.Load<Sprite>(ResourcesFolder + "HB_9slice_FineEdge");
+        fineGlowSprite = Resources.Load<Sprite>(ResourcesFolder + "HB_9slice_FineGlow");
+        dividerSprite = Resources.Load<Sprite>(ResourcesFolder + "Divider");
+
         if (normalSprite == null && !warned)
         {
             warned = true;
-            Debug.LogWarning("UITheme: could not load sliced sprites from " + BasePath +
-                " - buttons/sliders will fall back to flat colour styling. Check the folder path and that each texture's Sprite Mode is Single.");
+            Debug.LogWarning("UITheme: could not load sliced sprites from Resources/" + ResourcesFolder +
+                " - buttons/sliders will fall back to flat colour styling. Check that Assets/Resources/UI_GFX/ exists with each texture's Sprite Mode set to Single.");
         }
         return normalSprite != null;
     }
+
 
     // One-time setup for a Button: sliced sprite skin (with graceful flat-colour fallback if
     // sprites aren't found), consistent size clamp, and a tidied label. Safe to call once per
