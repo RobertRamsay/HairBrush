@@ -189,9 +189,9 @@ public class SelectionBrushScaleTuning : MonoBehaviour
             object[] args = { parent, "Radius", .001f, MaxRadius, viewer.brushRadius, onRadius, null, 38f, 16 };
             radiusRow = createSliderMethod.Invoke(viewer, args) as GameObject;
             radiusSlider = args[6] as Slider;
-            if (radiusRow != null)
-                radiusRow.transform.SetSiblingIndex(falloffRow.transform.GetSiblingIndex());
         }
+
+        PlaceBrushControlsAtTop(falloffRow);
 
         if (radiusSlider != null)
         {
@@ -214,6 +214,27 @@ public class SelectionBrushScaleTuning : MonoBehaviour
                 if (label != null) label.text = "Falloff: " + viewer.brushFalloffDistance.ToString("F3");
             });
         }
+    }
+
+    void PlaceBrushControlsAtTop(GameObject falloffRow)
+    {
+        if (radiusRow == null || falloffRow == null) return;
+
+        Transform parent = falloffRow.transform.parent;
+        if (parent == null || radiusRow.transform.parent != parent) return;
+
+        // Keep the panel-wide tab/save/mode rows first, then make POST-local spatial
+        // controls the first modifier controls: Radius -> Falloff -> Length/etc.
+        int insertIndex = 0;
+        Transform tabRow = parent.Find("PanelTabRow");
+        if (tabRow != null)
+            insertIndex = Mathf.Max(insertIndex, tabRow.GetSiblingIndex() + 1);
+        Transform topControlsRow = parent.Find("TopControlsRow");
+        if (topControlsRow != null)
+            insertIndex = Mathf.Max(insertIndex, topControlsRow.GetSiblingIndex() + 1);
+
+        radiusRow.transform.SetSiblingIndex(Mathf.Min(insertIndex, parent.childCount - 1));
+        falloffRow.transform.SetSiblingIndex(Mathf.Min(insertIndex + 1, parent.childCount - 1));
     }
 
     public void RecomputeWeights(Vector3 center, float radius, float falloff)
