@@ -169,7 +169,7 @@ public class GroupUVRangeSliderUIAuthority : MonoBehaviour
     static void MakeInputCompact(TMP_InputField input)
     {
         if (input == null) return;
-        TextMeshProUGUI text = input.textComponent;
+        TMP_Text text = input.textComponent;
         if (text == null) return;
         text.enableAutoSizing = true;
         text.fontSizeMin = 8f;
