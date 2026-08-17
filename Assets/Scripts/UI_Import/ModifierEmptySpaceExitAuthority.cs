@@ -6,7 +6,10 @@ using UnityEngine.InputSystem;
 // A plain left-click on genuinely empty 3D space is the universal modifier deselect gesture.
 // It exits POST or CLUMPER without stealing clicks from UI, the model surface, or any of the
 // modifier authoring gestures (Ctrl/Shift/Space/Tab).
-[DefaultExecutionOrder(5255)]
+//
+// Run before ModelViewer's default Update so the legacy localized-selection state is cleared
+// before ModelViewer decides whether this click is allowed to place cards.
+[DefaultExecutionOrder(-100)]
 public class ModifierEmptySpaceExitAuthority : MonoBehaviour
 {
     private ModelViewer viewer;
@@ -15,6 +18,7 @@ public class ModifierEmptySpaceExitAuthority : MonoBehaviour
 
     private FieldInfo postActiveIdField;
     private FieldInfo postActiveGroupField;
+    private FieldInfo isSelectionModeField;
     private FieldInfo hasSelectionField;
     private FieldInfo hitPointField;
     private FieldInfo hitNormalField;
@@ -38,7 +42,7 @@ public class ModifierEmptySpaceExitAuthority : MonoBehaviour
         Resolve();
         if (viewer == null || viewer.mainCamera == null || Mouse.current == null) return;
         if (!Mouse.current.leftButton.wasPressedThisFrame) return;
-        if (!HasActiveModifier()) return;
+        if (!HasActiveModifierOrLocalizedSelection()) return;
 
         // "Click in space" is deliberately a plain click. Modified clicks continue to own
         // POST creation/move, CLUMPER creation/move, placement, and the other groom gestures.
@@ -55,7 +59,7 @@ public class ModifierEmptySpaceExitAuthority : MonoBehaviour
         Ray ray = viewer.mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
         if (Physics.Raycast(ray, out _, Mathf.Infinity, ~0, QueryTriggerInteraction.Ignore)) return;
 
-        ExitPost();
+        ExitPostAndLocalizedSelection();
         ExitClumper();
 
         if (EventSystem.current != null)
@@ -101,36 +105,43 @@ public class ModifierEmptySpaceExitAuthority : MonoBehaviour
     void TypeCacheViewer(BindingFlags flags)
     {
         System.Type type = typeof(ModelViewer);
+        isSelectionModeField = type.GetField("isSelectionMode", flags);
         hasSelectionField = type.GetField("hasSelectionHotspot", flags);
         hitPointField = type.GetField("selectionHitPoint", flags);
         hitNormalField = type.GetField("selectionHitNormal", flags);
         clearSelectionMethod = type.GetMethod("ClearSelectionHotspot", flags);
     }
 
-    bool HasActiveModifier()
+    bool HasActiveModifierOrLocalizedSelection()
     {
+        bool localizedSelection =
+            (isSelectionModeField != null && isSelectionModeField.GetValue(viewer) is bool selectionMode && selectionMode) ||
+            (hasSelectionField != null && hasSelectionField.GetValue(viewer) is bool hotspot && hotspot);
         bool postActive = posts != null && postActiveIdField != null &&
             postActiveIdField.GetValue(posts) is int postId && postId >= 0;
         bool clumpActive = clumper != null && selectedClumperIdField != null &&
             selectedClumperIdField.GetValue(clumper) is int clumpId && clumpId >= 0;
-        return postActive || clumpActive;
+        return localizedSelection || postActive || clumpActive;
     }
 
-    void ExitPost()
+    void ExitPostAndLocalizedSelection()
     {
-        if (posts == null || postActiveIdField == null) return;
-        if (!(postActiveIdField.GetValue(posts) is int id) || id < 0) return;
+        // POST selection and ModelViewer's legacy localized-selection state can get out of sync.
+        // Clear each independently; do not make one conditional on the other still being active.
+        if (posts != null && postActiveIdField != null &&
+            postActiveIdField.GetValue(posts) is int id && id >= 0)
+        {
+            postActiveIdField.SetValue(posts, -1);
+            postActiveGroupField?.SetValue(posts, -1);
+        }
 
-        postActiveIdField.SetValue(posts, -1);
-        postActiveGroupField?.SetValue(posts, -1);
-
-        // Match ModelViewer's original Ctrl+click-in-empty-space teardown exactly. Clearing
-        // only the hotspot leaves isSelectionMode enabled, which blocks normal hair placement
-        // after a plain click exits POST editing.
         if (clearSelectionMethod != null)
             clearSelectionMethod.Invoke(viewer, null);
         else
+        {
+            isSelectionModeField?.SetValue(viewer, false);
             hasSelectionField?.SetValue(viewer, false);
+        }
 
         hitPointField?.SetValue(viewer, Vector3.zero);
         hitNormalField?.SetValue(viewer, Vector3.zero);
