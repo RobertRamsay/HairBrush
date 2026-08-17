@@ -224,7 +224,7 @@ public class MaterialEditorManager : MonoBehaviour
 
         GameObject textBlock = new GameObject("Info", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
         textBlock.transform.SetParent(row.transform, false);
-        textBlock.GetComponent<LayoutElement>().preferredWidth = 160f;
+        textBlock.GetComponent<LayoutElement>().preferredWidth = 320f;
         VerticalLayoutGroup textLayout = textBlock.GetComponent<VerticalLayoutGroup>();
         textLayout.spacing = 0f;
         textLayout.childControlHeight = false;

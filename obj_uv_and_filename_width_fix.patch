@@ -1,0 +1,111 @@
+--- a/Assets/Scripts/UI_Import/CustomOBJImporter.cs	2026-08-17 19:08:57.797242114 +0000
++++ b/Assets/Scripts/UI_Import/CustomOBJImporter.cs	2026-08-17 19:09:19.917962508 +0000
+@@ -24,9 +24,20 @@
+             return null;
+         }
+ 
+-        List<Vector3> sourceVertices = new List<Vector3>();
++        List<Vector3> sourcePositions = new List<Vector3>();
++        List<Vector2> sourceUVs = new List<Vector2>();
+         List<int> triangles = new List<int>();
+ 
++        // OBJ indexes position/UV/normal independently per face-vertex, but Unity's Mesh needs
++        // one flat, parallel array per attribute - the same position can legitimately carry a
++        // different UV on different faces (e.g. a UV seam), so vertices are deduplicated here by
++        // the (position, UV) pair actually used, not by position alone. That's also why UVs were
++        // never coming through before: the old parser reused position indices directly into a
++        // single vertex list and never read vt lines or the UV index in each face reference at all.
++        List<Vector3> dedupPositions = new List<Vector3>();
++        List<Vector2> dedupUVs = new List<Vector2>();
++        Dictionary<long, int> dedupMap = new Dictionary<long, int>();
++
+         string[] lines = File.ReadAllLines(path);
+ 
+         foreach (string line in lines)
+@@ -41,7 +52,13 @@
+                 float x = float.Parse(parts[1], CultureInfo.InvariantCulture);
+                 float y = float.Parse(parts[2], CultureInfo.InvariantCulture);
+                 float z = float.Parse(parts[3], CultureInfo.InvariantCulture);
+-                sourceVertices.Add(new Vector3(x, y, z));
++                sourcePositions.Add(new Vector3(x, y, z));
++            }
++            else if (parts[0] == "vt")
++            {
++                float u = float.Parse(parts[1], CultureInfo.InvariantCulture);
++                float v = parts.Length > 2 ? float.Parse(parts[2], CultureInfo.InvariantCulture) : 0f;
++                sourceUVs.Add(new Vector2(u, v));
+             }
+             else if (parts[0] == "f")
+             {
+@@ -49,8 +66,22 @@
+                 for (int i = 1; i < parts.Length; i++)
+                 {
+                     string[] vertexData = parts[i].Split('/');
+-                    int vIndex = int.Parse(vertexData[0]) - 1;
+-                    faceIndices.Add(vIndex);
++                    int posIndex = int.Parse(vertexData[0]) - 1;
++                    int uvIndex = -1;
++                    if (vertexData.Length > 1 && vertexData[1].Length > 0)
++                        uvIndex = int.Parse(vertexData[1]) - 1;
++
++                    // Pack both indices into one key - posIndex alone isn't enough since the same
++                    // position can appear with a different UV on another face.
++                    long key = ((long)(posIndex + 1) << 32) | (uint)(uvIndex + 1);
++                    if (!dedupMap.TryGetValue(key, out int localIndex))
++                    {
++                        localIndex = dedupPositions.Count;
++                        dedupPositions.Add(sourcePositions[posIndex]);
++                        dedupUVs.Add(uvIndex >= 0 && uvIndex < sourceUVs.Count ? sourceUVs[uvIndex] : Vector2.zero);
++                        dedupMap[key] = localIndex;
++                    }
++                    faceIndices.Add(localIndex);
+                 }
+ 
+                 // Import converts OBJ/right-handed coordinates to Unity by mirroring X.
+@@ -66,21 +97,21 @@
+         }
+ 
+         Vector3 sourceCenter = Vector3.zero;
+-        if (sourceVertices.Count > 0)
++        if (sourcePositions.Count > 0)
+         {
+-            Bounds sourceBounds = new Bounds(sourceVertices[0], Vector3.zero);
+-            for (int i = 1; i < sourceVertices.Count; i++) sourceBounds.Encapsulate(sourceVertices[i]);
++            Bounds sourceBounds = new Bounds(sourcePositions[0], Vector3.zero);
++            for (int i = 1; i < sourcePositions.Count; i++) sourceBounds.Encapsulate(sourcePositions[i]);
+             sourceCenter = sourceBounds.center;
+         }
+ 
+         // The ModelViewer keeps its existing 180-degree Y viewing orientation. Mirroring X
+         // here is the handedness conversion that cancels that orientation's apparent X flip,
+         // leaving the editor with the expected left/right layout while changing handedness on Z.
+-        List<Vector3> vertices = new List<Vector3>(sourceVertices.Count);
++        List<Vector3> vertices = new List<Vector3>(dedupPositions.Count);
+         Vector3 convertedCenter = new Vector3(-sourceCenter.x, sourceCenter.y, sourceCenter.z);
+-        for (int i = 0; i < sourceVertices.Count; i++)
++        for (int i = 0; i < dedupPositions.Count; i++)
+         {
+-            Vector3 source = sourceVertices[i];
++            Vector3 source = dedupPositions[i];
+             Vector3 converted = new Vector3(-source.x, source.y, source.z);
+             vertices.Add(converted - convertedCenter);
+         }
+@@ -88,6 +119,7 @@
+         Mesh mesh = new Mesh();
+         mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+         mesh.vertices = vertices.ToArray();
++        mesh.uv = dedupUVs.ToArray();
+         mesh.triangles = triangles.ToArray();
+         mesh.RecalculateNormals();
+         mesh.RecalculateBounds();
+--- a/Assets/Scripts/UI_Import/MaterialEditorManager.cs	2026-08-17 19:09:45.411613510 +0000
++++ b/Assets/Scripts/UI_Import/MaterialEditorManager.cs	2026-08-17 19:09:48.687627472 +0000
+@@ -224,7 +224,7 @@
+ 
+         GameObject textBlock = new GameObject("Info", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
+         textBlock.transform.SetParent(row.transform, false);
+-        textBlock.GetComponent<LayoutElement>().preferredWidth = 160f;
++        textBlock.GetComponent<LayoutElement>().preferredWidth = 320f;
+         VerticalLayoutGroup textLayout = textBlock.GetComponent<VerticalLayoutGroup>();
+         textLayout.spacing = 0f;
+         textLayout.childControlHeight = false;
