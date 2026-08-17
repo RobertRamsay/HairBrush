@@ -259,7 +259,7 @@ public class MaterialEditorManager : MonoBehaviour
         GameObject row = new GameObject(label + "Row", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
         row.transform.SetParent(parent, false);
         row.GetComponent<LayoutElement>().preferredHeight = 32f;
-        HorizontalLayoutGroup layout = row.AddComponent<HorizontalLayoutGroup>();
+        HorizontalLayoutGroup layout = row.GetComponent<HorizontalLayoutGroup>();
         layout.spacing = 6f;
         layout.childControlWidth = false;
         layout.childControlHeight = true;
