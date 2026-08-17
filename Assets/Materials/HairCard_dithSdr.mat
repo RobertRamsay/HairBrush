@@ -118,6 +118,7 @@ Material:
     - _GlossyReflections: 0
     - _Metal: 0.33
     - _Metallic: 0.233
+    - _Normal_G_Adj: 0.9
     - _Normal_Power: 2.59
     - _OcclusionStrength: 1
     - _Parallax: 0.005
@@ -136,7 +137,7 @@ Material:
     - _Surface: 0
     - _TransAmbient: 0.1
     - _TransDirect: 0.9
-    - _TransNormal: 0.5
+    - _TransNormal: 0.558
     - _TransScattering: 2
     - _TransShadow: 0.5
     - _TransStrength: 1
@@ -147,7 +148,7 @@ Material:
     - _BaseColor: {r: 1, g: 1, b: 1, a: 1}
     - _Color: {r: 1, g: 1, b: 1, a: 1}
     - _EmissionColor: {r: 0.37106913, g: 0.37106913, b: 0.37106913, a: 1}
-    - _HairTint: {r: 1, g: 1, b: 1, a: 0}
+    - _HairTint: {r: 0.9622642, g: 0.91082233, b: 0.91082233, a: 0}
     - _HaitTint: {r: 0.7830189, g: 0.3689935, b: 0.121885024, a: 0}
     - _SpecColor: {r: 0.19999996, g: 0.19999996, b: 0.19999996, a: 1}
   m_BuildTextureStacks: []
