@@ -426,7 +426,7 @@ public class GroomShapeCurveAuthority : MonoBehaviour
         popupEditor.Bind(this, popupGroup, channel, graph, lineRoot, pointRoot);
         graphGO.GetComponent<GroomCurveGraphInput>().Bind(popupEditor);
 
-        AddPopupButton(root, "RESET", new Vector2(.41f, .054f), new Vector2(.59f, .086f), popupEditor.ResetDefault);
+        AddPopupButton(root, "RESET", new Vector2(.41f, .060f), new Vector2(.59f, .080f), popupEditor.ResetDefault);
 
         Canvas.ForceUpdateCanvases();
         popupEditor.RefreshAll();
