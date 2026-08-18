@@ -139,6 +139,17 @@ public static class UITheme
             label.margin = Vector4.zero;
             label.color = TextBright;
             label.raycastTarget = false;
+
+            // Different builders created these labels with different fixed-size child rects
+            // (the UV row's was sized for the old single-letter "R"). Normalising the rect to
+            // stretch-fill its button here is what makes every button render identically
+            // regardless of which script originally built it.
+            RectTransform labelRect = label.rectTransform;
+            labelRect.anchorMin = Vector2.zero;
+            labelRect.anchorMax = Vector2.one;
+            labelRect.offsetMin = Vector2.zero;
+            labelRect.offsetMax = Vector2.zero;
+            labelRect.anchoredPosition = Vector2.zero;
         }
     }
 

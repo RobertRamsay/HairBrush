@@ -38,7 +38,15 @@ public class RuntimeToolInteractionFixes : MonoBehaviour
             bool hover = ScreenRectContains(rect, mouse);
             Image image = field.GetComponent<Image>();
             if (image != null)
-                image.color = field.isFocused ? new Color(.20f,.38f,.24f,1f) : hover ? new Color(.36f,.46f,.30f,1f) : new Color(.12f,.12f,.12f,1f);
+            {
+                // The seed box is now the FineEdge sliced sprite (see GroomVarianceSeedUIFix),
+                // so hover/focus feedback is expressed as near-white tint variations that let
+                // the sprite show through. The old opaque dark fills here were force-painted
+                // every frame and completely buried the sprite no matter what set it.
+                image.color = field.isFocused ? new Color(.75f, 1f, .95f, 1f)
+                    : hover ? new Color(.85f, 1f, .97f, 1f)
+                    : Color.white;
+            }
 
             if (pressed && hover && field.interactable)
             {

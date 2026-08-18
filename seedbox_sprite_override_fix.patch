@@ -1,0 +1,39 @@
+--- a/Assets/Scripts/UI_Import/RuntimeToolInteractionFixes.cs	2026-08-18 09:43:16.740257136 +0000
++++ b/Assets/Scripts/UI_Import/RuntimeToolInteractionFixes.cs	2026-08-18 09:43:23.755220936 +0000
+@@ -38,7 +38,15 @@
+             bool hover = ScreenRectContains(rect, mouse);
+             Image image = field.GetComponent<Image>();
+             if (image != null)
+-                image.color = field.isFocused ? new Color(.20f,.38f,.24f,1f) : hover ? new Color(.36f,.46f,.30f,1f) : new Color(.12f,.12f,.12f,1f);
++            {
++                // The seed box is now the FineEdge sliced sprite (see GroomVarianceSeedUIFix),
++                // so hover/focus feedback is expressed as near-white tint variations that let
++                // the sprite show through. The old opaque dark fills here were force-painted
++                // every frame and completely buried the sprite no matter what set it.
++                image.color = field.isFocused ? new Color(.75f, 1f, .95f, 1f)
++                    : hover ? new Color(.85f, 1f, .97f, 1f)
++                    : Color.white;
++            }
+ 
+             if (pressed && hover && field.interactable)
+             {
+--- a/Assets/Scripts/UI_Import/UITheme.cs	2026-08-18 09:43:16.743201197 +0000
++++ b/Assets/Scripts/UI_Import/UITheme.cs	2026-08-18 09:43:34.329164390 +0000
+@@ -139,6 +139,17 @@
+             label.margin = Vector4.zero;
+             label.color = TextBright;
+             label.raycastTarget = false;
++
++            // Different builders created these labels with different fixed-size child rects
++            // (the UV row's was sized for the old single-letter "R"). Normalising the rect to
++            // stretch-fill its button here is what makes every button render identically
++            // regardless of which script originally built it.
++            RectTransform labelRect = label.rectTransform;
++            labelRect.anchorMin = Vector2.zero;
++            labelRect.anchorMax = Vector2.one;
++            labelRect.offsetMin = Vector2.zero;
++            labelRect.offsetMax = Vector2.zero;
++            labelRect.anchoredPosition = Vector2.zero;
+         }
+     }
+ 
