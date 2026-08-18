@@ -50,32 +50,13 @@ public static class HairObjExporter
         GameObject modelRoot = GetLoadedModel(viewer);
         ImportedOBJMetadata metadata = modelRoot != null ? modelRoot.GetComponent<ImportedOBJMetadata>() : null;
 
-#if UNITY_EDITOR
-        int choice = EditorUtility.DisplayDialogComplex(
-            "Export Hair OBJ",
-            "Which coordinate space should the hair use?\n\nMATCH ORIGINAL reverses the model's import handedness conversion, recentering, normalization scale and editor orientation so the hair aligns with the original source OBJ.\n\nCURRENT SCALE exports exactly as the hair currently exists in the editor.",
-            "MATCH ORIGINAL",
-            "CANCEL",
-            "CURRENT SCALE");
-
-        if (choice == 1) return;
-        space = choice == 0 ? ExportSpace.OriginalImportedOBJSpace : ExportSpace.CurrentEditorSpace;
-
-        if (space == ExportSpace.OriginalImportedOBJSpace && (modelRoot == null || metadata == null))
-        {
-            bool currentInstead = EditorUtility.DisplayDialog(
-                "Original Import Transform Unavailable",
-                "This model was loaded before import metadata was recorded, so its exact original OBJ coordinate space cannot be reconstructed.\n\nExport at the current editor scale instead?",
-                "CURRENT SCALE",
-                "CANCEL");
-            if (!currentInstead) return;
-            space = ExportSpace.CurrentEditorSpace;
-        }
-#else
-        // The interactive space-choice dialog has no native Windows equivalent here, so a build
-        // always exports at the current scale - the space the hair actually looks like on screen.
-        space = ExportSpace.CurrentEditorSpace;
-#endif
+        // Always match the original source OBJ's coordinate space when the metadata to do so
+        // is available, without asking - falls back to the current editor scale silently, only
+        // when that metadata genuinely isn't there to reconstruct it from (e.g. a model loaded
+        // before import metadata started being recorded).
+        space = (modelRoot != null && metadata != null)
+            ? ExportSpace.OriginalImportedOBJSpace
+            : ExportSpace.CurrentEditorSpace;
 
         string defaultName = "HairCards.obj";
         if (metadata != null && !string.IsNullOrEmpty(metadata.sourcePath))

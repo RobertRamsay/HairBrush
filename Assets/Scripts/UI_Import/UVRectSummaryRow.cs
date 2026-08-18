@@ -45,10 +45,14 @@ public class UVRectSummaryRow : MonoBehaviour, IPointerEnterHandler, IPointerExi
     {
         if (background == null) return;
         Sprite sprite = UITheme.FineGlowSprite;
-        if (sprite == null) return;
-        background.sprite = sprite;
-        background.type = Image.Type.Sliced;
-        background.color = Color.white;
+        if (sprite != null)
+        {
+            background.sprite = sprite;
+            background.type = Image.Type.Sliced;
+        }
+        // A colour tint on top of the glow sprite, not just the sprite swap alone - the sprite
+        // difference by itself was too subtle to reliably notice.
+        background.color = new Color(1f, .82f, .35f, 1f);
     }
 
     // Combines the row's own mouse-hover state with a highlight driven externally by the

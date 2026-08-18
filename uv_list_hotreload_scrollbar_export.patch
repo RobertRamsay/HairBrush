@@ -1,0 +1,199 @@
+diff --git a/Assets/Scripts/UI_Import/HairObjExporter.cs b/Assets/Scripts/UI_Import/HairObjExporter.cs
+index ba3d7ab..754f146 100644
+--- a/Assets/Scripts/UI_Import/HairObjExporter.cs
++++ b/Assets/Scripts/UI_Import/HairObjExporter.cs
+@@ -50,32 +50,13 @@ public static class HairObjExporter
+         GameObject modelRoot = GetLoadedModel(viewer);
+         ImportedOBJMetadata metadata = modelRoot != null ? modelRoot.GetComponent<ImportedOBJMetadata>() : null;
+ 
+-#if UNITY_EDITOR
+-        int choice = EditorUtility.DisplayDialogComplex(
+-            "Export Hair OBJ",
+-            "Which coordinate space should the hair use?\n\nMATCH ORIGINAL reverses the model's import handedness conversion, recentering, normalization scale and editor orientation so the hair aligns with the original source OBJ.\n\nCURRENT SCALE exports exactly as the hair currently exists in the editor.",
+-            "MATCH ORIGINAL",
+-            "CANCEL",
+-            "CURRENT SCALE");
+-
+-        if (choice == 1) return;
+-        space = choice == 0 ? ExportSpace.OriginalImportedOBJSpace : ExportSpace.CurrentEditorSpace;
+-
+-        if (space == ExportSpace.OriginalImportedOBJSpace && (modelRoot == null || metadata == null))
+-        {
+-            bool currentInstead = EditorUtility.DisplayDialog(
+-                "Original Import Transform Unavailable",
+-                "This model was loaded before import metadata was recorded, so its exact original OBJ coordinate space cannot be reconstructed.\n\nExport at the current editor scale instead?",
+-                "CURRENT SCALE",
+-                "CANCEL");
+-            if (!currentInstead) return;
+-            space = ExportSpace.CurrentEditorSpace;
+-        }
+-#else
+-        // The interactive space-choice dialog has no native Windows equivalent here, so a build
+-        // always exports at the current scale - the space the hair actually looks like on screen.
+-        space = ExportSpace.CurrentEditorSpace;
+-#endif
++        // Always match the original source OBJ's coordinate space when the metadata to do so
++        // is available, without asking - falls back to the current editor scale silently, only
++        // when that metadata genuinely isn't there to reconstruct it from (e.g. a model loaded
++        // before import metadata started being recorded).
++        space = (modelRoot != null && metadata != null)
++            ? ExportSpace.OriginalImportedOBJSpace
++            : ExportSpace.CurrentEditorSpace;
+ 
+         string defaultName = "HairCards.obj";
+         if (metadata != null && !string.IsNullOrEmpty(metadata.sourcePath))
+diff --git a/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs b/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs
+index e47d9a0..e415e2d 100644
+--- a/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs
++++ b/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs
+@@ -325,17 +325,14 @@ public class TextureUVRectWorkspace : MonoBehaviour
+         if (texturePanel == null) return;
+         if (section != null && section.transform.parent == texturePanel.transform) return;
+ 
++        // A hot script-reload while staying in Play mode resets this MonoBehaviour's own
++        // fields (section becomes null again) but leaves the scene's GameObjects untouched, so
++        // without this the panel would just keep reusing whatever dimensions/wiring it was
++        // built with on the FIRST run of this method - stale layout values (heights, spacing,
++        // even entire new features) would never actually show up until a full Stop/Start of
++        // Play mode. Destroying and falling through to a full rebuild below fixes that for good.
+         Transform existing = texturePanel.transform.Find("UVWorkspaceSection");
+-        if (existing != null)
+-        {
+-            section = existing.gameObject;
+-            summaryText = section.transform.Find("SummaryHeader")?.GetComponent<TextMeshProUGUI>();
+-            summaryListRoot = section.transform.Find("SummaryList/Content");
+-            Transform draw = section.transform.Find("Buttons/Row1/DRAW UV RECT");
+-            drawButtonImage = draw != null ? draw.GetComponent<Image>() : null;
+-            drawButtonText = draw != null ? draw.GetComponentInChildren<TextMeshProUGUI>(true) : null;
+-            return;
+-        }
++        if (existing != null) Destroy(existing.gameObject);
+ 
+         section = new GameObject("UVWorkspaceSection", typeof(RectTransform), typeof(LayoutElement), typeof(VerticalLayoutGroup));
+         section.transform.SetParent(texturePanel.transform, false);
+@@ -413,6 +410,8 @@ public class TextureUVRectWorkspace : MonoBehaviour
+ 
+     // Scrollable viewport so the list keeps working once AUTO produces more rectangles than
+     // fit in the fixed-height panel - a plain stacked list would just overflow past its box.
++    // A visible scrollbar matters here specifically because a partially-cut-off last row at
++    // the bottom of the box otherwise reads as a clipping bug rather than "scroll for more."
+     Transform BuildSummaryScrollList(Transform parent)
+     {
+         GameObject scrollGO = new GameObject("SummaryList", typeof(RectTransform), typeof(Image), typeof(ScrollRect), typeof(RectMask2D), typeof(LayoutElement));
+@@ -431,7 +430,9 @@ public class TextureUVRectWorkspace : MonoBehaviour
+         contentRect.anchorMax = new Vector2(1f, 1f);
+         contentRect.pivot = new Vector2(.5f, 1f);
+         contentRect.anchoredPosition = Vector2.zero;
+-        contentRect.sizeDelta = Vector2.zero;
++        // 12px narrower than full width - reserves a gutter on the right for the scrollbar
++        // below so it doesn't sit on top of the rows.
++        contentRect.sizeDelta = new Vector2(-12f, 0f);
+         VerticalLayoutGroup contentLayout = contentGO.GetComponent<VerticalLayoutGroup>();
+         contentLayout.spacing = 4f;
+         contentLayout.padding = new RectOffset(2, 2, 2, 2);
+@@ -442,12 +443,39 @@ public class TextureUVRectWorkspace : MonoBehaviour
+         fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+         fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+ 
++        GameObject scrollbarGO = new GameObject("Scrollbar", typeof(RectTransform), typeof(Image), typeof(Scrollbar));
++        scrollbarGO.transform.SetParent(scrollGO.transform, false);
++        RectTransform scrollbarRect = scrollbarGO.GetComponent<RectTransform>();
++        scrollbarRect.anchorMin = new Vector2(1f, 0f);
++        scrollbarRect.anchorMax = new Vector2(1f, 1f);
++        scrollbarRect.pivot = new Vector2(1f, .5f);
++        scrollbarRect.sizeDelta = new Vector2(8f, 0f);
++        scrollbarRect.anchoredPosition = Vector2.zero;
++        Image scrollbarBackground = scrollbarGO.GetComponent<Image>();
++        scrollbarBackground.color = new Color(1f, 1f, 1f, .06f);
++
++        GameObject handleGO = new GameObject("Handle", typeof(RectTransform), typeof(Image));
++        handleGO.transform.SetParent(scrollbarGO.transform, false);
++        RectTransform handleRect = handleGO.GetComponent<RectTransform>();
++        handleRect.anchorMin = Vector2.zero;
++        handleRect.anchorMax = Vector2.one;
++        handleRect.sizeDelta = Vector2.zero;
++        Image handleImage = handleGO.GetComponent<Image>();
++        handleImage.color = new Color(.45f, .85f, .92f, .85f);
++
++        Scrollbar scrollbar = scrollbarGO.GetComponent<Scrollbar>();
++        scrollbar.direction = Scrollbar.Direction.BottomToTop;
++        scrollbar.handleRect = handleRect;
++        scrollbar.targetGraphic = handleImage;
++
+         ScrollRect scroll = scrollGO.GetComponent<ScrollRect>();
+         scroll.content = contentRect;
+         scroll.horizontal = false;
+         scroll.vertical = true;
+         scroll.movementType = ScrollRect.MovementType.Clamped;
+         scroll.scrollSensitivity = 18f;
++        scroll.verticalScrollbar = scrollbar;
++        scroll.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.Permanent;
+ 
+         return contentGO.transform;
+     }
+@@ -645,8 +673,8 @@ public class TextureUVRectWorkspace : MonoBehaviour
+     void UpdateHoverPulse()
+     {
+         if (hoveredRectId < 0 || hoverLineMaterial == null) return;
+-        float pulse = .55f + .45f * Mathf.Sin(Time.unscaledTime * 6f);
+-        Color color = Color.Lerp(new Color(1f, .95f, .3f, 1f), Color.white, pulse);
++        float pulse = .5f + .5f * Mathf.Sin(Time.unscaledTime * 7f);
++        Color color = Color.Lerp(new Color(1f, .1f, .8f, 1f), Color.white, pulse);
+         if (hoverLineMaterial.HasProperty("_BaseColor")) hoverLineMaterial.SetColor("_BaseColor", color);
+         if (hoverLineMaterial.HasProperty("_Color")) hoverLineMaterial.SetColor("_Color", color);
+     }
+@@ -672,8 +700,14 @@ public class TextureUVRectWorkspace : MonoBehaviour
+     void ApplyHoverVisual(int id)
+     {
+         EnsureHoverLineMaterial();
+-        if (hoverLineMaterial != null && rectangleLines.TryGetValue(id, out LineRenderer line) && line != null)
+-            line.material = hoverLineMaterial;
++        if (rectangleLines.TryGetValue(id, out LineRenderer line) && line != null)
++        {
++            if (hoverLineMaterial != null) line.material = hoverLineMaterial;
++            // Noticeably thicker than the normal .006f outline width - a colour pulse alone was
++            // too easy to miss next to the plane outline's own similarly bright amber colour.
++            line.startWidth = .016f;
++            line.endWidth = .016f;
++        }
+         if (summaryRows.TryGetValue(id, out UVRectSummaryRow row) && row != null)
+             row.SetExternalHighlight(true);
+     }
+@@ -681,8 +715,12 @@ public class TextureUVRectWorkspace : MonoBehaviour
+     void ClearHoverVisual()
+     {
+         if (hoveredRectId < 0) return;
+-        if (lineMaterial != null && rectangleLines.TryGetValue(hoveredRectId, out LineRenderer line) && line != null)
+-            line.material = lineMaterial;
++        if (rectangleLines.TryGetValue(hoveredRectId, out LineRenderer line) && line != null)
++        {
++            if (lineMaterial != null) line.material = lineMaterial;
++            line.startWidth = .006f;
++            line.endWidth = .006f;
++        }
+         if (summaryRows.TryGetValue(hoveredRectId, out UVRectSummaryRow row) && row != null)
+             row.SetExternalHighlight(false);
+     }
+diff --git a/Assets/Scripts/UI_Import/UVRectSummaryRow.cs b/Assets/Scripts/UI_Import/UVRectSummaryRow.cs
+index af1db69..b1e8839 100644
+--- a/Assets/Scripts/UI_Import/UVRectSummaryRow.cs
++++ b/Assets/Scripts/UI_Import/UVRectSummaryRow.cs
+@@ -45,10 +45,14 @@ public class UVRectSummaryRow : MonoBehaviour, IPointerEnterHandler, IPointerExi
+     {
+         if (background == null) return;
+         Sprite sprite = UITheme.FineGlowSprite;
+-        if (sprite == null) return;
+-        background.sprite = sprite;
+-        background.type = Image.Type.Sliced;
+-        background.color = Color.white;
++        if (sprite != null)
++        {
++            background.sprite = sprite;
++            background.type = Image.Type.Sliced;
++        }
++        // A colour tint on top of the glow sprite, not just the sprite swap alone - the sprite
++        // difference by itself was too subtle to reliably notice.
++        background.color = new Color(1f, .82f, .35f, 1f);
+     }
+ 
+     // Combines the row's own mouse-hover state with a highlight driven externally by the
