@@ -319,8 +319,8 @@ public class TextureUVRectWorkspace : MonoBehaviour
         section = new GameObject("UVWorkspaceSection", typeof(RectTransform), typeof(LayoutElement), typeof(VerticalLayoutGroup));
         section.transform.SetParent(texturePanel.transform, false);
         LayoutElement sectionLayout = section.GetComponent<LayoutElement>();
-        sectionLayout.preferredHeight = 320f;
-        sectionLayout.minHeight = 320f;
+        sectionLayout.preferredHeight = 356f;
+        sectionLayout.minHeight = 356f;
         VerticalLayoutGroup vertical = section.GetComponent<VerticalLayoutGroup>();
         vertical.spacing = 4f;
         vertical.padding = new RectOffset(0, 0, 2, 2);
@@ -335,14 +335,17 @@ public class TextureUVRectWorkspace : MonoBehaviour
         instructions.alignment = TextAlignmentOptions.TopLeft;
         instructions.textWrappingMode = TextWrappingModes.Normal;
 
-        GameObject buttons = new GameObject("Buttons", typeof(RectTransform), typeof(HorizontalLayoutGroup));
+        GameObject buttons = new GameObject("Buttons", typeof(RectTransform), typeof(GridLayoutGroup));
         buttons.transform.SetParent(section.transform, false);
-        buttons.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 30f);
-        HorizontalLayoutGroup row = buttons.GetComponent<HorizontalLayoutGroup>();
-        row.spacing = 5f;
-        row.childControlWidth = true;
-        row.childForceExpandWidth = true;
-        row.childControlHeight = true;
+        buttons.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 66f);
+        GridLayoutGroup grid = buttons.GetComponent<GridLayoutGroup>();
+        grid.cellSize = new Vector2(261f, 30f);
+        grid.spacing = new Vector2(8f, 6f);
+        grid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
+        grid.constraintCount = 2;
+        grid.startCorner = GridLayoutGroup.Corner.UpperLeft;
+        grid.startAxis = GridLayoutGroup.Axis.Horizontal;
+        grid.childAlignment = TextAnchor.MiddleCenter;
 
         GameObject drawButton = AddButton(buttons.transform, "DRAW UV RECT", ToggleDrawMode);
         drawButtonImage = drawButton.GetComponent<Image>();
@@ -397,7 +400,7 @@ public class TextureUVRectWorkspace : MonoBehaviour
         rect.offsetMax = Vector2.zero;
         TextMeshProUGUI text = textGO.GetComponent<TextMeshProUGUI>();
         text.text = label;
-        text.fontSize = 10.5f;
+        text.fontSize = 12.5f;
         text.fontStyle = FontStyles.Bold;
         text.alignment = TextAlignmentOptions.Center;
         text.color = Color.white;

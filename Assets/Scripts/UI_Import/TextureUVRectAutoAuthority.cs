@@ -11,7 +11,7 @@ using UnityEngine.UI;
 [DefaultExecutionOrder(9250)]
 public class TextureUVRectAutoAuthority : MonoBehaviour
 {
-    private const int PaddingPixels = 4;
+    private const int PaddingPixels = 6;
     private const int MaxJoinedGapPixels = 4;
     private const int MaxSplitDepth = 16;
 
@@ -79,7 +79,7 @@ public class TextureUVRectAutoAuthority : MonoBehaviour
         textRect.offsetMax = Vector2.zero;
         TextMeshProUGUI text = textGO.GetComponent<TextMeshProUGUI>();
         text.text = "AUTO";
-        text.fontSize = 10.5f;
+        text.fontSize = 12.5f;
         text.fontStyle = FontStyles.Bold;
         text.alignment = TextAlignmentOptions.Center;
         text.color = Color.white;
@@ -467,7 +467,7 @@ public class TextureUVRectAutoAuthority : MonoBehaviour
     {
         if (useAlpha)
         {
-            int threshold = Mathf.Clamp(background.a + 16, 16, 224);
+            int threshold = Mathf.Clamp(background.a + 8, 8, 224);
             return pixel.a > threshold;
         }
 
@@ -476,7 +476,7 @@ public class TextureUVRectAutoAuthority : MonoBehaviour
         int db = pixel.b - background.b;
         int distanceSq = dr * dr + dg * dg + db * db;
         int maxDelta = Mathf.Max(Mathf.Abs(dr), Mathf.Max(Mathf.Abs(dg), Mathf.Abs(db)));
-        return maxDelta >= 14 && distanceSq >= 300;
+        return maxDelta >= 7 && distanceSq >= 90;
     }
 
     static void JoinSmallGaps(bool[] occupied, int maxGap)
