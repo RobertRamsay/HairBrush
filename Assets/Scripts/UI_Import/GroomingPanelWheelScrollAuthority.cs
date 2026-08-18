@@ -61,6 +61,7 @@ public class GroomingPanelWheelScroll : MonoBehaviour, IScrollHandler
     private int baseBottom;
     private bool baseCaptured;
     private float offset;
+    private Scrollbar scrollbar;
 
     public float sensitivity = 42f;
 
@@ -103,6 +104,7 @@ public class GroomingPanelWheelScroll : MonoBehaviour, IScrollHandler
 
         offset = Mathf.Clamp(offset + (-eventData.scrollDelta.y * sensitivity), 0f, maxOffset);
         ApplyOffset();
+        UpdateScrollbar(maxOffset);
         eventData.Use();
     }
 
@@ -116,6 +118,7 @@ public class GroomingPanelWheelScroll : MonoBehaviour, IScrollHandler
             offset = clamped;
             ApplyOffset();
         }
+        UpdateScrollbar(maxOffset);
     }
 
     float GetMaxOffset()
@@ -133,8 +136,8 @@ public class GroomingPanelWheelScroll : MonoBehaviour, IScrollHandler
             LayoutElement element = child.GetComponent<LayoutElement>();
             if (element != null && element.ignoreLayout) continue;
 
-            float h = LayoutUtility.GetPreferredHeight(child);
-            if (h <= .01f) h = child.rect.height;
+            float h = child.rect.height;
+            if (h <= .01f) h = LayoutUtility.GetPreferredHeight(child);
             if (h <= .01f) h = child.sizeDelta.y;
             contentHeight += Mathf.Max(0f, h);
             activeLayoutChildren++;
@@ -155,5 +158,75 @@ public class GroomingPanelWheelScroll : MonoBehaviour, IScrollHandler
         p.bottom = baseBottom + rounded;
         layout.padding = p;
         LayoutRebuilder.MarkLayoutForRebuild(panel);
+    }
+
+    // Visible right-edge scrollbar mirroring the padding-based scroll. Built lazily as a child
+    // of the panel with ignoreLayout so the VerticalLayoutGroup (and GetMaxOffset's child walk,
+    // which already skips ignoreLayout elements) leave it alone.
+    void UpdateScrollbar(float maxOffset)
+    {
+        if (panel == null) return;
+        if (scrollbar == null) BuildScrollbar();
+        if (scrollbar == null) return;
+
+        bool scrollable = maxOffset > .5f;
+        if (scrollbar.gameObject.activeSelf != scrollable)
+            scrollbar.gameObject.SetActive(scrollable);
+        if (!scrollable) return;
+
+        float viewHeight = Mathf.Max(1f, panel.rect.height);
+        scrollbar.size = Mathf.Clamp01(viewHeight / (viewHeight + maxOffset));
+        scrollbar.SetValueWithoutNotify(Mathf.Clamp01(offset / maxOffset));
+    }
+
+    void BuildScrollbar()
+    {
+        if (panel == null) return;
+
+        GameObject barGO = new GameObject("PanelScrollbar", typeof(RectTransform), typeof(Image), typeof(Scrollbar), typeof(LayoutElement));
+        barGO.transform.SetParent(panel, false);
+        barGO.GetComponent<LayoutElement>().ignoreLayout = true;
+
+        RectTransform barRect = barGO.GetComponent<RectTransform>();
+        barRect.anchorMin = new Vector2(1f, 0f);
+        barRect.anchorMax = new Vector2(1f, 1f);
+        barRect.pivot = new Vector2(1f, .5f);
+        barRect.sizeDelta = new Vector2(6f, -12f);
+        barRect.anchoredPosition = new Vector2(-2f, 0f);
+
+        barGO.GetComponent<Image>().color = new Color(.08f, .10f, .12f, .85f);
+
+        GameObject areaGO = new GameObject("SlidingArea", typeof(RectTransform));
+        areaGO.transform.SetParent(barGO.transform, false);
+        RectTransform areaRect = areaGO.GetComponent<RectTransform>();
+        areaRect.anchorMin = Vector2.zero;
+        areaRect.anchorMax = Vector2.one;
+        areaRect.offsetMin = new Vector2(1f, 1f);
+        areaRect.offsetMax = new Vector2(-1f, -1f);
+
+        GameObject handleGO = new GameObject("Handle", typeof(RectTransform), typeof(Image));
+        handleGO.transform.SetParent(areaGO.transform, false);
+        RectTransform handleRect = handleGO.GetComponent<RectTransform>();
+        handleRect.anchorMin = Vector2.zero;
+        handleRect.anchorMax = Vector2.one;
+        handleRect.offsetMin = Vector2.zero;
+        handleRect.offsetMax = Vector2.zero;
+        Image handleImage = handleGO.GetComponent<Image>();
+        handleImage.color = new Color(.30f, .65f, .70f, .9f);
+
+        scrollbar = barGO.GetComponent<Scrollbar>();
+        scrollbar.handleRect = handleRect;
+        scrollbar.targetGraphic = handleImage;
+        // Value 0 must mean "scrolled to the top" to match offset's meaning.
+        scrollbar.direction = Scrollbar.Direction.TopToBottom;
+        scrollbar.onValueChanged.AddListener(OnScrollbarChanged);
+    }
+
+    void OnScrollbarChanged(float value)
+    {
+        float maxOffset = GetMaxOffset();
+        if (maxOffset <= .5f) return;
+        offset = Mathf.Clamp01(value) * maxOffset;
+        ApplyOffset();
     }
 }

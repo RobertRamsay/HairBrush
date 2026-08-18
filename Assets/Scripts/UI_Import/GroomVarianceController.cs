@@ -266,9 +266,16 @@ public class GroomVarianceController : MonoBehaviour
         GameObject dividerGO = new GameObject(key + "_VarianceDivider", typeof(RectTransform), typeof(LayoutElement), typeof(Image));
         dividerGO.transform.SetParent(panel, false);
         dividerGO.transform.SetSiblingIndex(mainRow.GetSiblingIndex() + 3);
+        // The panel's VerticalLayoutGroup runs childControlHeight = false, meaning it sizes
+        // children from their raw RectTransform, NOT from LayoutElement.preferredHeight - and a
+        // fresh RectTransform defaults to 100x100. Not setting sizeDelta here is what made every
+        // divider silently occupy 100px of layout space (the huge gaps), while the scroll bound
+        // calculation read the 4px preferred height instead - undercounting total content by
+        // ~100px per divider and cutting the scroll range short around Embed Depth.
+        dividerGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 8f);
         LayoutElement dividerLayout = dividerGO.GetComponent<LayoutElement>();
-        dividerLayout.minHeight = 4f;
-        dividerLayout.preferredHeight = 4f;
+        dividerLayout.minHeight = 8f;
+        dividerLayout.preferredHeight = 8f;
         dividerLayout.flexibleWidth = 1f;
         Image dividerImage = dividerGO.GetComponent<Image>();
         dividerImage.raycastTarget = false;
@@ -322,9 +329,12 @@ public class GroomVarianceController : MonoBehaviour
         GameObject dividerGO = new GameObject(rowName + "_VarianceDivider", typeof(RectTransform), typeof(LayoutElement), typeof(Image));
         dividerGO.transform.SetParent(panel, false);
         dividerGO.transform.SetSiblingIndex(row.GetSiblingIndex() + 1);
+        // Same childControlHeight=false sizing rule as the main divider above: sizeDelta is what
+        // the panel layout actually uses, so it must be set explicitly or the default 100px wins.
+        dividerGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 8f);
         LayoutElement dividerLayout = dividerGO.GetComponent<LayoutElement>();
-        dividerLayout.minHeight = 4f;
-        dividerLayout.preferredHeight = 4f;
+        dividerLayout.minHeight = 8f;
+        dividerLayout.preferredHeight = 8f;
         dividerLayout.flexibleWidth = 1f;
         Image dividerImage = dividerGO.GetComponent<Image>();
         dividerImage.raycastTarget = false;

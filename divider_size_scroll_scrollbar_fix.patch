@@ -1,0 +1,148 @@
+--- a/Assets/Scripts/UI_Import/GroomVarianceController.cs	2026-08-18 08:57:45.349230872 +0000
++++ b/Assets/Scripts/UI_Import/GroomVarianceController.cs	2026-08-18 08:58:08.256397141 +0000
+@@ -266,9 +266,16 @@
+         GameObject dividerGO = new GameObject(key + "_VarianceDivider", typeof(RectTransform), typeof(LayoutElement), typeof(Image));
+         dividerGO.transform.SetParent(panel, false);
+         dividerGO.transform.SetSiblingIndex(mainRow.GetSiblingIndex() + 3);
++        // The panel's VerticalLayoutGroup runs childControlHeight = false, meaning it sizes
++        // children from their raw RectTransform, NOT from LayoutElement.preferredHeight - and a
++        // fresh RectTransform defaults to 100x100. Not setting sizeDelta here is what made every
++        // divider silently occupy 100px of layout space (the huge gaps), while the scroll bound
++        // calculation read the 4px preferred height instead - undercounting total content by
++        // ~100px per divider and cutting the scroll range short around Embed Depth.
++        dividerGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 8f);
+         LayoutElement dividerLayout = dividerGO.GetComponent<LayoutElement>();
+-        dividerLayout.minHeight = 4f;
+-        dividerLayout.preferredHeight = 4f;
++        dividerLayout.minHeight = 8f;
++        dividerLayout.preferredHeight = 8f;
+         dividerLayout.flexibleWidth = 1f;
+         Image dividerImage = dividerGO.GetComponent<Image>();
+         dividerImage.raycastTarget = false;
+@@ -322,9 +329,12 @@
+         GameObject dividerGO = new GameObject(rowName + "_VarianceDivider", typeof(RectTransform), typeof(LayoutElement), typeof(Image));
+         dividerGO.transform.SetParent(panel, false);
+         dividerGO.transform.SetSiblingIndex(row.GetSiblingIndex() + 1);
++        // Same childControlHeight=false sizing rule as the main divider above: sizeDelta is what
++        // the panel layout actually uses, so it must be set explicitly or the default 100px wins.
++        dividerGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 8f);
+         LayoutElement dividerLayout = dividerGO.GetComponent<LayoutElement>();
+-        dividerLayout.minHeight = 4f;
+-        dividerLayout.preferredHeight = 4f;
++        dividerLayout.minHeight = 8f;
++        dividerLayout.preferredHeight = 8f;
+         dividerLayout.flexibleWidth = 1f;
+         Image dividerImage = dividerGO.GetComponent<Image>();
+         dividerImage.raycastTarget = false;
+--- a/Assets/Scripts/UI_Import/GroomingPanelWheelScrollAuthority.cs	2026-08-18 08:57:45.352422158 +0000
++++ b/Assets/Scripts/UI_Import/GroomingPanelWheelScrollAuthority.cs	2026-08-18 08:59:46.872938602 +0000
+@@ -61,6 +61,7 @@
+     private int baseBottom;
+     private bool baseCaptured;
+     private float offset;
++    private Scrollbar scrollbar;
+ 
+     public float sensitivity = 42f;
+ 
+@@ -103,6 +104,7 @@
+ 
+         offset = Mathf.Clamp(offset + (-eventData.scrollDelta.y * sensitivity), 0f, maxOffset);
+         ApplyOffset();
++        UpdateScrollbar(maxOffset);
+         eventData.Use();
+     }
+ 
+@@ -116,6 +118,7 @@
+             offset = clamped;
+             ApplyOffset();
+         }
++        UpdateScrollbar(maxOffset);
+     }
+ 
+     float GetMaxOffset()
+@@ -133,8 +136,8 @@
+             LayoutElement element = child.GetComponent<LayoutElement>();
+             if (element != null && element.ignoreLayout) continue;
+ 
+-            float h = LayoutUtility.GetPreferredHeight(child);
+-            if (h <= .01f) h = child.rect.height;
++            float h = child.rect.height;
++            if (h <= .01f) h = LayoutUtility.GetPreferredHeight(child);
+             if (h <= .01f) h = child.sizeDelta.y;
+             contentHeight += Mathf.Max(0f, h);
+             activeLayoutChildren++;
+@@ -156,4 +159,74 @@
+         layout.padding = p;
+         LayoutRebuilder.MarkLayoutForRebuild(panel);
+     }
++
++    // Visible right-edge scrollbar mirroring the padding-based scroll. Built lazily as a child
++    // of the panel with ignoreLayout so the VerticalLayoutGroup (and GetMaxOffset's child walk,
++    // which already skips ignoreLayout elements) leave it alone.
++    void UpdateScrollbar(float maxOffset)
++    {
++        if (panel == null) return;
++        if (scrollbar == null) BuildScrollbar();
++        if (scrollbar == null) return;
++
++        bool scrollable = maxOffset > .5f;
++        if (scrollbar.gameObject.activeSelf != scrollable)
++            scrollbar.gameObject.SetActive(scrollable);
++        if (!scrollable) return;
++
++        float viewHeight = Mathf.Max(1f, panel.rect.height);
++        scrollbar.size = Mathf.Clamp01(viewHeight / (viewHeight + maxOffset));
++        scrollbar.SetValueWithoutNotify(Mathf.Clamp01(offset / maxOffset));
++    }
++
++    void BuildScrollbar()
++    {
++        if (panel == null) return;
++
++        GameObject barGO = new GameObject("PanelScrollbar", typeof(RectTransform), typeof(Image), typeof(Scrollbar), typeof(LayoutElement));
++        barGO.transform.SetParent(panel, false);
++        barGO.GetComponent<LayoutElement>().ignoreLayout = true;
++
++        RectTransform barRect = barGO.GetComponent<RectTransform>();
++        barRect.anchorMin = new Vector2(1f, 0f);
++        barRect.anchorMax = new Vector2(1f, 1f);
++        barRect.pivot = new Vector2(1f, .5f);
++        barRect.sizeDelta = new Vector2(6f, -12f);
++        barRect.anchoredPosition = new Vector2(-2f, 0f);
++
++        barGO.GetComponent<Image>().color = new Color(.08f, .10f, .12f, .85f);
++
++        GameObject areaGO = new GameObject("SlidingArea", typeof(RectTransform));
++        areaGO.transform.SetParent(barGO.transform, false);
++        RectTransform areaRect = areaGO.GetComponent<RectTransform>();
++        areaRect.anchorMin = Vector2.zero;
++        areaRect.anchorMax = Vector2.one;
++        areaRect.offsetMin = new Vector2(1f, 1f);
++        areaRect.offsetMax = new Vector2(-1f, -1f);
++
++        GameObject handleGO = new GameObject("Handle", typeof(RectTransform), typeof(Image));
++        handleGO.transform.SetParent(areaGO.transform, false);
++        RectTransform handleRect = handleGO.GetComponent<RectTransform>();
++        handleRect.anchorMin = Vector2.zero;
++        handleRect.anchorMax = Vector2.one;
++        handleRect.offsetMin = Vector2.zero;
++        handleRect.offsetMax = Vector2.zero;
++        Image handleImage = handleGO.GetComponent<Image>();
++        handleImage.color = new Color(.30f, .65f, .70f, .9f);
++
++        scrollbar = barGO.GetComponent<Scrollbar>();
++        scrollbar.handleRect = handleRect;
++        scrollbar.targetGraphic = handleImage;
++        // Value 0 must mean "scrolled to the top" to match offset's meaning.
++        scrollbar.direction = Scrollbar.Direction.TopToBottom;
++        scrollbar.onValueChanged.AddListener(OnScrollbarChanged);
++    }
++
++    void OnScrollbarChanged(float value)
++    {
++        float maxOffset = GetMaxOffset();
++        if (maxOffset <= .5f) return;
++        offset = Mathf.Clamp01(value) * maxOffset;
++        ApplyOffset();
++    }
+ }
