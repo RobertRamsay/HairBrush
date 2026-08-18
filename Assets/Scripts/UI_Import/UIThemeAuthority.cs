@@ -44,6 +44,12 @@ public class UIThemeAuthority : MonoBehaviour
         foreach (Button button in FindObjectsByType<Button>(FindObjectsInactive.Include, FindObjectsSortMode.None))
         {
             if (button == null) continue;
+
+            // Buttons that deliberately style themselves (currently the variance RANDOMIZE
+            // reroll) opt out of the shared skin here, otherwise this pass overwrites their
+            // custom tint with the standard white one the moment they're created.
+            if (button.gameObject.name == "RANDOMIZEButton") continue;
+
             if (!styledButtons.Contains(button))
             {
                 UITheme.StyleButton(button);
