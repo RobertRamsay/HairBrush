@@ -98,18 +98,17 @@ public class GroupUVRangeSliderUIAuthority : MonoBehaviour
 
         Place(rectLabel, 0.00f, 0.24f, 0.52f, 1.00f);
         Place(slider, 0.24f, 1.00f, 0.52f, 1.00f);
-        Place(seedLabel, 0.00f, 0.16f, 0.00f, 0.46f);
-        // Seed box narrowed to visually match the variance rows' 78px seed field, freeing the
-        // remaining width for the reroll button to carry the full RANDOMIZE label like they do.
-        if (seedInput != null) Place(seedInput.transform, 0.16f, 0.31f, 0.00f, 0.46f);
-        // Wider and flatter than the seed box's cell so RANDOMIZE fits on one line and the
-        // button reads with the same low-profile proportions as the variance rows' version.
-        Place(random, 0.33f, 0.58f, 0.05f, 0.42f);
+        // The seed line uses EXACT fixed geometry copied from the variance rows (SEED label
+        // 38x24 at x4, seed field 78x24 at x47, RANDOMIZE 92x19 at x130), replacing the old
+        // proportional shares - proportions could only ever approximate the variance layout,
+        // and the whole point of this line is to read identically to those rows.
+        PlaceFixed(seedLabel, 4f, 2f, 38f, 24f);
+        if (seedInput != null) PlaceFixed(seedInput.transform, 47f, 2f, 78f, 24f);
+        PlaceFixed(random, 130f, 4f, 92f, 19f);
 
         MakeTextCompact(rectLabel, 9f, 11f);
         MakeTextCompact(seedLabel, 9f, 10f);
         MakeInputCompact(seedInput);
-        MakeButtonTextCompact(random, 8f, 10f);
     }
 
     void CompactPostRow()
@@ -179,14 +178,14 @@ public class GroupUVRangeSliderUIAuthority : MonoBehaviour
 
         Place(rectLabel, 0.00f, 0.26f, 0.52f, 1.00f);
         if (postSlider != null) Place(postSlider.transform, 0.26f, 1.00f, 0.52f, 1.00f);
-        Place(seedLabel, 0.00f, 0.18f, 0.00f, 0.48f);
-        if (seedInput != null) Place(seedInput.transform, 0.18f, 0.33f, 0.00f, 0.48f);
-        Place(random, 0.35f, 0.60f, 0.06f, 0.44f);
+        // Same exact fixed variance-row geometry as the GROUP block above.
+        PlaceFixed(seedLabel, 4f, 2f, 38f, 24f);
+        if (seedInput != null) PlaceFixed(seedInput.transform, 47f, 2f, 78f, 24f);
+        PlaceFixed(random, 130f, 4f, 92f, 19f);
 
         MakeTextCompact(rectLabel, 10f, 13f);
         MakeTextCompact(seedLabel, 9f, 11f);
         MakeInputCompact(seedInput);
-        MakeButtonTextCompact(random);
 
         SyncPostSlider();
     }
@@ -285,6 +284,21 @@ public class GroupUVRangeSliderUIAuthority : MonoBehaviour
         rect.offsetMin = new Vector2(1f, 1f);
         rect.offsetMax = new Vector2(-1f, -1f);
         rect.anchoredPosition = Vector2.zero;
+    }
+
+    // Exact pixel placement anchored to the row's bottom-left, for elements that must render
+    // identically to their fixed-size counterparts in the variance rows rather than scale with
+    // the row. x/y are offsets from the bottom-left corner; w/h are absolute sizes.
+    static void PlaceFixed(Transform item, float x, float y, float w, float h)
+    {
+        if (item == null) return;
+        RectTransform rect = item as RectTransform;
+        if (rect == null) return;
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.zero;
+        rect.pivot = Vector2.zero;
+        rect.sizeDelta = new Vector2(w, h);
+        rect.anchoredPosition = new Vector2(x, y);
     }
 
     static void MakeTextCompact(Transform item, float minSize, float maxSize)
