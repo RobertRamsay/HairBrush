@@ -14,6 +14,9 @@ public static class RuntimeFileDialog
     const int OFN_PATHMUSTEXIST = 0x00000800;
     const int OFN_FILEMUSTEXIST = 0x00001000;
     const int OFN_EXPLORER = 0x00080000;
+    const uint MB_YESNO = 0x00000004;
+    const uint MB_ICONQUESTION = 0x00000020;
+    const int IDYES = 6;
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     struct OpenFileName
@@ -56,6 +59,9 @@ public static class RuntimeFileDialog
 
     [DllImport("user32.dll")]
     static extern IntPtr GetActiveWindow();
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "MessageBoxW")]
+    static extern int MessageBox(IntPtr hWnd, string text, string caption, uint type);
 #endif
 
     public static string OpenFile(string title, string filter, string defaultExtension = null)
@@ -75,6 +81,20 @@ public static class RuntimeFileDialog
 #else
         Debug.LogWarning("RuntimeFileDialog currently supports standalone Windows builds only.");
         return string.Empty;
+#endif
+    }
+
+    public static bool ConfirmOptionalAlbedo()
+    {
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+        int result = MessageBox(
+            GetActiveWindow(),
+            "Would you like to add an albedo texture to this head?\n\nYes = Choose Albedo\nNo = Skip (use HairBrush grey)",
+            "HairBrush - Optional Albedo",
+            MB_YESNO | MB_ICONQUESTION);
+        return result == IDYES;
+#else
+        return false;
 #endif
     }
 
