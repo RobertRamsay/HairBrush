@@ -1,31 +1,26 @@
 using System;
-using System.Collections.Generic;
-using System.IO;
+using System.Collections;
 using System.Reflection;
 using UnityEngine;
 using UnityEngine.UI;
 
-// ModelViewer's original Load Model file picker is EditorUtility-only. In a Windows player
-// this authority replaces that startup button callback with the same load operation driven
-// by RuntimeFileDialog. The Editor path is intentionally untouched. Load Project is deliberately
-// NOT handled here any more - see RuntimeNavigationProjectIO.LoadProjectEnhanced for that.
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
+
+// ModelViewer's original Load Model picker is EditorUtility-only. This authority owns the
+// startup Load Model button in both Editor play mode and Windows builds so import behaviour is
+// identical: load/display the OBJ with HairBrush's grey material first, then offer an optional
+// albedo on the following frame. Load Project remains owned by RuntimeNavigationProjectIO.
 [DefaultExecutionOrder(10000)]
 public class RuntimeBuildLoadAuthority : MonoBehaviour
 {
-#if !UNITY_EDITOR
     private ModelViewer viewer;
     private Button boundModelButton;
     private float nextBindAttempt;
 
     private FieldInfo loadedModelField;
     private FieldInfo currentModelPathField;
-    private FieldInfo allGroupIdsField;
-    private FieldInfo groupNamesField;
-    private FieldInfo groupUScalesField;
-    private FieldInfo groupVScalesField;
-    private FieldInfo groupUOffsetsField;
-    private FieldInfo groupVOffsetsField;
-    private FieldInfo activeSliderPanelField;
     private FieldInfo isGroomingModeField;
     private MethodInfo buildGroupManagementMethod;
 
@@ -56,13 +51,6 @@ public class RuntimeBuildLoadAuthority : MonoBehaviour
         Type t = typeof(ModelViewer);
         loadedModelField = t.GetField("loadedModel", flags);
         currentModelPathField = t.GetField("currentModelPath", flags);
-        allGroupIdsField = t.GetField("allGroupIds", flags);
-        groupNamesField = t.GetField("groupNames", flags);
-        groupUScalesField = t.GetField("groupUScales", flags);
-        groupVScalesField = t.GetField("groupVScales", flags);
-        groupUOffsetsField = t.GetField("groupUOffsets", flags);
-        groupVOffsetsField = t.GetField("groupVOffsets", flags);
-        activeSliderPanelField = t.GetField("activeSliderPanel", flags);
         isGroomingModeField = t.GetField("isGroomingMode", flags);
         buildGroupManagementMethod = t.GetMethod("BuildGroupManagementUI", flags);
     }
@@ -78,25 +66,29 @@ public class RuntimeBuildLoadAuthority : MonoBehaviour
             boundModelButton.onClick.AddListener(ChooseAndLoadModel);
         }
 
-        // loadProjectButton is deliberately NOT bound here any more. RuntimeNavigationProjectIO's
-        // LoadProjectEnhanced() is the more complete implementation - it also restores per-group
-        // modifiers (clumpers, POST affectors) via ModifierPersistenceBridge, which this script's
-        // own LoadProjectAtPath never did. Both scripts used to fight over this same button, and
-        // this one happened to win by execution order, which meant projects only ever got the
-        // more limited restore in a build. Leaving Load Model here alone since that path is
-        // confirmed working and unrelated to the project-load gap.
+        // loadProjectButton is deliberately not bound here. RuntimeNavigationProjectIO owns the
+        // complete project restore path, including per-group modifiers.
     }
 
     void ChooseAndLoadModel()
     {
-        string path = RuntimeFileDialog.OpenFile(
+        string path;
+#if UNITY_EDITOR
+        path = EditorUtility.OpenFilePanel("Select OBJ Model", "", "obj");
+#else
+        path = RuntimeFileDialog.OpenFile(
             "Select OBJ Model",
             "OBJ Models\0*.obj\0All Files\0*.*\0\0",
             "obj");
+#endif
         if (string.IsNullOrEmpty(path)) return;
 
         try { LoadModelAtPath(path); }
-        catch (Exception ex) { Debug.LogException(ex); }
+        catch (Exception ex)
+        {
+            Debug.LogException(ex);
+            StatusToast.Show("HairBrush could not import that OBJ model.", true);
+        }
     }
 
     void LoadModelAtPath(string path)
@@ -118,15 +110,69 @@ public class RuntimeBuildLoadAuthority : MonoBehaviour
         viewer.BuildRuntimeGroomingUI();
         buildGroupManagementMethod?.Invoke(viewer, null);
         isGroomingModeField?.SetValue(viewer, true);
+
+        // The model is fully installed with its grey material before this coroutine starts.
+        // Waiting one frame lets the user actually see the successful import before a second
+        // native dialog appears.
+        StartCoroutine(PromptForOptionalAlbedo(model));
+    }
+
+    IEnumerator PromptForOptionalAlbedo(GameObject model)
+    {
+        yield return null;
+        if (model == null) yield break;
+
+        bool wantsAlbedo;
+#if UNITY_EDITOR
+        wantsAlbedo = EditorUtility.DisplayDialog(
+            "Optional Albedo",
+            "Would you like to add an albedo texture to this head?\n\nChoose Albedo will apply a PNG or JPEG to the imported head. Skip keeps the HairBrush grey material.",
+            "Choose Albedo",
+            "Skip");
+#else
+        wantsAlbedo = RuntimeFileDialog.ConfirmOptionalAlbedo();
+#endif
+
+        if (!wantsAlbedo)
+        {
+            StatusToast.Show("Head imported with the default grey material.");
+            yield break;
+        }
+
+        if (!ImportedHeadAppearance.HasUsableUV0(model))
+        {
+            StatusToast.Show("This mesh has no UV coordinates, so an albedo cannot be displayed. Keeping the grey head material.", true);
+            yield break;
+        }
+
+        string texturePath;
+#if UNITY_EDITOR
+        texturePath = EditorUtility.OpenFilePanelWithFilters(
+            "Select Albedo Texture",
+            "",
+            new[] { "Image files", "png,jpg,jpeg", "All files", "*" });
+#else
+        texturePath = RuntimeFileDialog.OpenFile(
+            "Select Albedo Texture",
+            "Image Files\0*.png;*.jpg;*.jpeg\0PNG\0*.png\0JPEG\0*.jpg;*.jpeg\0All Files\0*.*\0\0");
+#endif
+
+        // Cancelling the texture picker is an intentional Skip, not an import error.
+        if (string.IsNullOrEmpty(texturePath))
+        {
+            StatusToast.Show("No albedo selected; using the default grey material.");
+            yield break;
+        }
+
+        ImportedHeadAppearance.TryApplyAlbedo(model, texturePath);
     }
 
     void CentreCameraOn(GameObject model)
     {
-        MeshRenderer[] renderers = model.GetComponentsInChildren<MeshRenderer>();
+        Renderer[] renderers = model.GetComponentsInChildren<Renderer>();
         if (renderers.Length == 0 || viewer.cameraPivot == null) return;
         Bounds bounds = renderers[0].bounds;
         for (int i = 1; i < renderers.Length; i++) bounds.Encapsulate(renderers[i].bounds);
         viewer.cameraPivot.position = bounds.center;
     }
-#endif
 }
