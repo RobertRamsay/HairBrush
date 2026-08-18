@@ -358,6 +358,11 @@ public class TextureUVRectWorkspace : MonoBehaviour
         LayoutElement buttonsLayout = buttons.GetComponent<LayoutElement>();
         buttonsLayout.preferredHeight = 75f;
         buttonsLayout.minHeight = 75f;
+        // section's own VerticalLayoutGroup has childControlHeight=false, so it never actually
+        // resizes this RectTransform itself - it only reads LayoutElement.preferredHeight to
+        // position whatever comes after it. Without this, "Buttons" renders at Unity's raw
+        // default RectTransform size (100) rather than the 75 the LayoutElement declares.
+        buttons.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 75f);
         VerticalLayoutGroup buttonsGroup = buttons.GetComponent<VerticalLayoutGroup>();
         buttonsGroup.spacing = 6f;
         buttonsGroup.childControlWidth = true;
@@ -377,6 +382,8 @@ public class TextureUVRectWorkspace : MonoBehaviour
         GameObject listSpacer = new GameObject("ListSpacer", typeof(RectTransform), typeof(LayoutElement));
         listSpacer.transform.SetParent(section.transform, false);
         listSpacer.GetComponent<LayoutElement>().preferredHeight = 10f;
+        // Same reason as "Buttons" above.
+        listSpacer.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 10f);
 
         summaryText = AddText(section.transform, "SummaryHeader", 12.5f, 20f, FontStyles.Normal);
         summaryText.gameObject.name = "SummaryHeader";
@@ -419,6 +426,10 @@ public class TextureUVRectWorkspace : MonoBehaviour
         LayoutElement scrollLayout = scrollGO.GetComponent<LayoutElement>();
         scrollLayout.preferredHeight = 600f;
         scrollLayout.minHeight = 600f;
+        // section's own VerticalLayoutGroup has childControlHeight=false, so LayoutElement alone
+        // never actually resizes this RectTransform - without this it renders at Unity's raw
+        // default (100) instead of the 600 declared above. Same fix as "Buttons"/"ListSpacer".
+        scrollGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 600f);
         Image scrollBackground = scrollGO.GetComponent<Image>();
         scrollBackground.color = Color.clear;
         scrollBackground.raycastTarget = true;
