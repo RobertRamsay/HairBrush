@@ -59,6 +59,7 @@ public class GroomingPanelWheelScroll : MonoBehaviour, IScrollHandler
     private VerticalLayoutGroup layout;
     private int baseTop;
     private int baseBottom;
+    private bool baseCaptured;
     private float offset;
 
     public float sensitivity = 42f;
@@ -67,10 +68,17 @@ public class GroomingPanelWheelScroll : MonoBehaviour, IScrollHandler
     {
         panel = rect;
         layout = verticalLayout;
-        if (layout != null)
+
+        // Capture the panel's REAL base padding exactly once, and only while unscrolled.
+        // ApplyOffset mutates layout.padding.top/bottom every scroll tick, so re-reading it on a
+        // later rebind (Bind re-runs whenever the panel instance changes) would fold the current
+        // scroll amount into the baseline and permanently corrupt every subsequent height/clamp
+        // calculation - which is what made the scroll range come up short and stop early.
+        if (layout != null && !baseCaptured)
         {
             baseTop = layout.padding.top;
             baseBottom = layout.padding.bottom;
+            baseCaptured = true;
         }
         offset = 0f;
         ApplyOffset();

@@ -1,0 +1,45 @@
+--- a/Assets/Scripts/UI_Import/GroomingPanelWheelScrollAuthority.cs	2026-08-18 08:52:25.251974219 +0000
++++ b/Assets/Scripts/UI_Import/GroomingPanelWheelScrollAuthority.cs	2026-08-18 08:52:33.672659695 +0000
+@@ -59,6 +59,7 @@
+     private VerticalLayoutGroup layout;
+     private int baseTop;
+     private int baseBottom;
++    private bool baseCaptured;
+     private float offset;
+ 
+     public float sensitivity = 42f;
+@@ -67,10 +68,17 @@
+     {
+         panel = rect;
+         layout = verticalLayout;
+-        if (layout != null)
++
++        // Capture the panel's REAL base padding exactly once, and only while unscrolled.
++        // ApplyOffset mutates layout.padding.top/bottom every scroll tick, so re-reading it on a
++        // later rebind (Bind re-runs whenever the panel instance changes) would fold the current
++        // scroll amount into the baseline and permanently corrupt every subsequent height/clamp
++        // calculation - which is what made the scroll range come up short and stop early.
++        if (layout != null && !baseCaptured)
+         {
+             baseTop = layout.padding.top;
+             baseBottom = layout.padding.bottom;
++            baseCaptured = true;
+         }
+         offset = 0f;
+         ApplyOffset();
+--- a/Assets/Scripts/UI_Import/GroomVarianceController.cs	2026-08-18 08:52:42.668959890 +0000
++++ b/Assets/Scripts/UI_Import/GroomVarianceController.cs	2026-08-18 08:52:55.873034678 +0000
+@@ -218,10 +218,10 @@
+         GameObject rowGO = new GameObject(key + "_VarianceRow", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
+         rowGO.transform.SetParent(panel, false);
+         rowGO.transform.SetSiblingIndex(mainRow.GetSiblingIndex() + 1);
+-        rowGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 24);
++        rowGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 20);
+         LayoutElement rowLayoutElement = rowGO.GetComponent<LayoutElement>();
+-        rowLayoutElement.preferredHeight = 24f;
+-        rowLayoutElement.minHeight = 24f;
++        rowLayoutElement.preferredHeight = 20f;
++        rowLayoutElement.minHeight = 20f;
+ 
+         HorizontalLayoutGroup layout = rowGO.GetComponent<HorizontalLayoutGroup>();
+         layout.spacing = 5;

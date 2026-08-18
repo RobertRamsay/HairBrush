@@ -218,10 +218,10 @@ public class GroomVarianceController : MonoBehaviour
         GameObject rowGO = new GameObject(key + "_VarianceRow", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
         rowGO.transform.SetParent(panel, false);
         rowGO.transform.SetSiblingIndex(mainRow.GetSiblingIndex() + 1);
-        rowGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 24);
+        rowGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 20);
         LayoutElement rowLayoutElement = rowGO.GetComponent<LayoutElement>();
-        rowLayoutElement.preferredHeight = 24f;
-        rowLayoutElement.minHeight = 24f;
+        rowLayoutElement.preferredHeight = 20f;
+        rowLayoutElement.minHeight = 20f;
 
         HorizontalLayoutGroup layout = rowGO.GetComponent<HorizontalLayoutGroup>();
         layout.spacing = 5;
