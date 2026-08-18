@@ -1,0 +1,83 @@
+--- a/Assets/Scripts/UI_Import/GroomVarianceController.cs	2026-08-18 08:26:46.950680684 +0000
++++ b/Assets/Scripts/UI_Import/GroomVarianceController.cs	2026-08-18 08:27:32.277314997 +0000
+@@ -135,9 +135,13 @@
+         }
+ 
+         // Clean up any generated rows left by an older install before creating one canonical set.
++        // Matches on "_Variance" as a substring rather than a specific suffix so it catches every
++        // row type this builds (main row, seed row, divider) - narrower matching here is exactly
++        // what let an earlier divider-insertion feature elsewhere in this project leak orphaned
++        // objects across reinstalls.
+         foreach (Transform child in panel.Cast<Transform>().ToArray())
+         {
+-            if (child != null && child.name.EndsWith("_VarianceRow", StringComparison.Ordinal))
++            if (child != null && child.name.Contains("_Variance"))
+                 Destroy(child.gameObject);
+         }
+ 
+@@ -204,6 +208,8 @@
+     VarianceRow BuildVarianceRow(Transform panel, Transform mainRow, Channel channel, float maxVariance)
+     {
+         string key = ChannelLabel(channel);
++
++        // First line: the variance amount itself, under the main slider it modifies.
+         GameObject rowGO = new GameObject(key + "_VarianceRow", typeof(RectTransform), typeof(HorizontalLayoutGroup));
+         rowGO.transform.SetParent(panel, false);
+         rowGO.transform.SetSiblingIndex(mainRow.GetSiblingIndex() + 1);
+@@ -219,11 +225,52 @@
+ 
+         TextMeshProUGUI valueText = AddText(rowGO.transform, "VAR ± 0.000", 11, 82);
+         valueText.alignment = TextAlignmentOptions.MidlineLeft;
+-        Slider varianceSlider = AddCompactSlider(rowGO.transform, 0, maxVariance, 0, 245);
+-        TextMeshProUGUI seedLabel = AddText(rowGO.transform, "SEED", 10, 38);
++        Slider varianceSlider = AddCompactSlider(rowGO.transform, 0, maxVariance, 0, 150);
++
++        // Second line, its own row below the first: seed + reroll. Previously all of this lived
++        // on one ~500px-wide line (label + slider + "SEED" + input + button); the panel this
++        // lives in is roughly 300px, so everything past the variance slider was being pushed off
++        // the edge and clipped - invisible, not missing. Splitting onto its own line keeps every
++        // control within the panel's actual width instead of chasing a single line that can't fit.
++        GameObject seedRowGO = new GameObject(key + "_VarianceSeedRow", typeof(RectTransform), typeof(HorizontalLayoutGroup));
++        seedRowGO.transform.SetParent(panel, false);
++        seedRowGO.transform.SetSiblingIndex(mainRow.GetSiblingIndex() + 2);
++        seedRowGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 28);
++
++        HorizontalLayoutGroup seedLayout = seedRowGO.GetComponent<HorizontalLayoutGroup>();
++        seedLayout.spacing = 5;
++        seedLayout.padding = new RectOffset(4, 2, 2, 2);
++        seedLayout.childControlHeight = true;
++        seedLayout.childControlWidth = false;
++        seedLayout.childForceExpandHeight = false;
++        seedLayout.childForceExpandWidth = false;
++
++        TextMeshProUGUI seedLabel = AddText(seedRowGO.transform, "SEED", 10, 38);
+         seedLabel.alignment = TextAlignmentOptions.Center;
+-        TMP_InputField seedInput = AddSeedField(rowGO.transform, 78);
+-        GameObject randomButton = AddButton(rowGO.transform, "R", 30);
++        TMP_InputField seedInput = AddSeedField(seedRowGO.transform, 78);
++        GameObject randomButton = AddButton(seedRowGO.transform, "R", 30);
++
++        // Thin divider between this channel's block and the next, so each setting's variance
++        // controls read as one clearly separated group rather than running into each other.
++        GameObject dividerGO = new GameObject(key + "_VarianceDivider", typeof(RectTransform), typeof(LayoutElement), typeof(Image));
++        dividerGO.transform.SetParent(panel, false);
++        dividerGO.transform.SetSiblingIndex(mainRow.GetSiblingIndex() + 3);
++        LayoutElement dividerLayout = dividerGO.GetComponent<LayoutElement>();
++        dividerLayout.minHeight = 10f;
++        dividerLayout.preferredHeight = 10f;
++        dividerLayout.flexibleWidth = 1f;
++        Image dividerImage = dividerGO.GetComponent<Image>();
++        dividerImage.raycastTarget = false;
++        if (UITheme.DividerSprite != null)
++        {
++            dividerImage.sprite = UITheme.DividerSprite;
++            dividerImage.type = Image.Type.Sliced;
++            dividerImage.color = Color.white;
++        }
++        else
++        {
++            dividerImage.color = new Color(1f, 1f, 1f, .12f);
++        }
+ 
+         varianceSlider.onValueChanged.AddListener(v =>
+         {
