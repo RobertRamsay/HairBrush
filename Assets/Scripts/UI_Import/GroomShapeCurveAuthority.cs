@@ -371,6 +371,15 @@ public class GroomShapeCurveAuthority : MonoBehaviour
     private void OpenEditor(GroomShapeCurveChannel channel)
     {
         if (viewer == null || boundPanel == null) return;
+
+        bool sameEditorAlreadyOpen = popup != null && popupEditor != null
+            && popupGroup == viewer.currentGroupId && popupEditor.Channel == channel;
+        if (sameEditorAlreadyOpen)
+        {
+            ClosePopup();
+            return;
+        }
+
         ClosePopup();
 
         Canvas canvas = boundPanel.GetComponentInParent<Canvas>();
@@ -417,8 +426,7 @@ public class GroomShapeCurveAuthority : MonoBehaviour
         popupEditor.Bind(this, popupGroup, channel, graph, lineRoot, pointRoot);
         graphGO.GetComponent<GroomCurveGraphInput>().Bind(popupEditor);
 
-        AddPopupButton(root, "RESET DEFAULT", new Vector2(.57f, .035f), new Vector2(.75f, .105f), popupEditor.ResetDefault);
-        AddPopupButton(root, "CLOSE", new Vector2(.77f, .035f), new Vector2(.93f, .105f), ClosePopup);
+        AddPopupButton(root, "RESET", new Vector2(.57f, .046f), new Vector2(.75f, .094f), popupEditor.ResetDefault);
 
         Canvas.ForceUpdateCanvases();
         popupEditor.RefreshAll();

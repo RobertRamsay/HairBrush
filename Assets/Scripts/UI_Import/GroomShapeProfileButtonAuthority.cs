@@ -156,8 +156,7 @@ public class GroomShapeProfileButtonAuthority : MonoBehaviour
 
         NormalizePopupText(popup.transform.Find("Title")?.GetComponent<TextMeshProUGUI>(), 12f, 18f);
         NormalizePopupText(popup.transform.Find("Hint")?.GetComponent<TextMeshProUGUI>(), 8f, 11f);
-        NormalizePopupText(popup.transform.Find("RESET DEFAULTButton/Text")?.GetComponent<TextMeshProUGUI>(), 8f, 11f);
-        NormalizePopupText(popup.transform.Find("CLOSEButton/Text")?.GetComponent<TextMeshProUGUI>(), 8f, 11f);
+        NormalizePopupText(popup.transform.Find("RESETButton/Text")?.GetComponent<TextMeshProUGUI>(), 8f, 11f);
     }
 
     static void NormalizePopupText(TextMeshProUGUI text, float minSize, float maxSize)
