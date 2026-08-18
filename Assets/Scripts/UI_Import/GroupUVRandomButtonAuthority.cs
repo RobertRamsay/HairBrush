@@ -120,7 +120,10 @@ public class GroupUVRandomButtonAuthority : MonoBehaviour
         foreach (Button button in root.GetComponentsInChildren<Button>(true))
         {
             if (!IsRandomButton(button)) continue;
-            SetLayout(button.gameObject, 46f, 30f);
+            // SetLayout (fixed sizeDelta) is deliberately no longer applied here: both UV rows
+            // are laid out with stretch anchors by GroupUVRangeSliderUIAuthority.Place, and
+            // sizeDelta on stretch anchors is additive - this call was the last survivor of the
+            // oversized-R bug after the same overrides were removed from GroupUVSeedButtonFix.
             StyleButton(button);
         }
     }
@@ -130,7 +133,9 @@ public class GroupUVRandomButtonAuthority : MonoBehaviour
         if (button == null) return false;
         if (button.gameObject.name == "RButton" || button.gameObject.name == "GroupUVRandomSeedButton") return true;
         TextMeshProUGUI label = button.GetComponentInChildren<TextMeshProUGUI>(true);
-        return label != null && label.text != null && label.text.Trim() == "R";
+        if (label == null || label.text == null) return false;
+        string trimmed = label.text.Trim();
+        return trimmed == "R" || trimmed == "RANDOMIZE";
     }
 
     static void SetLayout(GameObject go, float width, float height)

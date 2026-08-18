@@ -566,7 +566,18 @@ public class GroomVarianceController : MonoBehaviour
     TMP_InputField AddSeedField(Transform p, float width)
     {
         GameObject go = new GameObject("SeedInput", typeof(RectTransform), typeof(Image), typeof(TMP_InputField));
-        go.transform.SetParent(p, false); go.GetComponent<RectTransform>().sizeDelta = new Vector2(width, 24); go.GetComponent<Image>().color = new Color(.12f, .12f, .12f);
+        go.transform.SetParent(p, false); go.GetComponent<RectTransform>().sizeDelta = new Vector2(width, 24);
+        Image seedBg = go.GetComponent<Image>();
+        if (UITheme.FineEdgeSprite != null)
+        {
+            seedBg.sprite = UITheme.FineEdgeSprite;
+            seedBg.type = Image.Type.Sliced;
+            seedBg.color = Color.white;
+        }
+        else
+        {
+            seedBg.color = new Color(.12f, .12f, .12f);
+        }
         GameObject tg = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI)); tg.transform.SetParent(go.transform, false);
         RectTransform tr = tg.GetComponent<RectTransform>(); tr.anchorMin = Vector2.zero; tr.anchorMax = Vector2.one; tr.offsetMin = new Vector2(5, 1); tr.offsetMax = new Vector2(-5, -1);
         TextMeshProUGUI text = tg.GetComponent<TextMeshProUGUI>(); text.fontSize = 11; text.color = Color.white; text.alignment = TextAlignmentOptions.Center;

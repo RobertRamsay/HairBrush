@@ -176,7 +176,9 @@ public class GroupUVSeedButtonFix : MonoBehaviour
         if (candidate == null) return false;
         if (candidate.gameObject.name == "RButton" || candidate.gameObject.name == "GroupUVRandomSeedButton") return true;
         TextMeshProUGUI label = candidate.GetComponentInChildren<TextMeshProUGUI>(true);
-        return label != null && label.text.Trim() == "R";
+        if (label == null) return false;
+        string trimmed = label.text.Trim();
+        return trimmed == "R" || trimmed == "RANDOMIZE";
     }
 
     static void StyleRandomButton(Button candidate)
@@ -221,9 +223,9 @@ public class GroupUVSeedButtonFix : MonoBehaviour
         TextMeshProUGUI label = candidate.GetComponentInChildren<TextMeshProUGUI>(true);
         if (label != null)
         {
-            label.text = "R";
+            label.text = "RANDOMIZE";
             label.fontStyle = FontStyles.Bold;
-            label.fontSize = Mathf.Max(label.fontSize, 14f);
+            label.fontSize = 11f;
             label.alignment = TextAlignmentOptions.Center;
             label.raycastTarget = false;
         }

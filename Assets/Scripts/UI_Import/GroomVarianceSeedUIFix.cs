@@ -117,12 +117,21 @@ public class GroomVarianceSeedUIFix : MonoBehaviour
         input.selectionColor = new Color(0.25f, 0.65f, 1f, 0.45f);
         input.transition = Selectable.Transition.ColorTint;
 
+        // The box itself is the FineEdge sliced sprite (dark interior, glowing edge), matching
+        // the UV RECT row's seed field, so the ColorBlock tints stay near-white with a slight
+        // teal lean on focus rather than the old opaque dark fills that would bury the sprite.
+        if (UITheme.FineEdgeSprite != null)
+        {
+            background.sprite = UITheme.FineEdgeSprite;
+            background.type = Image.Type.Sliced;
+        }
+
         ColorBlock colors = input.colors;
-        colors.normalColor = new Color(0.12f, 0.12f, 0.12f, 1f);
-        colors.highlightedColor = new Color(0.24f, 0.30f, 0.22f, 1f);
-        colors.selectedColor = new Color(0.20f, 0.38f, 0.24f, 1f);
-        colors.pressedColor = new Color(0.16f, 0.28f, 0.18f, 1f);
-        colors.disabledColor = new Color(0.08f, 0.08f, 0.08f, 0.6f);
+        colors.normalColor = Color.white;
+        colors.highlightedColor = new Color(0.85f, 1f, 0.97f, 1f);
+        colors.selectedColor = new Color(0.75f, 1f, 0.95f, 1f);
+        colors.pressedColor = new Color(0.70f, 0.95f, 0.90f, 1f);
+        colors.disabledColor = new Color(1f, 1f, 1f, 0.45f);
         colors.colorMultiplier = 1f;
         colors.fadeDuration = 0.08f;
         input.colors = colors;
