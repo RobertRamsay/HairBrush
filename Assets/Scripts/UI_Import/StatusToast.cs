@@ -12,9 +12,14 @@ public static class StatusToast
 
     public static void Show(string message, bool isError = false)
     {
+        Show(message, isError, isError ? 6f : 3f);
+    }
+
+    public static void Show(string message, bool isError, float durationSeconds)
+    {
         Debug.Log((isError ? "[HairBrush ERROR] " : "[HairBrush] ") + message);
         Ensure();
-        instance.Display(message, isError);
+        instance.Display(message, isError, durationSeconds);
     }
 
     private static void Ensure()
@@ -47,13 +52,13 @@ public class StatusToastAuthority : MonoBehaviour
             canvas.gameObject.SetActive(false);
     }
 
-    public void Display(string message, bool isError)
+    public void Display(string message, bool isError, float durationSeconds)
     {
         if (canvas == null) BuildUI();
         label.text = message;
         background.color = isError ? new Color(.55f, .16f, .16f, .92f) : new Color(.14f, .30f, .32f, .92f);
         canvas.gameObject.SetActive(true);
-        hideAt = Time.unscaledTime + (isError ? 6f : 3f);
+        hideAt = Time.unscaledTime + Mathf.Max(0.5f, durationSeconds);
     }
 
     void BuildUI()
