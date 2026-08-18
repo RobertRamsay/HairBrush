@@ -1,0 +1,56 @@
+--- a/Assets/Scripts/UI_Import/GroomVarianceController.cs	2026-08-18 08:41:01.468343445 +0000
++++ b/Assets/Scripts/UI_Import/GroomVarianceController.cs	2026-08-18 08:41:19.623155772 +0000
+@@ -215,10 +215,13 @@
+         string key = ChannelLabel(channel);
+ 
+         // First line: the variance amount itself, under the main slider it modifies.
+-        GameObject rowGO = new GameObject(key + "_VarianceRow", typeof(RectTransform), typeof(HorizontalLayoutGroup));
++        GameObject rowGO = new GameObject(key + "_VarianceRow", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
+         rowGO.transform.SetParent(panel, false);
+         rowGO.transform.SetSiblingIndex(mainRow.GetSiblingIndex() + 1);
+-        rowGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 22);
++        rowGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 11);
++        LayoutElement rowLayoutElement = rowGO.GetComponent<LayoutElement>();
++        rowLayoutElement.preferredHeight = 11f;
++        rowLayoutElement.minHeight = 11f;
+ 
+         HorizontalLayoutGroup layout = rowGO.GetComponent<HorizontalLayoutGroup>();
+         layout.spacing = 5;
+@@ -237,10 +240,13 @@
+         // lives in is roughly 300px, so everything past the variance slider was being pushed off
+         // the edge and clipped - invisible, not missing. Splitting onto its own line keeps every
+         // control within the panel's actual width instead of chasing a single line that can't fit.
+-        GameObject seedRowGO = new GameObject(key + "_VarianceSeedRow", typeof(RectTransform), typeof(HorizontalLayoutGroup));
++        GameObject seedRowGO = new GameObject(key + "_VarianceSeedRow", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
+         seedRowGO.transform.SetParent(panel, false);
+         seedRowGO.transform.SetSiblingIndex(mainRow.GetSiblingIndex() + 2);
+-        seedRowGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 22);
++        seedRowGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 11);
++        LayoutElement seedRowLayoutElement = seedRowGO.GetComponent<LayoutElement>();
++        seedRowLayoutElement.preferredHeight = 11f;
++        seedRowLayoutElement.minHeight = 11f;
+ 
+         HorizontalLayoutGroup seedLayout = seedRowGO.GetComponent<HorizontalLayoutGroup>();
+         seedLayout.spacing = 5;
+@@ -261,8 +267,8 @@
+         dividerGO.transform.SetParent(panel, false);
+         dividerGO.transform.SetSiblingIndex(mainRow.GetSiblingIndex() + 3);
+         LayoutElement dividerLayout = dividerGO.GetComponent<LayoutElement>();
+-        dividerLayout.minHeight = 6f;
+-        dividerLayout.preferredHeight = 6f;
++        dividerLayout.minHeight = 3f;
++        dividerLayout.preferredHeight = 3f;
+         dividerLayout.flexibleWidth = 1f;
+         Image dividerImage = dividerGO.GetComponent<Image>();
+         dividerImage.raycastTarget = false;
+@@ -317,8 +323,8 @@
+         dividerGO.transform.SetParent(panel, false);
+         dividerGO.transform.SetSiblingIndex(row.GetSiblingIndex() + 1);
+         LayoutElement dividerLayout = dividerGO.GetComponent<LayoutElement>();
+-        dividerLayout.minHeight = 6f;
+-        dividerLayout.preferredHeight = 6f;
++        dividerLayout.minHeight = 3f;
++        dividerLayout.preferredHeight = 3f;
+         dividerLayout.flexibleWidth = 1f;
+         Image dividerImage = dividerGO.GetComponent<Image>();
+         dividerImage.raycastTarget = false;
