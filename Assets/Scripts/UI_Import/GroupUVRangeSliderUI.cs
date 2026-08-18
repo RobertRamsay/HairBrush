@@ -228,7 +228,7 @@ public class DualIntRangeSlider : MonoBehaviour, IPointerDownHandler, IDragHandl
         track.anchorMax = new Vector2(1f, .5f);
         track.offsetMin = new Vector2(10f, -2f);
         track.offsetMax = new Vector2(-10f, 2f);
-        trackGO.GetComponent<Image>().color = new Color(.26f, .28f, .31f, 1f);
+        trackGO.GetComponent<Image>().color = UITheme.TrackDark;
         trackGO.GetComponent<Image>().raycastTarget = false;
 
         GameObject selectedGO = new GameObject("SelectedRange", typeof(RectTransform), typeof(Image));
@@ -238,7 +238,7 @@ public class DualIntRangeSlider : MonoBehaviour, IPointerDownHandler, IDragHandl
         selected.anchorMax = new Vector2(1f, 1f);
         selected.offsetMin = Vector2.zero;
         selected.offsetMax = Vector2.zero;
-        selectedGO.GetComponent<Image>().color = new Color(.20f, .50f, .80f, 1f);
+        selectedGO.GetComponent<Image>().color = UITheme.FillCyan;
         selectedGO.GetComponent<Image>().raycastTarget = false;
 
         GameObject ticksGO = new GameObject("Ticks", typeof(RectTransform));
@@ -261,8 +261,18 @@ public class DualIntRangeSlider : MonoBehaviour, IPointerDownHandler, IDragHandl
         RectTransform rt = go.GetComponent<RectTransform>();
         rt.anchorMin = rt.anchorMax = new Vector2(0f, .5f);
         rt.sizeDelta = new Vector2(28f, 24f);
-        go.GetComponent<Image>().color = new Color(.88f, .90f, .93f, 1f);
-        go.GetComponent<Image>().raycastTarget = false;
+        Image handleImage = go.GetComponent<Image>();
+        if (UITheme.FineGlowSprite != null)
+        {
+            handleImage.sprite = UITheme.FineGlowSprite;
+            handleImage.type = Image.Type.Sliced;
+            handleImage.color = Color.white;
+        }
+        else
+        {
+            handleImage.color = new Color(.88f, .90f, .93f, 1f);
+        }
+        handleImage.raycastTarget = false;
 
         GameObject textGO = new GameObject("Value", typeof(RectTransform), typeof(TextMeshProUGUI));
         textGO.transform.SetParent(go.transform, false);
@@ -275,7 +285,9 @@ public class DualIntRangeSlider : MonoBehaviour, IPointerDownHandler, IDragHandl
         text.fontSize = 10f;
         text.fontStyle = FontStyles.Bold;
         text.alignment = TextAlignmentOptions.Center;
-        text.color = new Color(.08f, .09f, .10f, 1f);
+        // On the FineGlow handle (dark centre, glowing edge) the value needs to be light;
+        // the old near-black only worked against the previous flat light-grey handle fill.
+        text.color = UITheme.FineGlowSprite != null ? UITheme.TextBright : new Color(.08f, .09f, .10f, 1f);
         text.raycastTarget = false;
         return rt;
     }
@@ -428,7 +440,7 @@ public class DualIntRangeSlider : MonoBehaviour, IPointerDownHandler, IDragHandl
         if (highText != null) highText.text = highValue.ToString();
 
         float alpha = isInteractable ? 1f : .45f;
-        if (lowHandle.GetComponent<Image>() != null) lowHandle.GetComponent<Image>().color = new Color(.88f, .90f, .93f, alpha);
-        if (highHandle.GetComponent<Image>() != null) highHandle.GetComponent<Image>().color = new Color(.88f, .90f, .93f, alpha);
+        if (lowHandle.GetComponent<Image>() != null) lowHandle.GetComponent<Image>().color = new Color(1f, 1f, 1f, alpha);
+        if (highHandle.GetComponent<Image>() != null) highHandle.GetComponent<Image>().color = new Color(1f, 1f, 1f, alpha);
     }
 }

@@ -96,8 +96,8 @@ public class GroupUVRangeSliderUIAuthority : MonoBehaviour
         if (maxInput != null && maxInput.gameObject.activeSelf) maxInput.gameObject.SetActive(false);
         if (arrow != null && arrow.gameObject.activeSelf) arrow.gameObject.SetActive(false);
 
-        Place(rectLabel, 0.00f, 0.19f, 0.52f, 1.00f);
-        Place(slider, 0.19f, 1.00f, 0.52f, 1.00f);
+        Place(rectLabel, 0.00f, 0.24f, 0.52f, 1.00f);
+        Place(slider, 0.24f, 1.00f, 0.52f, 1.00f);
         Place(seedLabel, 0.00f, 0.16f, 0.00f, 0.46f);
         if (seedInput != null) Place(seedInput.transform, 0.16f, 0.83f, 0.00f, 0.46f);
         Place(random, 0.85f, 1.00f, 0.00f, 0.46f);
@@ -173,8 +173,8 @@ public class GroupUVRangeSliderUIAuthority : MonoBehaviour
             }
         }
 
-        Place(rectLabel, 0.00f, 0.22f, 0.52f, 1.00f);
-        if (postSlider != null) Place(postSlider.transform, 0.22f, 1.00f, 0.52f, 1.00f);
+        Place(rectLabel, 0.00f, 0.26f, 0.52f, 1.00f);
+        if (postSlider != null) Place(postSlider.transform, 0.26f, 1.00f, 0.52f, 1.00f);
         Place(seedLabel, 0.00f, 0.18f, 0.00f, 0.48f);
         if (seedInput != null) Place(seedInput.transform, 0.18f, 0.83f, 0.00f, 0.48f);
         Place(random, 0.85f, 1.00f, 0.00f, 0.48f);

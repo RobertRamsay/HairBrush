@@ -145,6 +145,11 @@ public class GroupUVSeedButtonFix : MonoBehaviour
 
     void Compact(Transform row)
     {
+        // Fixed sizeDelta values are deliberately NOT set here any more.
+        // GroupUVRangeSliderUIAuthority lays this row out with stretch anchors (Place), and
+        // sizeDelta on a stretch-anchored rect is ADDITIVE to the anchor span - the old
+        // 46x30 on the button is exactly what made it render as an oversized box hanging
+        // out of the row. The proportional layout is the single owner of sizing now.
         Transform range = row.Find("UVRectRangeSlider");
         if (range != null)
         {
@@ -154,10 +159,7 @@ public class GroupUVSeedButtonFix : MonoBehaviour
                 le.preferredWidth = 160f;
                 le.minWidth = 130f;
             }
-            range.GetComponent<RectTransform>().sizeDelta = new Vector2(160f, 30f);
         }
-        if (seedInput != null) seedInput.GetComponent<RectTransform>().sizeDelta = new Vector2(72f, 30f);
-        if (button != null) button.GetComponent<RectTransform>().sizeDelta = new Vector2(46f, 30f);
     }
 
     void StyleAllRandomButtons()
@@ -181,34 +183,40 @@ public class GroupUVSeedButtonFix : MonoBehaviour
     {
         if (candidate == null) return;
 
-        RectTransform rect = candidate.transform as RectTransform;
-        if (rect != null) rect.sizeDelta = new Vector2(46f, 30f);
-
-        LayoutElement le = candidate.GetComponent<LayoutElement>();
-        if (le != null)
-        {
-            le.minWidth = 42f;
-            le.preferredWidth = 46f;
-            le.minHeight = 28f;
-            le.preferredHeight = 30f;
-        }
-
+        // No sizeDelta / LayoutElement overrides here any more - the row's proportional layout
+        // (GroupUVRangeSliderUIAuthority.Place) owns sizing, and sizeDelta on stretch anchors is
+        // additive, which is what previously blew the button out past the row bounds.
         Image image = candidate.GetComponent<Image>();
         if (image == null) image = candidate.gameObject.AddComponent<Image>();
         image.raycastTarget = true;
         candidate.targetGraphic = image;
-        candidate.transition = Selectable.Transition.ColorTint;
 
-        ColorBlock colors = candidate.colors;
-        colors.normalColor = new Color(.25f, .42f, .58f, 1f);
-        colors.highlightedColor = new Color(.32f, .58f, .78f, 1f);
-        colors.selectedColor = new Color(.30f, .52f, .70f, 1f);
-        colors.pressedColor = new Color(.16f, .36f, .56f, 1f);
-        colors.disabledColor = new Color(.16f, .20f, .24f, .65f);
-        colors.colorMultiplier = 1f;
-        colors.fadeDuration = .06f;
-        candidate.colors = colors;
-        image.color = colors.normalColor;
+        // Same bright-teal sliced-sprite treatment as the variance RANDOMIZE button.
+        if (UITheme.ButtonNormalSprite != null)
+        {
+            image.sprite = UITheme.ButtonNormalSprite;
+            image.type = Image.Type.Sliced;
+            image.color = new Color(.62f, 1f, .96f, 1f);
+            candidate.transition = Selectable.Transition.SpriteSwap;
+            SpriteState state = candidate.spriteState;
+            state.highlightedSprite = UITheme.ButtonHoverSprite;
+            state.pressedSprite = UITheme.ButtonClickSprite;
+            candidate.spriteState = state;
+        }
+        else
+        {
+            candidate.transition = Selectable.Transition.ColorTint;
+            ColorBlock colors = candidate.colors;
+            colors.normalColor = new Color(.25f, .42f, .58f, 1f);
+            colors.highlightedColor = new Color(.32f, .58f, .78f, 1f);
+            colors.selectedColor = new Color(.30f, .52f, .70f, 1f);
+            colors.pressedColor = new Color(.16f, .36f, .56f, 1f);
+            colors.disabledColor = new Color(.16f, .20f, .24f, .65f);
+            colors.colorMultiplier = 1f;
+            colors.fadeDuration = .06f;
+            candidate.colors = colors;
+            image.color = colors.normalColor;
+        }
 
         TextMeshProUGUI label = candidate.GetComponentInChildren<TextMeshProUGUI>(true);
         if (label != null)

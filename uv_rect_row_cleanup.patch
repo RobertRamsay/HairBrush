@@ -1,0 +1,265 @@
+--- a/Assets/Scripts/UI_Import/GroupUVRangeSliderUI.cs	2026-08-18 09:13:03.607539928 +0000
++++ b/Assets/Scripts/UI_Import/GroupUVRangeSliderUI.cs	2026-08-18 09:13:30.791242395 +0000
+@@ -228,7 +228,7 @@
+         track.anchorMax = new Vector2(1f, .5f);
+         track.offsetMin = new Vector2(10f, -2f);
+         track.offsetMax = new Vector2(-10f, 2f);
+-        trackGO.GetComponent<Image>().color = new Color(.26f, .28f, .31f, 1f);
++        trackGO.GetComponent<Image>().color = UITheme.TrackDark;
+         trackGO.GetComponent<Image>().raycastTarget = false;
+ 
+         GameObject selectedGO = new GameObject("SelectedRange", typeof(RectTransform), typeof(Image));
+@@ -238,7 +238,7 @@
+         selected.anchorMax = new Vector2(1f, 1f);
+         selected.offsetMin = Vector2.zero;
+         selected.offsetMax = Vector2.zero;
+-        selectedGO.GetComponent<Image>().color = new Color(.20f, .50f, .80f, 1f);
++        selectedGO.GetComponent<Image>().color = UITheme.FillCyan;
+         selectedGO.GetComponent<Image>().raycastTarget = false;
+ 
+         GameObject ticksGO = new GameObject("Ticks", typeof(RectTransform));
+@@ -261,8 +261,18 @@
+         RectTransform rt = go.GetComponent<RectTransform>();
+         rt.anchorMin = rt.anchorMax = new Vector2(0f, .5f);
+         rt.sizeDelta = new Vector2(28f, 24f);
+-        go.GetComponent<Image>().color = new Color(.88f, .90f, .93f, 1f);
+-        go.GetComponent<Image>().raycastTarget = false;
++        Image handleImage = go.GetComponent<Image>();
++        if (UITheme.FineGlowSprite != null)
++        {
++            handleImage.sprite = UITheme.FineGlowSprite;
++            handleImage.type = Image.Type.Sliced;
++            handleImage.color = Color.white;
++        }
++        else
++        {
++            handleImage.color = new Color(.88f, .90f, .93f, 1f);
++        }
++        handleImage.raycastTarget = false;
+ 
+         GameObject textGO = new GameObject("Value", typeof(RectTransform), typeof(TextMeshProUGUI));
+         textGO.transform.SetParent(go.transform, false);
+@@ -275,7 +285,9 @@
+         text.fontSize = 10f;
+         text.fontStyle = FontStyles.Bold;
+         text.alignment = TextAlignmentOptions.Center;
+-        text.color = new Color(.08f, .09f, .10f, 1f);
++        // On the FineGlow handle (dark centre, glowing edge) the value needs to be light;
++        // the old near-black only worked against the previous flat light-grey handle fill.
++        text.color = UITheme.FineGlowSprite != null ? UITheme.TextBright : new Color(.08f, .09f, .10f, 1f);
+         text.raycastTarget = false;
+         return rt;
+     }
+@@ -428,7 +440,7 @@
+         if (highText != null) highText.text = highValue.ToString();
+ 
+         float alpha = isInteractable ? 1f : .45f;
+-        if (lowHandle.GetComponent<Image>() != null) lowHandle.GetComponent<Image>().color = new Color(.88f, .90f, .93f, alpha);
+-        if (highHandle.GetComponent<Image>() != null) highHandle.GetComponent<Image>().color = new Color(.88f, .90f, .93f, alpha);
++        if (lowHandle.GetComponent<Image>() != null) lowHandle.GetComponent<Image>().color = new Color(1f, 1f, 1f, alpha);
++        if (highHandle.GetComponent<Image>() != null) highHandle.GetComponent<Image>().color = new Color(1f, 1f, 1f, alpha);
+     }
+ }
+--- a/Assets/Scripts/UI_Import/GroupUVRandomButtonAuthority.cs	2026-08-18 09:13:03.615060874 +0000
++++ b/Assets/Scripts/UI_Import/GroupUVRandomButtonAuthority.cs	2026-08-18 09:13:42.402308345 +0000
+@@ -152,18 +152,34 @@
+         if (image == null) image = button.gameObject.AddComponent<Image>();
+         image.raycastTarget = true;
+         button.targetGraphic = image;
+-        button.transition = Selectable.Transition.ColorTint;
+ 
+-        ColorBlock colors = button.colors;
+-        colors.normalColor = new Color(.25f, .42f, .58f, 1f);
+-        colors.highlightedColor = new Color(.32f, .58f, .78f, 1f);
+-        colors.selectedColor = new Color(.30f, .52f, .70f, 1f);
+-        colors.pressedColor = new Color(.16f, .36f, .56f, 1f);
+-        colors.disabledColor = new Color(.16f, .20f, .24f, .65f);
+-        colors.colorMultiplier = 1f;
+-        colors.fadeDuration = .06f;
+-        button.colors = colors;
+-        image.color = button.interactable ? colors.normalColor : colors.disabledColor;
++        // Same bright-teal sliced-sprite treatment as the variance RANDOMIZE button, replacing
++        // the old flat navy ColorBlock so both reroll buttons read as one consistent control.
++        if (UITheme.ButtonNormalSprite != null)
++        {
++            image.sprite = UITheme.ButtonNormalSprite;
++            image.type = Image.Type.Sliced;
++            image.color = button.interactable ? new Color(.62f, 1f, .96f, 1f) : new Color(.62f, 1f, .96f, .45f);
++            button.transition = Selectable.Transition.SpriteSwap;
++            SpriteState state = button.spriteState;
++            state.highlightedSprite = UITheme.ButtonHoverSprite;
++            state.pressedSprite = UITheme.ButtonClickSprite;
++            button.spriteState = state;
++        }
++        else
++        {
++            button.transition = Selectable.Transition.ColorTint;
++            ColorBlock colors = button.colors;
++            colors.normalColor = new Color(.25f, .42f, .58f, 1f);
++            colors.highlightedColor = new Color(.32f, .58f, .78f, 1f);
++            colors.selectedColor = new Color(.30f, .52f, .70f, 1f);
++            colors.pressedColor = new Color(.16f, .36f, .56f, 1f);
++            colors.disabledColor = new Color(.16f, .20f, .24f, .65f);
++            colors.colorMultiplier = 1f;
++            colors.fadeDuration = .06f;
++            button.colors = colors;
++            image.color = button.interactable ? colors.normalColor : colors.disabledColor;
++        }
+ 
+         TextMeshProUGUI label = button.GetComponentInChildren<TextMeshProUGUI>(true);
+         if (label != null)
+--- a/Assets/Scripts/UI_Import/GroupUVSeedButtonFix.cs	2026-08-18 09:13:03.626208499 +0000
++++ b/Assets/Scripts/UI_Import/GroupUVSeedButtonFix.cs	2026-08-18 09:14:13.366771407 +0000
+@@ -145,6 +145,11 @@
+ 
+     void Compact(Transform row)
+     {
++        // Fixed sizeDelta values are deliberately NOT set here any more.
++        // GroupUVRangeSliderUIAuthority lays this row out with stretch anchors (Place), and
++        // sizeDelta on a stretch-anchored rect is ADDITIVE to the anchor span - the old
++        // 46x30 on the button is exactly what made it render as an oversized box hanging
++        // out of the row. The proportional layout is the single owner of sizing now.
+         Transform range = row.Find("UVRectRangeSlider");
+         if (range != null)
+         {
+@@ -154,10 +159,7 @@
+                 le.preferredWidth = 160f;
+                 le.minWidth = 130f;
+             }
+-            range.GetComponent<RectTransform>().sizeDelta = new Vector2(160f, 30f);
+         }
+-        if (seedInput != null) seedInput.GetComponent<RectTransform>().sizeDelta = new Vector2(72f, 30f);
+-        if (button != null) button.GetComponent<RectTransform>().sizeDelta = new Vector2(46f, 30f);
+     }
+ 
+     void StyleAllRandomButtons()
+@@ -181,34 +183,40 @@
+     {
+         if (candidate == null) return;
+ 
+-        RectTransform rect = candidate.transform as RectTransform;
+-        if (rect != null) rect.sizeDelta = new Vector2(46f, 30f);
+-
+-        LayoutElement le = candidate.GetComponent<LayoutElement>();
+-        if (le != null)
+-        {
+-            le.minWidth = 42f;
+-            le.preferredWidth = 46f;
+-            le.minHeight = 28f;
+-            le.preferredHeight = 30f;
+-        }
+-
++        // No sizeDelta / LayoutElement overrides here any more - the row's proportional layout
++        // (GroupUVRangeSliderUIAuthority.Place) owns sizing, and sizeDelta on stretch anchors is
++        // additive, which is what previously blew the button out past the row bounds.
+         Image image = candidate.GetComponent<Image>();
+         if (image == null) image = candidate.gameObject.AddComponent<Image>();
+         image.raycastTarget = true;
+         candidate.targetGraphic = image;
+-        candidate.transition = Selectable.Transition.ColorTint;
+ 
+-        ColorBlock colors = candidate.colors;
+-        colors.normalColor = new Color(.25f, .42f, .58f, 1f);
+-        colors.highlightedColor = new Color(.32f, .58f, .78f, 1f);
+-        colors.selectedColor = new Color(.30f, .52f, .70f, 1f);
+-        colors.pressedColor = new Color(.16f, .36f, .56f, 1f);
+-        colors.disabledColor = new Color(.16f, .20f, .24f, .65f);
+-        colors.colorMultiplier = 1f;
+-        colors.fadeDuration = .06f;
+-        candidate.colors = colors;
+-        image.color = colors.normalColor;
++        // Same bright-teal sliced-sprite treatment as the variance RANDOMIZE button.
++        if (UITheme.ButtonNormalSprite != null)
++        {
++            image.sprite = UITheme.ButtonNormalSprite;
++            image.type = Image.Type.Sliced;
++            image.color = new Color(.62f, 1f, .96f, 1f);
++            candidate.transition = Selectable.Transition.SpriteSwap;
++            SpriteState state = candidate.spriteState;
++            state.highlightedSprite = UITheme.ButtonHoverSprite;
++            state.pressedSprite = UITheme.ButtonClickSprite;
++            candidate.spriteState = state;
++        }
++        else
++        {
++            candidate.transition = Selectable.Transition.ColorTint;
++            ColorBlock colors = candidate.colors;
++            colors.normalColor = new Color(.25f, .42f, .58f, 1f);
++            colors.highlightedColor = new Color(.32f, .58f, .78f, 1f);
++            colors.selectedColor = new Color(.30f, .52f, .70f, 1f);
++            colors.pressedColor = new Color(.16f, .36f, .56f, 1f);
++            colors.disabledColor = new Color(.16f, .20f, .24f, .65f);
++            colors.colorMultiplier = 1f;
++            colors.fadeDuration = .06f;
++            candidate.colors = colors;
++            image.color = colors.normalColor;
++        }
+ 
+         TextMeshProUGUI label = candidate.GetComponentInChildren<TextMeshProUGUI>(true);
+         if (label != null)
+--- a/Assets/Scripts/UI_Import/GroupUVRangeSliderUIAuthority.cs	2026-08-18 09:13:03.635761281 +0000
++++ b/Assets/Scripts/UI_Import/GroupUVRangeSliderUIAuthority.cs	2026-08-18 09:14:46.319782990 +0000
+@@ -96,8 +96,8 @@
+         if (maxInput != null && maxInput.gameObject.activeSelf) maxInput.gameObject.SetActive(false);
+         if (arrow != null && arrow.gameObject.activeSelf) arrow.gameObject.SetActive(false);
+ 
+-        Place(rectLabel, 0.00f, 0.19f, 0.52f, 1.00f);
+-        Place(slider, 0.19f, 1.00f, 0.52f, 1.00f);
++        Place(rectLabel, 0.00f, 0.24f, 0.52f, 1.00f);
++        Place(slider, 0.24f, 1.00f, 0.52f, 1.00f);
+         Place(seedLabel, 0.00f, 0.16f, 0.00f, 0.46f);
+         if (seedInput != null) Place(seedInput.transform, 0.16f, 0.83f, 0.00f, 0.46f);
+         Place(random, 0.85f, 1.00f, 0.00f, 0.46f);
+@@ -173,8 +173,8 @@
+             }
+         }
+ 
+-        Place(rectLabel, 0.00f, 0.22f, 0.52f, 1.00f);
+-        if (postSlider != null) Place(postSlider.transform, 0.22f, 1.00f, 0.52f, 1.00f);
++        Place(rectLabel, 0.00f, 0.26f, 0.52f, 1.00f);
++        if (postSlider != null) Place(postSlider.transform, 0.26f, 1.00f, 0.52f, 1.00f);
+         Place(seedLabel, 0.00f, 0.18f, 0.00f, 0.48f);
+         if (seedInput != null) Place(seedInput.transform, 0.18f, 0.83f, 0.00f, 0.48f);
+         Place(random, 0.85f, 1.00f, 0.00f, 0.48f);
+--- a/Assets/Scripts/UI_Import/GroupPredeterminedUVController.cs	2026-08-18 09:14:32.291582474 +0000
++++ b/Assets/Scripts/UI_Import/GroupPredeterminedUVController.cs	2026-08-18 09:14:38.666761871 +0000
+@@ -676,7 +676,17 @@
+         GameObject go = new GameObject(placeholder + "Input", typeof(RectTransform), typeof(Image), typeof(TMP_InputField));
+         go.transform.SetParent(parent, false);
+         go.GetComponent<RectTransform>().sizeDelta = new Vector2(width, 30f);
+-        go.GetComponent<Image>().color = new Color(.16f, .18f, .22f, 1f);
++        Image inputBg = go.GetComponent<Image>();
++        if (UITheme.FineEdgeSprite != null)
++        {
++            inputBg.sprite = UITheme.FineEdgeSprite;
++            inputBg.type = Image.Type.Sliced;
++            inputBg.color = Color.white;
++        }
++        else
++        {
++            inputBg.color = new Color(.16f, .18f, .22f, 1f);
++        }
+ 
+         GameObject textArea = new GameObject("Text Area", typeof(RectTransform), typeof(RectMask2D));
+         textArea.transform.SetParent(go.transform, false);
+--- a/Assets/Scripts/UI_Import/PostPredeterminedUVAuthority.cs	2026-08-18 09:14:32.299529853 +0000
++++ b/Assets/Scripts/UI_Import/PostPredeterminedUVAuthority.cs	2026-08-18 09:14:38.696547415 +0000
+@@ -611,7 +611,17 @@
+         GameObject go = new GameObject(placeholder + "Input", typeof(RectTransform), typeof(Image), typeof(TMP_InputField));
+         go.transform.SetParent(parent, false);
+         go.GetComponent<RectTransform>().sizeDelta = new Vector2(width, 30f);
+-        go.GetComponent<Image>().color = new Color(.16f, .18f, .22f, 1f);
++        Image inputBg = go.GetComponent<Image>();
++        if (UITheme.FineEdgeSprite != null)
++        {
++            inputBg.sprite = UITheme.FineEdgeSprite;
++            inputBg.type = Image.Type.Sliced;
++            inputBg.color = Color.white;
++        }
++        else
++        {
++            inputBg.color = new Color(.16f, .18f, .22f, 1f);
++        }
+ 
+         GameObject textArea = new GameObject("Text Area", typeof(RectTransform), typeof(RectMask2D));
+         textArea.transform.SetParent(go.transform, false);

@@ -611,7 +611,17 @@ public class PostPredeterminedUVUIAuthority : MonoBehaviour
         GameObject go = new GameObject(placeholder + "Input", typeof(RectTransform), typeof(Image), typeof(TMP_InputField));
         go.transform.SetParent(parent, false);
         go.GetComponent<RectTransform>().sizeDelta = new Vector2(width, 30f);
-        go.GetComponent<Image>().color = new Color(.16f, .18f, .22f, 1f);
+        Image inputBg = go.GetComponent<Image>();
+        if (UITheme.FineEdgeSprite != null)
+        {
+            inputBg.sprite = UITheme.FineEdgeSprite;
+            inputBg.type = Image.Type.Sliced;
+            inputBg.color = Color.white;
+        }
+        else
+        {
+            inputBg.color = new Color(.16f, .18f, .22f, 1f);
+        }
 
         GameObject textArea = new GameObject("Text Area", typeof(RectTransform), typeof(RectMask2D));
         textArea.transform.SetParent(go.transform, false);
