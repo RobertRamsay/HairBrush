@@ -271,7 +271,6 @@ public class TextureUVRectWorkspace : MonoBehaviour
         }
 
         previewPlane.transform.localScale = new Vector3(width, height, 1f);
-        previewPlane.transform.position = new Vector3(-.28f, 0f, 0f);
         previewPlane.SetActive(true);
 
         Collider collider = previewPlane.GetComponent<Collider>();
