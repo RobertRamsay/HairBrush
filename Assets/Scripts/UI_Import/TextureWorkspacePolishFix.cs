@@ -26,6 +26,7 @@ public class TextureWorkspacePolishFix : MonoBehaviour
     private FieldInfo rectanglesField;
     private FieldInfo draftLineField;
     private MethodInfo updateRectangleVisualMethod;
+    private MethodInfo updateOutlineVisualMethod;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
@@ -67,6 +68,7 @@ public class TextureWorkspacePolishFix : MonoBehaviour
                 rectanglesField = type.GetField("rectangles", flags);
                 draftLineField = type.GetField("draftLine", flags);
                 updateRectangleVisualMethod = type.GetMethod("CreateOrUpdateRectangleVisual", flags);
+                updateOutlineVisualMethod = type.GetMethod("UpdateOutlineVisual", flags);
             }
         }
     }
@@ -255,6 +257,10 @@ public class TextureWorkspacePolishFix : MonoBehaviour
                         updateRectangleVisualMethod.Invoke(uvWorkspace, new[] { definition });
             }
         }
+
+        // Same reasoning as the rectangles above: the plane-edge outline is re-derived from the
+        // plane's final transform rather than shifted by delta, since it has no stored UV data.
+        updateOutlineVisualMethod?.Invoke(uvWorkspace, null);
 
         // The in-progress draft is recalculated by TextureUVRectWorkspace during Update, before
         // this final plane centring pass, so carry it by the same one-frame delta while drawing.

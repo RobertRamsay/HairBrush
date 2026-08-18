@@ -33,7 +33,9 @@ public class TextureUVRectWorkspace : MonoBehaviour
 
     private GameObject visualRoot;
     private LineRenderer draftLine;
+    private LineRenderer planeOutlineLine;
     private Material lineMaterial;
+    private Material outlineMaterial;
 
     private bool wasActive;
     private bool drawMode;
@@ -86,6 +88,7 @@ public class TextureUVRectWorkspace : MonoBehaviour
         EnforceWorkspaceCamera();
         EnsureVisualRoot();
         visualRoot.SetActive(true);
+        UpdateOutlineVisual();
         HandleDrawInput();
         UpdateSummary();
     }
@@ -100,6 +103,7 @@ public class TextureUVRectWorkspace : MonoBehaviour
     {
         if (wasActive) ExitWorkspace();
         if (lineMaterial != null) Destroy(lineMaterial);
+        if (outlineMaterial != null) Destroy(outlineMaterial);
     }
 
     void Resolve()
@@ -546,6 +550,51 @@ public class TextureUVRectWorkspace : MonoBehaviour
         Color color = new Color(.18f, .90f, 1f, 1f);
         if (lineMaterial.HasProperty("_BaseColor")) lineMaterial.SetColor("_BaseColor", color);
         if (lineMaterial.HasProperty("_Color")) lineMaterial.SetColor("_Color", color);
+    }
+
+    // Distinct from the cyan rectangle outlines so the plane's own edges never get mistaken
+    // for a drawn UV rect.
+    void EnsureOutlineMaterial()
+    {
+        if (outlineMaterial != null) return;
+        Shader shader = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Unlit/Color") ?? Shader.Find("Sprites/Default");
+        if (shader == null) return;
+        outlineMaterial = new Material(shader) { name = "TextureUVRectPlaneOutlineMaterial" };
+        Color color = new Color(1f, .78f, .28f, .9f);
+        if (outlineMaterial.HasProperty("_BaseColor")) outlineMaterial.SetColor("_BaseColor", color);
+        if (outlineMaterial.HasProperty("_Color")) outlineMaterial.SetColor("_Color", color);
+    }
+
+    // Traces the full 0..1 UV bounds of the preview plane so the texture's actual edges are
+    // always visible, independent of any drawn rectangles. Re-derived from UVToWorld every call
+    // (not just on creation) so it stays glued to the plane after TextureWorkspacePolishFix's
+    // centring pass, the same way CreateOrUpdateRectangleVisual stays glued for drawn rects.
+    void UpdateOutlineVisual()
+    {
+        if (previewPlane == null) return;
+        EnsureVisualRoot();
+        EnsureOutlineMaterial();
+
+        if (planeOutlineLine == null)
+        {
+            GameObject go = new GameObject("TexturePlaneOutline");
+            go.transform.SetParent(visualRoot.transform, false);
+            planeOutlineLine = go.AddComponent<LineRenderer>();
+            planeOutlineLine.useWorldSpace = true;
+            planeOutlineLine.positionCount = 5;
+            planeOutlineLine.loop = false;
+            planeOutlineLine.numCapVertices = 2;
+            planeOutlineLine.startWidth = .008f;
+            planeOutlineLine.endWidth = .008f;
+        }
+        if (outlineMaterial != null) planeOutlineLine.material = outlineMaterial;
+
+        planeOutlineLine.gameObject.SetActive(true);
+        planeOutlineLine.SetPosition(0, UVToWorld(new Vector2(0f, 0f)));
+        planeOutlineLine.SetPosition(1, UVToWorld(new Vector2(1f, 0f)));
+        planeOutlineLine.SetPosition(2, UVToWorld(new Vector2(1f, 1f)));
+        planeOutlineLine.SetPosition(3, UVToWorld(new Vector2(0f, 1f)));
+        planeOutlineLine.SetPosition(4, UVToWorld(new Vector2(0f, 0f)));
     }
 
     void EnsureDraftLine()
