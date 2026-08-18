@@ -247,7 +247,24 @@ public class MaterialEditorManager : MonoBehaviour
         file.enableWordWrapping = true;
         file.overflowMode = TMPro.TextOverflowModes.Truncate;
 
-        CreateSmallButton(row.transform, "LOAD", () => LoadTextureIntoSlot(propertyName, linear), 48f, 28f);
+        // Only ~56px remains after the Info column within the panel's fixed 300px width (see
+        // TextureWorkspacePolishFix.PolishMaterialPanel), so LOAD and LOCATE stack vertically in
+        // that same narrow column rather than sitting side by side, which would overflow the panel.
+        GameObject buttonColumn = new GameObject("ButtonColumn", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
+        buttonColumn.transform.SetParent(row.transform, false);
+        LayoutElement columnLayout = buttonColumn.GetComponent<LayoutElement>();
+        columnLayout.preferredWidth = 54f;
+        columnLayout.minWidth = 54f;
+        columnLayout.preferredHeight = 54f;
+        VerticalLayoutGroup columnGroup = buttonColumn.GetComponent<VerticalLayoutGroup>();
+        columnGroup.spacing = 2f;
+        columnGroup.childControlWidth = true;
+        columnGroup.childForceExpandWidth = true;
+        columnGroup.childControlHeight = true;
+        columnGroup.childForceExpandHeight = false;
+
+        CreateSmallButton(buttonColumn.transform, "LOAD", () => LoadTextureIntoSlot(propertyName, linear), 54f, 24f);
+        CreateSmallButton(buttonColumn.transform, "LOCATE", () => LocateTextureFile(currentPath), 54f, 24f);
     }
 
     // Simple 0-1 float slider bound directly to a shader property on this entry's material.
@@ -411,6 +428,39 @@ public class MaterialEditorManager : MonoBehaviour
         // Always preview the material currently being edited, even before applying it globally.
         UpdatePreviewForSelectedMaterial();
         RefreshPanel();
+    }
+
+    // Opens the containing folder for a loaded texture's source file, with the file itself
+    // pre-selected, so the person can find it again without hunting through their filesystem.
+    private void LocateTextureFile(string path)
+    {
+        if (string.IsNullOrEmpty(path))
+        {
+            StatusToast.Show("Nothing loaded into this slot yet.", true);
+            return;
+        }
+        if (!File.Exists(path))
+        {
+            StatusToast.Show("That file can't be found anymore: " + Path.GetFileName(path), true);
+            return;
+        }
+
+#if UNITY_EDITOR
+        EditorUtility.RevealInFinder(path);
+#elif UNITY_STANDALONE_WIN
+        try
+        {
+            System.Diagnostics.Process.Start("explorer.exe", "/select,\"" + path + "\"");
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError("Could not open containing folder: " + ex.Message);
+            StatusToast.Show("Couldn't open that folder: " + ex.Message, true);
+        }
+#else
+        Debug.LogWarning("Locate containing folder is currently supported in the Editor and standalone Windows builds only.");
+        StatusToast.Show("Locate isn't supported on this platform yet.", true);
+#endif
     }
 
     private void UpdatePreviewForSelectedMaterial()

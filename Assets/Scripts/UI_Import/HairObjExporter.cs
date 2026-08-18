@@ -21,15 +21,18 @@ public static class HairObjExporter
         OriginalImportedOBJSpace
     }
 
-    // Runtime UI can occasionally deliver the same button action twice in the frame that a
-    // blocking native file dialog closes. Unity's frame counter does not advance while the
-    // dialog is open, so this cleanly suppresses the duplicate without delaying later exports.
-    static int lastInteractiveFrame = -1;
+    // Runtime UI can occasionally deliver the same button action twice around a blocking native
+    // dialog closing - not just in the same frame, but on a later frame too if the user spent real
+    // time interacting with the dialog (e.g. renaming the file) before it closed. A wall-clock
+    // cooldown catches that regardless of which frame the duplicate lands on, the same fix already
+    // used for the Save Project dialog (see ModelViewer.SaveProject's nextAllowedSaveDialogTime).
+    static double nextAllowedExportDialogTime = 0.0;
 
     public static void ExportInteractive()
     {
-        if (lastInteractiveFrame == Time.frameCount) return;
-        lastInteractiveFrame = Time.frameCount;
+        double now = Time.realtimeSinceStartupAsDouble;
+        if (now < nextAllowedExportDialogTime) return;
+        nextAllowedExportDialogTime = now + 0.75;
 
         HairCard[] cards = FindExportCards();
         if (cards.Length == 0)
@@ -84,6 +87,7 @@ public static class HairObjExporter
 #else
         path = RuntimeFileDialog.SaveFile("Export Hair Cards OBJ", "OBJ Files\0*.obj\0All Files\0*.*\0\0", defaultName, "obj");
 #endif
+        nextAllowedExportDialogTime = Time.realtimeSinceStartupAsDouble + 0.75;
         if (string.IsNullOrEmpty(path)) return;
 
         try
