@@ -1,0 +1,369 @@
+diff --git a/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs b/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs
+index 152ec3f..08dab80 100644
+--- a/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs
++++ b/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs
+@@ -28,6 +28,8 @@ public class TextureUVRectWorkspace : MonoBehaviour
+ 
+     private GameObject section;
+     private TextMeshProUGUI summaryText;
++    private Transform summaryListRoot;
++    private bool summaryListDirty;
+     private TextMeshProUGUI drawButtonText;
+     private Image drawButtonImage;
+ 
+@@ -91,6 +93,14 @@ public class TextureUVRectWorkspace : MonoBehaviour
+         UpdateOutlineVisual();
+         HandleDrawInput();
+         UpdateSummary();
++
++        // Deferred from ReorderRectangle - see its comment for why the row list can't safely
++        // be rebuilt in the same frame as the drop event that triggered the reorder.
++        if (summaryListDirty)
++        {
++            summaryListDirty = false;
++            RebuildSummaryList();
++        }
+     }
+ 
+     void LateUpdate()
+@@ -176,7 +186,7 @@ public class TextureUVRectWorkspace : MonoBehaviour
+         EnforceWorkspaceCamera();
+         EnsureVisualRoot();
+         RefreshRectangleVisuals();
+-        UpdateSummary();
++        RefreshSummary();
+     }
+ 
+     void ExitWorkspace()
+@@ -313,7 +323,8 @@ public class TextureUVRectWorkspace : MonoBehaviour
+         if (existing != null)
+         {
+             section = existing.gameObject;
+-            summaryText = section.transform.Find("Summary")?.GetComponent<TextMeshProUGUI>();
++            summaryText = section.transform.Find("SummaryHeader")?.GetComponent<TextMeshProUGUI>();
++            summaryListRoot = section.transform.Find("SummaryList/Content");
+             Transform draw = section.transform.Find("Buttons/Row1/DRAW UV RECT");
+             drawButtonImage = draw != null ? draw.GetComponent<Image>() : null;
+             drawButtonText = draw != null ? draw.GetComponentInChildren<TextMeshProUGUI>(true) : null;
+@@ -364,18 +375,20 @@ public class TextureUVRectWorkspace : MonoBehaviour
+         listSpacer.transform.SetParent(section.transform, false);
+         listSpacer.GetComponent<LayoutElement>().preferredHeight = 10f;
+ 
+-        summaryText = AddText(section.transform, "Summary", 12.5f, 226f, FontStyles.Normal);
+-        summaryText.gameObject.name = "Summary";
++        summaryText = AddText(section.transform, "SummaryHeader", 12.5f, 20f, FontStyles.Normal);
++        summaryText.gameObject.name = "SummaryHeader";
+         summaryText.alignment = TextAlignmentOptions.TopLeft;
+         summaryText.textWrappingMode = TextWrappingModes.Normal;
+ 
++        summaryListRoot = BuildSummaryScrollList(section.transform);
++
+         int tabIndex = texturePanel.transform.Find("PanelTabRow") != null
+             ? texturePanel.transform.Find("PanelTabRow").GetSiblingIndex() + 1
+             : 0;
+         section.transform.SetSiblingIndex(tabIndex);
+ 
+         UpdateDrawButton();
+-        UpdateSummary();
++        RefreshSummary();
+     }
+ 
+     TextMeshProUGUI AddText(Transform parent, string text, float fontSize, float height, FontStyles style)
+@@ -392,6 +405,47 @@ public class TextureUVRectWorkspace : MonoBehaviour
+         return tmp;
+     }
+ 
++    // Scrollable viewport so the list keeps working once AUTO produces more rectangles than
++    // fit in the fixed-height panel - a plain stacked list would just overflow past its box.
++    Transform BuildSummaryScrollList(Transform parent)
++    {
++        GameObject scrollGO = new GameObject("SummaryList", typeof(RectTransform), typeof(Image), typeof(ScrollRect), typeof(RectMask2D), typeof(LayoutElement));
++        scrollGO.transform.SetParent(parent, false);
++        LayoutElement scrollLayout = scrollGO.GetComponent<LayoutElement>();
++        scrollLayout.preferredHeight = 200f;
++        scrollLayout.minHeight = 200f;
++        Image scrollBackground = scrollGO.GetComponent<Image>();
++        scrollBackground.color = Color.clear;
++        scrollBackground.raycastTarget = true;
++
++        GameObject contentGO = new GameObject("Content", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
++        contentGO.transform.SetParent(scrollGO.transform, false);
++        RectTransform contentRect = contentGO.GetComponent<RectTransform>();
++        contentRect.anchorMin = new Vector2(0f, 1f);
++        contentRect.anchorMax = new Vector2(1f, 1f);
++        contentRect.pivot = new Vector2(.5f, 1f);
++        contentRect.anchoredPosition = Vector2.zero;
++        contentRect.sizeDelta = Vector2.zero;
++        VerticalLayoutGroup contentLayout = contentGO.GetComponent<VerticalLayoutGroup>();
++        contentLayout.spacing = 3f;
++        contentLayout.padding = new RectOffset(2, 2, 2, 2);
++        contentLayout.childControlWidth = true;
++        contentLayout.childForceExpandWidth = true;
++        contentLayout.childControlHeight = false;
++        ContentSizeFitter fitter = contentGO.GetComponent<ContentSizeFitter>();
++        fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
++        fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
++
++        ScrollRect scroll = scrollGO.GetComponent<ScrollRect>();
++        scroll.content = contentRect;
++        scroll.horizontal = false;
++        scroll.vertical = true;
++        scroll.movementType = ScrollRect.MovementType.Clamped;
++        scroll.scrollSensitivity = 18f;
++
++        return contentGO.transform;
++    }
++
+     GameObject AddButtonRow(Transform parent, string rowName)
+     {
+         GameObject row = new GameObject(rowName, typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
+@@ -500,7 +554,7 @@ public class TextureUVRectWorkspace : MonoBehaviour
+             };
+             rectangles.Add(saved);
+             CreateOrUpdateRectangleVisual(saved);
+-            UpdateSummary();
++            RefreshSummary();
+         }
+     }
+ 
+@@ -725,7 +779,7 @@ public class TextureUVRectWorkspace : MonoBehaviour
+             if (label != null) Destroy(label.gameObject);
+             rectangleLabels.Remove(last.id);
+         }
+-        UpdateSummary();
++        RefreshSummary();
+     }
+ 
+     public void ClearDefinitions()
+@@ -738,7 +792,7 @@ public class TextureUVRectWorkspace : MonoBehaviour
+         foreach (TextMeshPro label in rectangleLabels.Values)
+             if (label != null) Destroy(label.gameObject);
+         rectangleLabels.Clear();
+-        UpdateSummary();
++        RefreshSummary();
+     }
+ 
+     public List<UVRectSaveData> ExportDefinitions()
+@@ -790,7 +844,7 @@ public class TextureUVRectWorkspace : MonoBehaviour
+             ResolvePreviewPlane();
+             RefreshRectangleVisuals();
+         }
+-        UpdateSummary();
++        RefreshSummary();
+     }
+ 
+     void RestorePendingProjectData()
+@@ -801,19 +855,106 @@ public class TextureUVRectWorkspace : MonoBehaviour
+         ImportDefinitions(pending.uvRects);
+     }
+ 
++    // Cheap per-frame header text only - the row list itself is rebuilt explicitly at the
++    // specific points the data actually changes (see RefreshSummary), not every frame, since
++    // destroying and recreating draggable row GameObjects 60 times a second would both waste
++    // work and constantly interrupt any hover/drag state a person is mid-interaction with.
+     void UpdateSummary()
+     {
+         if (summaryText == null) return;
+-        if (rectangles.Count == 0)
++        summaryText.text = rectangles.Count == 0
++            ? "UV Rects: 0  •  click DRAW UV RECT, then drag on the texture"
++            : "UV Rects: " + rectangles.Count + "  •  drag a row to reorder";
++    }
++
++    // Header text plus the row list, for the specific moments the data actually changed
++    // (a rect was drawn/undone/cleared/imported). Safe to call synchronously from anywhere
++    // that is NOT itself a row's drag/drop event callback - see ReorderRectangle for why that
++    // one case needs to defer instead.
++    void RefreshSummary()
++    {
++        UpdateSummary();
++        RebuildSummaryList();
++    }
++
++    void RebuildSummaryList()
++    {
++        if (summaryListRoot == null) return;
++        for (int i = summaryListRoot.childCount - 1; i >= 0; i--)
++            Destroy(summaryListRoot.GetChild(i).gameObject);
++
++        List<UVRectSaveData> ordered = rectangles.OrderBy(r => r.id).ToList();
++        foreach (UVRectSaveData r in ordered)
+         {
+-            summaryText.text = "UV Rects: 0  •  click DRAW UV RECT, then drag on the texture";
+-            return;
++            string text = "#" + r.id + "  U " + r.uMin.ToString("F3") + "–" + r.uMax.ToString("F3") +
++                "  V " + r.vMin.ToString("F3") + "–" + r.vMax.ToString("F3");
++            CreateSummaryRow(r.id, text);
+         }
++    }
++
++    void CreateSummaryRow(int id, string text)
++    {
++        GameObject rowGO = new GameObject("Row_" + id, typeof(RectTransform), typeof(Image), typeof(CanvasGroup), typeof(LayoutElement), typeof(UVRectSummaryRow));
++        rowGO.transform.SetParent(summaryListRoot, false);
++        LayoutElement rowLayout = rowGO.GetComponent<LayoutElement>();
++        rowLayout.preferredHeight = 24f;
++        rowLayout.minHeight = 24f;
++
++        Image rowImage = rowGO.GetComponent<Image>();
++        rowImage.raycastTarget = true;
++
++        GameObject textGO = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
++        textGO.transform.SetParent(rowGO.transform, false);
++        RectTransform textRect = textGO.GetComponent<RectTransform>();
++        textRect.anchorMin = Vector2.zero;
++        textRect.anchorMax = Vector2.one;
++        textRect.offsetMin = new Vector2(8f, 0f);
++        textRect.offsetMax = new Vector2(-6f, 0f);
++        TextMeshProUGUI label = textGO.GetComponent<TextMeshProUGUI>();
++        label.text = text;
++        label.fontSize = 11.5f;
++        label.color = Color.white;
++        label.alignment = TextAlignmentOptions.MidlineLeft;
++        label.enableWordWrapping = false;
++        label.overflowMode = TextOverflowModes.Ellipsis;
++        label.raycastTarget = false;
++
++        UVRectSummaryRow row = rowGO.GetComponent<UVRectSummaryRow>();
++        row.Bind(this, id, rowImage, rowGO.GetComponent<CanvasGroup>());
++    }
++
++    // Called by UVRectSummaryRow.OnDrop. Moves the dragged rectangle into the dropped-on
++    // rectangle's slot and renumbers everything sequentially so ids stay contiguous and match
++    // the new visual order (both here and in the on-texture labels).
++    public void ReorderRectangle(int draggedId, int dropOntoId)
++    {
++        if (draggedId == dropOntoId) return;
+ 
+         List<UVRectSaveData> ordered = rectangles.OrderBy(r => r.id).ToList();
+-        string rows = string.Join("\n", ordered.Select(r =>
+-            "#" + r.id + "  U " + r.uMin.ToString("F3") + "–" + r.uMax.ToString("F3") +
+-            "  V " + r.vMin.ToString("F3") + "–" + r.vMax.ToString("F3")));
+-        summaryText.text = "UV Rects: " + rectangles.Count + "\n" + rows;
++        int fromIndex = ordered.FindIndex(r => r.id == draggedId);
++        if (fromIndex < 0) return;
++
++        UVRectSaveData moved = ordered[fromIndex];
++        ordered.RemoveAt(fromIndex);
++        int insertIndex = ordered.FindIndex(r => r.id == dropOntoId);
++        if (insertIndex < 0) insertIndex = ordered.Count;
++        ordered.Insert(insertIndex, moved);
++
++        for (int i = 0; i < ordered.Count; i++)
++            ordered[i].id = i + 1;
++
++        rectangles.Clear();
++        rectangles.AddRange(ordered);
++        nextRectId = rectangles.Count + 1;
++
++        // Safe to do immediately - these are separate on-texture GameObjects, not the row
++        // GameObject currently mid-dispatch for this very OnDrop callback.
++        RefreshRectangleVisuals();
++        UpdateSummary();
++
++        // The row list itself IS the GameObject hierarchy this callback is executing under, so
++        // destroying and recreating it here would kill the dragged row before OnEndDrag finishes
++        // running on it. Deferred to next frame's Update, once this frame's event dispatch is done.
++        summaryListDirty = true;
+     }
+ }
+diff --git a/Assets/Scripts/UI_Import/UVRectSummaryRow.cs b/Assets/Scripts/UI_Import/UVRectSummaryRow.cs
+new file mode 100644
+index 0000000..2eb4f51
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/UVRectSummaryRow.cs
+@@ -0,0 +1,94 @@
++using UnityEngine;
++using UnityEngine.EventSystems;
++using UnityEngine.UI;
++
++// One draggable row in the Texture UV Rect Workspace's list. Dropping this row onto another
++// row asks the owning TextureUVRectWorkspace to move it into that row's slot; the workspace
++// renumbers everything to match the new order and rebuilds both this list and the on-texture
++// outlines/labels from scratch, so this component only ever deals with a single drag gesture
++// at a time and never has to reconcile its own state against a stale id afterward.
++public class UVRectSummaryRow : MonoBehaviour, IPointerEnterHandler, IPointerExitHandler,
++    IBeginDragHandler, IDragHandler, IEndDragHandler, IDropHandler
++{
++    private TextureUVRectWorkspace workspace;
++    private int rectId;
++    private Image background;
++    private CanvasGroup canvasGroup;
++    private Canvas rootCanvas;
++    private Transform originalParent;
++    private int originalSiblingIndex;
++
++    public void Bind(TextureUVRectWorkspace owner, int id, Image backgroundImage, CanvasGroup group)
++    {
++        workspace = owner;
++        rectId = id;
++        background = backgroundImage;
++        canvasGroup = group;
++        ApplyNormalSkin();
++    }
++
++    void ApplyNormalSkin()
++    {
++        if (background == null) return;
++        Sprite sprite = UITheme.FineEdgeSprite;
++        if (sprite == null) return;
++        background.sprite = sprite;
++        background.type = Image.Type.Sliced;
++        background.color = Color.white;
++    }
++
++    void ApplyHoverSkin()
++    {
++        if (background == null) return;
++        Sprite sprite = UITheme.FineGlowSprite;
++        if (sprite == null) return;
++        background.sprite = sprite;
++        background.type = Image.Type.Sliced;
++        background.color = Color.white;
++    }
++
++    public void OnPointerEnter(PointerEventData eventData) => ApplyHoverSkin();
++    public void OnPointerExit(PointerEventData eventData) => ApplyNormalSkin();
++
++    public void OnBeginDrag(PointerEventData eventData)
++    {
++        originalParent = transform.parent;
++        originalSiblingIndex = transform.GetSiblingIndex();
++        if (rootCanvas == null) rootCanvas = GetComponentInParent<Canvas>();
++
++        // Dropping raycasts through this row while it's being dragged is what lets the row
++        // underneath the pointer receive its own OnPointerEnter/OnDrop - without this, the
++        // dragged row would just keep blocking itself as the closest raycast target.
++        if (canvasGroup != null) canvasGroup.blocksRaycasts = false;
++
++        if (rootCanvas != null) transform.SetParent(rootCanvas.transform, true);
++        transform.SetAsLastSibling();
++        ApplyHoverSkin();
++    }
++
++    public void OnDrag(PointerEventData eventData)
++    {
++        transform.position = eventData.position;
++    }
++
++    public void OnEndDrag(PointerEventData eventData)
++    {
++        if (canvasGroup != null) canvasGroup.blocksRaycasts = true;
++        if (originalParent != null)
++        {
++            transform.SetParent(originalParent, false);
++            transform.SetSiblingIndex(originalSiblingIndex);
++        }
++        ApplyNormalSkin();
++    }
++
++    public void OnDrop(PointerEventData eventData)
++    {
++        GameObject draggedGO = eventData.pointerDrag;
++        if (draggedGO == null) return;
++        UVRectSummaryRow draggedRow = draggedGO.GetComponent<UVRectSummaryRow>();
++        if (draggedRow == null || draggedRow == this) return;
++
++        workspace?.ReorderRectangle(draggedRow.rectId, rectId);
++    }
++}
