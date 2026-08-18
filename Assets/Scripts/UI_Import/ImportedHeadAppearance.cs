@@ -7,28 +7,19 @@ using UnityEngine;
 // material, and an optional user-selected albedo can then be applied to that material.
 public static class ImportedHeadAppearance
 {
+    private const string DefaultMaterialResource = "DefaultImportedHead";
     private static readonly Color DefaultGrey = new Color(0.55f, 0.55f, 0.55f, 1f);
 
     public static bool ApplyDefaultMaterial(GameObject root)
     {
         if (root == null) return false;
 
-        Shader shader = FindViewportShader();
-        if (shader == null)
+        Material material = CreateDefaultMaterialInstance();
+        if (material == null)
         {
-            Debug.LogWarning("Could not find a standard shader for the current render pipeline.");
+            Debug.LogWarning("Could not create the imported-head fallback material.");
             return false;
         }
-
-        Material material = new Material(shader)
-        {
-            name = "HairBrush Imported Head"
-        };
-
-        SetBaseColor(material, DefaultGrey);
-        SetBaseMap(material, null);
-        if (material.HasProperty("_Metallic")) material.SetFloat("_Metallic", 0f);
-        if (material.HasProperty("_Smoothness")) material.SetFloat("_Smoothness", 0.3f);
 
         Renderer[] renderers = root.GetComponentsInChildren<Renderer>(true);
         foreach (Renderer renderer in renderers)
@@ -131,6 +122,42 @@ public static class ImportedHeadAppearance
 
         StatusToast.Show("Albedo applied: " + Path.GetFileName(texturePath));
         return true;
+    }
+
+    private static Material CreateDefaultMaterialInstance()
+    {
+        // Loading a real material asset from Resources creates a hard build-time reference to
+        // URP/Lit. This prevents Unity's Player build shader stripping from removing the shader,
+        // which otherwise produces a magenta imported head until/after the albedo prompt.
+        Material template = Resources.Load<Material>(DefaultMaterialResource);
+        if (template != null && template.shader != null && template.shader.isSupported)
+        {
+            Material instance = new Material(template)
+            {
+                name = "HairBrush Imported Head"
+            };
+            ConfigureDefaultMaterial(instance);
+            return instance;
+        }
+
+        // Keep Shader.Find only as a defensive fallback for unusual project configurations.
+        Shader shader = FindViewportShader();
+        if (shader == null || !shader.isSupported) return null;
+
+        Material fallback = new Material(shader)
+        {
+            name = "HairBrush Imported Head"
+        };
+        ConfigureDefaultMaterial(fallback);
+        return fallback;
+    }
+
+    private static void ConfigureDefaultMaterial(Material material)
+    {
+        SetBaseColor(material, DefaultGrey);
+        SetBaseMap(material, null);
+        if (material.HasProperty("_Metallic")) material.SetFloat("_Metallic", 0f);
+        if (material.HasProperty("_Smoothness")) material.SetFloat("_Smoothness", 0.3f);
     }
 
     private static Shader FindViewportShader()
