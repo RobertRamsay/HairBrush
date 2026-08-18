@@ -131,6 +131,9 @@ public class GroupUVRandomButtonAuthority : MonoBehaviour
     static bool IsRandomButton(Button button)
     {
         if (button == null) return false;
+        // The variance rows' reroll buttons style themselves and must not be touched here -
+        // matching them by label is what let this script overwrite their text/styling.
+        if (button.gameObject.name == "RANDOMIZEButton") return false;
         if (button.gameObject.name == "RButton" || button.gameObject.name == "GroupUVRandomSeedButton") return true;
         TextMeshProUGUI label = button.GetComponentInChildren<TextMeshProUGUI>(true);
         if (label == null || label.text == null) return false;
@@ -189,8 +192,10 @@ public class GroupUVRandomButtonAuthority : MonoBehaviour
         TextMeshProUGUI label = button.GetComponentInChildren<TextMeshProUGUI>(true);
         if (label != null)
         {
-            label.text = "R";
-            label.fontSize = Mathf.Max(label.fontSize, 14f);
+            // "RANDOMIZE", matching the variance rows. This block previously stamped "R" every
+            // pass, which is what kept reverting the label after other scripts set the full word.
+            label.text = "RANDOMIZE";
+            label.fontSize = 11f;
             label.fontStyle = FontStyles.Bold;
             label.alignment = TextAlignmentOptions.Center;
             label.raycastTarget = false;

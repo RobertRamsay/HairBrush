@@ -174,6 +174,8 @@ public class GroupUVSeedButtonFix : MonoBehaviour
     static bool IsRandomButton(Button candidate)
     {
         if (candidate == null) return false;
+        // Never touch the variance rows' self-styled reroll buttons.
+        if (candidate.gameObject.name == "RANDOMIZEButton") return false;
         if (candidate.gameObject.name == "RButton" || candidate.gameObject.name == "GroupUVRandomSeedButton") return true;
         TextMeshProUGUI label = candidate.GetComponentInChildren<TextMeshProUGUI>(true);
         if (label == null) return false;
