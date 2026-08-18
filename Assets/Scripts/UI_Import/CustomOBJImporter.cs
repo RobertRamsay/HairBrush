@@ -12,6 +12,7 @@ public class ImportedOBJMetadata : MonoBehaviour
     public float appliedScale = 1f;
     public string sourcePath;
     public bool sourceXMirroredOnImport;
+    public bool hasUV0;
 }
 
 public static class CustomOBJImporter
@@ -27,6 +28,7 @@ public static class CustomOBJImporter
         List<Vector3> sourcePositions = new List<Vector3>();
         List<Vector2> sourceUVs = new List<Vector2>();
         List<int> triangles = new List<int>();
+        bool usedSourceUV = false;
 
         // OBJ indexes position/UV/normal independently per face-vertex, but Unity's Mesh needs
         // one flat, parallel array per attribute - the same position can legitimately carry a
@@ -70,6 +72,9 @@ public static class CustomOBJImporter
                     int uvIndex = -1;
                     if (vertexData.Length > 1 && vertexData[1].Length > 0)
                         uvIndex = int.Parse(vertexData[1]) - 1;
+
+                    if (uvIndex >= 0 && uvIndex < sourceUVs.Count)
+                        usedSourceUV = true;
 
                     // Pack both indices into one key - posIndex alone isn't enough since the same
                     // position can appear with a different UV on another face.
@@ -132,9 +137,10 @@ public static class CustomOBJImporter
         metadata.appliedScale = 1f;
         metadata.sourcePath = path;
         metadata.sourceXMirroredOnImport = true;
+        metadata.hasUV0 = usedSourceUV;
 
         MeshFilter mf = go.AddComponent<MeshFilter>();
-        MeshRenderer mr = go.AddComponent<MeshRenderer>();
+        go.AddComponent<MeshRenderer>();
         MeshCollider mc = go.AddComponent<MeshCollider>();
         mf.mesh = mesh;
 
@@ -154,30 +160,9 @@ public static class CustomOBJImporter
         mc.sharedMesh = null;
         mc.sharedMesh = mesh;
 
-        // A dedicated head material (with its own texture) can be provided at
-        // Resources/BodyShaderHead.mat - if present, imported models use it directly rather
-        // than the generic untextured fallback below. This is specifically for the base head
-        // model; a future pass can generalise this per-import once there's more than one.
-        Material headMaterial = Resources.Load<Material>("BodyShaderHead");
-        if (headMaterial != null)
-        {
-            mr.material = headMaterial;
-            return go;
-        }
-
-        Shader defaultShader;
-        if (UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline != null)
-        {
-            defaultShader = Shader.Find("Universal Render Pipeline/Lit");
-            if (defaultShader == null) defaultShader = Shader.Find("HDRP/Lit");
-        }
-        else
-        {
-            defaultShader = Shader.Find("Standard");
-        }
-
-        if (defaultShader != null) mr.material = new Material(defaultShader);
-        else Debug.LogWarning("Could not find a standard shader for the current render pipeline.");
+        // Ignore source/imported materials. HairBrush owns a single predictable viewport
+        // appearance for imported heads and optionally adds a user-selected albedo afterwards.
+        ImportedHeadAppearance.ApplyDefaultMaterial(go);
 
         return go;
     }
