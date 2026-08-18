@@ -1,0 +1,29 @@
+diff --git a/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs b/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs
+index 08dab80..a2b7746 100644
+--- a/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs
++++ b/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs
+@@ -427,11 +427,11 @@ public class TextureUVRectWorkspace : MonoBehaviour
+         contentRect.anchoredPosition = Vector2.zero;
+         contentRect.sizeDelta = Vector2.zero;
+         VerticalLayoutGroup contentLayout = contentGO.GetComponent<VerticalLayoutGroup>();
+-        contentLayout.spacing = 3f;
++        contentLayout.spacing = 4f;
+         contentLayout.padding = new RectOffset(2, 2, 2, 2);
+         contentLayout.childControlWidth = true;
+         contentLayout.childForceExpandWidth = true;
+-        contentLayout.childControlHeight = false;
++        contentLayout.childControlHeight = true;
+         ContentSizeFitter fitter = contentGO.GetComponent<ContentSizeFitter>();
+         fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+         fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+@@ -897,8 +897,8 @@ public class TextureUVRectWorkspace : MonoBehaviour
+         GameObject rowGO = new GameObject("Row_" + id, typeof(RectTransform), typeof(Image), typeof(CanvasGroup), typeof(LayoutElement), typeof(UVRectSummaryRow));
+         rowGO.transform.SetParent(summaryListRoot, false);
+         LayoutElement rowLayout = rowGO.GetComponent<LayoutElement>();
+-        rowLayout.preferredHeight = 24f;
+-        rowLayout.minHeight = 24f;
++        rowLayout.preferredHeight = 18f;
++        rowLayout.minHeight = 18f;
+ 
+         Image rowImage = rowGO.GetComponent<Image>();
+         rowImage.raycastTarget = true;
