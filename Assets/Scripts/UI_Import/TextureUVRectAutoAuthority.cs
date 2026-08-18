@@ -57,15 +57,20 @@ public class TextureUVRectAutoAuthority : MonoBehaviour
             .FirstOrDefault(t => t != null && t.name == "Buttons" && t.parent != null && t.parent.name == "UVWorkspaceSection");
         if (buttons == null) return;
 
-        Transform existing = buttons.Find("AUTO");
+        Transform existing = buttons.GetComponentsInChildren<Transform>(true).FirstOrDefault(t => t != null && t.name == "AUTO");
         if (existing != null)
         {
             autoButton = existing.gameObject;
             return;
         }
 
+        // CLEAR now lives inside its own row (buttons layout is 2-per-row), so AUTO joins
+        // that same row rather than parenting directly under the top-level Buttons container.
+        Transform clear = buttons.GetComponentsInChildren<Transform>(true).FirstOrDefault(t => t != null && t.name == "CLEAR");
+        Transform targetRow = clear != null ? clear.parent : buttons;
+
         autoButton = new GameObject("AUTO", typeof(RectTransform), typeof(Image), typeof(Button));
-        autoButton.transform.SetParent(buttons, false);
+        autoButton.transform.SetParent(targetRow, false);
         autoButton.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 28f);
         autoButton.GetComponent<Image>().color = new Color(.20f, .25f, .32f, 1f);
         autoButton.GetComponent<Button>().onClick.AddListener(AutoDetectRectangles);
@@ -85,8 +90,7 @@ public class TextureUVRectAutoAuthority : MonoBehaviour
         text.color = Color.white;
         text.raycastTarget = false;
 
-        // Familiar order: DRAWING | UNDO LAST | AUTO | CLEAR.
-        Transform clear = buttons.Find("CLEAR");
+        // Familiar order: DRAWING | UNDO LAST / AUTO | CLEAR.
         if (clear != null)
             autoButton.transform.SetSiblingIndex(clear.GetSiblingIndex());
     }

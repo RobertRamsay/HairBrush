@@ -310,7 +310,7 @@ public class TextureUVRectWorkspace : MonoBehaviour
         {
             section = existing.gameObject;
             summaryText = section.transform.Find("Summary")?.GetComponent<TextMeshProUGUI>();
-            Transform draw = section.transform.Find("Buttons/DRAW UV RECT");
+            Transform draw = section.transform.Find("Buttons/Row1/DRAW UV RECT");
             drawButtonImage = draw != null ? draw.GetComponent<Image>() : null;
             drawButtonText = draw != null ? draw.GetComponentInChildren<TextMeshProUGUI>(true) : null;
             return;
@@ -319,8 +319,8 @@ public class TextureUVRectWorkspace : MonoBehaviour
         section = new GameObject("UVWorkspaceSection", typeof(RectTransform), typeof(LayoutElement), typeof(VerticalLayoutGroup));
         section.transform.SetParent(texturePanel.transform, false);
         LayoutElement sectionLayout = section.GetComponent<LayoutElement>();
-        sectionLayout.preferredHeight = 356f;
-        sectionLayout.minHeight = 356f;
+        sectionLayout.preferredHeight = 366f;
+        sectionLayout.minHeight = 366f;
         VerticalLayoutGroup vertical = section.GetComponent<VerticalLayoutGroup>();
         vertical.spacing = 4f;
         vertical.padding = new RectOffset(0, 0, 2, 2);
@@ -335,25 +335,32 @@ public class TextureUVRectWorkspace : MonoBehaviour
         instructions.alignment = TextAlignmentOptions.TopLeft;
         instructions.textWrappingMode = TextWrappingModes.Normal;
 
-        GameObject buttons = new GameObject("Buttons", typeof(RectTransform), typeof(GridLayoutGroup));
+        GameObject buttons = new GameObject("Buttons", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
         buttons.transform.SetParent(section.transform, false);
-        buttons.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 66f);
-        GridLayoutGroup grid = buttons.GetComponent<GridLayoutGroup>();
-        grid.cellSize = new Vector2(261f, 30f);
-        grid.spacing = new Vector2(8f, 6f);
-        grid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
-        grid.constraintCount = 2;
-        grid.startCorner = GridLayoutGroup.Corner.UpperLeft;
-        grid.startAxis = GridLayoutGroup.Axis.Horizontal;
-        grid.childAlignment = TextAnchor.MiddleCenter;
+        LayoutElement buttonsLayout = buttons.GetComponent<LayoutElement>();
+        buttonsLayout.preferredHeight = 66f;
+        buttonsLayout.minHeight = 66f;
+        VerticalLayoutGroup buttonsGroup = buttons.GetComponent<VerticalLayoutGroup>();
+        buttonsGroup.spacing = 6f;
+        buttonsGroup.childControlWidth = true;
+        buttonsGroup.childForceExpandWidth = true;
+        buttonsGroup.childControlHeight = true;
+        buttonsGroup.childForceExpandHeight = false;
 
-        GameObject drawButton = AddButton(buttons.transform, "DRAW UV RECT", ToggleDrawMode);
+        GameObject row1 = AddButtonRow(buttons.transform, "Row1");
+        GameObject drawButton = AddButton(row1.transform, "DRAW UV RECT", ToggleDrawMode);
         drawButtonImage = drawButton.GetComponent<Image>();
         drawButtonText = drawButton.GetComponentInChildren<TextMeshProUGUI>(true);
-        AddButton(buttons.transform, "UNDO LAST", UndoLastRectangle);
-        AddButton(buttons.transform, "CLEAR", ClearDefinitions);
+        AddButton(row1.transform, "UNDO LAST", UndoLastRectangle);
 
-        summaryText = AddText(section.transform, "Summary", 10.5f, 226f, FontStyles.Normal);
+        GameObject row2 = AddButtonRow(buttons.transform, "Row2");
+        AddButton(row2.transform, "CLEAR", ClearDefinitions);
+
+        GameObject listSpacer = new GameObject("ListSpacer", typeof(RectTransform), typeof(LayoutElement));
+        listSpacer.transform.SetParent(section.transform, false);
+        listSpacer.GetComponent<LayoutElement>().preferredHeight = 10f;
+
+        summaryText = AddText(section.transform, "Summary", 12.5f, 226f, FontStyles.Normal);
         summaryText.gameObject.name = "Summary";
         summaryText.alignment = TextAlignmentOptions.TopLeft;
         summaryText.textWrappingMode = TextWrappingModes.Normal;
@@ -379,6 +386,19 @@ public class TextureUVRectWorkspace : MonoBehaviour
         tmp.color = Color.white;
         tmp.raycastTarget = false;
         return tmp;
+    }
+
+    GameObject AddButtonRow(Transform parent, string rowName)
+    {
+        GameObject row = new GameObject(rowName, typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
+        row.transform.SetParent(parent, false);
+        row.GetComponent<LayoutElement>().preferredHeight = 30f;
+        HorizontalLayoutGroup layout = row.GetComponent<HorizontalLayoutGroup>();
+        layout.spacing = 8f;
+        layout.childControlWidth = true;
+        layout.childForceExpandWidth = true;
+        layout.childControlHeight = true;
+        return row;
     }
 
     GameObject AddButton(Transform parent, string label, UnityEngine.Events.UnityAction action)
