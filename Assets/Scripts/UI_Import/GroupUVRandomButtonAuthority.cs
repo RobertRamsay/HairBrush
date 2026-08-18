@@ -156,49 +156,11 @@ public class GroupUVRandomButtonAuthority : MonoBehaviour
 
     static void StyleButton(Button button)
     {
-        Image image = button.GetComponent<Image>();
-        if (image == null) image = button.gameObject.AddComponent<Image>();
-        image.raycastTarget = true;
-        button.targetGraphic = image;
-
-        // Same bright-teal sliced-sprite treatment as the variance RANDOMIZE button, replacing
-        // the old flat navy ColorBlock so both reroll buttons read as one consistent control.
-        if (UITheme.ButtonNormalSprite != null)
-        {
-            image.sprite = UITheme.ButtonNormalSprite;
-            image.type = Image.Type.Sliced;
-            image.color = button.interactable ? new Color(.62f, 1f, .96f, 1f) : new Color(.62f, 1f, .96f, .45f);
-            button.transition = Selectable.Transition.SpriteSwap;
-            SpriteState state = button.spriteState;
-            state.highlightedSprite = UITheme.ButtonHoverSprite;
-            state.pressedSprite = UITheme.ButtonClickSprite;
-            button.spriteState = state;
-        }
-        else
-        {
-            button.transition = Selectable.Transition.ColorTint;
-            ColorBlock colors = button.colors;
-            colors.normalColor = new Color(.25f, .42f, .58f, 1f);
-            colors.highlightedColor = new Color(.32f, .58f, .78f, 1f);
-            colors.selectedColor = new Color(.30f, .52f, .70f, 1f);
-            colors.pressedColor = new Color(.16f, .36f, .56f, 1f);
-            colors.disabledColor = new Color(.16f, .20f, .24f, .65f);
-            colors.colorMultiplier = 1f;
-            colors.fadeDuration = .06f;
-            button.colors = colors;
-            image.color = button.interactable ? colors.normalColor : colors.disabledColor;
-        }
-
-        TextMeshProUGUI label = button.GetComponentInChildren<TextMeshProUGUI>(true);
-        if (label != null)
-        {
-            // "RANDOMIZE", matching the variance rows. This block previously stamped "R" every
-            // pass, which is what kept reverting the label after other scripts set the full word.
-            label.text = "RANDOMIZE";
-            label.fontSize = 11f;
-            label.fontStyle = FontStyles.Bold;
-            label.alignment = TextAlignmentOptions.Center;
-            label.raycastTarget = false;
-        }
+        // Delegates to the single shared reroll-button style so every RANDOMIZE button in the
+        // app is defined in exactly one place (UITheme.StyleRerollButton). This method used to
+        // carry its own duplicate styling plus a label stamp that fought the other stylers.
+        UITheme.StyleRerollButton(button);
+        if (button != null && button.targetGraphic is Image image)
+            image.color = new Color(.62f, 1f, .96f, button.interactable ? 1f : .45f);
     }
 }

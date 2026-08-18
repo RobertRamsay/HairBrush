@@ -102,7 +102,9 @@ public class GroupUVRangeSliderUIAuthority : MonoBehaviour
         // Seed box narrowed to visually match the variance rows' 78px seed field, freeing the
         // remaining width for the reroll button to carry the full RANDOMIZE label like they do.
         if (seedInput != null) Place(seedInput.transform, 0.16f, 0.31f, 0.00f, 0.46f);
-        Place(random, 0.33f, 0.51f, 0.00f, 0.46f);
+        // Wider and flatter than the seed box's cell so RANDOMIZE fits on one line and the
+        // button reads with the same low-profile proportions as the variance rows' version.
+        Place(random, 0.33f, 0.58f, 0.05f, 0.42f);
 
         MakeTextCompact(rectLabel, 9f, 11f);
         MakeTextCompact(seedLabel, 9f, 10f);
@@ -179,7 +181,7 @@ public class GroupUVRangeSliderUIAuthority : MonoBehaviour
         if (postSlider != null) Place(postSlider.transform, 0.26f, 1.00f, 0.52f, 1.00f);
         Place(seedLabel, 0.00f, 0.18f, 0.00f, 0.48f);
         if (seedInput != null) Place(seedInput.transform, 0.18f, 0.33f, 0.00f, 0.48f);
-        Place(random, 0.35f, 0.53f, 0.00f, 0.48f);
+        Place(random, 0.35f, 0.60f, 0.06f, 0.44f);
 
         MakeTextCompact(rectLabel, 10f, 13f);
         MakeTextCompact(seedLabel, 9f, 11f);

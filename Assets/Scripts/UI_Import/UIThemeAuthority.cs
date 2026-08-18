@@ -48,7 +48,10 @@ public class UIThemeAuthority : MonoBehaviour
             // Buttons that deliberately style themselves (currently the variance RANDOMIZE
             // reroll) opt out of the shared skin here, otherwise this pass overwrites their
             // custom tint with the standard white one the moment they're created.
-            if (button.gameObject.name == "RANDOMIZEButton") continue;
+            // Reroll buttons style themselves through UITheme.StyleRerollButton - the shared
+            // pass must never touch any of them or its label treatment re-truncates the text.
+            string goName = button.gameObject.name;
+            if (goName == "RANDOMIZEButton" || goName == "RButton" || goName == "GroupUVRandomSeedButton") continue;
 
             if (!styledButtons.Contains(button))
             {

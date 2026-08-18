@@ -105,6 +105,43 @@ public static class UITheme
 
     // SpriteSwap transition has no built-in disabled dimming (Unity only auto-dims under
     // ColorTint), so this keeps a visible disabled cue by hand. Cheap - safe to call every poll.
+    // THE single style for every seed-reroll button (variance rows, Group UV row, POST UV row).
+    // All three builders/fixers call this so there is exactly one definition of how a RANDOMIZE
+    // button looks; per-site fallback branches were removed deliberately - one path, one look.
+    public static void StyleRerollButton(Button button)
+    {
+        if (button == null) return;
+
+        Image image = button.GetComponent<Image>();
+        if (image == null) image = button.gameObject.AddComponent<Image>();
+        image.raycastTarget = true;
+        button.targetGraphic = image;
+
+        image.sprite = ButtonNormalSprite;
+        image.type = Image.Type.Sliced;
+        image.color = new Color(.62f, 1f, .96f, 1f);
+        button.transition = Selectable.Transition.SpriteSwap;
+        SpriteState state = button.spriteState;
+        state.highlightedSprite = ButtonHoverSprite;
+        state.pressedSprite = ButtonClickSprite;
+        button.spriteState = state;
+
+        TextMeshProUGUI label = button.GetComponentInChildren<TextMeshProUGUI>(true);
+        if (label != null)
+        {
+            label.text = "RANDOMIZE";
+            label.fontStyle = FontStyles.Bold;
+            label.enableAutoSizing = false;
+            label.fontSize = 11f;
+            label.alignment = TextAlignmentOptions.Center;
+            label.enableWordWrapping = false;
+            label.overflowMode = TextOverflowModes.Overflow;
+            label.margin = Vector4.zero;
+            label.color = TextBright;
+            label.raycastTarget = false;
+        }
+    }
+
     public static void RefreshInteractable(Button button)
     {
         if (button == null) return;

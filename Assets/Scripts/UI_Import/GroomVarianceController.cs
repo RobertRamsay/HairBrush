@@ -591,28 +591,10 @@ public class GroomVarianceController : MonoBehaviour
         go.transform.SetParent(p, false);
         go.GetComponent<RectTransform>().sizeDelta = new Vector2(width, height);
 
-        // Deliberately self-styled with a bright teal tint (UIThemeAuthority skips this button
-        // by name so the shared white-tint pass doesn't overwrite it). The previous cyan leaned
-        // blue against the teal sprite; this tint stays in the teal family, just brighter.
-        Image image = go.GetComponent<Image>();
-        Button button = go.GetComponent<Button>();
-        if (UITheme.ButtonNormalSprite != null)
-        {
-            image.sprite = UITheme.ButtonNormalSprite;
-            image.type = Image.Type.Sliced;
-            image.color = new Color(.62f, 1f, .96f, 1f);
-            button.transition = Selectable.Transition.SpriteSwap;
-            SpriteState state = button.spriteState;
-            state.highlightedSprite = UITheme.ButtonHoverSprite;
-            state.pressedSprite = UITheme.ButtonClickSprite;
-            button.spriteState = state;
-        }
-        else
-        {
-            image.color = new Color(.27f, .34f, .20f);
-        }
-
         TextMeshProUGUI text = AddText(go.transform, label, 11, width); RectTransform tr = text.rectTransform; tr.anchorMin = Vector2.zero; tr.anchorMax = Vector2.one; tr.offsetMin = Vector2.zero; tr.offsetMax = Vector2.zero;
+
+        // One shared style definition for all reroll buttons - see UITheme.StyleRerollButton.
+        UITheme.StyleRerollButton(go.GetComponent<Button>());
         return go;
     }
 }
