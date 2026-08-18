@@ -337,8 +337,8 @@ public class TextureUVRectWorkspace : MonoBehaviour
         section = new GameObject("UVWorkspaceSection", typeof(RectTransform), typeof(LayoutElement), typeof(VerticalLayoutGroup));
         section.transform.SetParent(texturePanel.transform, false);
         LayoutElement sectionLayout = section.GetComponent<LayoutElement>();
-        sectionLayout.preferredHeight = 381f;
-        sectionLayout.minHeight = 381f;
+        sectionLayout.preferredHeight = 781f;
+        sectionLayout.minHeight = 781f;
         VerticalLayoutGroup vertical = section.GetComponent<VerticalLayoutGroup>();
         vertical.spacing = 4f;
         vertical.padding = new RectOffset(0, 0, 2, 2);
@@ -417,11 +417,15 @@ public class TextureUVRectWorkspace : MonoBehaviour
         GameObject scrollGO = new GameObject("SummaryList", typeof(RectTransform), typeof(Image), typeof(ScrollRect), typeof(RectMask2D), typeof(LayoutElement));
         scrollGO.transform.SetParent(parent, false);
         LayoutElement scrollLayout = scrollGO.GetComponent<LayoutElement>();
-        scrollLayout.preferredHeight = 200f;
-        scrollLayout.minHeight = 200f;
+        scrollLayout.preferredHeight = 600f;
+        scrollLayout.minHeight = 600f;
         Image scrollBackground = scrollGO.GetComponent<Image>();
         scrollBackground.color = Color.clear;
         scrollBackground.raycastTarget = true;
+        // A hard mask edge made the last visible row look chopped off mid-line; a soft vertical
+        // fade reads as "content continues here" instead.
+        RectMask2D scrollMask = scrollGO.GetComponent<RectMask2D>();
+        scrollMask.softness = new Vector2Int(0, 27);
 
         GameObject contentGO = new GameObject("Content", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
         contentGO.transform.SetParent(scrollGO.transform, false);
