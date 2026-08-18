@@ -1,0 +1,294 @@
+diff --git a/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs b/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs
+index a2b7746..e47d9a0 100644
+--- a/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs
++++ b/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs
+@@ -19,6 +19,7 @@ public class TextureUVRectWorkspace : MonoBehaviour
+     private readonly List<UVRectSaveData> rectangles = new();
+     private readonly Dictionary<int, LineRenderer> rectangleLines = new();
+     private readonly Dictionary<int, TextMeshPro> rectangleLabels = new();
++    private readonly Dictionary<int, UVRectSummaryRow> summaryRows = new();
+ 
+     private ModelViewer viewer;
+     private GameObject texturePanel;
+@@ -38,6 +39,8 @@ public class TextureUVRectWorkspace : MonoBehaviour
+     private LineRenderer planeOutlineLine;
+     private Material lineMaterial;
+     private Material outlineMaterial;
++    private Material hoverLineMaterial;
++    private int hoveredRectId = -1;
+ 
+     private bool wasActive;
+     private bool drawMode;
+@@ -92,6 +95,8 @@ public class TextureUVRectWorkspace : MonoBehaviour
+         visualRoot.SetActive(true);
+         UpdateOutlineVisual();
+         HandleDrawInput();
++        UpdateTextureHoverDetection();
++        UpdateHoverPulse();
+         UpdateSummary();
+ 
+         // Deferred from ReorderRectangle - see its comment for why the row list can't safely
+@@ -114,6 +119,7 @@ public class TextureUVRectWorkspace : MonoBehaviour
+         if (wasActive) ExitWorkspace();
+         if (lineMaterial != null) Destroy(lineMaterial);
+         if (outlineMaterial != null) Destroy(outlineMaterial);
++        if (hoverLineMaterial != null) Destroy(hoverLineMaterial);
+     }
+ 
+     void Resolve()
+@@ -334,8 +340,8 @@ public class TextureUVRectWorkspace : MonoBehaviour
+         section = new GameObject("UVWorkspaceSection", typeof(RectTransform), typeof(LayoutElement), typeof(VerticalLayoutGroup));
+         section.transform.SetParent(texturePanel.transform, false);
+         LayoutElement sectionLayout = section.GetComponent<LayoutElement>();
+-        sectionLayout.preferredHeight = 366f;
+-        sectionLayout.minHeight = 366f;
++        sectionLayout.preferredHeight = 381f;
++        sectionLayout.minHeight = 381f;
+         VerticalLayoutGroup vertical = section.GetComponent<VerticalLayoutGroup>();
+         vertical.spacing = 4f;
+         vertical.padding = new RectOffset(0, 0, 2, 2);
+@@ -353,8 +359,8 @@ public class TextureUVRectWorkspace : MonoBehaviour
+         GameObject buttons = new GameObject("Buttons", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
+         buttons.transform.SetParent(section.transform, false);
+         LayoutElement buttonsLayout = buttons.GetComponent<LayoutElement>();
+-        buttonsLayout.preferredHeight = 66f;
+-        buttonsLayout.minHeight = 66f;
++        buttonsLayout.preferredHeight = 75f;
++        buttonsLayout.minHeight = 75f;
+         VerticalLayoutGroup buttonsGroup = buttons.GetComponent<VerticalLayoutGroup>();
+         buttonsGroup.spacing = 6f;
+         buttonsGroup.childControlWidth = true;
+@@ -450,7 +456,7 @@ public class TextureUVRectWorkspace : MonoBehaviour
+     {
+         GameObject row = new GameObject(rowName, typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
+         row.transform.SetParent(parent, false);
+-        row.GetComponent<LayoutElement>().preferredHeight = 30f;
++        row.GetComponent<LayoutElement>().preferredHeight = 34.5f;
+         HorizontalLayoutGroup layout = row.GetComponent<HorizontalLayoutGroup>();
+         layout.spacing = 8f;
+         layout.childControlWidth = true;
+@@ -463,7 +469,7 @@ public class TextureUVRectWorkspace : MonoBehaviour
+     {
+         GameObject go = new GameObject(label, typeof(RectTransform), typeof(Image), typeof(Button));
+         go.transform.SetParent(parent, false);
+-        go.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 28f);
++        go.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 32.2f);
+         Image image = go.GetComponent<Image>();
+         image.color = new Color(.20f, .25f, .32f, 1f);
+         Button button = go.GetComponent<Button>();
+@@ -588,6 +594,99 @@ public class TextureUVRectWorkspace : MonoBehaviour
+         return Rect.MinMaxRect(xMin, yMin, xMax, yMax);
+     }
+ 
++    // Runs every frame the workspace is active (independent of draw mode) so pointing at an
++    // already-drawn rectangle on the texture highlights it, the same way hovering its row does.
++    void UpdateTextureHoverDetection()
++    {
++        if (dragging || previewPlane == null || viewer == null || viewer.mainCamera == null || Mouse.current == null)
++        {
++            if (hoveredRectId >= 0) ClearHoveredRect(hoveredRectId);
++            return;
++        }
++        if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
++        {
++            if (hoveredRectId >= 0) ClearHoveredRect(hoveredRectId);
++            return;
++        }
++        if (!TryGetPlaneUV(out Vector2 uv))
++        {
++            if (hoveredRectId >= 0) ClearHoveredRect(hoveredRectId);
++            return;
++        }
++
++        int found = -1;
++        // Checked back-to-front so overlapping rectangles favor whichever was drawn most
++        // recently - the one actually visible "on top" - matching where the person is pointing.
++        for (int i = rectangles.Count - 1; i >= 0; i--)
++        {
++            UVRectSaveData r = rectangles[i];
++            if (r == null) continue;
++            if (uv.x >= r.uMin && uv.x <= r.uMax && uv.y >= r.vMin && uv.y <= r.vMax)
++            {
++                found = r.id;
++                break;
++            }
++        }
++
++        if (found >= 0) SetHoveredRect(found);
++        else if (hoveredRectId >= 0) ClearHoveredRect(hoveredRectId);
++    }
++
++    void EnsureHoverLineMaterial()
++    {
++        if (hoverLineMaterial != null) return;
++        Shader shader = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Unlit/Color") ?? Shader.Find("Sprites/Default");
++        if (shader == null) return;
++        hoverLineMaterial = new Material(shader) { name = "TextureUVRectHoverLineMaterial" };
++    }
++
++    // Gentle pulse rather than a flat highlight colour, so "flash" reads as an active cue you
++    // can spot at a glance rather than just another static outline colour among the others.
++    void UpdateHoverPulse()
++    {
++        if (hoveredRectId < 0 || hoverLineMaterial == null) return;
++        float pulse = .55f + .45f * Mathf.Sin(Time.unscaledTime * 6f);
++        Color color = Color.Lerp(new Color(1f, .95f, .3f, 1f), Color.white, pulse);
++        if (hoverLineMaterial.HasProperty("_BaseColor")) hoverLineMaterial.SetColor("_BaseColor", color);
++        if (hoverLineMaterial.HasProperty("_Color")) hoverLineMaterial.SetColor("_Color", color);
++    }
++
++    // Shared entry point for both hover directions: UpdateTextureHoverDetection calls this when
++    // the mouse is over a drawn rectangle, and UVRectSummaryRow calls this when its row is
++    // hovered - either source drives the same highlight state, so they can never fight.
++    public void SetHoveredRect(int id)
++    {
++        if (hoveredRectId == id) return;
++        ClearHoverVisual();
++        hoveredRectId = id;
++        ApplyHoverVisual(id);
++    }
++
++    public void ClearHoveredRect(int id)
++    {
++        if (hoveredRectId != id) return;
++        ClearHoverVisual();
++        hoveredRectId = -1;
++    }
++
++    void ApplyHoverVisual(int id)
++    {
++        EnsureHoverLineMaterial();
++        if (hoverLineMaterial != null && rectangleLines.TryGetValue(id, out LineRenderer line) && line != null)
++            line.material = hoverLineMaterial;
++        if (summaryRows.TryGetValue(id, out UVRectSummaryRow row) && row != null)
++            row.SetExternalHighlight(true);
++    }
++
++    void ClearHoverVisual()
++    {
++        if (hoveredRectId < 0) return;
++        if (lineMaterial != null && rectangleLines.TryGetValue(hoveredRectId, out LineRenderer line) && line != null)
++            line.material = lineMaterial;
++        if (summaryRows.TryGetValue(hoveredRectId, out UVRectSummaryRow row) && row != null)
++            row.SetExternalHighlight(false);
++    }
++
+     void EnsureVisualRoot()
+     {
+         if (visualRoot != null) return;
+@@ -751,6 +850,10 @@ public class TextureUVRectWorkspace : MonoBehaviour
+ 
+     void RefreshRectangleVisuals()
+     {
++        // Whatever was hovered is about to be destroyed and recreated below, so any stored
++        // reference to it is stale regardless of source (texture hover or row hover).
++        hoveredRectId = -1;
++
+         EnsureVisualRoot();
+         foreach (LineRenderer line in rectangleLines.Values)
+             if (line != null) Destroy(line.gameObject);
+@@ -864,7 +967,7 @@ public class TextureUVRectWorkspace : MonoBehaviour
+         if (summaryText == null) return;
+         summaryText.text = rectangles.Count == 0
+             ? "UV Rects: 0  •  click DRAW UV RECT, then drag on the texture"
+-            : "UV Rects: " + rectangles.Count + "  •  drag a row to reorder";
++            : "UV Rects: " + rectangles.Count + "  (DRAG to RE-ORDER)";
+     }
+ 
+     // Header text plus the row list, for the specific moments the data actually changed
+@@ -882,6 +985,7 @@ public class TextureUVRectWorkspace : MonoBehaviour
+         if (summaryListRoot == null) return;
+         for (int i = summaryListRoot.childCount - 1; i >= 0; i--)
+             Destroy(summaryListRoot.GetChild(i).gameObject);
++        summaryRows.Clear();
+ 
+         List<UVRectSaveData> ordered = rectangles.OrderBy(r => r.id).ToList();
+         foreach (UVRectSaveData r in ordered)
+@@ -921,6 +1025,7 @@ public class TextureUVRectWorkspace : MonoBehaviour
+ 
+         UVRectSummaryRow row = rowGO.GetComponent<UVRectSummaryRow>();
+         row.Bind(this, id, rowImage, rowGO.GetComponent<CanvasGroup>());
++        summaryRows[id] = row;
+     }
+ 
+     // Called by UVRectSummaryRow.OnDrop. Moves the dragged rectangle into the dropped-on
+diff --git a/Assets/Scripts/UI_Import/UVRectSummaryRow.cs b/Assets/Scripts/UI_Import/UVRectSummaryRow.cs
+index 2eb4f51..af1db69 100644
+--- a/Assets/Scripts/UI_Import/UVRectSummaryRow.cs
++++ b/Assets/Scripts/UI_Import/UVRectSummaryRow.cs
+@@ -17,6 +17,8 @@ public class UVRectSummaryRow : MonoBehaviour, IPointerEnterHandler, IPointerExi
+     private Canvas rootCanvas;
+     private Transform originalParent;
+     private int originalSiblingIndex;
++    private bool pointerHovered;
++    private bool externallyHighlighted;
+ 
+     public void Bind(TextureUVRectWorkspace owner, int id, Image backgroundImage, CanvasGroup group)
+     {
+@@ -24,6 +26,8 @@ public class UVRectSummaryRow : MonoBehaviour, IPointerEnterHandler, IPointerExi
+         rectId = id;
+         background = backgroundImage;
+         canvasGroup = group;
++        pointerHovered = false;
++        externallyHighlighted = false;
+         ApplyNormalSkin();
+     }
+ 
+@@ -47,8 +51,36 @@ public class UVRectSummaryRow : MonoBehaviour, IPointerEnterHandler, IPointerExi
+         background.color = Color.white;
+     }
+ 
+-    public void OnPointerEnter(PointerEventData eventData) => ApplyHoverSkin();
+-    public void OnPointerExit(PointerEventData eventData) => ApplyNormalSkin();
++    // Combines the row's own mouse-hover state with a highlight driven externally by the
++    // workspace (when the corresponding on-texture rectangle is hovered instead), so neither
++    // source can stomp on a highlight the other source still wants active.
++    void RefreshSkin()
++    {
++        if (pointerHovered || externallyHighlighted) ApplyHoverSkin();
++        else ApplyNormalSkin();
++    }
++
++    // Called by TextureUVRectWorkspace when this row's rectangle is hovered on the texture
++    // instead of directly on this row - the other half of the two-way hover sync.
++    public void SetExternalHighlight(bool on)
++    {
++        externallyHighlighted = on;
++        RefreshSkin();
++    }
++
++    public void OnPointerEnter(PointerEventData eventData)
++    {
++        pointerHovered = true;
++        RefreshSkin();
++        workspace?.SetHoveredRect(rectId);
++    }
++
++    public void OnPointerExit(PointerEventData eventData)
++    {
++        pointerHovered = false;
++        RefreshSkin();
++        workspace?.ClearHoveredRect(rectId);
++    }
+ 
+     public void OnBeginDrag(PointerEventData eventData)
+     {
+@@ -64,6 +96,10 @@ public class UVRectSummaryRow : MonoBehaviour, IPointerEnterHandler, IPointerExi
+         if (rootCanvas != null) transform.SetParent(rootCanvas.transform, true);
+         transform.SetAsLastSibling();
+         ApplyHoverSkin();
++
++        // The dragged row is about to move away from under the cursor's original spot, so its
++        // own hover-driven on-texture flash no longer applies for the duration of the drag.
++        workspace?.ClearHoveredRect(rectId);
+     }
+ 
+     public void OnDrag(PointerEventData eventData)
+@@ -74,6 +110,7 @@ public class UVRectSummaryRow : MonoBehaviour, IPointerEnterHandler, IPointerExi
+     public void OnEndDrag(PointerEventData eventData)
+     {
+         if (canvasGroup != null) canvasGroup.blocksRaycasts = true;
++        pointerHovered = false;
+         if (originalParent != null)
+         {
+             transform.SetParent(originalParent, false);

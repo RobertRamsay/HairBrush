@@ -17,6 +17,8 @@ public class UVRectSummaryRow : MonoBehaviour, IPointerEnterHandler, IPointerExi
     private Canvas rootCanvas;
     private Transform originalParent;
     private int originalSiblingIndex;
+    private bool pointerHovered;
+    private bool externallyHighlighted;
 
     public void Bind(TextureUVRectWorkspace owner, int id, Image backgroundImage, CanvasGroup group)
     {
@@ -24,6 +26,8 @@ public class UVRectSummaryRow : MonoBehaviour, IPointerEnterHandler, IPointerExi
         rectId = id;
         background = backgroundImage;
         canvasGroup = group;
+        pointerHovered = false;
+        externallyHighlighted = false;
         ApplyNormalSkin();
     }
 
@@ -47,8 +51,36 @@ public class UVRectSummaryRow : MonoBehaviour, IPointerEnterHandler, IPointerExi
         background.color = Color.white;
     }
 
-    public void OnPointerEnter(PointerEventData eventData) => ApplyHoverSkin();
-    public void OnPointerExit(PointerEventData eventData) => ApplyNormalSkin();
+    // Combines the row's own mouse-hover state with a highlight driven externally by the
+    // workspace (when the corresponding on-texture rectangle is hovered instead), so neither
+    // source can stomp on a highlight the other source still wants active.
+    void RefreshSkin()
+    {
+        if (pointerHovered || externallyHighlighted) ApplyHoverSkin();
+        else ApplyNormalSkin();
+    }
+
+    // Called by TextureUVRectWorkspace when this row's rectangle is hovered on the texture
+    // instead of directly on this row - the other half of the two-way hover sync.
+    public void SetExternalHighlight(bool on)
+    {
+        externallyHighlighted = on;
+        RefreshSkin();
+    }
+
+    public void OnPointerEnter(PointerEventData eventData)
+    {
+        pointerHovered = true;
+        RefreshSkin();
+        workspace?.SetHoveredRect(rectId);
+    }
+
+    public void OnPointerExit(PointerEventData eventData)
+    {
+        pointerHovered = false;
+        RefreshSkin();
+        workspace?.ClearHoveredRect(rectId);
+    }
 
     public void OnBeginDrag(PointerEventData eventData)
     {
@@ -64,6 +96,10 @@ public class UVRectSummaryRow : MonoBehaviour, IPointerEnterHandler, IPointerExi
         if (rootCanvas != null) transform.SetParent(rootCanvas.transform, true);
         transform.SetAsLastSibling();
         ApplyHoverSkin();
+
+        // The dragged row is about to move away from under the cursor's original spot, so its
+        // own hover-driven on-texture flash no longer applies for the duration of the drag.
+        workspace?.ClearHoveredRect(rectId);
     }
 
     public void OnDrag(PointerEventData eventData)
@@ -74,6 +110,7 @@ public class UVRectSummaryRow : MonoBehaviour, IPointerEnterHandler, IPointerExi
     public void OnEndDrag(PointerEventData eventData)
     {
         if (canvasGroup != null) canvasGroup.blocksRaycasts = true;
+        pointerHovered = false;
         if (originalParent != null)
         {
             transform.SetParent(originalParent, false);
