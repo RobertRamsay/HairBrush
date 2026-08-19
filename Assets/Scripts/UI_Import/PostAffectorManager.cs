@@ -170,14 +170,53 @@ public class PostAffectorManager : MonoBehaviour
         RebuildGroupRows(groupId);
     }
 
+    // ModelViewer.hasSelectionHotspot and PostAffectorManager.activeId are two halves of ONE
+    // selection. Every teardown path in the project clears them together EXCEPT this method,
+    // which used to clear activeId while leaving the hotspot latched true. That stranded pair
+    // is unrecoverable: DetectGroupRootSelection returns early on activeId < 0, and all three
+    // exit guards (PostSelectionExitAuthority, PostRootContextRestore, PostDeleteExitGuard)
+    // latch on the activeId >= 0 -> < 0 transition, which has already happened. Nothing is
+    // left that can clear the hotspot.
+    //
+    // The result is exactly the reported symptom: ModifierCoreLock unlocks the groom sliders
+    // because it reads hasSelectionHotspot as "editing a POST", so the handles drag and the
+    // labels update - but there is no active affector for the drag to become a delta on, so
+    // ApplyAll re-evaluates the identical result every frame and the geometry never moves.
+    //
+    // ClumperPostOwnershipAuthority (order 5190) drives activeId to -1 every frame a clumper
+    // is selected, which is what makes the clumper the trigger for this.
+    private int orphanHotspotFrames = 0;
+
     void MaintainActiveAuthoring()
     {
         PostAffector active = GetActive();
-        if (active == null) return;
+        if (active == null)
+        {
+            // Do not react instantly: on a Ctrl+Click frame ModelViewer sets the hotspot at
+            // execution order 0 and DetectCtrlClick creates the affector later in this same
+            // Update, so a one-frame hotspot-without-affector window is legitimate. Only a
+            // state that survives several frames is a genuine orphan.
+            if (HasSelection())
+            {
+                orphanHotspotFrames++;
+                if (orphanHotspotFrames >= 3)
+                {
+                    orphanHotspotFrames = 0;
+                    ReleasePostSelection();
+                }
+            }
+            else
+            {
+                orphanHotspotFrames = 0;
+            }
+            return;
+        }
+
+        orphanHotspotFrames = 0;
+
         if (!HasSelection() || viewer.currentGroupId != active.groupId)
         {
-            activeId = -1;
-            activeGroup = -1;
+            ReleasePostSelection();
             return;
         }
 
@@ -193,6 +232,21 @@ public class PostAffectorManager : MonoBehaviour
         }
 
         active.delta = Subtract(ReadControls(), active.baseline);
+    }
+
+    // The single, atomic way to leave POST editing. Both halves of the selection go down
+    // together so the orphaned-hotspot state above can never be created again, and the normal
+    // exit guards still see the activeId >= 0 -> < 0 transition they key off.
+    //
+    // Public so CLUMPER can call it when it releases a group (GroupClumperManager.RemoveClumper).
+    // A modifier that is being deleted must hand the edit context back explicitly rather than
+    // leaving it for whichever guard happens to notice first.
+    public void ReleasePostSelection()
+    {
+        activeId = -1;
+        activeGroup = -1;
+        orphanHotspotFrames = 0;
+        SetField(hasSelectionField, false);
     }
 
     // Canonical state is the only upstream source of truth. While a POST is actively

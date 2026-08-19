@@ -283,7 +283,47 @@ public class GroupClumperManager : MonoBehaviour
             selectedGroup = -1;
             DestroyControls();
         }
+
+        ReleaseEditOwnership(clumper.groupId);
         StartCoroutine(DeferredRemoveClumper(clumper));
+    }
+
+    // CLUMPER is a mutually-exclusive edit context: while one is selected,
+    // ClumperPostOwnershipAuthority tears POST's selection down every frame. Deleting the
+    // clumper has to hand that context back EXPLICITLY, not leave it to whichever guard
+    // notices first - the guards all key off transitions that have already happened by then.
+    //
+    // Three things are released here:
+    //   1. The panel overlay. Every other clumper exit (ClumperSelectionExitAuthority,
+    //      ModifierEmptySpaceExitAuthority, ClumperDeletedGroupExitAuthority,
+    //      NewGroupRootSelectionAuthority) destroys ClumperScrollHost itself. Removal was the
+    //      only path relying on ClumperControlsScrollFix noticing a frame later, which leaves
+    //      the whole grooming panel hidden in between.
+    //   2. POST's selection pair. Cleared atomically via PostAffectorManager so the sliders
+    //      cannot be left interactable with no active affector behind them.
+    //   3. CONTIG scope, but only when this was the group's LAST clumper. Scope is
+    //      group-lifetime metadata; leaving it armed silently forces the next clumper created
+    //      on this group into island-restricted mode with nothing in the UI having said so.
+    void ReleaseEditOwnership(int groupId)
+    {
+        GameObject scrollHost = GameObject.Find("ClumperScrollHost");
+        if (scrollHost != null) Destroy(scrollHost);
+
+        PostAffectorManager postManager = FindFirstObjectByType<PostAffectorManager>();
+        if (postManager != null) postManager.ReleasePostSelection();
+
+        bool lastClumperOnGroup = true;
+        if (byGroup.TryGetValue(groupId, out List<GroupClumper> remaining) && remaining != null)
+        {
+            int liveCount = 0;
+            foreach (GroupClumper other in remaining)
+            {
+                if (other != null) liveCount++;
+            }
+            if (liveCount > 1) lastClumperOnGroup = false;
+        }
+
+        if (lastClumperOnGroup) SurfaceIslandScope.SetClumperContiguous(groupId, false);
     }
 
     System.Collections.IEnumerator DeferredRemoveClumper(GroupClumper clumper)
