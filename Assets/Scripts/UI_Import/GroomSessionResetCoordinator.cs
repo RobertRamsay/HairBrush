@@ -338,6 +338,8 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         viewer.currentVScale = s.vScale;
         viewer.currentUOffset = s.uOffset;
         viewer.currentVOffset = s.vOffset;
+        viewer.currentCurlFrequency = s.curlFrequency;
+        viewer.currentCurlDiameter = s.curlDiameter;
     }
 
     static PostAffectorManager.ControlState ToControlState(GroomRootStateAuthority.RootState s)
@@ -356,7 +358,9 @@ public class GroomSessionResetCoordinator : MonoBehaviour
             uScale = s.uScale,
             vScale = s.vScale,
             uOffset = s.uOffset,
-            vOffset = s.vOffset
+            vOffset = s.vOffset,
+            curlFrequency = s.curlFrequency,
+            curlDiameter = s.curlDiameter
         };
     }
 

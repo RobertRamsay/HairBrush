@@ -100,6 +100,8 @@ public class GroupClumperSaveData
     public float length,width,segments,bend,twist,depth;
     public float x,y,z;
     public float uScale,vScale,uOffset,vOffset;
+    // Zero for legacy projects, which is exactly the correct no-curl-delta default.
+    public float curlFrequency,curlDiameter;
 }
 
 [Serializable] public class PostAffectorSaveData

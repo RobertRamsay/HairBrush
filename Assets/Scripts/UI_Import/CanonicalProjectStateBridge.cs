@@ -117,9 +117,7 @@ public class CanonicalProjectStateBridge : MonoBehaviour
                 canonical.bend, canonical.twist, canonical.x, canonical.y, canonical.z,
                 Mathf.Max(0f, canonical.depth), 1f,
                 canonical.uScale, canonical.vScale, canonical.uOffset, canonical.vOffset,
-                // ControlState has no curl fields - curl lives only at the group root, not per
-                // POST, so this restoration passes the card's current curl through unchanged.
-                card.curlFrequency, card.curlDiameter);
+                canonical.curlFrequency, canonical.curlDiameter);
             card.SetSelectionWeight(oldSelection);
 
             object state = states[card];
@@ -162,12 +160,14 @@ public class CanonicalProjectStateBridge : MonoBehaviour
     static PostAffectorManager.ControlState ReadControl(HairCardSaveData s) => new PostAffectorManager.ControlState
     {
         length=s.length, width=s.width, segments=s.segments, bend=s.bendAngle, twist=s.twistAngle, depth=s.embedDepth,
-        x=s.offsetX, y=s.offsetY, z=s.offsetZ, uScale=s.uScale, vScale=s.vScale, uOffset=s.uOffset, vOffset=s.vOffset
+        x=s.offsetX, y=s.offsetY, z=s.offsetZ, uScale=s.uScale, vScale=s.vScale, uOffset=s.uOffset, vOffset=s.vOffset,
+        curlFrequency=s.curlFrequency, curlDiameter=s.curlDiameter
     };
 
     static void WriteControl(HairCardSaveData s, PostAffectorManager.ControlState b)
     {
         s.length=b.length; s.width=b.width; s.segments=Mathf.RoundToInt(b.segments); s.bendAngle=b.bend; s.twistAngle=b.twist; s.embedDepth=b.depth;
         s.offsetX=b.x; s.offsetY=b.y; s.offsetZ=b.z; s.uScale=b.uScale; s.vScale=b.vScale; s.uOffset=b.uOffset; s.vOffset=b.vOffset;
+        s.curlFrequency=b.curlFrequency; s.curlDiameter=b.curlDiameter;
     }
 }

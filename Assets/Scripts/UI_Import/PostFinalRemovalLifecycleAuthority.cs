@@ -173,7 +173,9 @@ public class PostFinalRemovalLifecycleAuthority : MonoBehaviour
             uScale = s.uScale,
             vScale = s.vScale,
             uOffset = s.uOffset,
-            vOffset = s.vOffset
+            vOffset = s.vOffset,
+            curlFrequency = s.curlFrequency,
+            curlDiameter = Mathf.Max(0f, s.curlDiameter)
         };
     }
 

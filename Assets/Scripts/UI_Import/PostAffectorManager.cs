@@ -35,6 +35,7 @@ public class PostAffectorManager : MonoBehaviour
         public float segments;
         public float x, y, z;
         public float uScale, vScale, uOffset, vOffset;
+        public float curlFrequency, curlDiameter;
     }
 
     private class CardState
@@ -343,7 +344,9 @@ public class PostAffectorManager : MonoBehaviour
             uScale = s.uScale,
             vScale = s.vScale,
             uOffset = s.uOffset,
-            vOffset = s.vOffset
+            vOffset = s.vOffset,
+            curlFrequency = s.curlFrequency,
+            curlDiameter = Mathf.Max(0f, s.curlDiameter)
         };
     }
 
@@ -560,7 +563,9 @@ public class PostAffectorManager : MonoBehaviour
         uScale = viewer.currentUScale,
         vScale = viewer.currentVScale,
         uOffset = viewer.currentUOffset,
-        vOffset = viewer.currentVOffset
+        vOffset = viewer.currentVOffset,
+        curlFrequency = viewer.currentCurlFrequency,
+        curlDiameter = viewer.currentCurlDiameter
     };
 
     ControlState ReadCanonical(HairCard c)
@@ -580,7 +585,9 @@ public class PostAffectorManager : MonoBehaviour
             uScale = s.uScale,
             vScale = s.vScale,
             uOffset = s.uOffset,
-            vOffset = s.vOffset
+            vOffset = s.vOffset,
+            curlFrequency = s.curlFrequency,
+            curlDiameter = s.curlDiameter
         };
     }
 
@@ -599,6 +606,8 @@ public class PostAffectorManager : MonoBehaviour
         viewer.currentVScale = s.vScale;
         viewer.currentUOffset = s.uOffset;
         viewer.currentVOffset = s.vOffset;
+        viewer.currentCurlFrequency = s.curlFrequency;
+        viewer.currentCurlDiameter = s.curlDiameter;
     }
 
     static ControlState Add(ControlState a, ControlState b) => new ControlState
@@ -607,7 +616,8 @@ public class PostAffectorManager : MonoBehaviour
         bend = a.bend + b.bend, twist = a.twist + b.twist, depth = a.depth + b.depth,
         x = a.x + b.x, y = a.y + b.y, z = a.z + b.z,
         uScale = a.uScale + b.uScale, vScale = a.vScale + b.vScale,
-        uOffset = a.uOffset + b.uOffset, vOffset = a.vOffset + b.vOffset
+        uOffset = a.uOffset + b.uOffset, vOffset = a.vOffset + b.vOffset,
+        curlFrequency = a.curlFrequency + b.curlFrequency, curlDiameter = a.curlDiameter + b.curlDiameter
     };
 
     static ControlState Subtract(ControlState a, ControlState b) => new ControlState
@@ -616,7 +626,8 @@ public class PostAffectorManager : MonoBehaviour
         bend = a.bend - b.bend, twist = a.twist - b.twist, depth = a.depth - b.depth,
         x = a.x - b.x, y = a.y - b.y, z = a.z - b.z,
         uScale = a.uScale - b.uScale, vScale = a.vScale - b.vScale,
-        uOffset = a.uOffset - b.uOffset, vOffset = a.vOffset - b.vOffset
+        uOffset = a.uOffset - b.uOffset, vOffset = a.vOffset - b.vOffset,
+        curlFrequency = a.curlFrequency - b.curlFrequency, curlDiameter = a.curlDiameter - b.curlDiameter
     };
 
     static ControlState Scale(ControlState a, float s) => new ControlState
@@ -625,7 +636,8 @@ public class PostAffectorManager : MonoBehaviour
         bend = a.bend * s, twist = a.twist * s, depth = a.depth * s,
         x = a.x * s, y = a.y * s, z = a.z * s,
         uScale = a.uScale * s, vScale = a.vScale * s,
-        uOffset = a.uOffset * s, vOffset = a.vOffset * s
+        uOffset = a.uOffset * s, vOffset = a.vOffset * s,
+        curlFrequency = a.curlFrequency * s, curlDiameter = a.curlDiameter * s
     };
 
     public List<PostAffectorSaveData> ExportGroup(int groupId)
@@ -715,13 +727,15 @@ public class PostAffectorManager : MonoBehaviour
     {
         length = s.length, width = s.width, segments = s.segments, bend = s.bend, twist = s.twist,
         depth = s.depth, x = s.x, y = s.y, z = s.z,
-        uScale = s.uScale, vScale = s.vScale, uOffset = s.uOffset, vOffset = s.vOffset
+        uScale = s.uScale, vScale = s.vScale, uOffset = s.uOffset, vOffset = s.vOffset,
+        curlFrequency = s.curlFrequency, curlDiameter = s.curlDiameter
     };
 
     static ControlState FromSave(PostAffectorControlSaveData s) => s == null ? new ControlState() : new ControlState
     {
         length = s.length, width = s.width, segments = s.segments, bend = s.bend, twist = s.twist,
         depth = s.depth, x = s.x, y = s.y, z = s.z,
-        uScale = s.uScale, vScale = s.vScale, uOffset = s.uOffset, vOffset = s.vOffset
+        uScale = s.uScale, vScale = s.vScale, uOffset = s.uOffset, vOffset = s.vOffset,
+        curlFrequency = s.curlFrequency, curlDiameter = s.curlDiameter
     };
 }
