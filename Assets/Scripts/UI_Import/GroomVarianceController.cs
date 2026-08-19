@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -22,6 +23,8 @@ public class GroomVarianceController : MonoBehaviour
 
     private ModelViewer viewer;
     private GroomRootStateAuthority rootAuthority;
+    private PostAffectorManager postManager;
+    private FieldInfo cardStatesField;
     private bool installed;
     private GameObject installedPanel;
     private int lastGroupId = int.MinValue;
@@ -428,8 +431,43 @@ public class GroomVarianceController : MonoBehaviour
         VarianceSetting s = GetSetting(groupId, c);
         float baseValue = MainValue(c, groupId);
 
-        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None).Where(x => x.groupId == groupId))
+        HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None).Where(x => x.groupId == groupId).ToArray();
+        foreach (HairCard card in cards)
             ApplyChannelToCard(card, c, groupId, baseValue, s);
+
+        // While a POST is being actively edited, PostAffectorManager freezes each card's
+        // cached canonical baseline and re-asserts it every LateUpdate (by design, so the
+        // baseline doesn't drift mid-edit from unrelated causes). Without this, that frozen
+        // baseline would immediately overwrite the seed/variance change just written above the
+        // very next frame, making a seed edit made while a POST is selected appear to do
+        // nothing. Refreshing the cached baseline here keeps it in sync with variance's own
+        // authored canonical writes specifically, regardless of what's currently selected.
+        RefreshPostBaselines(cards);
+    }
+
+    void RefreshPostBaselines(HairCard[] cards)
+    {
+        if (postManager == null) postManager = FindFirstObjectByType<PostAffectorManager>();
+        if (postManager == null) return;
+        if (cardStatesField == null)
+            cardStatesField = typeof(PostAffectorManager).GetField("cardStates", BindingFlags.Instance | BindingFlags.NonPublic);
+        if (cardStatesField?.GetValue(postManager) is not System.Collections.IDictionary states) return;
+
+        MethodInfo readCanonical = null;
+        FieldInfo baseStateField = null;
+        foreach (HairCard card in cards)
+        {
+            if (card == null || !states.Contains(card)) continue;
+            object cardState = states[card];
+            if (cardState == null) continue;
+
+            baseStateField ??= cardState.GetType().GetField("baseState", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            readCanonical ??= typeof(PostAffectorManager).GetMethod("ReadCanonical", BindingFlags.Instance | BindingFlags.NonPublic);
+            if (baseStateField == null || readCanonical == null) continue;
+
+            object fresh = readCanonical.Invoke(postManager, new object[] { card });
+            baseStateField.SetValue(cardState, fresh);
+        }
     }
 
     void ApplyChannelToCard(HairCard card, Channel c, int groupId, float baseValue, VarianceSetting setting)
