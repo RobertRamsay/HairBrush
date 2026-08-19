@@ -240,14 +240,28 @@ public class GroupClumperManager : MonoBehaviour
         if (clumper == null) return;
 
         // Neutralize first so ThreeColumnClumperMeshAuthority can cleanly restore the
-        // affected cards on its next LateUpdate pass before the data disappears. Without this,
-        // the immediate data removal caused a frame-ordering race: the clumper mesh authority's
-        // RestoreRemovedGroups would overwrite POST-evaluated meshes after PostAffectorManager
-        // had already applied them for that frame, breaking POST editing until something else
-        // forced a full rebuild. The deferred removal via coroutine gives the mesh authority
-        // one clean frame to process the zeroed-out clumper before it vanishes from byGroup.
+        // affected cards on its next LateUpdate pass before the data disappears.
         clumper.amount = 0f;
         Invalidate(clumper);
+
+        // Clear every card's clump override flag immediately. The deferred data removal below
+        // creates a timing gap where ThreeColumnClumperMeshAuthority's RestoreRemovedGroups
+        // can't reliably do this itself: the neutralize phase (amount=0) causes it to remove
+        // the group from its own overriddenGroups tracking, so by the time the actual data
+        // disappears on the next frame, it no longer knows this group needs restoring. Without
+        // this, every card is left with externalClumpOverrideActive=true permanently, and
+        // GenerateMesh's signature-match guard silently discards every subsequent mesh write
+        // from POST, sliders, or anything else — the exact "nothing changes when I drag"
+        // symptom.
+        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
+        {
+            if (card != null && card.groupId == clumper.groupId)
+            {
+                card.ClearExternalClumpOverride();
+                card.GenerateMesh();
+            }
+        }
+
         if (selectedClumperId == clumper.id)
         {
             selectedClumperId = -1;
