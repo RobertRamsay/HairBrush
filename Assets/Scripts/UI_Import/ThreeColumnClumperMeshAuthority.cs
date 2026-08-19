@@ -39,18 +39,23 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         List<GroupClumperManager.GroupClumper> clumpers = manager.GetAllClumpers();
         HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
 
-        if (clumpers.Count == 0)
-        {
-            RestoreRemovedGroups(allCards, new HashSet<int>());
-            lastGroupSignature.Clear();
-            return;
-        }
-
+        // Amount == 0 means this clumper no longer owns the generated mesh. Treat zeroed
+        // clumpers exactly like removed clumpers here rather than keeping their group alive
+        // until the manager's deferred-delete/UI lifecycle finishes. This makes authority
+        // release a property of the evaluator itself, so normal HairCard GenerateMesh calls
+        // regain control immediately when clumping is neutralised.
         List<GroupClumperManager.GroupClumper> ordered = clumpers
-            .Where(c => c != null)
+            .Where(c => c != null && c.amount > .0001f)
             .OrderBy(c => c.id)
             .ToList();
         HashSet<int> groups = new HashSet<int>(ordered.Select(c => c.groupId));
+
+        if (ordered.Count == 0)
+        {
+            RestoreRemovedGroups(allCards, groups);
+            lastGroupSignature.Clear();
+            return;
+        }
 
         RestoreRemovedGroups(allCards, groups);
 
