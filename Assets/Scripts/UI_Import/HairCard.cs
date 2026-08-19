@@ -590,7 +590,14 @@ public class HairCard : MonoBehaviour
         // POST/other authorities can still call GenerateMesh every frame. If they produced the
         // exact same source that the CLUMPER stage already consumed, keep the derived mesh in
         // place. Any actual change to source vertices/UVs/topology automatically falls through.
-        if (externalClumpOverrideActive && sourceSignature == externalClumpSourceSignature)
+        // The HasActiveClumper check makes this guard self-limiting: it can only ever skip while
+        // a clumper with amount > 0 genuinely exists on this group RIGHT NOW. Previously it
+        // trusted externalClumpOverrideActive alone, and several lifecycle paths (removal,
+        // load-time restore, pre-delete neutralize) each managed to leave that flag stuck true -
+        // permanently freezing every subsequent mesh write for the whole group, from POST
+        // editing and root sliders alike, any time clumping had ever touched the group.
+        if (externalClumpOverrideActive && sourceSignature == externalClumpSourceSignature &&
+            GroupClumperManager.HasActiveClumper(groupId))
             return;
 
         externalClumpOverrideActive = false;

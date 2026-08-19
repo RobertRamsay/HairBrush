@@ -131,6 +131,21 @@ public class GroupClumperManager : MonoBehaviour
         return byGroup.TryGetValue(groupId, out List<GroupClumper> list) && list.Any(c => c != null);
     }
 
+    // Static lookup for HairCard.GenerateMesh's clump-override guard: "is there genuinely an
+    // active (amount > 0) clumper on this group RIGHT NOW". Lets the guard be self-limiting
+    // instead of trusting the per-card externalClumpOverrideActive flag, which several code
+    // paths (removal, load-time restore, pre-delete neutralize) have each managed to leave
+    // stuck in the past - freezing every subsequent mesh write for the group forever.
+    private static GroupClumperManager instance;
+
+    public static bool HasActiveClumper(int groupId)
+    {
+        if (instance == null) instance = FindFirstObjectByType<GroupClumperManager>();
+        if (instance == null) return false;
+        return instance.byGroup.TryGetValue(groupId, out List<GroupClumper> list) &&
+               list.Any(c => c != null && c.amount > .0001f);
+    }
+
     void EnsureRows()
     {
         RectTransform[] all = FindObjectsByType<RectTransform>(FindObjectsSortMode.None);
