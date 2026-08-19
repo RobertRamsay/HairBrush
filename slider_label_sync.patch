@@ -1,0 +1,60 @@
+diff --git a/Assets/Scripts/UI_Import/SliderLabelSyncAuthority.cs b/Assets/Scripts/UI_Import/SliderLabelSyncAuthority.cs
+new file mode 100644
+index 0000000..ba1ab28
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/SliderLabelSyncAuthority.cs
+@@ -0,0 +1,54 @@
++using TMPro;
++using UnityEngine;
++using UnityEngine.UI;
++
++// CreateSliderUI bundles the "Label: value" text update into the slider's own onValueChanged
++// listener. Every slider-sync authority in this project (switching POSTs, selecting a group,
++// exiting POST/CLUMPER, right-click reset, etc) deliberately uses SetValueWithoutNotify to move
++// the handle without re-triggering data application - but that also skips the label update
++// bundled into that same listener, since that's exactly what "WithoutNotify" means. The visible
++// symptom: the slider handle jumps to the correct position immediately, but its text label
++// keeps showing the previous value. Rather than touch every existing (and future) sync call
++// site individually, this keeps every slider's label matched to its actual value on its own,
++// independent of how or why the slider's value last changed.
++[DefaultExecutionOrder(9000)]
++public class SliderLabelSyncAuthority : MonoBehaviour
++{
++    private ModelViewer viewer;
++
++    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
++    static void Spawn()
++    {
++        if (FindFirstObjectByType<SliderLabelSyncAuthority>() != null) return;
++        GameObject go = new GameObject("SliderLabelSyncAuthority");
++        DontDestroyOnLoad(go);
++        go.AddComponent<SliderLabelSyncAuthority>();
++    }
++
++    void Update()
++    {
++        if (viewer == null) viewer = FindFirstObjectByType<ModelViewer>();
++        if (viewer == null || viewer.groomingSliderPanelGO == null) return;
++
++        foreach (Slider slider in viewer.groomingSliderPanelGO.GetComponentsInChildren<Slider>(true))
++        {
++            if (slider != null) Sync(slider);
++        }
++    }
++
++    static void Sync(Slider slider)
++    {
++        Transform row = slider.transform.parent;
++        if (row == null || !row.name.EndsWith("_Row")) return;
++
++        string label = row.name.Substring(0, row.name.Length - "_Row".Length);
++        Transform textTransform = row.Find(label + "_Text");
++        TextMeshProUGUI text = textTransform != null ? textTransform.GetComponent<TextMeshProUGUI>() : null;
++        if (text == null) return;
++
++        // Matches CreateSliderUI's own "Label: value" formatting exactly, including the F3
++        // precision it already uses uniformly (even for integer-valued sliders like Segments).
++        string expected = label + ": " + slider.value.ToString("F3");
++        if (text.text != expected) text.text = expected;
++    }
++}
