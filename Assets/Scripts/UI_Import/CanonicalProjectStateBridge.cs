@@ -18,6 +18,7 @@ public class CanonicalProjectStateBridge : MonoBehaviour
 
     private HairProjectSaveData pending;
     private int settleFrames;
+    private PostAffectorManager postReapplyAfterLoad;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
@@ -88,6 +89,20 @@ public class CanonicalProjectStateBridge : MonoBehaviour
         CompletedRestoreGeneration++;
     }
 
+    void LateUpdate()
+    {
+        if (postReapplyAfterLoad == null) return;
+
+        // PostAffectorManager normally skips an evaluated mesh write when its result matches
+        // the previous frame. During project load it can legitimately evaluate the restored
+        // POST state, then a later restore callback can write canonical state back to the card.
+        // Invalidating after this frame's POST/POST-variance LateUpdates guarantees the normal
+        // evaluator writes the saved POST result again next frame, including fine Length edits,
+        // without requiring a slider nudge to make the result look changed.
+        InvalidatePostEvaluationCache(postReapplyAfterLoad);
+        postReapplyAfterLoad = null;
+    }
+
     void RestoreCanonicalState(HairProjectSaveData data)
     {
         PostAffectorManager posts = FindFirstObjectByType<PostAffectorManager>();
@@ -137,6 +152,21 @@ public class CanonicalProjectStateBridge : MonoBehaviour
         }
 
         RestorePostLocalVariance(data);
+        postReapplyAfterLoad = posts;
+    }
+
+    static void InvalidatePostEvaluationCache(PostAffectorManager posts)
+    {
+        FieldInfo statesField = typeof(PostAffectorManager).GetField("cardStates", BindingFlags.Instance | BindingFlags.NonPublic);
+        IDictionary states = statesField?.GetValue(posts) as IDictionary;
+        if (states == null) return;
+
+        foreach (DictionaryEntry entry in states)
+        {
+            object state = entry.Value;
+            if (state == null) continue;
+            state.GetType().GetField("hasFinal", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.SetValue(state, false);
+        }
     }
 
     void RestorePostLocalVariance(HairProjectSaveData data)
