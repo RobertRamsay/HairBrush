@@ -136,7 +136,7 @@ public class SingleModeSwitchAuthority : MonoBehaviour
     static void StyleBrandHeader(Transform header)
     {
         TextMeshProUGUI title = header.Find("BrandTitle")?.GetComponent<TextMeshProUGUI>();
-        if (title != null) title.text = "HAIRBRUSH - ALPHA 1.0";
+        if (title != null) title.text = "HAIRBRUSH - ALPHA";
         TextMeshProUGUI subtitle = header.Find("BrandSubtitle")?.GetComponent<TextMeshProUGUI>();
         if (subtitle != null) subtitle.text = "by POLYTRICITY LTD 2026";
     }
