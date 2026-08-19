@@ -284,8 +284,17 @@ public class HairCard : MonoBehaviour
 
     public void UpdateVisualHighlight()
     {
-        if (cardMaterial == null) return;
         Color finalColor = Color.Lerp(Color.yellow, Color.white, selectionWeight);
+        if (selectionWeight <= .0001f)
+        {
+            RevertToSharedMaterialIfPossible();
+            if (cardMaterial == null) return;
+        }
+        else
+        {
+            EnsurePerInstanceMaterial();
+        }
+        if (cardMaterial == null) return;
         if (cardMaterial.HasProperty("_BaseColor")) cardMaterial.SetColor("_BaseColor", finalColor);
         if (cardMaterial.HasProperty("_Color")) cardMaterial.SetColor("_Color", finalColor);
     }
@@ -359,6 +368,7 @@ public class HairCard : MonoBehaviour
     }
 
     void OnValidate() { if (mesh != null) GenerateMesh(); }
+    void OnDestroy() { if (cardMaterial != null) Destroy(cardMaterial); }
     public void ApplyDeformations() { GenerateMesh(); }
 
     void Update()
@@ -368,27 +378,84 @@ public class HairCard : MonoBehaviour
         if (Keyboard.current.digit2Key.wasPressedThisFrame || Keyboard.current.numpad2Key.wasPressedThisFrame) SetDoubleSided(true);
     }
 
+    // MaterialEditorManager.ApplyAssignments() is the single authoritative source for which
+    // material every hair card should use by default (ModelViewer.hairCardMaterial), and it
+    // now also guarantees that material stays double-sided and GPU-instancing-enabled. Cards
+    // therefore just read it directly rather than maintaining an independent cached copy -
+    // there is nothing left to keep in sync, so nothing here can go stale, and nothing here
+    // competes with that other script over which material is "correct". Cards default to
+    // sharing this one reference so the SRP batcher/GPU instancing can actually batch them; a
+    // card only gets its own material instance - and only that card loses batching eligibility
+    // - the moment it genuinely diverges: a non-zero selection-brush highlight, or an explicit
+    // single-sided override. Both are small, usually-transient subsets of the full population.
+    private static ModelViewer cachedViewer;
+    private bool isDoubleSided = true;
+
+    // Lets MaterialEditorManager's periodic global-material enforcement skip this card instead
+    // of erasing a genuine, active divergence (selection highlight or single-sided override)
+    // every time it runs.
+    public bool HasDivergedMaterial() => cardMaterial != null;
+
+    static Material SharedMaterial()
+    {
+        if (cachedViewer == null) cachedViewer = FindFirstObjectByType<ModelViewer>();
+        return cachedViewer != null ? cachedViewer.hairCardMaterial : null;
+    }
+
     void SetupMaterial()
     {
         MeshRenderer mr = GetComponent<MeshRenderer>();
         if (mr == null) return;
-        if (mr.sharedMaterial != null) cardMaterial = new Material(mr.sharedMaterial);
-        else
-        {
-            Shader shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
-            if (shader != null) cardMaterial = new Material(shader);
-        }
+        cardMaterial = null;
+        isDoubleSided = true;
+
+        Material shared = SharedMaterial();
+        if (shared != null) { mr.sharedMaterial = shared; return; }
+
+        // No material chosen yet (very early startup, before MaterialEditorManager has run) -
+        // a plain per-card placeholder just so the card is visible. MaterialEditorManager
+        // assigns the real shared material and enforces double-sided/instancing on it shortly
+        // after this runs, at which point new cards pick it up directly and this one gets
+        // corrected the next time ApplyAssignments sweeps all cards.
+        Shader shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+        if (shader == null) return;
+        Material fallback = new Material(shader) { name = "HairCardFallback" };
+        if (fallback.HasProperty("_BaseColor")) fallback.SetColor("_BaseColor", Color.yellow);
+        if (fallback.HasProperty("_Color")) fallback.SetColor("_Color", Color.yellow);
+        if (fallback.HasProperty("_Cull")) fallback.SetFloat("_Cull", 0f);
+        fallback.EnableKeyword("_DOUBLESIDED_ON");
+        mr.sharedMaterial = fallback;
+    }
+
+    void EnsurePerInstanceMaterial()
+    {
+        if (cardMaterial != null) return;
+        MeshRenderer mr = GetComponent<MeshRenderer>();
+        if (mr == null) return;
+        Material shared = SharedMaterial() ?? mr.sharedMaterial;
+        if (shared == null) return;
+        cardMaterial = new Material(shared) { name = "HairCardInstance_" + GetInstanceID() };
+        mr.sharedMaterial = cardMaterial;
+    }
+
+    // Called whenever this card's state returns to matching the shared default exactly, so it
+    // rejoins the batchable pool instead of permanently keeping a now-unnecessary material.
+    void RevertToSharedMaterialIfPossible()
+    {
         if (cardMaterial == null) return;
-        cardMaterial.name = "HairCardInstance_" + GetInstanceID();
-        if (cardMaterial.HasProperty("_BaseColor")) cardMaterial.SetColor("_BaseColor", Color.yellow);
-        if (cardMaterial.HasProperty("_Color")) cardMaterial.SetColor("_Color", Color.yellow);
-        if (cardMaterial.HasProperty("_Cull")) cardMaterial.SetFloat("_Cull", 0f);
-        cardMaterial.EnableKeyword("_DOUBLESIDED_ON");
-        mr.material = cardMaterial;
+        if (selectionWeight > .0001f || !isDoubleSided) return;
+        MeshRenderer mr = GetComponent<MeshRenderer>();
+        Material shared = SharedMaterial();
+        if (mr != null && shared != null) mr.sharedMaterial = shared;
+        Destroy(cardMaterial);
+        cardMaterial = null;
     }
 
     public void SetDoubleSided(bool enabled)
     {
+        isDoubleSided = enabled;
+        if (enabled) { RevertToSharedMaterialIfPossible(); if (cardMaterial == null) return; }
+        else EnsurePerInstanceMaterial();
         if (cardMaterial != null && cardMaterial.HasProperty("_Cull")) cardMaterial.SetFloat("_Cull", enabled ? 0f : 2f);
     }
 

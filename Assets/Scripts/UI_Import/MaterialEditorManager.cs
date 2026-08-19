@@ -486,9 +486,23 @@ public class MaterialEditorManager : MonoBehaviour
         int index = GetGlobalMaterialIndex();
         if (index < 0) return;
         Material active = materials[index].material;
+        if (active == null) return;
+
+        // Hair cards are thin planes that need to render from both sides, and there can be
+        // thousands of them - GPU instancing is what actually lets the SRP batcher merge their
+        // draw calls instead of issuing one per card. Both are safe to force directly onto this
+        // object: it's not a UI preview swatch, it's literally what every card renders with.
+        if (active.HasProperty("_Cull")) active.SetFloat("_Cull", 0f);
+        active.EnableKeyword("_DOUBLESIDED_ON");
+        active.enableInstancing = true;
 
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
         {
+            // Skip cards that currently own a per-instance material for a genuine reason
+            // (an active selection highlight, or an explicit single-sided override) - this
+            // runs on a recurring timer, so without this check it would silently erase both
+            // every ~0.2s, fighting HairCard's own material bookkeeping every time it ran.
+            if (card.HasDivergedMaterial()) continue;
             MeshRenderer renderer = card.GetComponent<MeshRenderer>();
             if (renderer != null && renderer.sharedMaterial != active)
                 renderer.sharedMaterial = active;
