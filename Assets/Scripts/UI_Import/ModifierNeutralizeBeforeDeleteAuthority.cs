@@ -181,20 +181,52 @@ public class ModifierDeleteNeutralizeHook : MonoBehaviour, IPointerDownHandler
         const int columns = HairCard.CrossSectionColumns;
         int segments = Mathf.Clamp(card.segments, 1, 60);
         Vector3[] vertices = new Vector3[(segments + 1) * columns];
-        float segmentHeight = Mathf.Max(.0001f, card.length) / segments;
         float halfWidth = Mathf.Max(.0005f, card.width) * .5f;
         float ridge = card.GetCrossSectionRidgeHeight();
 
+        // Mirrors HairCard.GenerateMesh's own segment-density remap, curl offset, and
+        // GetLengthProfileRotation exactly - this reconstruction predated Curl and Segment
+        // Density entirely and used a hardcoded bend-only rotation formula that also ignored
+        // X/Y/Z angle offsets and the Bend profile curve. Same fix as
+        // ThreeColumnClumperMeshAuthority.BuildCleanMesh, which had the identical gap.
+        float previousSegmentT = 0f;
+
         for (int i = 0; i <= segments; i++)
         {
-            float t = (float)i / segments;
-            float z = i * segmentHeight;
+            float t;
+            if (i == 0) t = 0f;
+            else if (i == segments) t = 1f;
+            else
+            {
+                float u = (float)i / segments;
+                t = Mathf.Max(previousSegmentT, PostShapeCurveBridge.EvaluateRoot(card.groupId, GroomShapeCurveChannel.SegmentDensity, u));
+            }
+            previousSegmentT = t;
+            float z = t * Mathf.Max(.0001f, card.length);
             float span = halfWidth * card.flattenFactor;
-            Quaternion authored = Quaternion.Euler(card.bendAngle * (t * t), 0f, card.twistAngle * t);
             int index = i * columns;
-            vertices[index] = authored * new Vector3(-span, 0f, z);
-            vertices[index + 1] = authored * new Vector3(0f, ridge, z);
-            vertices[index + 2] = authored * new Vector3(span, 0f, z);
+
+            Vector3 left = new Vector3(-span, 0f, z);
+            Vector3 center = new Vector3(0f, ridge, z);
+            Vector3 right = new Vector3(span, 0f, z);
+
+            if (card.curlFrequency != 0f && card.curlDiameter > 0f)
+            {
+                float freqMultiplier = PostShapeCurveBridge.EvaluateRoot(card.groupId, GroomShapeCurveChannel.CurlFrequency, t);
+                float diameterMultiplier = PostShapeCurveBridge.EvaluateRoot(card.groupId, GroomShapeCurveChannel.CurlDiameter, t);
+                float turns = card.curlFrequency * freqMultiplier;
+                float radius = card.curlDiameter * diameterMultiplier * .5f;
+                float angle = turns * t * Mathf.PI * 2f;
+                Vector3 curlOffset = new Vector3(radius * (Mathf.Cos(angle) - 1f), radius * Mathf.Sin(angle), 0f);
+                left += curlOffset;
+                center += curlOffset;
+                right += curlOffset;
+            }
+
+            Quaternion authored = card.GetLengthProfileRotation(t);
+            vertices[index] = authored * left;
+            vertices[index + 1] = authored * center;
+            vertices[index + 2] = authored * right;
         }
 
         MeshFilter mf = card.GetComponent<MeshFilter>();

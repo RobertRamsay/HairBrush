@@ -1,0 +1,173 @@
+diff --git a/Assets/Scripts/UI_Import/GroupClumperManager.cs b/Assets/Scripts/UI_Import/GroupClumperManager.cs
+index d4ad34f..78a13d1 100644
+--- a/Assets/Scripts/UI_Import/GroupClumperManager.cs
++++ b/Assets/Scripts/UI_Import/GroupClumperManager.cs
+@@ -190,7 +190,7 @@ public class GroupClumperManager : MonoBehaviour
+         select.GetComponent<Button>().onClick.AddListener(() => SelectClumper(clumper.groupId, clumper.id));
+         AddText(row.transform, ModeShort(clumper.mode), 10, 88f);
+         GameObject neutral = AddButton(row.transform, "[-]", 34f);
+-        neutral.GetComponent<Button>().onClick.AddListener(() => NeutralizeClumper(clumper.id));
++        neutral.GetComponent<Button>().onClick.AddListener(() => RemoveClumper(clumper));
+         return row;
+     }
+ 
+@@ -228,6 +228,30 @@ public class GroupClumperManager : MonoBehaviour
+         RebuildRowsSoon();
+     }
+ 
++    // The "[-]" button previously only called NeutralizeClumper, which zeroes amount but never
++    // actually removes the clumper from byGroup - it stayed there forever, permanently inert.
++    // This is the actual second phase of the documented neutralize-then-delete pattern
++    // (ModifierNeutralizeBeforeDeleteAuthority handles the neutralize-on-pointer-down half),
++    // mirroring PostAffectorManager.RemoveAffector's true removal. ThreeColumnClumperMeshAuthority
++    // already restores affected cards to their unclamped shape automatically once a clumper
++    // disappears from byGroup, so no extra mesh-rebuild call is needed here.
++    void RemoveClumper(GroupClumper clumper)
++    {
++        if (clumper == null) return;
++        if (byGroup.TryGetValue(clumper.groupId, out List<GroupClumper> list))
++        {
++            list.RemoveAll(c => c != null && c.id == clumper.id);
++            if (list.Count == 0) byGroup.Remove(clumper.groupId);
++        }
++        if (selectedClumperId == clumper.id)
++        {
++            selectedClumperId = -1;
++            selectedGroup = -1;
++            DestroyControls();
++        }
++        RebuildRowsSoon();
++    }
++
+     void MaintainControls()
+     {
+         GroupClumper clumper = GetSelectedClumper();
+diff --git a/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs b/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs
+index b4c1d1a..a64aed7 100644
+--- a/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs
++++ b/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs
+@@ -181,20 +181,52 @@ public class ModifierDeleteNeutralizeHook : MonoBehaviour, IPointerDownHandler
+         const int columns = HairCard.CrossSectionColumns;
+         int segments = Mathf.Clamp(card.segments, 1, 60);
+         Vector3[] vertices = new Vector3[(segments + 1) * columns];
+-        float segmentHeight = Mathf.Max(.0001f, card.length) / segments;
+         float halfWidth = Mathf.Max(.0005f, card.width) * .5f;
+         float ridge = card.GetCrossSectionRidgeHeight();
+ 
++        // Mirrors HairCard.GenerateMesh's own segment-density remap, curl offset, and
++        // GetLengthProfileRotation exactly - this reconstruction predated Curl and Segment
++        // Density entirely and used a hardcoded bend-only rotation formula that also ignored
++        // X/Y/Z angle offsets and the Bend profile curve. Same fix as
++        // ThreeColumnClumperMeshAuthority.BuildCleanMesh, which had the identical gap.
++        float previousSegmentT = 0f;
++
+         for (int i = 0; i <= segments; i++)
+         {
+-            float t = (float)i / segments;
+-            float z = i * segmentHeight;
++            float t;
++            if (i == 0) t = 0f;
++            else if (i == segments) t = 1f;
++            else
++            {
++                float u = (float)i / segments;
++                t = Mathf.Max(previousSegmentT, PostShapeCurveBridge.EvaluateRoot(card.groupId, GroomShapeCurveChannel.SegmentDensity, u));
++            }
++            previousSegmentT = t;
++            float z = t * Mathf.Max(.0001f, card.length);
+             float span = halfWidth * card.flattenFactor;
+-            Quaternion authored = Quaternion.Euler(card.bendAngle * (t * t), 0f, card.twistAngle * t);
+             int index = i * columns;
+-            vertices[index] = authored * new Vector3(-span, 0f, z);
+-            vertices[index + 1] = authored * new Vector3(0f, ridge, z);
+-            vertices[index + 2] = authored * new Vector3(span, 0f, z);
++
++            Vector3 left = new Vector3(-span, 0f, z);
++            Vector3 center = new Vector3(0f, ridge, z);
++            Vector3 right = new Vector3(span, 0f, z);
++
++            if (card.curlFrequency != 0f && card.curlDiameter > 0f)
++            {
++                float freqMultiplier = PostShapeCurveBridge.EvaluateRoot(card.groupId, GroomShapeCurveChannel.CurlFrequency, t);
++                float diameterMultiplier = PostShapeCurveBridge.EvaluateRoot(card.groupId, GroomShapeCurveChannel.CurlDiameter, t);
++                float turns = card.curlFrequency * freqMultiplier;
++                float radius = card.curlDiameter * diameterMultiplier * .5f;
++                float angle = turns * t * Mathf.PI * 2f;
++                Vector3 curlOffset = new Vector3(radius * (Mathf.Cos(angle) - 1f), radius * Mathf.Sin(angle), 0f);
++                left += curlOffset;
++                center += curlOffset;
++                right += curlOffset;
++            }
++
++            Quaternion authored = card.GetLengthProfileRotation(t);
++            vertices[index] = authored * left;
++            vertices[index + 1] = authored * center;
++            vertices[index + 2] = authored * right;
+         }
+ 
+         MeshFilter mf = card.GetComponent<MeshFilter>();
+diff --git a/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs b/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
+index 7a56ef4..2071d94 100644
+--- a/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
++++ b/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
+@@ -294,21 +294,53 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
+         Vector2[] uvs = new Vector2[vertexCount];
+         int[] triangles = new int[segments * 12];
+ 
+-        float segmentHeight = Mathf.Max(.0001f, card.length) / segments;
+         float halfWidth = Mathf.Max(.0005f, card.width) * .5f;
+         float ridge = card.GetCrossSectionRidgeHeight();
+ 
++        // Mirrors HairCard.GenerateMesh's own segment-density remap and curl offset exactly -
++        // this "clean" reconstruction predates both features and was never updated to include
++        // them, so a clumped card silently lost its curl shape and always used uniform segment
++        // spacing regardless of its actual density profile. Root and tip stay pinned to exactly
++        // 0 and 1 for the same reason GenerateMesh pins them: so Length always produces the
++        // expected span even if the density curve doesn't touch its own corners.
++        float previousSegmentT = 0f;
++
+         for (int i = 0; i <= segments; i++)
+         {
+-            float t = (float)i / segments;
+-            float z = i * segmentHeight;
++            float t;
++            if (i == 0) t = 0f;
++            else if (i == segments) t = 1f;
++            else
++            {
++                float u = (float)i / segments;
++                t = Mathf.Max(previousSegmentT, PostShapeCurveBridge.EvaluateRoot(card.groupId, GroomShapeCurveChannel.SegmentDensity, u));
++            }
++            previousSegmentT = t;
++            float z = t * Mathf.Max(.0001f, card.length);
+             float span = halfWidth * card.flattenFactor;
+-            Quaternion authored = card.GetLengthProfileRotation(t);
+             int index = i * columns;
+ 
+-            vertices[index] = authored * new Vector3(-span, 0f, z);
+-            vertices[index + 1] = authored * new Vector3(0f, ridge, z);
+-            vertices[index + 2] = authored * new Vector3(span, 0f, z);
++            Vector3 left = new Vector3(-span, 0f, z);
++            Vector3 center = new Vector3(0f, ridge, z);
++            Vector3 right = new Vector3(span, 0f, z);
++
++            if (card.curlFrequency != 0f && card.curlDiameter > 0f)
++            {
++                float freqMultiplier = PostShapeCurveBridge.EvaluateRoot(card.groupId, GroomShapeCurveChannel.CurlFrequency, t);
++                float diameterMultiplier = PostShapeCurveBridge.EvaluateRoot(card.groupId, GroomShapeCurveChannel.CurlDiameter, t);
++                float turns = card.curlFrequency * freqMultiplier;
++                float radius = card.curlDiameter * diameterMultiplier * .5f;
++                float angle = turns * t * Mathf.PI * 2f;
++                Vector3 curlOffset = new Vector3(radius * (Mathf.Cos(angle) - 1f), radius * Mathf.Sin(angle), 0f);
++                left += curlOffset;
++                center += curlOffset;
++                right += curlOffset;
++            }
++
++            Quaternion authored = card.GetLengthProfileRotation(t);
++            vertices[index] = authored * left;
++            vertices[index + 1] = authored * center;
++            vertices[index + 2] = authored * right;
+ 
+             float baseULeft = card.uScale < 0f ? 1f : 0f;
+             float baseURight = card.uScale < 0f ? 0f : 1f;

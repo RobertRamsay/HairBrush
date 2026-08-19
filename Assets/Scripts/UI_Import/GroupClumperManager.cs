@@ -190,7 +190,7 @@ public class GroupClumperManager : MonoBehaviour
         select.GetComponent<Button>().onClick.AddListener(() => SelectClumper(clumper.groupId, clumper.id));
         AddText(row.transform, ModeShort(clumper.mode), 10, 88f);
         GameObject neutral = AddButton(row.transform, "[-]", 34f);
-        neutral.GetComponent<Button>().onClick.AddListener(() => NeutralizeClumper(clumper.id));
+        neutral.GetComponent<Button>().onClick.AddListener(() => RemoveClumper(clumper));
         return row;
     }
 
@@ -220,6 +220,30 @@ public class GroupClumperManager : MonoBehaviour
         clumper.amount = 0f;
         Invalidate(clumper);
         if (selectedClumperId == id)
+        {
+            selectedClumperId = -1;
+            selectedGroup = -1;
+            DestroyControls();
+        }
+        RebuildRowsSoon();
+    }
+
+    // The "[-]" button previously only called NeutralizeClumper, which zeroes amount but never
+    // actually removes the clumper from byGroup - it stayed there forever, permanently inert.
+    // This is the actual second phase of the documented neutralize-then-delete pattern
+    // (ModifierNeutralizeBeforeDeleteAuthority handles the neutralize-on-pointer-down half),
+    // mirroring PostAffectorManager.RemoveAffector's true removal. ThreeColumnClumperMeshAuthority
+    // already restores affected cards to their unclamped shape automatically once a clumper
+    // disappears from byGroup, so no extra mesh-rebuild call is needed here.
+    void RemoveClumper(GroupClumper clumper)
+    {
+        if (clumper == null) return;
+        if (byGroup.TryGetValue(clumper.groupId, out List<GroupClumper> list))
+        {
+            list.RemoveAll(c => c != null && c.id == clumper.id);
+            if (list.Count == 0) byGroup.Remove(clumper.groupId);
+        }
+        if (selectedClumperId == clumper.id)
         {
             selectedClumperId = -1;
             selectedGroup = -1;
