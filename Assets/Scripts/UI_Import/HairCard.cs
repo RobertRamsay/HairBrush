@@ -113,6 +113,34 @@ public class HairCard : MonoBehaviour
         postShapeProfileContributions.Clear();
     }
 
+    // Lets PostShapeCurveBridge decide whether this frame's freshly-computed contribution set
+    // actually differs from what this card already carries, so an unchanged steady state (e.g.
+    // just orbiting the camera with nothing being edited) can skip the full mesh regeneration
+    // instead of rebuilding every card every frame regardless of whether anything changed.
+    public bool PostShapeProfileContributionsEqual(List<PostShapeProfileContribution> other)
+    {
+        if (other == null) return postShapeProfileContributions.Count == 0;
+        if (other.Count != postShapeProfileContributions.Count) return false;
+        for (int i = 0; i < other.Count; i++)
+        {
+            PostShapeProfileContribution a = postShapeProfileContributions[i];
+            PostShapeProfileContribution b = other[i];
+            if (a.postId != b.postId ||
+                !Mathf.Approximately(a.bend, b.bend) ||
+                !Mathf.Approximately(a.x, b.x) ||
+                !Mathf.Approximately(a.y, b.y) ||
+                !Mathf.Approximately(a.z, b.z))
+                return false;
+        }
+        return true;
+    }
+
+    public void SetPostShapeProfileContributions(List<PostShapeProfileContribution> contributions)
+    {
+        postShapeProfileContributions.Clear();
+        if (contributions != null) postShapeProfileContributions.AddRange(contributions);
+    }
+
     public void AddPostShapeProfileContribution(int postId, float bend, float x, float y, float z)
     {
         if (Mathf.Abs(bend) + Mathf.Abs(x) + Mathf.Abs(y) + Mathf.Abs(z) <= .000001f) return;
