@@ -85,16 +85,6 @@ public class PostShapeCurveBridge : MonoBehaviour
         Dictionary<int, List<PostAffectorManager.PostAffector>> groups = GetGroups();
         HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
 
-        // While a POST's curve editor is presented, its curve shape can change under
-        // GenerateMesh every frame (graph drags write into the POST CurveSet) WITHOUT the
-        // contribution weights below changing at all - so live editing must keep rebuilding
-        // per frame. Outside of that, the curves are static: root-curve edits already fan out
-        // through GroomShapeCurveRegistry.RefreshGroup explicitly, so a card only needs a
-        // rebuild here when its computed contribution set (POST weights/positions) changed.
-        // That turns the steady-state cost from N full mesh rebuilds per frame into N small
-        // list comparisons.
-        bool liveCurveEditing = presentedPostId >= 0;
-
         foreach (HairCard card in cards)
         {
             if (card == null) continue;
@@ -127,7 +117,10 @@ public class PostShapeCurveBridge : MonoBehaviour
                 }
             }
 
-            if (!liveCurveEditing && card.PostShapeProfileContributionsEqual(scratchContributions))
+            // Curve editor mutations already call GroomShapeCurveRegistry.RefreshGroup at the
+            // moment a key is added, dragged, removed or reset. Merely presenting/selecting a
+            // POST is therefore not a dirty signal and must not force a mesh rebuild every frame.
+            if (card.PostShapeProfileContributionsEqual(scratchContributions))
                 continue;
 
             card.SetPostShapeProfileContributions(scratchContributions);
