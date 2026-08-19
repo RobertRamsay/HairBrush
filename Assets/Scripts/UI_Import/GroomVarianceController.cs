@@ -167,6 +167,19 @@ public class GroomVarianceController : MonoBehaviour
             Channel captured = d.Item1;
             main.onValueChanged.AddListener(_ =>
             {
+                // In POST authoring the shared main slider is editing the POST delta, not the
+                // group's canonical variance base. Re-applying group variance here produces an
+                // immediate canonical mesh write, then PostAffectorManager restores/evaluates the
+                // POST later in the frame, which is the visible two-state flicker while dragging.
+                // Re-submit the already-visible local VAR value as an idempotent route check: if
+                // an active POST owns this channel it returns true and we leave canonical alone.
+                if (rows.TryGetValue(captured, out VarianceRow postRow) && postRow != null && postRow.slider != null &&
+                    PostVarianceAffectorBridge.TrySetActiveLocalAmount(captured.ToString(), postRow.slider.value))
+                {
+                    MaintainMainLabel(captured);
+                    return;
+                }
+
                 if (GetSetting(viewer.currentGroupId, captured).amount > 0f)
                     ApplyChannel(captured, viewer.currentGroupId);
                 MaintainMainLabel(captured);
