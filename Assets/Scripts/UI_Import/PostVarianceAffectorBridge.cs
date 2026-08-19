@@ -15,6 +15,9 @@ public class PostVarianceAffectorBridge : MonoBehaviour
 {
     private static readonly string[] Channels = { "Length", "Width", "Bend", "Twist", "AngleX", "AngleY", "AngleZ" };
     private static readonly string[] RowNames = { "Length_VarianceRow", "Width_VarianceRow", "Bend_VarianceRow", "Twist_VarianceRow", "Angle X_VarianceRow", "Angle Y_VarianceRow", "Angle Z_VarianceRow" };
+    private static readonly string[] SeedRowNames = { "Length_VarianceSeedRow", "Width_VarianceSeedRow", "Bend_VarianceSeedRow", "Twist_VarianceSeedRow", "Angle X_VarianceSeedRow", "Angle Y_VarianceSeedRow", "Angle Z_VarianceSeedRow" };
+
+    private static PostVarianceAffectorBridge instance;
 
     private sealed class CardVarianceState
     {
@@ -44,6 +47,49 @@ public class PostVarianceAffectorBridge : MonoBehaviour
         GameObject go = new GameObject("PostVarianceAffectorBridge");
         DontDestroyOnLoad(go);
         go.AddComponent<PostVarianceAffectorBridge>();
+    }
+
+    void Awake()
+    {
+        instance = this;
+    }
+
+    void OnDestroy()
+    {
+        if (instance == this) instance = null;
+    }
+
+    // GroomVarianceController owns the shared rows. Give its callbacks a direct route into the
+    // active POST so they never have to mutate group variance first and repair it a frame later.
+    // Unsupported channels return false and keep the normal group-variance behaviour.
+    public static bool TrySetActiveLocalAmount(string channel, float amount)
+    {
+        return instance != null && instance.SetActiveLocalValue(channel, Mathf.Max(0f, amount), null);
+    }
+
+    public static bool TrySetActiveLocalSeed(string channel, int seed)
+    {
+        return instance != null && instance.SetActiveLocalValue(channel, null, seed);
+    }
+
+    bool SetActiveLocalValue(string channel, float? amount, int? seed)
+    {
+        if (Array.IndexOf(Channels, channel) < 0) return false;
+        EnsureRefs();
+        PostAffectorManager.PostAffector active = GetActive();
+        if (active == null) return false;
+
+        if (!localByPost.TryGetValue(active.id, out List<VarianceChannelSaveData> local))
+        {
+            local = ZeroLocal();
+            localByPost[active.id] = local;
+        }
+
+        VarianceChannelSaveData setting = local.FirstOrDefault(x => x != null && x.channel == channel);
+        if (setting == null) return false;
+        if (amount.HasValue) setting.amount = amount.Value;
+        if (seed.HasValue) setting.seed = seed.Value;
+        return true;
     }
 
     void Update()
@@ -91,8 +137,8 @@ public class PostVarianceAffectorBridge : MonoBehaviour
         List<VarianceChannelSaveData> localUI = ReadRows();
         localByPost[active.id] = localUI;
 
-        // Normal variance listeners fire before this bridge. Restore the real group variance,
-        // then put the localized POST variance values back into the visible controls.
+        // Direct-routed row callbacks no longer touch group variance. Keep this repair path for
+        // any older/external listener that still does, then restore the POST-local rows exactly.
         List<VarianceChannelSaveData> currentGroup = variance.ExportGroupSettings(active.groupId);
         if (!Equivalent(currentGroup, groupSettings))
         {
@@ -318,8 +364,9 @@ public class PostVarianceAffectorBridge : MonoBehaviour
         for (int i = 0; i < Channels.Length; i++)
         {
             Transform row = panel.Find(RowNames[i]);
+            Transform seedRow = panel.Find(SeedRowNames[i]);
             Slider slider = row != null ? row.GetComponentInChildren<Slider>(true) : null;
-            TMP_InputField seed = row != null ? row.GetComponentInChildren<TMP_InputField>(true) : null;
+            TMP_InputField seed = seedRow != null ? seedRow.GetComponentInChildren<TMP_InputField>(true) : null;
             int parsed = 0;
             if (seed != null) int.TryParse(seed.text, out parsed);
             result.Add(new VarianceChannelSaveData { channel = Channels[i], amount = slider != null ? slider.value : 0f, seed = parsed });
@@ -335,9 +382,10 @@ public class PostVarianceAffectorBridge : MonoBehaviour
         {
             VarianceChannelSaveData v = data.FirstOrDefault(x => x != null && x.channel == Channels[i]);
             Transform row = panel.Find(RowNames[i]);
+            Transform seedRow = panel.Find(SeedRowNames[i]);
             if (row == null || v == null) continue;
             Slider slider = row.GetComponentInChildren<Slider>(true);
-            TMP_InputField seed = row.GetComponentInChildren<TMP_InputField>(true);
+            TMP_InputField seed = seedRow != null ? seedRow.GetComponentInChildren<TMP_InputField>(true) : null;
             TextMeshProUGUI label = row.GetComponentsInChildren<TextMeshProUGUI>(true).FirstOrDefault(t => t.gameObject.name == "Text" || t.text.StartsWith("VAR"));
             if (slider != null) slider.SetValueWithoutNotify(v.amount);
             if (seed != null) seed.SetTextWithoutNotify(v.seed.ToString());
