@@ -242,6 +242,9 @@ public class NewGroupRootSelectionAuthority : MonoBehaviour
         GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.X);
         GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.Y);
         GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.Z);
+        GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.CurlFrequency);
+        GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.CurlDiameter);
+        GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.SegmentDensity);
     }
 
     static void RemoveGroupEntry(FieldInfo field, object owner, int gid)

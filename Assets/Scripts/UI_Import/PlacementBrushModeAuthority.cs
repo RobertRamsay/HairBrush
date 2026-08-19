@@ -321,7 +321,7 @@ public class PlacementBrushModeAuthority : MonoBehaviour
         {
             if (slider == null || slider.name != "Segments_Slider") continue;
             slider.minValue = 1f;
-            slider.maxValue = 36f;
+            slider.maxValue = 60f;
             slider.wholeNumbers = true;
             if (boundSegmentsSlider != slider)
             {

@@ -1,0 +1,53 @@
+diff --git a/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs b/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs
+index 6e06b67..a7e6f7a 100644
+--- a/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs
++++ b/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs
+@@ -182,6 +182,7 @@ public class GroomSessionResetCoordinator : MonoBehaviour
+         GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.Z);
+         GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.CurlFrequency);
+         GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.CurlDiameter);
++        GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.SegmentDensity);
+ 
+         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
+         {
+diff --git a/Assets/Scripts/UI_Import/GroomShapeProfileButtonAuthority.cs b/Assets/Scripts/UI_Import/GroomShapeProfileButtonAuthority.cs
+index f2bbb7c..e1c0df9 100644
+--- a/Assets/Scripts/UI_Import/GroomShapeProfileButtonAuthority.cs
++++ b/Assets/Scripts/UI_Import/GroomShapeProfileButtonAuthority.cs
+@@ -35,6 +35,9 @@ public class GroomShapeProfileButtonAuthority : MonoBehaviour
+         UpgradeRow("ShapeCurve_X_Row", GroomShapeCurveChannel.X);
+         UpgradeRow("ShapeCurve_Y_Row", GroomShapeCurveChannel.Y);
+         UpgradeRow("ShapeCurve_Z_Row", GroomShapeCurveChannel.Z);
++        UpgradeRow("ShapeCurve_CurlFrequency_Row", GroomShapeCurveChannel.CurlFrequency);
++        UpgradeRow("ShapeCurve_CurlDiameter_Row", GroomShapeCurveChannel.CurlDiameter);
++        UpgradeRow("ShapeCurve_SegmentDensity_Row", GroomShapeCurveChannel.SegmentDensity);
+         NormalizeOpenCurveEditor();
+     }
+ 
+diff --git a/Assets/Scripts/UI_Import/NewGroupRootSelectionAuthority.cs b/Assets/Scripts/UI_Import/NewGroupRootSelectionAuthority.cs
+index 84e5e3d..1097f2d 100644
+--- a/Assets/Scripts/UI_Import/NewGroupRootSelectionAuthority.cs
++++ b/Assets/Scripts/UI_Import/NewGroupRootSelectionAuthority.cs
+@@ -242,6 +242,9 @@ public class NewGroupRootSelectionAuthority : MonoBehaviour
+         GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.X);
+         GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.Y);
+         GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.Z);
++        GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.CurlFrequency);
++        GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.CurlDiameter);
++        GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.SegmentDensity);
+     }
+ 
+     static void RemoveGroupEntry(FieldInfo field, object owner, int gid)
+diff --git a/Assets/Scripts/UI_Import/PlacementBrushModeAuthority.cs b/Assets/Scripts/UI_Import/PlacementBrushModeAuthority.cs
+index 3cd8116..c4edc15 100644
+--- a/Assets/Scripts/UI_Import/PlacementBrushModeAuthority.cs
++++ b/Assets/Scripts/UI_Import/PlacementBrushModeAuthority.cs
+@@ -321,7 +321,7 @@ public class PlacementBrushModeAuthority : MonoBehaviour
+         {
+             if (slider == null || slider.name != "Segments_Slider") continue;
+             slider.minValue = 1f;
+-            slider.maxValue = 36f;
++            slider.maxValue = 60f;
+             slider.wholeNumbers = true;
+             if (boundSegmentsSlider != slider)
+             {
