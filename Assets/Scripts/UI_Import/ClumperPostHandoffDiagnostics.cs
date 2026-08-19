@@ -265,6 +265,7 @@ public class ClumperPostHandoffDiagnostics : MonoBehaviour
 
         int clumperCount = 0;
         int selectedClumper = -1;
+        string clumperModes = "";
         float clumperAmount = 0f;
         if (clumpers != null)
         {
@@ -276,6 +277,15 @@ public class ClumperPostHandoffDiagnostics : MonoBehaviour
             }
             GroupClumperManager.GroupClumper selected = clumpers.GetSelectedClumper();
             if (selected != null) selectedClumper = selected.id;
+
+            // Mode matters: leader selection is order-dependent for EVEN and POINT, but not for
+            // SINGLE. If this reads SINGLE while cards still pop, the leader-order fix is not
+            // the cause and the remaining suspect is per-card influence.
+            foreach (GroupClumperManager.GroupClumper c in list)
+            {
+                if (c == null || c.amount <= .0001f) continue;
+                clumperModes += " [" + c.id + ":" + c.mode + " n=" + c.count + " seed=" + c.seed + "]";
+            }
         }
 
         float maxSelectionWeight = 0f;
@@ -296,6 +306,7 @@ public class ClumperPostHandoffDiagnostics : MonoBehaviour
             " clumpers=" + clumperCount +
             " clumpAmount=" + clumperAmount.ToString("F3") +
             " selClumper=" + selectedClumper +
+            " modes=" + clumperModes +
             " cards=" + groupCards.Count +
             " maxSelWeight=" + maxSelectionWeight.ToString("F3") +
             " hitPoint=" + hitPoint.ToString("F4") +
