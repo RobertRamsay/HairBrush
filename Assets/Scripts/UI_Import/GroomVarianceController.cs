@@ -294,26 +294,33 @@ public class GroomVarianceController : MonoBehaviour
 
         varianceSlider.onValueChanged.AddListener(v =>
         {
+            valueText.text = "VAR ± " + FormatVariance(channel, v);
+            if (PostVarianceAffectorBridge.TrySetActiveLocalAmount(channel.ToString(), v)) return;
+
             VarianceSetting s = GetSetting(viewer.currentGroupId, channel);
             s.amount = v;
-            valueText.text = "VAR ± " + FormatVariance(channel, v);
             ApplyChannel(channel, viewer.currentGroupId);
         });
 
         seedInput.onEndEdit.AddListener(value =>
         {
-            VarianceSetting s = GetSetting(viewer.currentGroupId, channel);
             if (!int.TryParse(value, out int parsed)) parsed = 0;
-            s.seed = parsed;
             seedInput.SetTextWithoutNotify(parsed.ToString());
+            if (PostVarianceAffectorBridge.TrySetActiveLocalSeed(channel.ToString(), parsed)) return;
+
+            VarianceSetting s = GetSetting(viewer.currentGroupId, channel);
+            s.seed = parsed;
             if (s.amount > 0f) ApplyChannel(channel, viewer.currentGroupId);
         });
 
         randomButton.GetComponent<Button>().onClick.AddListener(() =>
         {
+            int randomized = UnityEngine.Random.Range(0, 1000000);
+            seedInput.SetTextWithoutNotify(randomized.ToString());
+            if (PostVarianceAffectorBridge.TrySetActiveLocalSeed(channel.ToString(), randomized)) return;
+
             VarianceSetting s = GetSetting(viewer.currentGroupId, channel);
-            s.seed = UnityEngine.Random.Range(0, 1000000);
-            seedInput.SetTextWithoutNotify(s.seed.ToString());
+            s.seed = randomized;
             if (s.amount > 0f) ApplyChannel(channel, viewer.currentGroupId);
         });
 
