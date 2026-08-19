@@ -44,6 +44,24 @@ public class ClumperPostHandoffDiagnostics : MonoBehaviour
     private FieldInfo cardMeshField = null;
     private FieldInfo cardBaseVerticesField = null;
 
+    // v7. `displaced` alone cannot say WHY a band of cards drops out of the clump. These three
+    // separate the only two possible causes:
+    //
+    //   override   how many cards still carry HairCard.externalClumpOverrideActive. If this
+    //              falls with `displaced`, GenerateMesh RECLAIMED those cards - their authored
+    //              source changed, which means a POST (or the variance bridge at order 3500)
+    //              moved them out from under the clumper.
+    //   drift      how many cards have generatedMeshSignature != externalClumpSourceSignature,
+    //              i.e. are one frame away from being reclaimed. This is the leading edge.
+    //   clumpSig   ThreeColumnClumperMeshAuthority's cached group signature. If this changes
+    //              every sample the clumper is re-evaluating constantly and the loss is in its
+    //              own maths; if it is pinned while `displaced` moves, the clumper is skipping.
+    private FieldInfo cardOverrideActiveField = null;
+    private FieldInfo cardOverrideSourceSigField = null;
+    private FieldInfo cardGeneratedSigField = null;
+    private ThreeColumnClumperMeshAuthority clumpAuthority = null;
+    private FieldInfo clumpSignatureField = null;
+
     private string lastHandoffLine = "";
     private string lastPostsLine = "";
     private readonly Dictionary<int, float> lastDeltaMagnitude = new Dictionary<int, float>();
@@ -125,6 +143,8 @@ public class ClumperPostHandoffDiagnostics : MonoBehaviour
         // per-card SurfaceIslandScope.SameIsland raycast) is even in play.
         int displaced = 0;
         int measured = 0;
+        int overrideHeld = 0;
+        int overrideDrift = 0;
         foreach (HairCard card in groupCards)
         {
             MeshFilter cardFilter = card.GetComponent<MeshFilter>();
@@ -134,13 +154,36 @@ public class ClumperPostHandoffDiagnostics : MonoBehaviour
             if (cardBase == null) continue;
             measured++;
             if (VertexHash(cardFilter.sharedMesh) != ArrayHash(cardBase)) displaced++;
+
+            bool held = false;
+            if (cardOverrideActiveField != null && cardOverrideActiveField.GetValue(card) is bool flag) held = flag;
+            if (held) overrideHeld++;
+
+            int generatedSig = 0;
+            int overrideSig = 0;
+            if (cardGeneratedSigField != null && cardGeneratedSigField.GetValue(card) is int g) generatedSig = g;
+            if (cardOverrideSourceSigField != null && cardOverrideSourceSigField.GetValue(card) is int o) overrideSig = o;
+            if (held && generatedSig != overrideSig) overrideDrift++;
+        }
+
+        // The clumper's own dirty-cache. A pinned value while `displaced` moves means the
+        // clumper SKIPPED and something else rewrote the meshes; a value that changes on every
+        // sample means the clumper re-ran and simply produced a different answer.
+        int clumpSig = 0;
+        if (clumpSignatureField != null && clumpAuthority != null)
+        {
+            var cache = clumpSignatureField.GetValue(clumpAuthority) as Dictionary<int, int>;
+            if (cache != null) cache.TryGetValue(currentGroup, out clumpSig);
         }
 
         StringBuilder builder = new StringBuilder();
         builder.Append("MESH group=").Append(currentGroup)
                .Append(" activeClump=").Append(GroupClumperManager.HasActiveClumper(currentGroup))
                .Append(" contiguous=").Append(SurfaceIslandScope.IsClumperContiguous(currentGroup))
-               .Append(" displaced=").Append(displaced).Append("/").Append(measured);
+               .Append(" displaced=").Append(displaced).Append("/").Append(measured)
+               .Append(" override=").Append(overrideHeld)
+               .Append(" drift=").Append(overrideDrift)
+               .Append(" clumpSig=").Append(clumpSig);
 
         int sampled = 0;
         foreach (HairCard card in groupCards)
@@ -455,6 +498,19 @@ public class ClumperPostHandoffDiagnostics : MonoBehaviour
             cardMeshField = typeof(HairCard).GetField("mesh", flags);
         if (cardBaseVerticesField == null)
             cardBaseVerticesField = typeof(HairCard).GetField("baseVertices", flags);
+        if (cardOverrideActiveField == null)
+            cardOverrideActiveField = typeof(HairCard).GetField("externalClumpOverrideActive", flags);
+        if (cardOverrideSourceSigField == null)
+            cardOverrideSourceSigField = typeof(HairCard).GetField("externalClumpSourceSignature", flags);
+        if (cardGeneratedSigField == null)
+            cardGeneratedSigField = typeof(HairCard).GetField("generatedMeshSignature", flags);
+
+        if (clumpAuthority == null)
+        {
+            clumpAuthority = FindFirstObjectByType<ThreeColumnClumperMeshAuthority>();
+            if (clumpAuthority != null)
+                clumpSignatureField = typeof(ThreeColumnClumperMeshAuthority).GetField("lastGroupSignature", flags);
+        }
     }
 
     bool ReadViewerBool(FieldInfo field)

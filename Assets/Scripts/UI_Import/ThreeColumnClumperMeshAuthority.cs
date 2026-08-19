@@ -470,7 +470,8 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         // in the group permanently - CLUMPER kept painting the rendered duplicate, GenerateMesh
         // kept painting the orphan, and from then on no POST edit, slider move or clumper
         // removal could ever change what was on screen again.
-        Mesh mesh = card != null ? card.GetLiveMesh() : null;
+        if (card == null) return;
+        Mesh mesh = card.GetLiveMesh();
         if (mesh == null || source == null || vertices == null) return;
 
         mesh.Clear();

@@ -58,6 +58,15 @@ public class PostAffectorManager : MonoBehaviour
     private int nextId = 1;
     private int activeId = -1;
     private int activeGroup = -1;
+
+    // The right-hand groom panel is SHARED property. POST is only entitled to absorb a change
+    // the user made while this POST owned that panel. These fields remember exactly what
+    // PostAffectorManager last handed to, or accepted from, the panel, so a write by any OTHER
+    // authority is recognisable as foreign instead of being read straight back in as an edit.
+    private ControlState lastPanelControls = new ControlState();
+    private bool hasPanelControls = false;
+    private GroomRootStateAuthority rootAuthority = null;
+    private GroupClumperManager clumperManager = null;
     private float nextUIScan;
     private int lastCreatedFrame = -1;
     private int predeterminedUVCacheFrame = -1;
@@ -157,6 +166,8 @@ public class PostAffectorManager : MonoBehaviour
         activeId = a.id;
         activeGroup = groupId;
         viewer.selectionStrength = 1f;
+        lastPanelControls = a.baseline;
+        hasPanelControls = true;
 
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None).Where(c => c.groupId == groupId))
         {
@@ -220,6 +231,19 @@ public class PostAffectorManager : MonoBehaviour
             return;
         }
 
+        // CLUMPER and POST are mutually exclusive edit contexts. ClumperPostOwnershipAuthority
+        // enforces that at execution order 5190 - AFTER this Update at 3300. That one-frame gap
+        // was fatal. On the frame a clumper row is clicked, POST is still "active" here, the
+        // groom panel has already been repointed at the group ROOT, and the delta line at the
+        // bottom of this method converted that root reading into this POST's delta - destroying
+        // the edit permanently, because delta is the only record of it. Release the context HERE,
+        // before a single control value is read, so the gap does not exist.
+        if (IsClumperSelectedForGroup(active.groupId))
+        {
+            ReleasePostSelection();
+            return;
+        }
+
         active.center = GetVector(hitPointField);
         active.normal = GetVector(hitNormalField);
         active.radius = Mathf.Clamp(viewer.brushRadius, .001f, .25f);
@@ -231,7 +255,133 @@ public class PostAffectorManager : MonoBehaviour
             RebuildGroupRows(active.groupId);
         }
 
-        active.delta = Subtract(ReadControls(), active.baseline);
+        AbsorbPanelEdit(active);
+    }
+
+    // "What does the panel say now" is not the same question as "what did the user just author".
+    // Absorb a control change ONLY when it is a real edit:
+    //
+    //   unchanged since we last looked  -> nothing to absorb, keep the stored delta.
+    //   changed, and the new reading is this group's own stored ROOT while the POST still holds
+    //                                      a real shape delta
+    //                                   -> a FOREIGN restore. ModelViewer.SyncShapeSlidersToGroupRoot,
+    //                                      GroomRootStateAuthority.RestoreRootToViewer, the CLUMPER
+    //                                      teardown and the menu/texture exit guards all write the
+    //                                      group root into these same fields. Put this POST's own
+    //                                      authored values back on the panel and KEEP the delta.
+    //   changed any other way           -> the user moved a slider. Absorb it.
+    //
+    // Without the middle case a single foreign write annihilates the POST's edit for good, and
+    // every later "why can I not edit my POSTs any more" symptom follows from that one frame.
+    void AbsorbPanelEdit(PostAffector active)
+    {
+        ControlState current = ReadControls();
+
+        if (!hasPanelControls)
+        {
+            lastPanelControls = current;
+            hasPanelControls = true;
+            return;
+        }
+
+        if (SameControls(current, lastPanelControls)) return;
+
+        if (IsForeignRootRestore(active, current))
+        {
+            ApplyControls(Add(active.baseline, active.delta));
+            lastPanelControls = ReadControls();
+            return;
+        }
+
+        active.delta = Subtract(current, active.baseline);
+        lastPanelControls = current;
+    }
+
+    bool IsForeignRootRestore(PostAffector active, ControlState current)
+    {
+        // A POST with no shape delta has nothing to lose, so never fight the panel over one.
+        if (!HasShapeDelta(active.delta)) return false;
+
+        if (rootAuthority == null) rootAuthority = FindFirstObjectByType<GroomRootStateAuthority>();
+        if (rootAuthority == null) return false;
+
+        GroomRootStateAuthority.RootState root = default;
+        if (!rootAuthority.TryGetRootState(active.groupId, out root)) return false;
+
+        // Compare the SHAPE channels only: SyncShapeSlidersToGroupRoot rewrites those eleven and
+        // deliberately leaves the UV channels alone, so a UV-only difference must not disqualify
+        // an otherwise obvious root restore.
+        return SameShape(current, FromRoot(root));
+    }
+
+    bool IsClumperSelectedForGroup(int groupId)
+    {
+        if (clumperManager == null) clumperManager = FindFirstObjectByType<GroupClumperManager>();
+        if (clumperManager == null) return false;
+
+        GroupClumperManager.GroupClumper selected = clumperManager.GetSelectedClumper();
+        if (selected == null) return false;
+        return selected.groupId == groupId;
+    }
+
+    static ControlState FromRoot(GroomRootStateAuthority.RootState r)
+    {
+        ControlState s = new ControlState();
+        s.length = r.length;
+        s.width = r.width;
+        s.segments = r.segments;
+        s.bend = r.bend;
+        s.twist = r.twist;
+        s.depth = r.depth;
+        s.x = r.x;
+        s.y = r.y;
+        s.z = r.z;
+        s.uScale = r.uScale;
+        s.vScale = r.vScale;
+        s.uOffset = r.uOffset;
+        s.vOffset = r.vOffset;
+        s.curlFrequency = r.curlFrequency;
+        s.curlDiameter = r.curlDiameter;
+        return s;
+    }
+
+    const float ControlEpsilon = .000001f;
+
+    static bool Near(float a, float b)
+    {
+        return Mathf.Abs(a - b) <= ControlEpsilon;
+    }
+
+    static bool SameShape(ControlState a, ControlState b)
+    {
+        if (!Near(a.length, b.length)) return false;
+        if (!Near(a.width, b.width)) return false;
+        if (!Near(a.segments, b.segments)) return false;
+        if (!Near(a.bend, b.bend)) return false;
+        if (!Near(a.twist, b.twist)) return false;
+        if (!Near(a.depth, b.depth)) return false;
+        if (!Near(a.x, b.x)) return false;
+        if (!Near(a.y, b.y)) return false;
+        if (!Near(a.z, b.z)) return false;
+        if (!Near(a.curlFrequency, b.curlFrequency)) return false;
+        if (!Near(a.curlDiameter, b.curlDiameter)) return false;
+        return true;
+    }
+
+    static bool SameControls(ControlState a, ControlState b)
+    {
+        if (!SameShape(a, b)) return false;
+        if (!Near(a.uScale, b.uScale)) return false;
+        if (!Near(a.vScale, b.vScale)) return false;
+        if (!Near(a.uOffset, b.uOffset)) return false;
+        if (!Near(a.vOffset, b.vOffset)) return false;
+        return true;
+    }
+
+    static bool HasShapeDelta(ControlState d)
+    {
+        ControlState zero = new ControlState();
+        return !SameShape(d, zero);
     }
 
     // The single, atomic way to leave POST editing. Both halves of the selection go down
@@ -246,6 +396,7 @@ public class PostAffectorManager : MonoBehaviour
         activeId = -1;
         activeGroup = -1;
         orphanHotspotFrames = 0;
+        hasPanelControls = false;
         SetField(hasSelectionField, false);
     }
 
@@ -478,6 +629,13 @@ public class PostAffectorManager : MonoBehaviour
         viewer.selectionStrength = a.weight;
         ApplyControls(Add(a.baseline, a.delta));
         SyncVisibleSlidersToViewer();
+
+        // This POST now owns the panel and the panel now shows exactly its authored values.
+        // Record that so AbsorbPanelEdit's very first comparison next frame is against what we
+        // just wrote, not against whatever the previous context left behind.
+        lastPanelControls = ReadControls();
+        hasPanelControls = true;
+
         RebuildGroupRows(a.groupId);
     }
 
