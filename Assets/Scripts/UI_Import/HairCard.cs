@@ -13,6 +13,7 @@ public class HairCard : MonoBehaviour
         public int segments;
         public float x, y, z;
         public float uScale, vScale, uOffset, vOffset;
+        public float curlFrequency, curlDiameter;
     }
 
     // A POST keeps its authored scalar delta, but its Bend/X/Y/Z contribution can have a
@@ -39,6 +40,10 @@ public class HairCard : MonoBehaviour
     public float bendAngle = 0f;
     public float twistAngle = 0f;
     public float flattenFactor = 1f;
+    // Curl (spiral/coil): frequency = full turns from root to tip, diameter = coil width.
+    // Applied after width, before bend, in the shape pipeline (see GenerateMesh).
+    public float curlFrequency = 0f;
+    public float curlDiameter = 0f;
 
     [Header("UV Settings")]
     public float uScale = 1.0f;
@@ -60,6 +65,7 @@ public class HairCard : MonoBehaviour
     private float currentEmbedDepth = 0.01f;
     private float storedOffsetX, storedOffsetY, storedOffsetZ;
     private float baseLength, baseWidth, baseBend, baseTwist, baseEmbedDepth;
+    private float baseCurlFrequency, baseCurlDiameter;
     private int baseSegments;
     private float baseOffsetX, baseOffsetY, baseOffsetZ;
     private Material cardMaterial;
@@ -189,6 +195,8 @@ public class HairCard : MonoBehaviour
         vScale = state.vScale;
         uOffset = state.uOffset;
         vOffset = state.vOffset;
+        curlFrequency = state.curlFrequency;
+        curlDiameter = state.curlDiameter;
         if (surfaceNormal != Vector3.zero) UpdateTransformOrientation(currentEmbedDepth);
         GenerateMesh();
     }
@@ -209,7 +217,9 @@ public class HairCard : MonoBehaviour
             uScale = uScale,
             vScale = vScale,
             uOffset = uOffset,
-            vOffset = vOffset
+            vOffset = vOffset,
+            curlFrequency = curlFrequency,
+            curlDiameter = curlDiameter
         };
     }
 
@@ -219,6 +229,7 @@ public class HairCard : MonoBehaviour
         state.width = Mathf.Max(0.0005f, state.width);
         state.segments = Mathf.Clamp(state.segments, 1, 36);
         state.depth = Mathf.Max(0f, state.depth);
+        state.curlDiameter = Mathf.Max(0f, state.curlDiameter);
         return state;
     }
 
@@ -279,7 +290,7 @@ public class HairCard : MonoBehaviour
         if (cardMaterial.HasProperty("_Color")) cardMaterial.SetColor("_Color", finalColor);
     }
 
-    public void SetParameters(float newLength, float newWidth, int newSegments, float newBend, float newTwist, float offsetX, float offsetY, float offsetZ, float newEmbedDepth, float strengthMultiplier = 1f, float newUScale = 1f, float newVScale = 1f, float newUOffset = 0f, float newVOffset = 0f)
+    public void SetParameters(float newLength, float newWidth, int newSegments, float newBend, float newTwist, float offsetX, float offsetY, float offsetZ, float newEmbedDepth, float strengthMultiplier = 1f, float newUScale = 1f, float newVScale = 1f, float newUOffset = 0f, float newVOffset = 0f, float newCurlFrequency = 0f, float newCurlDiameter = 0f)
     {
         if (selectionWeight > 0f)
         {
@@ -293,6 +304,8 @@ public class HairCard : MonoBehaviour
             storedOffsetY = Mathf.Lerp(baseOffsetY, offsetY, w);
             storedOffsetZ = Mathf.Lerp(baseOffsetZ, offsetZ, w);
             currentEmbedDepth = Mathf.Lerp(baseEmbedDepth, newEmbedDepth, w);
+            curlFrequency = Mathf.Lerp(baseCurlFrequency, newCurlFrequency, w);
+            curlDiameter = Mathf.Lerp(baseCurlDiameter, newCurlDiameter, w);
         }
         else
         {
@@ -305,6 +318,8 @@ public class HairCard : MonoBehaviour
             storedOffsetY = offsetY;
             storedOffsetZ = offsetZ;
             currentEmbedDepth = newEmbedDepth;
+            curlFrequency = newCurlFrequency;
+            curlDiameter = newCurlDiameter;
         }
         uScale = newUScale;
         vScale = newVScale;
@@ -315,7 +330,7 @@ public class HairCard : MonoBehaviour
         GenerateMesh();
     }
 
-    public void CaptureBaseState(float activeLength, float activeWidth, int activeSegments, float activeBend, float activeTwist, float activeDepth, float ox, float oy, float oz)
+    public void CaptureBaseState(float activeLength, float activeWidth, int activeSegments, float activeBend, float activeTwist, float activeDepth, float ox, float oy, float oz, float activeCurlFrequency = 0f, float activeCurlDiameter = 0f)
     {
         baseLength = activeLength;
         baseWidth = activeWidth;
@@ -326,6 +341,8 @@ public class HairCard : MonoBehaviour
         baseOffsetX = ox;
         baseOffsetY = oy;
         baseOffsetZ = oz;
+        baseCurlFrequency = activeCurlFrequency;
+        baseCurlDiameter = activeCurlDiameter;
     }
 
     public void SetSelectionWeight(float weight) { selectionWeight = Mathf.Clamp01(weight); UpdateVisualHighlight(); }
@@ -427,6 +444,26 @@ public class HairCard : MonoBehaviour
                 left += delta;
                 center += delta;
                 right += delta;
+            }
+
+            // Curl (spiral/coil): displaces the whole cross-section outward from the straight
+            // centerline, sweeping around the card's own length axis as t increases. Applied
+            // after width (currentWidth above) and before Bend/X/Y/Z's rotation below, so a
+            // curled card still gets bent/angled as a whole on top of its own coil shape.
+            // Root-only profile curves (see GroomShapeCurveAuthority) - no per-POST override.
+            if (curlFrequency != 0f && curlDiameter > 0f)
+            {
+                float freqMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.CurlFrequency, t);
+                float diameterMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.CurlDiameter, t);
+                float turns = curlFrequency * freqMultiplier;
+                float radius = curlDiameter * diameterMultiplier * .5f;
+                float angle = turns * t * Mathf.PI * 2f;
+                // cos(0)-1 = 0 and sin(0) = 0, so this is exactly zero at the root (t=0),
+                // keeping the coil continuous with the card's actual root position.
+                Vector3 curlOffset = new Vector3(radius * (Mathf.Cos(angle) - 1f), radius * Mathf.Sin(angle), 0f);
+                left += curlOffset;
+                center += curlOffset;
+                right += curlOffset;
             }
 
             Quaternion authoredRotation = GetLengthProfileRotation(t);

@@ -22,6 +22,9 @@ public class HairCardSaveData
     public float uOffset;
     public float vOffset;
     public int groupId;
+    // Curl (spiral/coil) modifier - applied after width, before bend, in the shape pipeline.
+    public float curlFrequency;
+    public float curlDiameter;
 }
 
 [Serializable] public class VarianceChannelSaveData { public string channel; public float amount; public int seed; }
@@ -153,6 +156,12 @@ public class PostPredeterminedUVSaveData
     public List<GroomCurveKeySaveData> yAngleCurve=new();
     public List<GroomCurveKeySaveData> zAngleCurve=new();
 
+    // Group-root 0..1 length profiles for the Curl modifier's frequency/diameter magnitudes.
+    // Curl has no per-POST override (unlike Bend/X/Y/Z above) - empty lists mean a flat x1
+    // multiplier throughout, same default convention as X/Y/Z.
+    public List<GroomCurveKeySaveData> curlFrequencyCurve=new();
+    public List<GroomCurveKeySaveData> curlDiameterCurve=new();
+
     // Group UV source. Adjustable keeps the legacy group U/V controls. Predetermined
     // chooses one authored Texture Editor rectangle per card using the inclusive ID range
     // and a deterministic seed.
@@ -201,6 +210,8 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
     public float sliderVScale;
     public float sliderUOffset;
     public float sliderVOffset;
+    public float sliderCurlFrequency;
+    public float sliderCurlDiameter;
 
     public void OnBeforeSerialize()
     {

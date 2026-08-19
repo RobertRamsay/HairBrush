@@ -1,0 +1,667 @@
+diff --git a/Assets/Scripts/UI_Import/CanonicalProjectStateBridge.cs b/Assets/Scripts/UI_Import/CanonicalProjectStateBridge.cs
+index c919637..9eb6f94 100644
+--- a/Assets/Scripts/UI_Import/CanonicalProjectStateBridge.cs
++++ b/Assets/Scripts/UI_Import/CanonicalProjectStateBridge.cs
+@@ -116,7 +116,10 @@ public class CanonicalProjectStateBridge : MonoBehaviour
+                 Mathf.Max(.0005f, canonical.length), Mathf.Max(.0005f, canonical.width), Mathf.Clamp(Mathf.RoundToInt(canonical.segments), 4, 36),
+                 canonical.bend, canonical.twist, canonical.x, canonical.y, canonical.z,
+                 Mathf.Max(0f, canonical.depth), 1f,
+-                canonical.uScale, canonical.vScale, canonical.uOffset, canonical.vOffset);
++                canonical.uScale, canonical.vScale, canonical.uOffset, canonical.vOffset,
++                // ControlState has no curl fields - curl lives only at the group root, not per
++                // POST, so this restoration passes the card's current curl through unchanged.
++                card.curlFrequency, card.curlDiameter);
+             card.SetSelectionWeight(oldSelection);
+ 
+             object state = states[card];
+diff --git a/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs b/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs
+index aebc4df..06eb851 100644
+--- a/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs
++++ b/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs
+@@ -180,12 +180,14 @@ public class GroomSessionResetCoordinator : MonoBehaviour
+         GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.X);
+         GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.Y);
+         GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.Z);
++        GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.CurlFrequency);
++        GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.CurlDiameter);
+ 
+         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
+         {
+             if (card == null || card.groupId != groupId) continue;
+             card.SetSelectionWeight(0f);
+-            card.SetParameters(.2f, .01f, 12, 0f, 0f, 0f, 0f, 0f, .002f, 1f, 1f, 1f, 0f, 0f);
++            card.SetParameters(.2f, .01f, 12, 0f, 0f, 0f, 0f, 0f, .002f, 1f, 1f, 1f, 0f, 0f, 0f, 0f);
+         }
+ 
+         SyncCoreSliderUI(ToControlState(defaults));
+diff --git a/Assets/Scripts/UI_Import/GroomShapeCurveAuthority.cs b/Assets/Scripts/UI_Import/GroomShapeCurveAuthority.cs
+index 2f3d502..1fc0787 100644
+--- a/Assets/Scripts/UI_Import/GroomShapeCurveAuthority.cs
++++ b/Assets/Scripts/UI_Import/GroomShapeCurveAuthority.cs
+@@ -12,7 +12,12 @@ public enum GroomShapeCurveChannel
+     Bend,
+     X,
+     Y,
+-    Z
++    Z,
++    // Curl (spiral/coil) magnitude profiles. Unlike Bend/X/Y/Z these have no per-POST override -
++    // see PostShapeCurveBridge.EvaluateRoot, which routes these two straight to the group
++    // registry rather than through the POST-editing snapshot mechanism.
++    CurlFrequency,
++    CurlDiameter
+ }
+ 
+ // Canonical group-root length profiles for shape angles. The slider remains the authored
+@@ -27,6 +32,8 @@ public static class GroomShapeCurveRegistry
+         public AnimationCurve x = CreateDefault(GroomShapeCurveChannel.X);
+         public AnimationCurve y = CreateDefault(GroomShapeCurveChannel.Y);
+         public AnimationCurve z = CreateDefault(GroomShapeCurveChannel.Z);
++        public AnimationCurve curlFrequency = CreateDefault(GroomShapeCurveChannel.CurlFrequency);
++        public AnimationCurve curlDiameter = CreateDefault(GroomShapeCurveChannel.CurlDiameter);
+     }
+ 
+     private static readonly Dictionary<int, CurveSet> byGroup = new Dictionary<int, CurveSet>();
+@@ -39,7 +46,9 @@ public static class GroomShapeCurveRegistry
+             case GroomShapeCurveChannel.Bend: return set.bend;
+             case GroomShapeCurveChannel.X: return set.x;
+             case GroomShapeCurveChannel.Y: return set.y;
+-            default: return set.z;
++            case GroomShapeCurveChannel.Z: return set.z;
++            case GroomShapeCurveChannel.CurlFrequency: return set.curlFrequency;
++            default: return set.curlDiameter;
+         }
+     }
+ 
+@@ -59,6 +68,8 @@ public static class GroomShapeCurveRegistry
+             case GroomShapeCurveChannel.X: set.x = clean; break;
+             case GroomShapeCurveChannel.Y: set.y = clean; break;
+             case GroomShapeCurveChannel.Z: set.z = clean; break;
++            case GroomShapeCurveChannel.CurlFrequency: set.curlFrequency = clean; break;
++            case GroomShapeCurveChannel.CurlDiameter: set.curlDiameter = clean; break;
+         }
+     }
+ 
+@@ -236,6 +247,8 @@ public class GroomShapeCurveAuthority : MonoBehaviour
+             group.xAngleCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.X);
+             group.yAngleCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.Y);
+             group.zAngleCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.Z);
++            group.curlFrequencyCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.CurlFrequency);
++            group.curlDiameterCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.CurlDiameter);
+         }
+     }
+ 
+@@ -270,6 +283,8 @@ public class GroomShapeCurveAuthority : MonoBehaviour
+         EnsureCurveRow("Offset X_Row", "X ANGLE PROFILE", GroomShapeCurveChannel.X);
+         EnsureCurveRow("Offset Y_Row", "Y ANGLE PROFILE", GroomShapeCurveChannel.Y);
+         EnsureCurveRow("Offset Z_Row", "Z ANGLE PROFILE", GroomShapeCurveChannel.Z);
++        EnsureCurveRow("Curl Frequency_Row", "CURL FREQUENCY PROFILE", GroomShapeCurveChannel.CurlFrequency);
++        EnsureCurveRow("Curl Diameter_Row", "CURL DIAMETER PROFILE", GroomShapeCurveChannel.CurlDiameter);
+     }
+ 
+     private void ResolveViewer()
+@@ -316,6 +331,8 @@ public class GroomShapeCurveAuthority : MonoBehaviour
+                 GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.X, group.xAngleCurve);
+                 GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.Y, group.yAngleCurve);
+                 GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.Z, group.zAngleCurve);
++                GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.CurlFrequency, group.curlFrequencyCurve);
++                GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.CurlDiameter, group.curlDiameterCurve);
+                 GroomShapeCurveRegistry.RefreshGroup(group.groupId);
+             }
+         }
+@@ -447,7 +464,9 @@ public class GroomShapeCurveAuthority : MonoBehaviour
+             case GroomShapeCurveChannel.Bend: return "BEND";
+             case GroomShapeCurveChannel.X: return "X ANGLE";
+             case GroomShapeCurveChannel.Y: return "Y ANGLE";
+-            default: return "Z ANGLE";
++            case GroomShapeCurveChannel.Z: return "Z ANGLE";
++            case GroomShapeCurveChannel.CurlFrequency: return "CURL FREQUENCY";
++            default: return "CURL DIAMETER";
+         }
+     }
+ 
+diff --git a/Assets/Scripts/UI_Import/HairCard.cs b/Assets/Scripts/UI_Import/HairCard.cs
+index 6403b2d..e1fbf87 100644
+--- a/Assets/Scripts/UI_Import/HairCard.cs
++++ b/Assets/Scripts/UI_Import/HairCard.cs
+@@ -13,6 +13,7 @@ public class HairCard : MonoBehaviour
+         public int segments;
+         public float x, y, z;
+         public float uScale, vScale, uOffset, vOffset;
++        public float curlFrequency, curlDiameter;
+     }
+ 
+     // A POST keeps its authored scalar delta, but its Bend/X/Y/Z contribution can have a
+@@ -39,6 +40,10 @@ public class HairCard : MonoBehaviour
+     public float bendAngle = 0f;
+     public float twistAngle = 0f;
+     public float flattenFactor = 1f;
++    // Curl (spiral/coil): frequency = full turns from root to tip, diameter = coil width.
++    // Applied after width, before bend, in the shape pipeline (see GenerateMesh).
++    public float curlFrequency = 0f;
++    public float curlDiameter = 0f;
+ 
+     [Header("UV Settings")]
+     public float uScale = 1.0f;
+@@ -60,6 +65,7 @@ public class HairCard : MonoBehaviour
+     private float currentEmbedDepth = 0.01f;
+     private float storedOffsetX, storedOffsetY, storedOffsetZ;
+     private float baseLength, baseWidth, baseBend, baseTwist, baseEmbedDepth;
++    private float baseCurlFrequency, baseCurlDiameter;
+     private int baseSegments;
+     private float baseOffsetX, baseOffsetY, baseOffsetZ;
+     private Material cardMaterial;
+@@ -189,6 +195,8 @@ public class HairCard : MonoBehaviour
+         vScale = state.vScale;
+         uOffset = state.uOffset;
+         vOffset = state.vOffset;
++        curlFrequency = state.curlFrequency;
++        curlDiameter = state.curlDiameter;
+         if (surfaceNormal != Vector3.zero) UpdateTransformOrientation(currentEmbedDepth);
+         GenerateMesh();
+     }
+@@ -209,7 +217,9 @@ public class HairCard : MonoBehaviour
+             uScale = uScale,
+             vScale = vScale,
+             uOffset = uOffset,
+-            vOffset = vOffset
++            vOffset = vOffset,
++            curlFrequency = curlFrequency,
++            curlDiameter = curlDiameter
+         };
+     }
+ 
+@@ -219,6 +229,7 @@ public class HairCard : MonoBehaviour
+         state.width = Mathf.Max(0.0005f, state.width);
+         state.segments = Mathf.Clamp(state.segments, 1, 36);
+         state.depth = Mathf.Max(0f, state.depth);
++        state.curlDiameter = Mathf.Max(0f, state.curlDiameter);
+         return state;
+     }
+ 
+@@ -279,7 +290,7 @@ public class HairCard : MonoBehaviour
+         if (cardMaterial.HasProperty("_Color")) cardMaterial.SetColor("_Color", finalColor);
+     }
+ 
+-    public void SetParameters(float newLength, float newWidth, int newSegments, float newBend, float newTwist, float offsetX, float offsetY, float offsetZ, float newEmbedDepth, float strengthMultiplier = 1f, float newUScale = 1f, float newVScale = 1f, float newUOffset = 0f, float newVOffset = 0f)
++    public void SetParameters(float newLength, float newWidth, int newSegments, float newBend, float newTwist, float offsetX, float offsetY, float offsetZ, float newEmbedDepth, float strengthMultiplier = 1f, float newUScale = 1f, float newVScale = 1f, float newUOffset = 0f, float newVOffset = 0f, float newCurlFrequency = 0f, float newCurlDiameter = 0f)
+     {
+         if (selectionWeight > 0f)
+         {
+@@ -293,6 +304,8 @@ public class HairCard : MonoBehaviour
+             storedOffsetY = Mathf.Lerp(baseOffsetY, offsetY, w);
+             storedOffsetZ = Mathf.Lerp(baseOffsetZ, offsetZ, w);
+             currentEmbedDepth = Mathf.Lerp(baseEmbedDepth, newEmbedDepth, w);
++            curlFrequency = Mathf.Lerp(baseCurlFrequency, newCurlFrequency, w);
++            curlDiameter = Mathf.Lerp(baseCurlDiameter, newCurlDiameter, w);
+         }
+         else
+         {
+@@ -305,6 +318,8 @@ public class HairCard : MonoBehaviour
+             storedOffsetY = offsetY;
+             storedOffsetZ = offsetZ;
+             currentEmbedDepth = newEmbedDepth;
++            curlFrequency = newCurlFrequency;
++            curlDiameter = newCurlDiameter;
+         }
+         uScale = newUScale;
+         vScale = newVScale;
+@@ -315,7 +330,7 @@ public class HairCard : MonoBehaviour
+         GenerateMesh();
+     }
+ 
+-    public void CaptureBaseState(float activeLength, float activeWidth, int activeSegments, float activeBend, float activeTwist, float activeDepth, float ox, float oy, float oz)
++    public void CaptureBaseState(float activeLength, float activeWidth, int activeSegments, float activeBend, float activeTwist, float activeDepth, float ox, float oy, float oz, float activeCurlFrequency = 0f, float activeCurlDiameter = 0f)
+     {
+         baseLength = activeLength;
+         baseWidth = activeWidth;
+@@ -326,6 +341,8 @@ public class HairCard : MonoBehaviour
+         baseOffsetX = ox;
+         baseOffsetY = oy;
+         baseOffsetZ = oz;
++        baseCurlFrequency = activeCurlFrequency;
++        baseCurlDiameter = activeCurlDiameter;
+     }
+ 
+     public void SetSelectionWeight(float weight) { selectionWeight = Mathf.Clamp01(weight); UpdateVisualHighlight(); }
+@@ -429,6 +446,26 @@ public class HairCard : MonoBehaviour
+                 right += delta;
+             }
+ 
++            // Curl (spiral/coil): displaces the whole cross-section outward from the straight
++            // centerline, sweeping around the card's own length axis as t increases. Applied
++            // after width (currentWidth above) and before Bend/X/Y/Z's rotation below, so a
++            // curled card still gets bent/angled as a whole on top of its own coil shape.
++            // Root-only profile curves (see GroomShapeCurveAuthority) - no per-POST override.
++            if (curlFrequency != 0f && curlDiameter > 0f)
++            {
++                float freqMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.CurlFrequency, t);
++                float diameterMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.CurlDiameter, t);
++                float turns = curlFrequency * freqMultiplier;
++                float radius = curlDiameter * diameterMultiplier * .5f;
++                float angle = turns * t * Mathf.PI * 2f;
++                // cos(0)-1 = 0 and sin(0) = 0, so this is exactly zero at the root (t=0),
++                // keeping the coil continuous with the card's actual root position.
++                Vector3 curlOffset = new Vector3(radius * (Mathf.Cos(angle) - 1f), radius * Mathf.Sin(angle), 0f);
++                left += curlOffset;
++                center += curlOffset;
++                right += curlOffset;
++            }
++
+             Quaternion authoredRotation = GetLengthProfileRotation(t);
+             left = authoredRotation * left;
+             center = authoredRotation * center;
+diff --git a/Assets/Scripts/UI_Import/HairCardSaveData.cs b/Assets/Scripts/UI_Import/HairCardSaveData.cs
+index 345bb61..f6c753f 100644
+--- a/Assets/Scripts/UI_Import/HairCardSaveData.cs
++++ b/Assets/Scripts/UI_Import/HairCardSaveData.cs
+@@ -22,6 +22,9 @@ public class HairCardSaveData
+     public float uOffset;
+     public float vOffset;
+     public int groupId;
++    // Curl (spiral/coil) modifier - applied after width, before bend, in the shape pipeline.
++    public float curlFrequency;
++    public float curlDiameter;
+ }
+ 
+ [Serializable] public class VarianceChannelSaveData { public string channel; public float amount; public int seed; }
+@@ -153,6 +156,12 @@ public class PostPredeterminedUVSaveData
+     public List<GroomCurveKeySaveData> yAngleCurve=new();
+     public List<GroomCurveKeySaveData> zAngleCurve=new();
+ 
++    // Group-root 0..1 length profiles for the Curl modifier's frequency/diameter magnitudes.
++    // Curl has no per-POST override (unlike Bend/X/Y/Z above) - empty lists mean a flat x1
++    // multiplier throughout, same default convention as X/Y/Z.
++    public List<GroomCurveKeySaveData> curlFrequencyCurve=new();
++    public List<GroomCurveKeySaveData> curlDiameterCurve=new();
++
+     // Group UV source. Adjustable keeps the legacy group U/V controls. Predetermined
+     // chooses one authored Texture Editor rectangle per card using the inclusive ID range
+     // and a deterministic seed.
+@@ -201,6 +210,8 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
+     public float sliderVScale;
+     public float sliderUOffset;
+     public float sliderVOffset;
++    public float sliderCurlFrequency;
++    public float sliderCurlDiameter;
+ 
+     public void OnBeforeSerialize()
+     {
+diff --git a/Assets/Scripts/UI_Import/ModelViewer.cs b/Assets/Scripts/UI_Import/ModelViewer.cs
+index 7dcea29..1d34362 100644
+--- a/Assets/Scripts/UI_Import/ModelViewer.cs
++++ b/Assets/Scripts/UI_Import/ModelViewer.cs
+@@ -55,6 +55,8 @@ public class ModelViewer : MonoBehaviour
+     public float currentVScale = 1.0f;
+     public float currentUOffset = 0.0f;
+     public float currentVOffset = 0.0f;
++    public float currentCurlFrequency = 0f;
++    public float currentCurlDiameter = 0f;
+ 
+     // Group Management
+     public int currentGroupId = 0;
+@@ -91,6 +93,8 @@ public class ModelViewer : MonoBehaviour
+ 
+     private Slider lengthSlider;
+     private Slider widthSlider;
++    private Slider curlFrequencySlider;
++    private Slider curlDiameterSlider;
+     private Slider segmentsSlider;
+     private Slider bendSlider;
+     private Slider twistSlider;
+@@ -178,7 +182,7 @@ public class ModelViewer : MonoBehaviour
+         float delta = val - currentLength;
+         currentLength = val;
+         if (hasSelectionHotspot) UpdateActiveCard();
+-        else ApplyGroupUpdate(c => c.SetParameters(Mathf.Max(0.001f, isRelativeMode ? c.length + delta : val), c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset));
++        else ApplyGroupUpdate(c => c.SetParameters(Mathf.Max(0.001f, isRelativeMode ? c.length + delta : val), c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
+     }
+ 
+     public void OnSliderWidthChanged(float val)
+@@ -186,7 +190,23 @@ public class ModelViewer : MonoBehaviour
+         float delta = val - currentWidth;
+         currentWidth = val;
+         if (hasSelectionHotspot) UpdateActiveCard();
+-        else ApplyGroupUpdate(c => c.SetParameters(c.length, Mathf.Max(0.0005f, isRelativeMode ? c.width + delta : val), c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset));
++        else ApplyGroupUpdate(c => c.SetParameters(c.length, Mathf.Max(0.0005f, isRelativeMode ? c.width + delta : val), c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
++    }
++
++    public void OnSliderCurlFrequencyChanged(float val)
++    {
++        float delta = val - currentCurlFrequency;
++        currentCurlFrequency = val;
++        if (hasSelectionHotspot) UpdateActiveCard();
++        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, isRelativeMode ? c.curlFrequency + delta : val, c.curlDiameter));
++    }
++
++    public void OnSliderCurlDiameterChanged(float val)
++    {
++        float delta = val - currentCurlDiameter;
++        currentCurlDiameter = val;
++        if (hasSelectionHotspot) UpdateActiveCard();
++        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, Mathf.Max(0f, isRelativeMode ? c.curlDiameter + delta : val)));
+     }
+ 
+     public void OnSliderSegmentsChanged(float val)
+@@ -195,7 +215,7 @@ public class ModelViewer : MonoBehaviour
+         int deltaSegs = targetSegs - currentSegments;
+         currentSegments = targetSegs;
+         if (hasSelectionHotspot) UpdateActiveCard();
+-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, Mathf.Clamp(isRelativeMode ? c.segments + deltaSegs : targetSegs, 4, 36), c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset));
++        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, Mathf.Clamp(isRelativeMode ? c.segments + deltaSegs : targetSegs, 4, 36), c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
+     }
+ 
+     public void OnSliderBendChanged(float val)
+@@ -203,7 +223,7 @@ public class ModelViewer : MonoBehaviour
+         float delta = val - currentBend;
+         currentBend = val;
+         if (hasSelectionHotspot) UpdateActiveCard();
+-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, isRelativeMode ? c.bendAngle + delta : val, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset));
++        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, isRelativeMode ? c.bendAngle + delta : val, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
+     }
+ 
+     public void OnSliderTwistChanged(float val)
+@@ -211,7 +231,7 @@ public class ModelViewer : MonoBehaviour
+         float delta = val - currentTwist;
+         currentTwist = val;
+         if (hasSelectionHotspot) UpdateActiveCard();
+-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, isRelativeMode ? c.twistAngle + delta : val, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset));
++        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, isRelativeMode ? c.twistAngle + delta : val, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
+     }
+ 
+     public void OnSliderEmbedDepthChanged(float val)
+@@ -219,7 +239,7 @@ public class ModelViewer : MonoBehaviour
+         float delta = val - currentEmbedDepth;
+         currentEmbedDepth = val;
+         if (hasSelectionHotspot) UpdateActiveCard();
+-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), Mathf.Max(0f, isRelativeMode ? c.GetEmbedDepth() + delta : val), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset));
++        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), Mathf.Max(0f, isRelativeMode ? c.GetEmbedDepth() + delta : val), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
+     }
+ 
+     public void OnSliderOffsetXChanged(float val)
+@@ -227,7 +247,7 @@ public class ModelViewer : MonoBehaviour
+         float delta = val - currentOffsetX;
+         currentOffsetX = val;
+         if (hasSelectionHotspot) UpdateActiveCard();
+-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, isRelativeMode ? c.GetOffsetX() + delta : val, c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset));
++        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, isRelativeMode ? c.GetOffsetX() + delta : val, c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
+     }
+ 
+     public void OnSliderOffsetYChanged(float val)
+@@ -235,7 +255,7 @@ public class ModelViewer : MonoBehaviour
+         float delta = val - currentOffsetY;
+         currentOffsetY = val;
+         if (hasSelectionHotspot) UpdateActiveCard();
+-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), isRelativeMode ? c.GetOffsetY() + delta : val, c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset));
++        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), isRelativeMode ? c.GetOffsetY() + delta : val, c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
+     }
+ 
+     public void OnSliderOffsetZChanged(float val)
+@@ -243,41 +263,43 @@ public class ModelViewer : MonoBehaviour
+         float delta = val - currentOffsetZ;
+         currentOffsetZ = val;
+         if (hasSelectionHotspot) UpdateActiveCard();
+-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), isRelativeMode ? c.GetOffsetZ() + delta : val, c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset));
++        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), isRelativeMode ? c.GetOffsetZ() + delta : val, c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
+     }
+ 
+     public void OnSliderUScaleChanged(float val)
+     {
+         currentUScale = val;
+         groupUScales[currentGroupId] = val;
+-        ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, val, c.vScale, c.uOffset, c.vOffset));
++        ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, val, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
+     }
+ 
+     public void OnSliderVScaleChanged(float val)
+     {
+         currentVScale = val;
+         groupVScales[currentGroupId] = val;
+-        ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, val, c.uOffset, c.vOffset));
++        ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, val, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
+     }
+ 
+     public void OnSliderUOffsetChanged(float val)
+     {
+         currentUOffset = val;
+         groupUOffsets[currentGroupId] = val;
+-        ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, val, c.vOffset));
++        ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, val, c.vOffset, c.curlFrequency, c.curlDiameter));
+     }
+ 
+     public void OnSliderVOffsetChanged(float val)
+     {
+         currentVOffset = val;
+         groupVOffsets[currentGroupId] = val;
+-        ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, val));
++        ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, val, c.curlFrequency, c.curlDiameter));
+     }
+ 
+     void ResetAllSliders()
+     {
+         currentLength = 0.2f;
+         currentWidth = 0.01f;
++        currentCurlFrequency = 0f;
++        currentCurlDiameter = 0f;
+         currentSegments = 12;
+         currentBend = 0f;
+         currentTwist = 0f;
+@@ -295,6 +317,8 @@ public class ModelViewer : MonoBehaviour
+         groupVOffsets[currentGroupId] = currentVOffset;
+         if (lengthSlider != null) lengthSlider.value = currentLength;
+         if (widthSlider != null) widthSlider.value = currentWidth;
++        if (curlFrequencySlider != null) curlFrequencySlider.value = currentCurlFrequency;
++        if (curlDiameterSlider != null) curlDiameterSlider.value = currentCurlDiameter;
+         if (segmentsSlider != null) segmentsSlider.value = currentSegments;
+         if (bendSlider != null) bendSlider.value = currentBend;
+         if (twistSlider != null) twistSlider.value = currentTwist;
+@@ -476,6 +500,8 @@ public class ModelViewer : MonoBehaviour
+         CreateModeToggleButton(panelGO.transform);
+         CreateSliderUI(panelGO.transform, "Length", 0.0005f, 1.0f, currentLength, OnActualSliderLengthChanged, out lengthSlider, 38, 16);
+         CreateSliderUI(panelGO.transform, "Width", 0.0005f, 0.05f, currentWidth, OnSliderWidthChanged, out widthSlider, 38, 16);
++        CreateSliderUI(panelGO.transform, "Curl Frequency", -10f, 10f, currentCurlFrequency, OnSliderCurlFrequencyChanged, out curlFrequencySlider, 38, 16);
++        CreateSliderUI(panelGO.transform, "Curl Diameter", 0f, 0.15f, currentCurlDiameter, OnSliderCurlDiameterChanged, out curlDiameterSlider, 38, 16);
+         CreateSliderUI(panelGO.transform, "Segments", 4, 36, currentSegments, OnSliderSegmentsChanged, out segmentsSlider, 38, 16);
+         CreateSliderUI(panelGO.transform, "Bend Angle", -360f, 360f, currentBend, OnSliderBendChanged, out bendSlider, 38, 16);
+         CreateSliderUI(panelGO.transform, "Twist Angle", -360f, 360f, currentTwist, OnSliderTwistChanged, out twistSlider, 38, 16);
+@@ -848,9 +874,9 @@ public class ModelViewer : MonoBehaviour
+         if (hasSelectionHotspot)
+         {
+             HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
+-            foreach (HairCard card in allCards) if (card.groupId == currentGroupId && card.selectionWeight > 0f) card.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, selectionStrength, currentUScale, currentVScale, currentUOffset, currentVOffset);
++            foreach (HairCard card in allCards) if (card.groupId == currentGroupId && card.selectionWeight > 0f) card.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, selectionStrength, currentUScale, currentVScale, currentUOffset, currentVOffset, currentCurlFrequency, currentCurlDiameter);
+         }
+-        else if (lastPlacedCard != null) lastPlacedCard.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, 1f, currentUScale, currentVScale, currentUOffset, currentVOffset);
++        else if (lastPlacedCard != null) lastPlacedCard.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, 1f, currentUScale, currentVScale, currentUOffset, currentVOffset, currentCurlFrequency, currentCurlDiameter);
+     }
+ 
+     void Update() { HandleCameraControls(); HandleGrooming(); }
+@@ -889,7 +915,7 @@ public class ModelViewer : MonoBehaviour
+                 groupVScales[newId] = currentVScale;
+                 groupUOffsets[newId] = currentUOffset;
+                 groupVOffsets[newId] = currentVOffset;
+-                foreach (var card in sessionPlacedCards) if (card != null) { card.groupId = newId; card.SetParameters(card.length, card.width, card.segments, card.bendAngle, card.twistAngle, card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ(), card.GetEmbedDepth(), 1f, currentUScale, currentVScale, currentUOffset, currentVOffset); }
++                foreach (var card in sessionPlacedCards) if (card != null) { card.groupId = newId; card.SetParameters(card.length, card.width, card.segments, card.bendAngle, card.twistAngle, card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ(), card.GetEmbedDepth(), 1f, currentUScale, currentVScale, currentUOffset, currentVOffset, card.curlFrequency, card.curlDiameter); }
+                 SelectGroup(newId);
+             }
+ #endif
+@@ -926,20 +952,24 @@ public class ModelViewer : MonoBehaviour
+         if (groupCards.Length > 0)
+         {
+             var nearestCards = groupCards.OrderBy(card => Vector3.Distance(brushCenter, card.transform.position)).Take(6).ToList();
+-            float totalWeight = 0f, avgLength = 0f, avgWidth = 0f, avgBend = 0f, avgTwist = 0f;
++            float totalWeight = 0f, avgLength = 0f, avgWidth = 0f, avgBend = 0f, avgTwist = 0f, avgCurlFrequency = 0f, avgCurlDiameter = 0f;
+             int accumulatedSegments = 0;
+-            foreach (var card in nearestCards) { float dist = Vector3.Distance(brushCenter, card.transform.position); float weight = 1f / (dist + 0.0001f); totalWeight += weight; avgLength += card.length * weight; avgWidth += card.width * weight; avgBend += card.bendAngle * weight; avgTwist += card.twistAngle * weight; accumulatedSegments += card.segments; }
++            foreach (var card in nearestCards) { float dist = Vector3.Distance(brushCenter, card.transform.position); float weight = 1f / (dist + 0.0001f); totalWeight += weight; avgLength += card.length * weight; avgWidth += card.width * weight; avgBend += card.bendAngle * weight; avgTwist += card.twistAngle * weight; avgCurlFrequency += card.curlFrequency * weight; avgCurlDiameter += card.curlDiameter * weight; accumulatedSegments += card.segments; }
+             if (totalWeight > 0f)
+             {
+                 currentLength = avgLength / totalWeight;
+                 currentWidth = avgWidth / totalWeight;
+                 currentBend = avgBend / totalWeight;
+                 currentTwist = avgTwist / totalWeight;
++                currentCurlFrequency = avgCurlFrequency / totalWeight;
++                currentCurlDiameter = avgCurlDiameter / totalWeight;
+                 currentSegments = Mathf.RoundToInt((float)accumulatedSegments / nearestCards.Count);
+                 if (lengthSlider != null) lengthSlider.SetValueWithoutNotify(currentLength);
+                 if (widthSlider != null) widthSlider.SetValueWithoutNotify(currentWidth);
+                 if (bendSlider != null) bendSlider.SetValueWithoutNotify(currentBend);
+                 if (twistSlider != null) twistSlider.SetValueWithoutNotify(currentTwist);
++                if (curlFrequencySlider != null) curlFrequencySlider.SetValueWithoutNotify(currentCurlFrequency);
++                if (curlDiameterSlider != null) curlDiameterSlider.SetValueWithoutNotify(currentCurlDiameter);
+                 if (segmentsSlider != null) segmentsSlider.SetValueWithoutNotify(currentSegments);
+             }
+         }
+@@ -969,7 +999,7 @@ public class ModelViewer : MonoBehaviour
+         {
+             if (card.groupId != currentGroupId) { card.SetSelectionWeight(0f); continue; }
+             float distance = Vector3.Distance(brushCenter, card.transform.position);
+-            if (distance <= brushFalloffDistance) { float weight = Mathf.Clamp01(1f - (distance / brushFalloffDistance)); card.SetSelectionWeight(weight); card.CaptureBaseState(card.length, card.width, card.segments, card.bendAngle, card.twistAngle, card.GetEmbedDepth(), card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ()); }
++            if (distance <= brushFalloffDistance) { float weight = Mathf.Clamp01(1f - (distance / brushFalloffDistance)); card.SetSelectionWeight(weight); card.CaptureBaseState(card.length, card.width, card.segments, card.bendAngle, card.twistAngle, card.GetEmbedDepth(), card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ(), card.curlFrequency, card.curlDiameter); }
+             else card.SetSelectionWeight(0f);
+         }
+     }
+@@ -979,7 +1009,7 @@ public class ModelViewer : MonoBehaviour
+         GameObject cardGO = new GameObject("HairCard_Strip", typeof(MeshFilter), typeof(MeshRenderer), typeof(HairCard));
+         HairCard card = cardGO.GetComponent<HairCard>();
+         card.SetPlacementData(position, normal, currentEmbedDepth, currentOffsetX, currentOffsetY, currentOffsetZ, currentGroupId);
+-        card.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, 1f, currentUScale, currentVScale, currentUOffset, currentVOffset);
++        card.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, 1f, currentUScale, currentVScale, currentUOffset, currentVOffset, currentCurlFrequency, currentCurlDiameter);
+         lastPlacedCard = card;
+         MeshRenderer mr = cardGO.GetComponent<MeshRenderer>();
+         if (hairCardMaterial != null) mr.sharedMaterial = hairCardMaterial;
+@@ -1039,6 +1069,8 @@ public class ModelViewer : MonoBehaviour
+         saveData.sliderVScale = currentVScale;
+         saveData.sliderUOffset = currentUOffset;
+         saveData.sliderVOffset = currentVOffset;
++        saveData.sliderCurlFrequency = currentCurlFrequency;
++        saveData.sliderCurlDiameter = currentCurlDiameter;
+         foreach (int id in allGroupIds)
+         {
+             GroupSaveData gData = new GroupSaveData();
+@@ -1076,6 +1108,8 @@ public class ModelViewer : MonoBehaviour
+             cardData.uOffset = card.uOffset;
+             cardData.vOffset = card.vOffset;
+             cardData.groupId = card.groupId;
++            cardData.curlFrequency = card.curlFrequency;
++            cardData.curlDiameter = card.curlDiameter;
+             saveData.hairCards.Add(cardData);
+         }
+         string json = JsonUtility.ToJson(saveData, true);
+@@ -1124,6 +1158,8 @@ public class ModelViewer : MonoBehaviour
+         currentVScale = saveData.sliderVScale != 0 ? saveData.sliderVScale : 1.0f;
+         currentUOffset = saveData.sliderUOffset;
+         currentVOffset = saveData.sliderVOffset;
++        currentCurlFrequency = saveData.sliderCurlFrequency;
++        currentCurlDiameter = saveData.sliderCurlDiameter;
+         allGroupIds.Clear();
+         groupNames.Clear();
+         groupUScales.Clear();
+@@ -1148,7 +1184,7 @@ public class ModelViewer : MonoBehaviour
+             card.groupId = cData.groupId;
+             float u = cData.uScale != 0 ? cData.uScale : 1.0f;
+             float v = cData.vScale != 0 ? cData.vScale : 1.0f;
+-            card.SetParameters(cData.length, cData.width, cData.segments, cData.bendAngle, cData.twistAngle, cData.offsetX, cData.offsetY, cData.offsetZ, cData.embedDepth, 1f, u, v, cData.uOffset, cData.vOffset);
++            card.SetParameters(cData.length, cData.width, cData.segments, cData.bendAngle, cData.twistAngle, cData.offsetX, cData.offsetY, cData.offsetZ, cData.embedDepth, 1f, u, v, cData.uOffset, cData.vOffset, cData.curlFrequency, cData.curlDiameter);
+             MeshRenderer mr = cardGO.GetComponent<MeshRenderer>();
+             if (hairCardMaterial != null) mr.sharedMaterial = hairCardMaterial;
+         }
+diff --git a/Assets/Scripts/UI_Import/PostAffectorSurfaceMoveUX.cs b/Assets/Scripts/UI_Import/PostAffectorSurfaceMoveUX.cs
+index e6d50b0..787eb20 100644
+--- a/Assets/Scripts/UI_Import/PostAffectorSurfaceMoveUX.cs
++++ b/Assets/Scripts/UI_Import/PostAffectorSurfaceMoveUX.cs
+@@ -127,7 +127,7 @@ public class PostAffectorSurfaceMoveUX : MonoBehaviour
+             if (previousWeight <= 0f && weight > 0f)
+             {
+                 card.CaptureBaseState(card.length, card.width, card.segments, card.bendAngle, card.twistAngle,
+-                    card.GetEmbedDepth(), card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ());
++                    card.GetEmbedDepth(), card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ(), card.curlFrequency, card.curlDiameter);
+             }
+             card.SetSelectionWeight(weight);
+         }
+diff --git a/Assets/Scripts/UI_Import/PostShapeCurveBridge.cs b/Assets/Scripts/UI_Import/PostShapeCurveBridge.cs
+index 6292eb3..93d0965 100644
+--- a/Assets/Scripts/UI_Import/PostShapeCurveBridge.cs
++++ b/Assets/Scripts/UI_Import/PostShapeCurveBridge.cs
+@@ -119,6 +119,12 @@ public class PostShapeCurveBridge : MonoBehaviour
+     public static float EvaluateRoot(int groupId, GroomShapeCurveChannel channel, float t)
+     {
+         t = Mathf.Clamp01(t);
++        // Curl has no per-POST override (see the enum's own comment), so it must never go
++        // through the POST-editing snapshot path below - that snapshot's CurveSet genuinely has
++        // no curl fields, and the channel switch in GetCurve(CurveSet,...) would otherwise fall
++        // through to its default case and silently evaluate the wrong (Z) curve for it.
++        if (channel == GroomShapeCurveChannel.CurlFrequency || channel == GroomShapeCurveChannel.CurlDiameter)
++            return GroomShapeCurveRegistry.Evaluate(groupId, channel, t);
+         if (live != null && live.rootWhilePost.TryGetValue(groupId, out CurveSet root) && root != null)
+             return Mathf.Clamp01(GetCurve(root, channel).Evaluate(t));
+         return GroomShapeCurveRegistry.Evaluate(groupId, channel, t);
+diff --git a/Assets/Scripts/UI_Import/RuntimeNavigationProjectIO.cs b/Assets/Scripts/UI_Import/RuntimeNavigationProjectIO.cs
+index 8bd94a9..49fcfb8 100644
+--- a/Assets/Scripts/UI_Import/RuntimeNavigationProjectIO.cs
++++ b/Assets/Scripts/UI_Import/RuntimeNavigationProjectIO.cs
+@@ -118,6 +118,7 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
+         data.sliderBend=viewer.currentBend; data.sliderTwist=viewer.currentTwist; data.sliderEmbedDepth=viewer.currentEmbedDepth;
+         data.sliderOffsetX=viewer.currentOffsetX; data.sliderOffsetY=viewer.currentOffsetY; data.sliderOffsetZ=viewer.currentOffsetZ;
+         data.sliderUScale=viewer.currentUScale; data.sliderVScale=viewer.currentVScale; data.sliderUOffset=viewer.currentUOffset; data.sliderVOffset=viewer.currentVOffset;
++        data.sliderCurlFrequency=viewer.currentCurlFrequency; data.sliderCurlDiameter=viewer.currentCurlDiameter;
+ 
+         HashSet<int> ids = GetField<HashSet<int>>("allGroupIds") ?? new HashSet<int>();
+         var names=GetField<Dictionary<int,string>>("groupNames"); var us=GetField<Dictionary<int,float>>("groupUScales"); var vs=GetField<Dictionary<int,float>>("groupVScales"); var uo=GetField<Dictionary<int,float>>("groupUOffsets"); var vo=GetField<Dictionary<int,float>>("groupVOffsets");
+@@ -137,7 +138,8 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
+                 hitX=hit.x,hitY=hit.y,hitZ=hit.z,normalX=normal.x,normalY=normal.y,normalZ=normal.z,
+                 length=card.length,width=card.width,segments=card.segments,bendAngle=card.bendAngle,twistAngle=card.twistAngle,flattenFactor=card.flattenFactor,
+                 embedDepth=card.GetEmbedDepth(),offsetX=card.GetOffsetX(),offsetY=card.GetOffsetY(),offsetZ=card.GetOffsetZ(),
+-                uScale=card.uScale,vScale=card.vScale,uOffset=card.uOffset,vOffset=card.vOffset,groupId=card.groupId
++                uScale=card.uScale,vScale=card.vScale,uOffset=card.uOffset,vOffset=card.vOffset,groupId=card.groupId,
++                curlFrequency=card.curlFrequency,curlDiameter=card.curlDiameter
+             });
+         }
+         File.WriteAllText(path, JsonUtility.ToJson(data,true));
+@@ -165,6 +167,7 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
+         }
+ 
+         viewer.currentLength=data.sliderLength;viewer.currentWidth=data.sliderWidth;viewer.currentSegments=data.sliderSegments;viewer.currentBend=data.sliderBend;viewer.currentTwist=data.sliderTwist;viewer.currentEmbedDepth=data.sliderEmbedDepth;viewer.currentOffsetX=data.sliderOffsetX;viewer.currentOffsetY=data.sliderOffsetY;viewer.currentOffsetZ=data.sliderOffsetZ;viewer.currentUScale=data.sliderUScale;viewer.currentVScale=data.sliderVScale;viewer.currentUOffset=data.sliderUOffset;viewer.currentVOffset=data.sliderVOffset;
++        viewer.currentCurlFrequency=data.sliderCurlFrequency;viewer.currentCurlDiameter=data.sliderCurlDiameter;
+ 
+         HashSet<int> ids=GetField<HashSet<int>>("allGroupIds");var names=GetField<Dictionary<int,string>>("groupNames");var us=GetField<Dictionary<int,float>>("groupUScales");var vs=GetField<Dictionary<int,float>>("groupVScales");var uo=GetField<Dictionary<int,float>>("groupUOffsets");var vo=GetField<Dictionary<int,float>>("groupVOffsets");ids?.Clear();names?.Clear();us?.Clear();vs?.Clear();uo?.Clear();vo?.Clear();
+         foreach(GroupSaveData g in data.groups){ids?.Add(g.groupId);if(names!=null)names[g.groupId]=g.groupName;if(us!=null)us[g.groupId]=g.uScale;if(vs!=null)vs[g.groupId]=g.vScale;if(uo!=null)uo[g.groupId]=g.uOffset;if(vo!=null)vo[g.groupId]=g.vOffset;}
+@@ -177,7 +180,7 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
+             Vector3 hit=new Vector3(c.hitX,c.hitY,c.hitZ);
+             Vector3 normal=new Vector3(c.normalX,c.normalY,c.normalZ).normalized;
+             card.SetPlacementData(hit,normal,c.embedDepth,c.offsetX,c.offsetY,c.offsetZ,c.groupId);
+-            card.SetParameters(c.length,c.width,c.segments,c.bendAngle,c.twistAngle,c.offsetX,c.offsetY,c.offsetZ,c.embedDepth,1f,c.uScale,c.vScale,c.uOffset,c.vOffset);
++            card.SetParameters(c.length,c.width,c.segments,c.bendAngle,c.twistAngle,c.offsetX,c.offsetY,c.offsetZ,c.embedDepth,1f,c.uScale,c.vScale,c.uOffset,c.vOffset,c.curlFrequency,c.curlDiameter);
+             if(viewer.hairCardMaterial!=null)go.GetComponent<MeshRenderer>().sharedMaterial=viewer.hairCardMaterial;
+         }
+ 
+diff --git a/Assets/Scripts/UI_Import/SelectionBrushScaleTuning.cs b/Assets/Scripts/UI_Import/SelectionBrushScaleTuning.cs
+index 3ed38de..344a59e 100644
+--- a/Assets/Scripts/UI_Import/SelectionBrushScaleTuning.cs
++++ b/Assets/Scripts/UI_Import/SelectionBrushScaleTuning.cs
+@@ -260,7 +260,7 @@ public class SelectionBrushScaleTuning : MonoBehaviour
+             if (previousWeight <= 0f && weight > 0f)
+             {
+                 card.CaptureBaseState(card.length, card.width, card.segments, card.bendAngle, card.twistAngle,
+-                    card.GetEmbedDepth(), card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ());
++                    card.GetEmbedDepth(), card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ(), card.curlFrequency, card.curlDiameter);
+             }
+             card.SetSelectionWeight(weight);
+         }
+diff --git a/Assets/Scripts/UI_Import/SelectionLocalizedEditAuthority.cs b/Assets/Scripts/UI_Import/SelectionLocalizedEditAuthority.cs
+index d54aa18..c44b039 100644
+--- a/Assets/Scripts/UI_Import/SelectionLocalizedEditAuthority.cs
++++ b/Assets/Scripts/UI_Import/SelectionLocalizedEditAuthority.cs
+@@ -114,8 +114,12 @@ public class SelectionLocalizedEditAuthority : MonoBehaviour
+             // so temporarily bypass that second interpolation.
+             float selectionWeight = card.selectionWeight;
+             card.SetSelectionWeight(0f);
++            // Curl isn't part of this file's Controls/Snapshot weighted-blend system (unlike
++            // Length/Width/Bend/etc above) - passed through unchanged so it isn't silently
++            // reset to 0 by SetParameters' defaults. Brush-localized curl blending can be added
++            // here later if wanted, following the same pattern as the other channels above.
+             card.SetParameters(length, width, segments, bend, twist, x, y, z, depth, 1f,
+-                uScale, vScale, uOffset, vOffset);
++                uScale, vScale, uOffset, vOffset, card.curlFrequency, card.curlDiameter);
+             card.SetSelectionWeight(selectionWeight);
+         }
+ 

@@ -116,7 +116,10 @@ public class CanonicalProjectStateBridge : MonoBehaviour
                 Mathf.Max(.0005f, canonical.length), Mathf.Max(.0005f, canonical.width), Mathf.Clamp(Mathf.RoundToInt(canonical.segments), 4, 36),
                 canonical.bend, canonical.twist, canonical.x, canonical.y, canonical.z,
                 Mathf.Max(0f, canonical.depth), 1f,
-                canonical.uScale, canonical.vScale, canonical.uOffset, canonical.vOffset);
+                canonical.uScale, canonical.vScale, canonical.uOffset, canonical.vOffset,
+                // ControlState has no curl fields - curl lives only at the group root, not per
+                // POST, so this restoration passes the card's current curl through unchanged.
+                card.curlFrequency, card.curlDiameter);
             card.SetSelectionWeight(oldSelection);
 
             object state = states[card];

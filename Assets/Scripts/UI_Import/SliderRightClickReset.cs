@@ -94,6 +94,10 @@ public class SliderRightClickResetInstaller : MonoBehaviour
             case "V Offset_Slider":
                 value = 0f; return true;
 
+            case "Curl Frequency_Slider":
+            case "Curl Diameter_Slider":
+                value = 0f; return true;
+
             case "Radius_Slider": value = .03f; return true;
             case "Falloff_Slider":
             case "Falloff Dist_Slider": value = .05f; return true;

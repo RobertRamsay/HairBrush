@@ -17,7 +17,7 @@ using UnityEngine.UI;
 public class GroomSessionResetCoordinator : MonoBehaviour
 {
     private static readonly string[] VarianceChannels =
-        { "Length", "Width", "Bend", "Twist", "AngleX", "AngleY", "AngleZ" };
+        { "Length", "Width", "Bend", "Twist", "AngleX", "AngleY", "AngleZ", "CurlFrequency", "CurlDiameter" };
     private static readonly string[] VarianceRows =
         { "Length_VarianceRow", "Width_VarianceRow", "Bend_VarianceRow", "Twist_VarianceRow", "Angle X_VarianceRow", "Angle Y_VarianceRow", "Angle Z_VarianceRow" };
 
@@ -180,12 +180,14 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.X);
         GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.Y);
         GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.Z);
+        GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.CurlFrequency);
+        GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.CurlDiameter);
 
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
         {
             if (card == null || card.groupId != groupId) continue;
             card.SetSelectionWeight(0f);
-            card.SetParameters(.2f, .01f, 12, 0f, 0f, 0f, 0f, 0f, .002f, 1f, 1f, 1f, 0f, 0f);
+            card.SetParameters(.2f, .01f, 12, 0f, 0f, 0f, 0f, 0f, .002f, 1f, 1f, 1f, 0f, 0f, 0f, 0f);
         }
 
         SyncCoreSliderUI(ToControlState(defaults));
@@ -295,7 +297,9 @@ public class GroomSessionResetCoordinator : MonoBehaviour
             uScale = 1f,
             vScale = 1f,
             uOffset = 0f,
-            vOffset = 0f
+            vOffset = 0f,
+            curlFrequency = 0f,
+            curlDiameter = 0f
         };
     }
 
@@ -314,6 +318,8 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         viewer.currentVScale = s.vScale;
         viewer.currentUOffset = s.uOffset;
         viewer.currentVOffset = s.vOffset;
+        viewer.currentCurlFrequency = s.curlFrequency;
+        viewer.currentCurlDiameter = s.curlDiameter;
     }
 
     void WriteViewerControls(PostAffectorManager.ControlState s)
@@ -391,6 +397,12 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         SetCoreSlider(new[] { "V Scale_Slider" }, "V Scale", s.vScale);
         SetCoreSlider(new[] { "U Offset_Slider" }, "U Offset", s.uOffset);
         SetCoreSlider(new[] { "V Offset_Slider" }, "V Offset", s.vOffset);
+        // ControlState (POST-level) has no curl fields - curl lives only at the root, so these
+        // read straight from the viewer instead, which WriteViewerRoot has already reset by the
+        // time this runs. Without this the curl sliders would keep showing their pre-reset value
+        // even though the underlying state was correctly zeroed.
+        SetCoreSlider(new[] { "Curl Frequency_Slider" }, "Curl Frequency", viewer.currentCurlFrequency);
+        SetCoreSlider(new[] { "Curl Diameter_Slider" }, "Curl Diameter", viewer.currentCurlDiameter);
     }
 
     void SetCoreSlider(string[] names, string labelPrefix, float value)
@@ -503,6 +515,8 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         viewer.currentVScale = 1f;
         viewer.currentUOffset = 0f;
         viewer.currentVOffset = 0f;
+        viewer.currentCurlFrequency = 0f;
+        viewer.currentCurlDiameter = 0f;
 
         if (viewer.groomingSliderPanelGO == null) return;
 
@@ -520,6 +534,7 @@ public class GroomSessionResetCoordinator : MonoBehaviour
                      n == "Angle X_Slider" || n == "Angle Y_Slider" || n == "Angle Z_Slider") slider.SetValueWithoutNotify(0f);
             else if (n == "U Scale_Slider" || n == "V Scale_Slider") slider.SetValueWithoutNotify(1f);
             else if (n == "U Offset_Slider" || n == "V Offset_Slider") slider.SetValueWithoutNotify(0f);
+            else if (n == "Curl Frequency_Slider" || n == "Curl Diameter_Slider") slider.SetValueWithoutNotify(0f);
             else if (n == "VarianceSlider") slider.SetValueWithoutNotify(0f);
             slider.interactable = true;
         }

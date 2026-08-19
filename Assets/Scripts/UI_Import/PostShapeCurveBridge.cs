@@ -119,6 +119,12 @@ public class PostShapeCurveBridge : MonoBehaviour
     public static float EvaluateRoot(int groupId, GroomShapeCurveChannel channel, float t)
     {
         t = Mathf.Clamp01(t);
+        // Curl has no per-POST override (see the enum's own comment), so it must never go
+        // through the POST-editing snapshot path below - that snapshot's CurveSet genuinely has
+        // no curl fields, and the channel switch in GetCurve(CurveSet,...) would otherwise fall
+        // through to its default case and silently evaluate the wrong (Z) curve for it.
+        if (channel == GroomShapeCurveChannel.CurlFrequency || channel == GroomShapeCurveChannel.CurlDiameter)
+            return GroomShapeCurveRegistry.Evaluate(groupId, channel, t);
         if (live != null && live.rootWhilePost.TryGetValue(groupId, out CurveSet root) && root != null)
             return Mathf.Clamp01(GetCurve(root, channel).Evaluate(t));
         return GroomShapeCurveRegistry.Evaluate(groupId, channel, t);

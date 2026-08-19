@@ -12,7 +12,12 @@ public enum GroomShapeCurveChannel
     Bend,
     X,
     Y,
-    Z
+    Z,
+    // Curl (spiral/coil) magnitude profiles. Unlike Bend/X/Y/Z these have no per-POST override -
+    // see PostShapeCurveBridge.EvaluateRoot, which routes these two straight to the group
+    // registry rather than through the POST-editing snapshot mechanism.
+    CurlFrequency,
+    CurlDiameter
 }
 
 // Canonical group-root length profiles for shape angles. The slider remains the authored
@@ -27,6 +32,8 @@ public static class GroomShapeCurveRegistry
         public AnimationCurve x = CreateDefault(GroomShapeCurveChannel.X);
         public AnimationCurve y = CreateDefault(GroomShapeCurveChannel.Y);
         public AnimationCurve z = CreateDefault(GroomShapeCurveChannel.Z);
+        public AnimationCurve curlFrequency = CreateDefault(GroomShapeCurveChannel.CurlFrequency);
+        public AnimationCurve curlDiameter = CreateDefault(GroomShapeCurveChannel.CurlDiameter);
     }
 
     private static readonly Dictionary<int, CurveSet> byGroup = new Dictionary<int, CurveSet>();
@@ -39,7 +46,9 @@ public static class GroomShapeCurveRegistry
             case GroomShapeCurveChannel.Bend: return set.bend;
             case GroomShapeCurveChannel.X: return set.x;
             case GroomShapeCurveChannel.Y: return set.y;
-            default: return set.z;
+            case GroomShapeCurveChannel.Z: return set.z;
+            case GroomShapeCurveChannel.CurlFrequency: return set.curlFrequency;
+            default: return set.curlDiameter;
         }
     }
 
@@ -59,6 +68,8 @@ public static class GroomShapeCurveRegistry
             case GroomShapeCurveChannel.X: set.x = clean; break;
             case GroomShapeCurveChannel.Y: set.y = clean; break;
             case GroomShapeCurveChannel.Z: set.z = clean; break;
+            case GroomShapeCurveChannel.CurlFrequency: set.curlFrequency = clean; break;
+            case GroomShapeCurveChannel.CurlDiameter: set.curlDiameter = clean; break;
         }
     }
 
@@ -236,6 +247,8 @@ public class GroomShapeCurveAuthority : MonoBehaviour
             group.xAngleCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.X);
             group.yAngleCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.Y);
             group.zAngleCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.Z);
+            group.curlFrequencyCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.CurlFrequency);
+            group.curlDiameterCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.CurlDiameter);
         }
     }
 
@@ -270,6 +283,8 @@ public class GroomShapeCurveAuthority : MonoBehaviour
         EnsureCurveRow("Offset X_Row", "X ANGLE PROFILE", GroomShapeCurveChannel.X);
         EnsureCurveRow("Offset Y_Row", "Y ANGLE PROFILE", GroomShapeCurveChannel.Y);
         EnsureCurveRow("Offset Z_Row", "Z ANGLE PROFILE", GroomShapeCurveChannel.Z);
+        EnsureCurveRow("Curl Frequency_Row", "CURL FREQUENCY PROFILE", GroomShapeCurveChannel.CurlFrequency);
+        EnsureCurveRow("Curl Diameter_Row", "CURL DIAMETER PROFILE", GroomShapeCurveChannel.CurlDiameter);
     }
 
     private void ResolveViewer()
@@ -316,6 +331,8 @@ public class GroomShapeCurveAuthority : MonoBehaviour
                 GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.X, group.xAngleCurve);
                 GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.Y, group.yAngleCurve);
                 GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.Z, group.zAngleCurve);
+                GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.CurlFrequency, group.curlFrequencyCurve);
+                GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.CurlDiameter, group.curlDiameterCurve);
                 GroomShapeCurveRegistry.RefreshGroup(group.groupId);
             }
         }
@@ -447,7 +464,9 @@ public class GroomShapeCurveAuthority : MonoBehaviour
             case GroomShapeCurveChannel.Bend: return "BEND";
             case GroomShapeCurveChannel.X: return "X ANGLE";
             case GroomShapeCurveChannel.Y: return "Y ANGLE";
-            default: return "Z ANGLE";
+            case GroomShapeCurveChannel.Z: return "Z ANGLE";
+            case GroomShapeCurveChannel.CurlFrequency: return "CURL FREQUENCY";
+            default: return "CURL DIAMETER";
         }
     }
 

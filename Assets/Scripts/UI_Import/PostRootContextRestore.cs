@@ -105,6 +105,12 @@ public class PostRootContextRestore : MonoBehaviour
                 case "V Offset_Slider":
                     slider.SetValueWithoutNotify(viewer.currentVOffset);
                     break;
+                case "Curl Frequency_Slider":
+                    slider.SetValueWithoutNotify(viewer.currentCurlFrequency);
+                    break;
+                case "Curl Diameter_Slider":
+                    slider.SetValueWithoutNotify(viewer.currentCurlDiameter);
+                    break;
             }
         }
     }
