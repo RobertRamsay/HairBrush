@@ -62,9 +62,16 @@ public class ModifierNeutralizeBeforeDeleteAuthority : MonoBehaviour
         {
             if (row == null) continue;
 
-            if (row.name.StartsWith("GroupClumper_") && int.TryParse(row.name.Substring("GroupClumper_".Length), out int clumpGid))
+            // Clumper rows are named "GroupClumper_{groupId}_{clumperId}". Parsing everything
+            // after the prefix gave "0_1", int.TryParse failed, and NO clumper row was ever
+            // hooked - so the "go to 0, then be removed" step has never actually run for a
+            // CLUMPER. Split properly, and carry the clumper id through so the right one is
+            // neutralised when a group holds more than one.
+            if (row.name.StartsWith("GroupClumper_"))
             {
-                HookRow(row, ModifierDeleteNeutralizeHook.Kind.Clumper, clumpGid, -1);
+                string[] parts = row.name.Split('_');
+                if (parts.Length >= 3 && int.TryParse(parts[1], out int clumpGid) && int.TryParse(parts[2], out int clumpId))
+                    HookRow(row, ModifierDeleteNeutralizeHook.Kind.Clumper, clumpGid, clumpId);
                 continue;
             }
 
@@ -132,10 +139,15 @@ public class ModifierDeleteNeutralizeHook : MonoBehaviour, IPointerDownHandler
         var groups = clumperGroupsField.GetValue(clumperManager) as Dictionary<int, List<GroupClumperManager.GroupClumper>>;
         if (groups == null || !groups.TryGetValue(groupId, out List<GroupClumperManager.GroupClumper> list) || list == null) return;
 
+        // Take the clumper this button belongs to. Picking the first in the group silently
+        // neutralised the wrong one whenever a group held more than one clumper.
         GroupClumperManager.GroupClumper target = null;
         foreach (GroupClumperManager.GroupClumper c in list)
         {
-            if (c != null) { target = c; break; }
+            if (c == null) continue;
+            if (modifierId >= 0 && c.id != modifierId) continue;
+            target = c;
+            break;
         }
         if (target == null) return;
 

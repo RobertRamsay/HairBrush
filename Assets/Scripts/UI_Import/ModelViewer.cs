@@ -528,7 +528,9 @@ public class ModelViewer : MonoBehaviour
         panelRect.anchorMin = new Vector2(0, 0);
         panelRect.anchorMax = new Vector2(0, 1);
         panelRect.pivot = new Vector2(0, 0.5f);
-        panelRect.sizeDelta = new Vector2(300, 0);
+        // 300 could not fit a POST row's five columns once the remove button became "DEL":
+        // the row overflowed and the last column was clipped by the panel edge.
+        panelRect.sizeDelta = new Vector2(360, 0);
         panelRect.anchoredPosition = new Vector2(15, 0);
         groupPanelGO.GetComponent<Image>().color = new Color(0.15f, 0.15f, 0.15f, 0.85f);
         VerticalLayoutGroup vLayout = groupPanelGO.AddComponent<VerticalLayoutGroup>();

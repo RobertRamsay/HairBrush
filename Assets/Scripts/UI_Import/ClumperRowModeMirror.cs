@@ -1,5 +1,4 @@
-using System.Collections;
-using System.Reflection;
+using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 
@@ -10,7 +9,6 @@ using UnityEngine;
 public class ClumperRowModeMirror : MonoBehaviour
 {
     private GroupClumperManager manager;
-    private FieldInfo byGroupField;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
@@ -24,16 +22,26 @@ public class ClumperRowModeMirror : MonoBehaviour
     void LateUpdate()
     {
         Resolve();
-        if (manager == null || byGroupField == null) return;
-        if (byGroupField.GetValue(manager) is not IDictionary dict) return;
+        if (manager == null) return;
 
         foreach (RectTransform row in FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
         {
             if (row == null || !row.name.StartsWith("GroupClumper_")) continue;
-            if (!int.TryParse(row.name.Substring("GroupClumper_".Length), out int groupId)) continue;
-            if (!dict.Contains(groupId)) continue;
 
-            GroupClumperManager.GroupClumper clumper = dict[groupId] as GroupClumperManager.GroupClumper;
+            // The row is named "GroupClumper_{groupId}_{clumperId}". Parsing everything after
+            // the prefix produced "0_1", int.TryParse failed, and this loop `continue`d on EVERY
+            // row - which is why the SINGLE / EVEN / POINT summary never changed when the mode
+            // was switched in the right panel. Match on the CLUMPER id, not the group: a group
+            // can hold several clumpers and they do not have to share a mode.
+            string[] parts = row.name.Split('_');
+            if (parts.Length < 3) continue;
+            if (!int.TryParse(parts[2], out int clumperId)) continue;
+
+            GroupClumperManager.GroupClumper clumper = null;
+            foreach (GroupClumperManager.GroupClumper candidate in manager.GetAllClumpers())
+            {
+                if (candidate != null && candidate.id == clumperId) { clumper = candidate; break; }
+            }
             if (clumper == null) continue;
 
             string wanted = ModeShort(clumper.mode);
@@ -56,8 +64,6 @@ public class ClumperRowModeMirror : MonoBehaviour
     {
         if (manager != null) return;
         manager = FindFirstObjectByType<GroupClumperManager>();
-        if (manager == null) return;
-        byGroupField = typeof(GroupClumperManager).GetField("byGroup", BindingFlags.Instance | BindingFlags.NonPublic);
     }
 
     static string ModeShort(GroupClumperManager.ClumpMode mode)
