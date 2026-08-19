@@ -3,7 +3,7 @@ using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.UI;
 
-// Adds a "Length Fine" slider (0.0005..0.1) directly under the Length block, shown only while
+// Adds a "Length Fine" slider (0.0001..0.1) directly under the Length block, shown only while
 // the current length is inside that range. The main Length slider's full 0..0.5 sweep gives
 // short hair only a few pixels of travel; this dedicates a whole slider's width to that
 // bottom band for fine control. It never owns state: changes are forwarded through the main
@@ -15,7 +15,7 @@ using UnityEngine.UI;
 public class LengthFineControlAuthority : MonoBehaviour
 {
     private const float FineMax = .1f;
-    private const float FineMin = .0005f;
+    private const float FineMin = .0001f;
 
     private ModelViewer viewer;
     private MethodInfo createSliderMethod;

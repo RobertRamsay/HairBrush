@@ -294,7 +294,7 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         Vector2[] uvs = new Vector2[vertexCount];
         int[] triangles = new int[segments * 12];
 
-        float segmentHeight = Mathf.Max(.001f, card.length) / segments;
+        float segmentHeight = Mathf.Max(.0001f, card.length) / segments;
         float halfWidth = Mathf.Max(.0005f, card.width) * .5f;
         float ridge = card.GetCrossSectionRidgeHeight();
 

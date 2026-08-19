@@ -182,7 +182,7 @@ public class ModelViewer : MonoBehaviour
         float delta = val - currentLength;
         currentLength = val;
         if (hasSelectionHotspot) UpdateActiveCard();
-        else ApplyGroupUpdate(c => c.SetParameters(Mathf.Max(0.001f, isRelativeMode ? c.length + delta : val), c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
+        else ApplyGroupUpdate(c => c.SetParameters(Mathf.Max(0.0001f, isRelativeMode ? c.length + delta : val), c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
     }
 
     public void OnSliderWidthChanged(float val)
@@ -498,7 +498,7 @@ public class ModelViewer : MonoBehaviour
         activeSliderPanel = panelGO;
         CreatePanelTabSwitcher(panelGO.transform);
         CreateModeToggleButton(panelGO.transform);
-        CreateSliderUI(panelGO.transform, "Length", 0.0005f, 0.5f, currentLength, OnActualSliderLengthChanged, out lengthSlider, 38, 16);
+        CreateSliderUI(panelGO.transform, "Length", 0.0001f, 1.0f, currentLength, OnActualSliderLengthChanged, out lengthSlider, 38, 16);
         CreateSliderUI(panelGO.transform, "Width", 0.0005f, 0.05f, currentWidth, OnSliderWidthChanged, out widthSlider, 38, 16);
         CreateSliderUI(panelGO.transform, "Curl Frequency", -10f, 10f, currentCurlFrequency, OnSliderCurlFrequencyChanged, out curlFrequencySlider, 38, 16);
         CreateSliderUI(panelGO.transform, "Curl Diameter", 0f, 0.15f, currentCurlDiameter, OnSliderCurlDiameterChanged, out curlDiameterSlider, 38, 16);

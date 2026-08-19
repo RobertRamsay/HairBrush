@@ -181,7 +181,7 @@ public class ModifierDeleteNeutralizeHook : MonoBehaviour, IPointerDownHandler
         const int columns = HairCard.CrossSectionColumns;
         int segments = Mathf.Clamp(card.segments, 1, 60);
         Vector3[] vertices = new Vector3[(segments + 1) * columns];
-        float segmentHeight = Mathf.Max(.001f, card.length) / segments;
+        float segmentHeight = Mathf.Max(.0001f, card.length) / segments;
         float halfWidth = Mathf.Max(.0005f, card.width) * .5f;
         float ridge = card.GetCrossSectionRidgeHeight();
 

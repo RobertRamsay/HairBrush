@@ -331,7 +331,7 @@ public class PostAffectorManager : MonoBehaviour
     {
         return new HairCard.GroomState
         {
-            length = Mathf.Max(.0005f, s.length),
+            length = Mathf.Max(.0001f, s.length),
             width = Mathf.Max(.0005f, s.width),
             segments = Mathf.Clamp(Mathf.RoundToInt(s.segments), 4, 60),
             bend = s.bend,

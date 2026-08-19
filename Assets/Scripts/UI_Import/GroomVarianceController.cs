@@ -441,7 +441,7 @@ public class GroomVarianceController : MonoBehaviour
 
         switch (c)
         {
-            case Channel.Length: state.length = Mathf.Max(.0005f, varied); break;
+            case Channel.Length: state.length = Mathf.Max(.0001f, varied); break;
             case Channel.Width: state.width = Mathf.Max(.0005f, varied); break;
             case Channel.Bend: state.bend = varied; break;
             case Channel.Twist: state.twist = varied; break;

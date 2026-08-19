@@ -1,0 +1,166 @@
+diff --git a/Assets/Scripts/UI_Import/CanonicalProjectStateBridge.cs b/Assets/Scripts/UI_Import/CanonicalProjectStateBridge.cs
+index 7f83bf8..abb0748 100644
+--- a/Assets/Scripts/UI_Import/CanonicalProjectStateBridge.cs
++++ b/Assets/Scripts/UI_Import/CanonicalProjectStateBridge.cs
+@@ -113,7 +113,7 @@ public class CanonicalProjectStateBridge : MonoBehaviour
+             float oldSelection = card.selectionWeight;
+             card.SetSelectionWeight(0f);
+             card.SetParameters(
+-                Mathf.Max(.0005f, canonical.length), Mathf.Max(.0005f, canonical.width), Mathf.Clamp(Mathf.RoundToInt(canonical.segments), 4, 60),
++                Mathf.Max(.0001f, canonical.length), Mathf.Max(.0005f, canonical.width), Mathf.Clamp(Mathf.RoundToInt(canonical.segments), 4, 60),
+                 canonical.bend, canonical.twist, canonical.x, canonical.y, canonical.z,
+                 Mathf.Max(0f, canonical.depth), 1f,
+                 canonical.uScale, canonical.vScale, canonical.uOffset, canonical.vOffset,
+diff --git a/Assets/Scripts/UI_Import/GroomVarianceController.cs b/Assets/Scripts/UI_Import/GroomVarianceController.cs
+index 0e6283b..5ec8857 100644
+--- a/Assets/Scripts/UI_Import/GroomVarianceController.cs
++++ b/Assets/Scripts/UI_Import/GroomVarianceController.cs
+@@ -441,7 +441,7 @@ public class GroomVarianceController : MonoBehaviour
+ 
+         switch (c)
+         {
+-            case Channel.Length: state.length = Mathf.Max(.0005f, varied); break;
++            case Channel.Length: state.length = Mathf.Max(.0001f, varied); break;
+             case Channel.Width: state.width = Mathf.Max(.0005f, varied); break;
+             case Channel.Bend: state.bend = varied; break;
+             case Channel.Twist: state.twist = varied; break;
+diff --git a/Assets/Scripts/UI_Import/HairCard.cs b/Assets/Scripts/UI_Import/HairCard.cs
+index 2b3112d..f90f719 100644
+--- a/Assets/Scripts/UI_Import/HairCard.cs
++++ b/Assets/Scripts/UI_Import/HairCard.cs
+@@ -225,7 +225,7 @@ public class HairCard : MonoBehaviour
+ 
+     GroomState SanitizeState(GroomState state)
+     {
+-        state.length = Mathf.Max(0.001f, state.length);
++        state.length = Mathf.Max(0.0001f, state.length);
+         state.width = Mathf.Max(0.0005f, state.width);
+         state.segments = Mathf.Clamp(state.segments, 1, 60);
+         state.depth = Mathf.Max(0f, state.depth);
+@@ -295,7 +295,7 @@ public class HairCard : MonoBehaviour
+         if (selectionWeight > 0f)
+         {
+             float w = Mathf.Clamp01(selectionWeight * strengthMultiplier);
+-            length = Mathf.Max(0.001f, Mathf.Lerp(baseLength, newLength, w));
++            length = Mathf.Max(0.0001f, Mathf.Lerp(baseLength, newLength, w));
+             width = Mathf.Lerp(baseWidth, newWidth, w);
+             segments = Mathf.RoundToInt(Mathf.Lerp(baseSegments, newSegments, w));
+             bendAngle = Mathf.Lerp(baseBend, newBend, w);
+@@ -309,7 +309,7 @@ public class HairCard : MonoBehaviour
+         }
+         else
+         {
+-            length = Mathf.Max(0.001f, newLength);
++            length = Mathf.Max(0.0001f, newLength);
+             width = newWidth;
+             segments = newSegments;
+             bendAngle = newBend;
+diff --git a/Assets/Scripts/UI_Import/LengthFineControlAuthority.cs b/Assets/Scripts/UI_Import/LengthFineControlAuthority.cs
+index d3262e3..99c34ea 100644
+--- a/Assets/Scripts/UI_Import/LengthFineControlAuthority.cs
++++ b/Assets/Scripts/UI_Import/LengthFineControlAuthority.cs
+@@ -3,7 +3,7 @@ using UnityEngine;
+ using UnityEngine.Events;
+ using UnityEngine.UI;
+ 
+-// Adds a "Length Fine" slider (0.0005..0.1) directly under the Length block, shown only while
++// Adds a "Length Fine" slider (0.0001..0.1) directly under the Length block, shown only while
+ // the current length is inside that range. The main Length slider's full 0..0.5 sweep gives
+ // short hair only a few pixels of travel; this dedicates a whole slider's width to that
+ // bottom band for fine control. It never owns state: changes are forwarded through the main
+@@ -15,7 +15,7 @@ using UnityEngine.UI;
+ public class LengthFineControlAuthority : MonoBehaviour
+ {
+     private const float FineMax = .1f;
+-    private const float FineMin = .0005f;
++    private const float FineMin = .0001f;
+ 
+     private ModelViewer viewer;
+     private MethodInfo createSliderMethod;
+diff --git a/Assets/Scripts/UI_Import/ModelViewer.cs b/Assets/Scripts/UI_Import/ModelViewer.cs
+index 591fd23..3138fb5 100644
+--- a/Assets/Scripts/UI_Import/ModelViewer.cs
++++ b/Assets/Scripts/UI_Import/ModelViewer.cs
+@@ -182,7 +182,7 @@ public class ModelViewer : MonoBehaviour
+         float delta = val - currentLength;
+         currentLength = val;
+         if (hasSelectionHotspot) UpdateActiveCard();
+-        else ApplyGroupUpdate(c => c.SetParameters(Mathf.Max(0.001f, isRelativeMode ? c.length + delta : val), c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
++        else ApplyGroupUpdate(c => c.SetParameters(Mathf.Max(0.0001f, isRelativeMode ? c.length + delta : val), c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
+     }
+ 
+     public void OnSliderWidthChanged(float val)
+@@ -498,7 +498,7 @@ public class ModelViewer : MonoBehaviour
+         activeSliderPanel = panelGO;
+         CreatePanelTabSwitcher(panelGO.transform);
+         CreateModeToggleButton(panelGO.transform);
+-        CreateSliderUI(panelGO.transform, "Length", 0.0005f, 0.5f, currentLength, OnActualSliderLengthChanged, out lengthSlider, 38, 16);
++        CreateSliderUI(panelGO.transform, "Length", 0.0001f, 1.0f, currentLength, OnActualSliderLengthChanged, out lengthSlider, 38, 16);
+         CreateSliderUI(panelGO.transform, "Width", 0.0005f, 0.05f, currentWidth, OnSliderWidthChanged, out widthSlider, 38, 16);
+         CreateSliderUI(panelGO.transform, "Curl Frequency", -10f, 10f, currentCurlFrequency, OnSliderCurlFrequencyChanged, out curlFrequencySlider, 38, 16);
+         CreateSliderUI(panelGO.transform, "Curl Diameter", 0f, 0.15f, currentCurlDiameter, OnSliderCurlDiameterChanged, out curlDiameterSlider, 38, 16);
+diff --git a/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs b/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs
+index cbafdfd..b4c1d1a 100644
+--- a/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs
++++ b/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs
+@@ -181,7 +181,7 @@ public class ModifierDeleteNeutralizeHook : MonoBehaviour, IPointerDownHandler
+         const int columns = HairCard.CrossSectionColumns;
+         int segments = Mathf.Clamp(card.segments, 1, 60);
+         Vector3[] vertices = new Vector3[(segments + 1) * columns];
+-        float segmentHeight = Mathf.Max(.001f, card.length) / segments;
++        float segmentHeight = Mathf.Max(.0001f, card.length) / segments;
+         float halfWidth = Mathf.Max(.0005f, card.width) * .5f;
+         float ridge = card.GetCrossSectionRidgeHeight();
+ 
+diff --git a/Assets/Scripts/UI_Import/PostAffectorManager.cs b/Assets/Scripts/UI_Import/PostAffectorManager.cs
+index 257fa3a..364e85f 100644
+--- a/Assets/Scripts/UI_Import/PostAffectorManager.cs
++++ b/Assets/Scripts/UI_Import/PostAffectorManager.cs
+@@ -331,7 +331,7 @@ public class PostAffectorManager : MonoBehaviour
+     {
+         return new HairCard.GroomState
+         {
+-            length = Mathf.Max(.0005f, s.length),
++            length = Mathf.Max(.0001f, s.length),
+             width = Mathf.Max(.0005f, s.width),
+             segments = Mathf.Clamp(Mathf.RoundToInt(s.segments), 4, 60),
+             bend = s.bend,
+diff --git a/Assets/Scripts/UI_Import/PostFinalRemovalLifecycleAuthority.cs b/Assets/Scripts/UI_Import/PostFinalRemovalLifecycleAuthority.cs
+index a20f0c3..326960f 100644
+--- a/Assets/Scripts/UI_Import/PostFinalRemovalLifecycleAuthority.cs
++++ b/Assets/Scripts/UI_Import/PostFinalRemovalLifecycleAuthority.cs
+@@ -161,7 +161,7 @@ public class PostFinalRemovalLifecycleAuthority : MonoBehaviour
+     {
+         return new HairCard.GroomState
+         {
+-            length = Mathf.Max(.001f, s.length),
++            length = Mathf.Max(.0001f, s.length),
+             width = Mathf.Max(.0005f, s.width),
+             segments = Mathf.Clamp(Mathf.RoundToInt(s.segments), 1, 60),
+             bend = s.bend,
+diff --git a/Assets/Scripts/UI_Import/PostVarianceAffectorBridge.cs b/Assets/Scripts/UI_Import/PostVarianceAffectorBridge.cs
+index ad63ba8..44c7b4e 100644
+--- a/Assets/Scripts/UI_Import/PostVarianceAffectorBridge.cs
++++ b/Assets/Scripts/UI_Import/PostVarianceAffectorBridge.cs
+@@ -130,7 +130,7 @@ public class PostVarianceAffectorBridge : MonoBehaviour
+ 
+             HairCard.GroomState evaluated = new HairCard.GroomState
+             {
+-                length = Mathf.Max(.0005f, card.length + dLength),
++                length = Mathf.Max(.0001f, card.length + dLength),
+                 width = Mathf.Max(.0005f, card.width + dWidth),
+                 segments = card.segments,
+                 bend = card.bendAngle + dBend,
+diff --git a/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs b/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
+index 2239c2f..7a56ef4 100644
+--- a/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
++++ b/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
+@@ -294,7 +294,7 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
+         Vector2[] uvs = new Vector2[vertexCount];
+         int[] triangles = new int[segments * 12];
+ 
+-        float segmentHeight = Mathf.Max(.001f, card.length) / segments;
++        float segmentHeight = Mathf.Max(.0001f, card.length) / segments;
+         float halfWidth = Mathf.Max(.0005f, card.width) * .5f;
+         float ridge = card.GetCrossSectionRidgeHeight();
+ 

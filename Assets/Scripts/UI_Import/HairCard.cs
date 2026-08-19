@@ -225,7 +225,7 @@ public class HairCard : MonoBehaviour
 
     GroomState SanitizeState(GroomState state)
     {
-        state.length = Mathf.Max(0.001f, state.length);
+        state.length = Mathf.Max(0.0001f, state.length);
         state.width = Mathf.Max(0.0005f, state.width);
         state.segments = Mathf.Clamp(state.segments, 1, 60);
         state.depth = Mathf.Max(0f, state.depth);
@@ -295,7 +295,7 @@ public class HairCard : MonoBehaviour
         if (selectionWeight > 0f)
         {
             float w = Mathf.Clamp01(selectionWeight * strengthMultiplier);
-            length = Mathf.Max(0.001f, Mathf.Lerp(baseLength, newLength, w));
+            length = Mathf.Max(0.0001f, Mathf.Lerp(baseLength, newLength, w));
             width = Mathf.Lerp(baseWidth, newWidth, w);
             segments = Mathf.RoundToInt(Mathf.Lerp(baseSegments, newSegments, w));
             bendAngle = Mathf.Lerp(baseBend, newBend, w);
@@ -309,7 +309,7 @@ public class HairCard : MonoBehaviour
         }
         else
         {
-            length = Mathf.Max(0.001f, newLength);
+            length = Mathf.Max(0.0001f, newLength);
             width = newWidth;
             segments = newSegments;
             bendAngle = newBend;

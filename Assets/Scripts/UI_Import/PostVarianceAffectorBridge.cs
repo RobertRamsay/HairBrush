@@ -130,7 +130,7 @@ public class PostVarianceAffectorBridge : MonoBehaviour
 
             HairCard.GroomState evaluated = new HairCard.GroomState
             {
-                length = Mathf.Max(.0005f, card.length + dLength),
+                length = Mathf.Max(.0001f, card.length + dLength),
                 width = Mathf.Max(.0005f, card.width + dWidth),
                 segments = card.segments,
                 bend = card.bendAngle + dBend,

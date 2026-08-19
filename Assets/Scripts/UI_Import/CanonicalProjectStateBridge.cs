@@ -113,7 +113,7 @@ public class CanonicalProjectStateBridge : MonoBehaviour
             float oldSelection = card.selectionWeight;
             card.SetSelectionWeight(0f);
             card.SetParameters(
-                Mathf.Max(.0005f, canonical.length), Mathf.Max(.0005f, canonical.width), Mathf.Clamp(Mathf.RoundToInt(canonical.segments), 4, 60),
+                Mathf.Max(.0001f, canonical.length), Mathf.Max(.0005f, canonical.width), Mathf.Clamp(Mathf.RoundToInt(canonical.segments), 4, 60),
                 canonical.bend, canonical.twist, canonical.x, canonical.y, canonical.z,
                 Mathf.Max(0f, canonical.depth), 1f,
                 canonical.uScale, canonical.vScale, canonical.uOffset, canonical.vOffset,

@@ -161,7 +161,7 @@ public class PostFinalRemovalLifecycleAuthority : MonoBehaviour
     {
         return new HairCard.GroomState
         {
-            length = Mathf.Max(.001f, s.length),
+            length = Mathf.Max(.0001f, s.length),
             width = Mathf.Max(.0005f, s.width),
             segments = Mathf.Clamp(Mathf.RoundToInt(s.segments), 1, 60),
             bend = s.bend,
