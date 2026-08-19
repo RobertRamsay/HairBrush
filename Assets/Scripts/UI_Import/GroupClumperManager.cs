@@ -238,16 +238,32 @@ public class GroupClumperManager : MonoBehaviour
     void RemoveClumper(GroupClumper clumper)
     {
         if (clumper == null) return;
-        if (byGroup.TryGetValue(clumper.groupId, out List<GroupClumper> list))
-        {
-            list.RemoveAll(c => c != null && c.id == clumper.id);
-            if (list.Count == 0) byGroup.Remove(clumper.groupId);
-        }
+
+        // Neutralize first so ThreeColumnClumperMeshAuthority can cleanly restore the
+        // affected cards on its next LateUpdate pass before the data disappears. Without this,
+        // the immediate data removal caused a frame-ordering race: the clumper mesh authority's
+        // RestoreRemovedGroups would overwrite POST-evaluated meshes after PostAffectorManager
+        // had already applied them for that frame, breaking POST editing until something else
+        // forced a full rebuild. The deferred removal via coroutine gives the mesh authority
+        // one clean frame to process the zeroed-out clumper before it vanishes from byGroup.
+        clumper.amount = 0f;
+        Invalidate(clumper);
         if (selectedClumperId == clumper.id)
         {
             selectedClumperId = -1;
             selectedGroup = -1;
             DestroyControls();
+        }
+        StartCoroutine(DeferredRemoveClumper(clumper));
+    }
+
+    System.Collections.IEnumerator DeferredRemoveClumper(GroupClumper clumper)
+    {
+        yield return null;
+        if (byGroup.TryGetValue(clumper.groupId, out List<GroupClumper> list))
+        {
+            list.RemoveAll(c => c != null && c.id == clumper.id);
+            if (list.Count == 0) byGroup.Remove(clumper.groupId);
         }
         RebuildRowsSoon();
     }

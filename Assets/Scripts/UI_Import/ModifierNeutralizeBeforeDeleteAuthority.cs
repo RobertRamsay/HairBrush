@@ -124,12 +124,19 @@ public class ModifierDeleteNeutralizeHook : MonoBehaviour, IPointerDownHandler
     void NeutralizeClumper()
     {
         if (clumperManager == null || clumperGroupsField == null) return;
-        var groups = clumperGroupsField.GetValue(clumperManager) as Dictionary<int, GroupClumperManager.GroupClumper>;
-        if (groups == null || !groups.TryGetValue(groupId, out GroupClumperManager.GroupClumper clumper) || clumper == null) return;
+        var groups = clumperGroupsField.GetValue(clumperManager) as Dictionary<int, List<GroupClumperManager.GroupClumper>>;
+        if (groups == null || !groups.TryGetValue(groupId, out List<GroupClumperManager.GroupClumper> list) || list == null) return;
 
-        clumper.amount = 0f;
-        clumper.lastTopologyHash = 0;
-        if (clumper.leaders != null) clumper.leaders.Clear();
+        GroupClumperManager.GroupClumper target = null;
+        foreach (GroupClumperManager.GroupClumper c in list)
+        {
+            if (c != null) { target = c; break; }
+        }
+        if (target == null) return;
+
+        target.amount = 0f;
+        target.lastTopologyHash = 0;
+        if (target.leaders != null) target.leaders.Clear();
 
         HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
         int reset = 0;
