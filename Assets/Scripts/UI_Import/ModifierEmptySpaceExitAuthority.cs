@@ -105,6 +105,12 @@ public class ModifierEmptySpaceExitAuthority : MonoBehaviour
         ExitPostAndLocalizedSelection();
         ExitClumper();
 
+        // Coming out of POST or CLUMPER editing back to plain group context is exactly the
+        // same "which values are the sliders actually showing right now" problem SelectGroup
+        // already solves - without this, the sliders keep showing whatever the modifier you
+        // just exited left them at, not the group's own root values.
+        if (viewer != null) viewer.SyncShapeSlidersToGroupRoot(viewer.currentGroupId);
+
         if (EventSystem.current != null)
             EventSystem.current.SetSelectedGameObject(null);
     }

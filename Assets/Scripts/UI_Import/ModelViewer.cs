@@ -106,6 +106,7 @@ public class ModelViewer : MonoBehaviour
     private Slider vScaleSlider;
     private Slider uOffsetSlider;
     private Slider vOffsetSlider;
+    private GroomRootStateAuthority rootStateAuthority;
 
     private float spawnCooldown = 0.05f;
     private float lastSpawnTime = 0f;
@@ -612,6 +613,7 @@ public class ModelViewer : MonoBehaviour
         groupVScales[id] = currentVScale;
         groupUOffsets[id] = currentUOffset;
         groupVOffsets[id] = currentVOffset;
+        SyncShapeSlidersToGroupRoot(id);
         if (uScaleSlider != null) uScaleSlider.SetValueWithoutNotify(currentUScale);
         if (vScaleSlider != null) vScaleSlider.SetValueWithoutNotify(currentVScale);
         if (uOffsetSlider != null) uOffsetSlider.SetValueWithoutNotify(currentUOffset);
@@ -619,6 +621,70 @@ public class ModelViewer : MonoBehaviour
         RefreshGroupListUI();
         if (flashGroupCoroutine != null) StopCoroutine(flashGroupCoroutine);
         flashGroupCoroutine = StartCoroutine(FlashActiveGroupRoutine(currentGroupId));
+    }
+
+    // Selecting a group only ever synced the UV sliders - Length/Width/Bend/Twist/Curl/etc kept
+    // showing whatever a PREVIOUSLY-edited POST or group happened to leave them at, silently
+    // misleading anyone who assumed the sliders reflected the newly-selected group. This gives
+    // every shape slider the same "known resting point" guarantee SelectAffector already gives
+    // when switching between POSTs. Also called (via SyncGroomingSlidersToCurrent) when leaving
+    // POST/CLUMPER editing back to plain group context.
+    public void SyncShapeSlidersToGroupRoot(int groupId)
+    {
+        if (rootStateAuthority == null) rootStateAuthority = FindFirstObjectByType<GroomRootStateAuthority>();
+        bool found = rootStateAuthority != null && rootStateAuthority.TryGetRootState(groupId, out GroomRootStateAuthority.RootState state);
+
+        if (!found)
+        {
+            // No stored root yet for this group (never entered/exited a POST or CLUMPER on it) -
+            // fall back to sampling any existing card's own canonical state.
+            HairCard sample = FindObjectsByType<HairCard>(FindObjectsSortMode.None).FirstOrDefault(c => c.groupId == groupId);
+            if (sample != null)
+            {
+                HairCard.GroomState s = sample.GetCanonicalState();
+                state = new GroomRootStateAuthority.RootState
+                {
+                    length = s.length, width = s.width, segments = s.segments, bend = s.bend, twist = s.twist,
+                    depth = s.depth, x = s.x, y = s.y, z = s.z,
+                    curlFrequency = s.curlFrequency, curlDiameter = s.curlDiameter
+                };
+                found = true;
+            }
+        }
+
+        if (!found)
+        {
+            // Brand new, empty group - the same defaults GroomSessionResetCoordinator uses.
+            state = new GroomRootStateAuthority.RootState
+            {
+                length = .2f, width = .01f, segments = 12, bend = 0f, twist = 0f, depth = .002f,
+                x = 0f, y = 0f, z = 0f, curlFrequency = 0f, curlDiameter = 0f
+            };
+        }
+
+        currentLength = state.length;
+        currentWidth = state.width;
+        currentSegments = state.segments;
+        currentBend = state.bend;
+        currentTwist = state.twist;
+        currentEmbedDepth = state.depth;
+        currentOffsetX = state.x;
+        currentOffsetY = state.y;
+        currentOffsetZ = state.z;
+        currentCurlFrequency = state.curlFrequency;
+        currentCurlDiameter = state.curlDiameter;
+
+        if (lengthSlider != null) lengthSlider.SetValueWithoutNotify(currentLength);
+        if (widthSlider != null) widthSlider.SetValueWithoutNotify(currentWidth);
+        if (segmentsSlider != null) segmentsSlider.SetValueWithoutNotify(currentSegments);
+        if (bendSlider != null) bendSlider.SetValueWithoutNotify(currentBend);
+        if (twistSlider != null) twistSlider.SetValueWithoutNotify(currentTwist);
+        if (depthSlider != null) depthSlider.SetValueWithoutNotify(currentEmbedDepth);
+        if (offsetXSlider != null) offsetXSlider.SetValueWithoutNotify(currentOffsetX);
+        if (offsetYSlider != null) offsetYSlider.SetValueWithoutNotify(currentOffsetY);
+        if (offsetZSlider != null) offsetZSlider.SetValueWithoutNotify(currentOffsetZ);
+        if (curlFrequencySlider != null) curlFrequencySlider.SetValueWithoutNotify(currentCurlFrequency);
+        if (curlDiameterSlider != null) curlDiameterSlider.SetValueWithoutNotify(currentCurlDiameter);
     }
 
     IEnumerator FlashActiveGroupRoutine(int activeId)

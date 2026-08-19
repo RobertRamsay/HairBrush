@@ -152,6 +152,9 @@ public class PostFinalRemovalLifecycleAuthority : MonoBehaviour
             if (hitPointField != null) hitPointField.SetValue(viewer, Vector3.zero);
             if (hitNormalField != null) hitNormalField.SetValue(viewer, Vector3.zero);
             viewer.selectionStrength = 1f;
+            // Same reasoning as the plain "click in empty space" exit path: without this the
+            // sliders keep showing whatever this now-removed POST last had them at.
+            viewer.SyncShapeSlidersToGroupRoot(gid);
         }
 
         Debug.Log("Final POST removed from group " + gid + ": restored " + restored + " HairCards to upstream state and cleared POST lifecycle cache.");
