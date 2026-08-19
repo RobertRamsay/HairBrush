@@ -333,7 +333,7 @@ public class PostAffectorManager : MonoBehaviour
         {
             length = Mathf.Max(.0005f, s.length),
             width = Mathf.Max(.0005f, s.width),
-            segments = Mathf.Clamp(Mathf.RoundToInt(s.segments), 4, 36),
+            segments = Mathf.Clamp(Mathf.RoundToInt(s.segments), 4, 60),
             bend = s.bend,
             twist = s.twist,
             depth = Mathf.Max(0f, s.depth),

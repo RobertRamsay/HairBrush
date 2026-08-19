@@ -17,7 +17,12 @@ public enum GroomShapeCurveChannel
     // see PostShapeCurveBridge.EvaluateRoot, which routes these two straight to the group
     // registry rather than through the POST-editing snapshot mechanism.
     CurlFrequency,
-    CurlDiameter
+    CurlDiameter,
+    // Segment density: NOT a magnitude multiplier like every channel above - this one is a
+    // 0..1 -> 0..1 REMAP of where segments actually sit along the card's length (see
+    // HairCard.GenerateMesh). Root-only, same reasoning as Curl: mesh topology isn't a
+    // per-POST concept.
+    SegmentDensity
 }
 
 // Canonical group-root length profiles for shape angles. The slider remains the authored
@@ -34,6 +39,7 @@ public static class GroomShapeCurveRegistry
         public AnimationCurve z = CreateDefault(GroomShapeCurveChannel.Z);
         public AnimationCurve curlFrequency = CreateDefault(GroomShapeCurveChannel.CurlFrequency);
         public AnimationCurve curlDiameter = CreateDefault(GroomShapeCurveChannel.CurlDiameter);
+        public AnimationCurve segmentDensity = CreateDefault(GroomShapeCurveChannel.SegmentDensity);
     }
 
     private static readonly Dictionary<int, CurveSet> byGroup = new Dictionary<int, CurveSet>();
@@ -48,7 +54,8 @@ public static class GroomShapeCurveRegistry
             case GroomShapeCurveChannel.Y: return set.y;
             case GroomShapeCurveChannel.Z: return set.z;
             case GroomShapeCurveChannel.CurlFrequency: return set.curlFrequency;
-            default: return set.curlDiameter;
+            case GroomShapeCurveChannel.CurlDiameter: return set.curlDiameter;
+            default: return set.segmentDensity;
         }
     }
 
@@ -70,6 +77,7 @@ public static class GroomShapeCurveRegistry
             case GroomShapeCurveChannel.Z: set.z = clean; break;
             case GroomShapeCurveChannel.CurlFrequency: set.curlFrequency = clean; break;
             case GroomShapeCurveChannel.CurlDiameter: set.curlDiameter = clean; break;
+            case GroomShapeCurveChannel.SegmentDensity: set.segmentDensity = clean; break;
         }
     }
 
@@ -137,6 +145,14 @@ public static class GroomShapeCurveRegistry
                 new Keyframe(0f, 0f, 0f, 0f),
                 new Keyframe(.5f, .25f, 1f, 1f),
                 new Keyframe(1f, 1f, 2f, 2f));
+        }
+        else if (channel == GroomShapeCurveChannel.SegmentDensity)
+        {
+            // Identity remap (y=t) - straight diagonal, so segments stay exactly evenly spaced
+            // by default, matching pre-existing behaviour until this is deliberately edited.
+            curve = new AnimationCurve(
+                new Keyframe(0f, 0f, 1f, 1f),
+                new Keyframe(1f, 1f, 1f, 1f));
         }
         else
         {
@@ -249,6 +265,7 @@ public class GroomShapeCurveAuthority : MonoBehaviour
             group.zAngleCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.Z);
             group.curlFrequencyCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.CurlFrequency);
             group.curlDiameterCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.CurlDiameter);
+            group.segmentDensityCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.SegmentDensity);
         }
     }
 
@@ -285,6 +302,7 @@ public class GroomShapeCurveAuthority : MonoBehaviour
         EnsureCurveRow("Offset Z_Row", "Z ANGLE PROFILE", GroomShapeCurveChannel.Z);
         EnsureCurveRow("Curl Frequency_Row", "CURL FREQUENCY PROFILE", GroomShapeCurveChannel.CurlFrequency);
         EnsureCurveRow("Curl Diameter_Row", "CURL DIAMETER PROFILE", GroomShapeCurveChannel.CurlDiameter);
+        EnsureCurveRow("Segments_Row", "SEGMENT DENSITY PROFILE", GroomShapeCurveChannel.SegmentDensity);
     }
 
     private void ResolveViewer()
@@ -333,6 +351,7 @@ public class GroomShapeCurveAuthority : MonoBehaviour
                 GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.Z, group.zAngleCurve);
                 GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.CurlFrequency, group.curlFrequencyCurve);
                 GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.CurlDiameter, group.curlDiameterCurve);
+                GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.SegmentDensity, group.segmentDensityCurve);
                 GroomShapeCurveRegistry.RefreshGroup(group.groupId);
             }
         }
@@ -466,7 +485,8 @@ public class GroomShapeCurveAuthority : MonoBehaviour
             case GroomShapeCurveChannel.Y: return "Y ANGLE";
             case GroomShapeCurveChannel.Z: return "Z ANGLE";
             case GroomShapeCurveChannel.CurlFrequency: return "CURL FREQUENCY";
-            default: return "CURL DIAMETER";
+            case GroomShapeCurveChannel.CurlDiameter: return "CURL DIAMETER";
+            default: return "SEGMENT DENSITY";
         }
     }
 

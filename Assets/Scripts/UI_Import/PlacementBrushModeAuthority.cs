@@ -329,7 +329,7 @@ public class PlacementBrushModeAuthority : MonoBehaviour
     void ApplySegmentOverride(float value)
     {
         if (viewer == null || GetBool(selectionHotspotField)) return;
-        int target = Mathf.Clamp(Mathf.RoundToInt(value), 1, 36);
+        int target = Mathf.Clamp(Mathf.RoundToInt(value), 1, 60);
         viewer.currentSegments = target;
         HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
         foreach (HairCard card in cards)

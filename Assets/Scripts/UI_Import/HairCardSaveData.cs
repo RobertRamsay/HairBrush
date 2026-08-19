@@ -161,6 +161,9 @@ public class PostPredeterminedUVSaveData
     // multiplier throughout, same default convention as X/Y/Z.
     public List<GroomCurveKeySaveData> curlFrequencyCurve=new();
     public List<GroomCurveKeySaveData> curlDiameterCurve=new();
+    // Segment density: where segments cluster along the length. Not a magnitude multiplier
+    // like the curves above - a 0..1 -> 0..1 remap (see HairCard.GenerateMesh).
+    public List<GroomCurveKeySaveData> segmentDensityCurve=new();
 
     // Group UV source. Adjustable keeps the legacy group U/V controls. Predetermined
     // chooses one authored Texture Editor rectangle per card using the inclusive ID range

@@ -1,0 +1,294 @@
+diff --git a/Assets/Scripts/UI_Import/CanonicalProjectStateBridge.cs b/Assets/Scripts/UI_Import/CanonicalProjectStateBridge.cs
+index 9eb6f94..7f83bf8 100644
+--- a/Assets/Scripts/UI_Import/CanonicalProjectStateBridge.cs
++++ b/Assets/Scripts/UI_Import/CanonicalProjectStateBridge.cs
+@@ -113,7 +113,7 @@ public class CanonicalProjectStateBridge : MonoBehaviour
+             float oldSelection = card.selectionWeight;
+             card.SetSelectionWeight(0f);
+             card.SetParameters(
+-                Mathf.Max(.0005f, canonical.length), Mathf.Max(.0005f, canonical.width), Mathf.Clamp(Mathf.RoundToInt(canonical.segments), 4, 36),
++                Mathf.Max(.0005f, canonical.length), Mathf.Max(.0005f, canonical.width), Mathf.Clamp(Mathf.RoundToInt(canonical.segments), 4, 60),
+                 canonical.bend, canonical.twist, canonical.x, canonical.y, canonical.z,
+                 Mathf.Max(0f, canonical.depth), 1f,
+                 canonical.uScale, canonical.vScale, canonical.uOffset, canonical.vOffset,
+diff --git a/Assets/Scripts/UI_Import/GroomShapeCurveAuthority.cs b/Assets/Scripts/UI_Import/GroomShapeCurveAuthority.cs
+index 1fc0787..2d760e0 100644
+--- a/Assets/Scripts/UI_Import/GroomShapeCurveAuthority.cs
++++ b/Assets/Scripts/UI_Import/GroomShapeCurveAuthority.cs
+@@ -17,7 +17,12 @@ public enum GroomShapeCurveChannel
+     // see PostShapeCurveBridge.EvaluateRoot, which routes these two straight to the group
+     // registry rather than through the POST-editing snapshot mechanism.
+     CurlFrequency,
+-    CurlDiameter
++    CurlDiameter,
++    // Segment density: NOT a magnitude multiplier like every channel above - this one is a
++    // 0..1 -> 0..1 REMAP of where segments actually sit along the card's length (see
++    // HairCard.GenerateMesh). Root-only, same reasoning as Curl: mesh topology isn't a
++    // per-POST concept.
++    SegmentDensity
+ }
+ 
+ // Canonical group-root length profiles for shape angles. The slider remains the authored
+@@ -34,6 +39,7 @@ public static class GroomShapeCurveRegistry
+         public AnimationCurve z = CreateDefault(GroomShapeCurveChannel.Z);
+         public AnimationCurve curlFrequency = CreateDefault(GroomShapeCurveChannel.CurlFrequency);
+         public AnimationCurve curlDiameter = CreateDefault(GroomShapeCurveChannel.CurlDiameter);
++        public AnimationCurve segmentDensity = CreateDefault(GroomShapeCurveChannel.SegmentDensity);
+     }
+ 
+     private static readonly Dictionary<int, CurveSet> byGroup = new Dictionary<int, CurveSet>();
+@@ -48,7 +54,8 @@ public static class GroomShapeCurveRegistry
+             case GroomShapeCurveChannel.Y: return set.y;
+             case GroomShapeCurveChannel.Z: return set.z;
+             case GroomShapeCurveChannel.CurlFrequency: return set.curlFrequency;
+-            default: return set.curlDiameter;
++            case GroomShapeCurveChannel.CurlDiameter: return set.curlDiameter;
++            default: return set.segmentDensity;
+         }
+     }
+ 
+@@ -70,6 +77,7 @@ public static class GroomShapeCurveRegistry
+             case GroomShapeCurveChannel.Z: set.z = clean; break;
+             case GroomShapeCurveChannel.CurlFrequency: set.curlFrequency = clean; break;
+             case GroomShapeCurveChannel.CurlDiameter: set.curlDiameter = clean; break;
++            case GroomShapeCurveChannel.SegmentDensity: set.segmentDensity = clean; break;
+         }
+     }
+ 
+@@ -138,6 +146,14 @@ public static class GroomShapeCurveRegistry
+                 new Keyframe(.5f, .25f, 1f, 1f),
+                 new Keyframe(1f, 1f, 2f, 2f));
+         }
++        else if (channel == GroomShapeCurveChannel.SegmentDensity)
++        {
++            // Identity remap (y=t) - straight diagonal, so segments stay exactly evenly spaced
++            // by default, matching pre-existing behaviour until this is deliberately edited.
++            curve = new AnimationCurve(
++                new Keyframe(0f, 0f, 1f, 1f),
++                new Keyframe(1f, 1f, 1f, 1f));
++        }
+         else
+         {
+             curve = new AnimationCurve(
+@@ -249,6 +265,7 @@ public class GroomShapeCurveAuthority : MonoBehaviour
+             group.zAngleCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.Z);
+             group.curlFrequencyCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.CurlFrequency);
+             group.curlDiameterCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.CurlDiameter);
++            group.segmentDensityCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.SegmentDensity);
+         }
+     }
+ 
+@@ -285,6 +302,7 @@ public class GroomShapeCurveAuthority : MonoBehaviour
+         EnsureCurveRow("Offset Z_Row", "Z ANGLE PROFILE", GroomShapeCurveChannel.Z);
+         EnsureCurveRow("Curl Frequency_Row", "CURL FREQUENCY PROFILE", GroomShapeCurveChannel.CurlFrequency);
+         EnsureCurveRow("Curl Diameter_Row", "CURL DIAMETER PROFILE", GroomShapeCurveChannel.CurlDiameter);
++        EnsureCurveRow("Segments_Row", "SEGMENT DENSITY PROFILE", GroomShapeCurveChannel.SegmentDensity);
+     }
+ 
+     private void ResolveViewer()
+@@ -333,6 +351,7 @@ public class GroomShapeCurveAuthority : MonoBehaviour
+                 GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.Z, group.zAngleCurve);
+                 GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.CurlFrequency, group.curlFrequencyCurve);
+                 GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.CurlDiameter, group.curlDiameterCurve);
++                GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.SegmentDensity, group.segmentDensityCurve);
+                 GroomShapeCurveRegistry.RefreshGroup(group.groupId);
+             }
+         }
+@@ -466,7 +485,8 @@ public class GroomShapeCurveAuthority : MonoBehaviour
+             case GroomShapeCurveChannel.Y: return "Y ANGLE";
+             case GroomShapeCurveChannel.Z: return "Z ANGLE";
+             case GroomShapeCurveChannel.CurlFrequency: return "CURL FREQUENCY";
+-            default: return "CURL DIAMETER";
++            case GroomShapeCurveChannel.CurlDiameter: return "CURL DIAMETER";
++            default: return "SEGMENT DENSITY";
+         }
+     }
+ 
+diff --git a/Assets/Scripts/UI_Import/HairCard.cs b/Assets/Scripts/UI_Import/HairCard.cs
+index e1fbf87..2b3112d 100644
+--- a/Assets/Scripts/UI_Import/HairCard.cs
++++ b/Assets/Scripts/UI_Import/HairCard.cs
+@@ -34,7 +34,7 @@ public class HairCard : MonoBehaviour
+     [Header("Grooming Parameters")]
+     public float width = 0.01f;
+     public float length = 0.2f;
+-    [Range(1, 36)] public int segments = 12;
++    [Range(1, 60)] public int segments = 12;
+ 
+     [Header("Deformations")]
+     public float bendAngle = 0f;
+@@ -227,7 +227,7 @@ public class HairCard : MonoBehaviour
+     {
+         state.length = Mathf.Max(0.001f, state.length);
+         state.width = Mathf.Max(0.0005f, state.width);
+-        state.segments = Mathf.Clamp(state.segments, 1, 36);
++        state.segments = Mathf.Clamp(state.segments, 1, 60);
+         state.depth = Mathf.Max(0f, state.depth);
+         state.curlDiameter = Mathf.Max(0f, state.curlDiameter);
+         return state;
+@@ -394,7 +394,7 @@ public class HairCard : MonoBehaviour
+ 
+     public void SetSegments(int newSegments)
+     {
+-        segments = Mathf.Clamp(newSegments, 1, 36);
++        segments = Mathf.Clamp(newSegments, 1, 60);
+         CaptureCanonicalFromRendered();
+         GenerateMesh();
+     }
+@@ -408,14 +408,29 @@ public class HairCard : MonoBehaviour
+         baseVertices = new Vector3[numVertices];
+         Vector2[] uvs = new Vector2[numVertices];
+         int[] triangles = new int[segments * 12];
+-        float segmentHeight = length / segments;
+         float halfWidth = width * 0.5f;
+         float ridgeHeight = GetCrossSectionRidgeHeight();
+ 
++        // Segment density remaps where segments actually sit along the length, instead of the
++        // plain uniform i/segments spacing every other value in this loop used to derive z from.
++        // Root and tip are forced to exactly 0 and 1 regardless of the curve's own endpoints, so
++        // "Length" always produces the expected total span even if the curve doesn't touch its
++        // own corners. previousSegmentT enforces non-decreasing t: a badly-authored (non-
++        // monotonic) density curve must never fold the mesh back on itself.
++        float previousSegmentT = 0f;
++
+         for (int i = 0; i <= segments; i++)
+         {
+-            float z = i * segmentHeight;
+-            float t = (float)i / segments;
++            float t;
++            if (i == 0) t = 0f;
++            else if (i == segments) t = 1f;
++            else
++            {
++                float u = (float)i / segments;
++                t = Mathf.Max(previousSegmentT, PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.SegmentDensity, u));
++            }
++            previousSegmentT = t;
++            float z = t * length;
+             float baseULeft = uScale < 0f ? 1f : 0f;
+             float baseURight = uScale < 0f ? 0f : 1f;
+             float finalULeft = baseULeft * Mathf.Abs(uScale) + uOffset;
+diff --git a/Assets/Scripts/UI_Import/HairCardSaveData.cs b/Assets/Scripts/UI_Import/HairCardSaveData.cs
+index f6c753f..403238f 100644
+--- a/Assets/Scripts/UI_Import/HairCardSaveData.cs
++++ b/Assets/Scripts/UI_Import/HairCardSaveData.cs
+@@ -161,6 +161,9 @@ public class PostPredeterminedUVSaveData
+     // multiplier throughout, same default convention as X/Y/Z.
+     public List<GroomCurveKeySaveData> curlFrequencyCurve=new();
+     public List<GroomCurveKeySaveData> curlDiameterCurve=new();
++    // Segment density: where segments cluster along the length. Not a magnitude multiplier
++    // like the curves above - a 0..1 -> 0..1 remap (see HairCard.GenerateMesh).
++    public List<GroomCurveKeySaveData> segmentDensityCurve=new();
+ 
+     // Group UV source. Adjustable keeps the legacy group U/V controls. Predetermined
+     // chooses one authored Texture Editor rectangle per card using the inclusive ID range
+diff --git a/Assets/Scripts/UI_Import/ModelViewer.cs b/Assets/Scripts/UI_Import/ModelViewer.cs
+index 1d34362..4de9fe8 100644
+--- a/Assets/Scripts/UI_Import/ModelViewer.cs
++++ b/Assets/Scripts/UI_Import/ModelViewer.cs
+@@ -215,7 +215,7 @@ public class ModelViewer : MonoBehaviour
+         int deltaSegs = targetSegs - currentSegments;
+         currentSegments = targetSegs;
+         if (hasSelectionHotspot) UpdateActiveCard();
+-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, Mathf.Clamp(isRelativeMode ? c.segments + deltaSegs : targetSegs, 4, 36), c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
++        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, Mathf.Clamp(isRelativeMode ? c.segments + deltaSegs : targetSegs, 4, 60), c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
+     }
+ 
+     public void OnSliderBendChanged(float val)
+@@ -502,7 +502,7 @@ public class ModelViewer : MonoBehaviour
+         CreateSliderUI(panelGO.transform, "Width", 0.0005f, 0.05f, currentWidth, OnSliderWidthChanged, out widthSlider, 38, 16);
+         CreateSliderUI(panelGO.transform, "Curl Frequency", -10f, 10f, currentCurlFrequency, OnSliderCurlFrequencyChanged, out curlFrequencySlider, 38, 16);
+         CreateSliderUI(panelGO.transform, "Curl Diameter", 0f, 0.15f, currentCurlDiameter, OnSliderCurlDiameterChanged, out curlDiameterSlider, 38, 16);
+-        CreateSliderUI(panelGO.transform, "Segments", 4, 36, currentSegments, OnSliderSegmentsChanged, out segmentsSlider, 38, 16);
++        CreateSliderUI(panelGO.transform, "Segments", 4, 60, currentSegments, OnSliderSegmentsChanged, out segmentsSlider, 38, 16);
+         CreateSliderUI(panelGO.transform, "Bend Angle", -360f, 360f, currentBend, OnSliderBendChanged, out bendSlider, 38, 16);
+         CreateSliderUI(panelGO.transform, "Twist Angle", -360f, 360f, currentTwist, OnSliderTwistChanged, out twistSlider, 38, 16);
+         CreateSliderUI(panelGO.transform, "Embed Depth", 0.0f, 0.1f, currentEmbedDepth, OnSliderEmbedDepthChanged, out depthSlider, 38, 16);
+diff --git a/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs b/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs
+index 92a3eb7..cbafdfd 100644
+--- a/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs
++++ b/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs
+@@ -179,7 +179,7 @@ public class ModifierDeleteNeutralizeHook : MonoBehaviour, IPointerDownHandler
+     static void WriteCleanThreeColumnMesh(HairCard card)
+     {
+         const int columns = HairCard.CrossSectionColumns;
+-        int segments = Mathf.Clamp(card.segments, 1, 36);
++        int segments = Mathf.Clamp(card.segments, 1, 60);
+         Vector3[] vertices = new Vector3[(segments + 1) * columns];
+         float segmentHeight = Mathf.Max(.001f, card.length) / segments;
+         float halfWidth = Mathf.Max(.0005f, card.width) * .5f;
+diff --git a/Assets/Scripts/UI_Import/PlacementBrushModeAuthority.cs b/Assets/Scripts/UI_Import/PlacementBrushModeAuthority.cs
+index 40702f9..ebe9cbb 100644
+--- a/Assets/Scripts/UI_Import/PlacementBrushModeAuthority.cs
++++ b/Assets/Scripts/UI_Import/PlacementBrushModeAuthority.cs
+@@ -329,7 +329,7 @@ public class PlacementBrushModeAuthority : MonoBehaviour
+     void ApplySegmentOverride(float value)
+     {
+         if (viewer == null || GetBool(selectionHotspotField)) return;
+-        int target = Mathf.Clamp(Mathf.RoundToInt(value), 1, 36);
++        int target = Mathf.Clamp(Mathf.RoundToInt(value), 1, 60);
+         viewer.currentSegments = target;
+         HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
+         foreach (HairCard card in cards)
+diff --git a/Assets/Scripts/UI_Import/PostAffectorManager.cs b/Assets/Scripts/UI_Import/PostAffectorManager.cs
+index b29b612..257fa3a 100644
+--- a/Assets/Scripts/UI_Import/PostAffectorManager.cs
++++ b/Assets/Scripts/UI_Import/PostAffectorManager.cs
+@@ -333,7 +333,7 @@ public class PostAffectorManager : MonoBehaviour
+         {
+             length = Mathf.Max(.0005f, s.length),
+             width = Mathf.Max(.0005f, s.width),
+-            segments = Mathf.Clamp(Mathf.RoundToInt(s.segments), 4, 36),
++            segments = Mathf.Clamp(Mathf.RoundToInt(s.segments), 4, 60),
+             bend = s.bend,
+             twist = s.twist,
+             depth = Mathf.Max(0f, s.depth),
+diff --git a/Assets/Scripts/UI_Import/PostFinalRemovalLifecycleAuthority.cs b/Assets/Scripts/UI_Import/PostFinalRemovalLifecycleAuthority.cs
+index 89c5a1a..a20f0c3 100644
+--- a/Assets/Scripts/UI_Import/PostFinalRemovalLifecycleAuthority.cs
++++ b/Assets/Scripts/UI_Import/PostFinalRemovalLifecycleAuthority.cs
+@@ -163,7 +163,7 @@ public class PostFinalRemovalLifecycleAuthority : MonoBehaviour
+         {
+             length = Mathf.Max(.001f, s.length),
+             width = Mathf.Max(.0005f, s.width),
+-            segments = Mathf.Clamp(Mathf.RoundToInt(s.segments), 1, 36),
++            segments = Mathf.Clamp(Mathf.RoundToInt(s.segments), 1, 60),
+             bend = s.bend,
+             twist = s.twist,
+             depth = Mathf.Max(0f, s.depth),
+diff --git a/Assets/Scripts/UI_Import/PostShapeCurveBridge.cs b/Assets/Scripts/UI_Import/PostShapeCurveBridge.cs
+index 93d0965..6d3eb96 100644
+--- a/Assets/Scripts/UI_Import/PostShapeCurveBridge.cs
++++ b/Assets/Scripts/UI_Import/PostShapeCurveBridge.cs
+@@ -119,11 +119,13 @@ public class PostShapeCurveBridge : MonoBehaviour
+     public static float EvaluateRoot(int groupId, GroomShapeCurveChannel channel, float t)
+     {
+         t = Mathf.Clamp01(t);
+-        // Curl has no per-POST override (see the enum's own comment), so it must never go
+-        // through the POST-editing snapshot path below - that snapshot's CurveSet genuinely has
+-        // no curl fields, and the channel switch in GetCurve(CurveSet,...) would otherwise fall
+-        // through to its default case and silently evaluate the wrong (Z) curve for it.
+-        if (channel == GroomShapeCurveChannel.CurlFrequency || channel == GroomShapeCurveChannel.CurlDiameter)
++        // Curl and Segment Density have no per-POST override (see the enum's own comments), so
++        // they must never go through the POST-editing snapshot path below - that snapshot's
++        // CurveSet genuinely has no fields for either, and the channel switch in
++        // GetCurve(CurveSet,...) would otherwise fall through to its default case and silently
++        // evaluate the wrong (Z) curve for them.
++        if (channel == GroomShapeCurveChannel.CurlFrequency || channel == GroomShapeCurveChannel.CurlDiameter
++            || channel == GroomShapeCurveChannel.SegmentDensity)
+             return GroomShapeCurveRegistry.Evaluate(groupId, channel, t);
+         if (live != null && live.rootWhilePost.TryGetValue(groupId, out CurveSet root) && root != null)
+             return Mathf.Clamp01(GetCurve(root, channel).Evaluate(t));
+diff --git a/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs b/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
+index b9bd1fb..2239c2f 100644
+--- a/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
++++ b/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
+@@ -288,7 +288,7 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
+         if (card == null) return null;
+ 
+         const int columns = HairCard.CrossSectionColumns;
+-        int segments = Mathf.Clamp(card.segments, 1, 36);
++        int segments = Mathf.Clamp(card.segments, 1, 60);
+         int vertexCount = (segments + 1) * columns;
+         Vector3[] vertices = new Vector3[vertexCount];
+         Vector2[] uvs = new Vector2[vertexCount];

@@ -288,7 +288,7 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         if (card == null) return null;
 
         const int columns = HairCard.CrossSectionColumns;
-        int segments = Mathf.Clamp(card.segments, 1, 36);
+        int segments = Mathf.Clamp(card.segments, 1, 60);
         int vertexCount = (segments + 1) * columns;
         Vector3[] vertices = new Vector3[vertexCount];
         Vector2[] uvs = new Vector2[vertexCount];

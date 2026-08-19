@@ -34,7 +34,7 @@ public class HairCard : MonoBehaviour
     [Header("Grooming Parameters")]
     public float width = 0.01f;
     public float length = 0.2f;
-    [Range(1, 36)] public int segments = 12;
+    [Range(1, 60)] public int segments = 12;
 
     [Header("Deformations")]
     public float bendAngle = 0f;
@@ -227,7 +227,7 @@ public class HairCard : MonoBehaviour
     {
         state.length = Mathf.Max(0.001f, state.length);
         state.width = Mathf.Max(0.0005f, state.width);
-        state.segments = Mathf.Clamp(state.segments, 1, 36);
+        state.segments = Mathf.Clamp(state.segments, 1, 60);
         state.depth = Mathf.Max(0f, state.depth);
         state.curlDiameter = Mathf.Max(0f, state.curlDiameter);
         return state;
@@ -394,7 +394,7 @@ public class HairCard : MonoBehaviour
 
     public void SetSegments(int newSegments)
     {
-        segments = Mathf.Clamp(newSegments, 1, 36);
+        segments = Mathf.Clamp(newSegments, 1, 60);
         CaptureCanonicalFromRendered();
         GenerateMesh();
     }
@@ -408,14 +408,29 @@ public class HairCard : MonoBehaviour
         baseVertices = new Vector3[numVertices];
         Vector2[] uvs = new Vector2[numVertices];
         int[] triangles = new int[segments * 12];
-        float segmentHeight = length / segments;
         float halfWidth = width * 0.5f;
         float ridgeHeight = GetCrossSectionRidgeHeight();
 
+        // Segment density remaps where segments actually sit along the length, instead of the
+        // plain uniform i/segments spacing every other value in this loop used to derive z from.
+        // Root and tip are forced to exactly 0 and 1 regardless of the curve's own endpoints, so
+        // "Length" always produces the expected total span even if the curve doesn't touch its
+        // own corners. previousSegmentT enforces non-decreasing t: a badly-authored (non-
+        // monotonic) density curve must never fold the mesh back on itself.
+        float previousSegmentT = 0f;
+
         for (int i = 0; i <= segments; i++)
         {
-            float z = i * segmentHeight;
-            float t = (float)i / segments;
+            float t;
+            if (i == 0) t = 0f;
+            else if (i == segments) t = 1f;
+            else
+            {
+                float u = (float)i / segments;
+                t = Mathf.Max(previousSegmentT, PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.SegmentDensity, u));
+            }
+            previousSegmentT = t;
+            float z = t * length;
             float baseULeft = uScale < 0f ? 1f : 0f;
             float baseURight = uScale < 0f ? 0f : 1f;
             float finalULeft = baseULeft * Mathf.Abs(uScale) + uOffset;
