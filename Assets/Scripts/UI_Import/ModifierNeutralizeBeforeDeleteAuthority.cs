@@ -236,10 +236,13 @@ public class ModifierDeleteNeutralizeHook : MonoBehaviour, IPointerDownHandler
             vertices[index + 2] = authored * right;
         }
 
-        MeshFilter mf = card.GetComponent<MeshFilter>();
-        if (mf == null || mf.mesh == null || mf.mesh.vertexCount != vertices.Length) return;
-        mf.mesh.vertices = vertices;
-        mf.mesh.RecalculateNormals();
-        mf.mesh.RecalculateBounds();
+        // Same rule as ThreeColumnClumperMeshAuthority.WriteFullMesh: HairCard.GetLiveMesh(),
+        // never MeshFilter.mesh. That getter instantiates a duplicate and strands the card
+        // writing into an orphan for the rest of the session.
+        Mesh live = card.GetLiveMesh();
+        if (live == null || live.vertexCount != vertices.Length) return;
+        live.vertices = vertices;
+        live.RecalculateNormals();
+        live.RecalculateBounds();
     }
 }

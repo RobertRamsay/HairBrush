@@ -97,6 +97,26 @@ public class HairCard : MonoBehaviour
     public float GetCrossSectionRidgeHeight() { return Mathf.Max(.0005f, width) * flattenFactor * CrossSectionRidgeRatio; }
     public int GetGeneratedMeshSignature() { return generatedMeshSignature; }
 
+    // The Mesh this card owns and writes into. Any other authority that needs to write a
+    // derived mesh for this card MUST go through here and never through MeshFilter.mesh.
+    //
+    // MeshFilter.mesh is Unity's INSTANTIATING getter: reading it duplicates the mesh and
+    // leaves the duplicate on the filter. HairCard keeps its own reference to the original,
+    // so a single read permanently divorces the two. After that, GenerateMesh keeps running,
+    // keeps computing correct geometry, and keeps writing it into a mesh nobody renders -
+    // the card is frozen on screen for the rest of the session with no error anywhere.
+    //
+    // This also self-heals: if the filter has already drifted onto a duplicate (a project
+    // loaded by an older build, or any future stray MeshFilter.mesh read), point it back at
+    // the mesh this card actually maintains.
+    public Mesh GetLiveMesh()
+    {
+        if (mesh == null) return null;
+        if (meshFilter == null) meshFilter = GetComponent<MeshFilter>();
+        if (meshFilter != null && meshFilter.sharedMesh != mesh) meshFilter.sharedMesh = mesh;
+        return mesh;
+    }
+
     public void MarkExternalClumpOverride()
     {
         externalClumpOverrideActive = true;

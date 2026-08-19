@@ -41,6 +41,8 @@ public class ClumperPostHandoffDiagnostics : MonoBehaviour
     private FieldInfo activeGroupField = null;
     private FieldInfo postGroupsField = null;
     private FieldInfo hitPointField = null;
+    private FieldInfo cardMeshField = null;
+    private FieldInfo cardBaseVerticesField = null;
 
     private string lastHandoffLine = "";
     private string lastPostsLine = "";
@@ -144,16 +146,47 @@ public class ClumperPostHandoffDiagnostics : MonoBehaviour
                 }
             }
 
+            // v4. The v3 run showed sig moving every frame (so GenerateMesh IS running and IS
+            // producing new source vertices) while vhash on the MeshFilter never moved at all.
+            // With activeClump=False the clump-override early-return cannot fire, so GenerateMesh
+            // must be reaching "mesh.vertices = baseVertices". The only way both can be true is
+            // if HairCard's own private mesh reference is no longer the mesh the MeshFilter
+            // renders. These three columns separate the possibilities:
+            //
+            //   baseHash   HairCard.baseVertices - what GenerateMesh just computed.
+            //   cardMesh   HairCard.mesh - the Mesh object HairCard writes into. id + hash.
+            //   filtMesh   MeshFilter.sharedMesh - the Mesh object actually rendered. id + hash.
+            //
+            //   baseHash moves, cardHash frozen   -> GenerateMesh returned before the write.
+            //   cardHash moves, filtHash frozen   -> the two Mesh objects have diverged. The card
+            //                                        is updating an orphan nobody renders.
+            //   cardId != filtId                  -> same thing, proven by identity.
+            //   all three move                    -> the pipeline is fine, problem is rendering.
+            Mesh cardMesh = null;
+            if (cardMeshField != null) cardMesh = cardMeshField.GetValue(card) as Mesh;
+
+            Vector3[] baseVertices = null;
+            if (cardBaseVerticesField != null) baseVertices = cardBaseVerticesField.GetValue(card) as Vector3[];
+
+            int cardMeshId = 0;
+            int cardHash = 0;
+            if (cardMesh != null)
+            {
+                cardMeshId = cardMesh.GetInstanceID();
+                cardHash = VertexHash(cardMesh);
+            }
+
             builder.Append("\n  card#").Append(card.GetInstanceID())
                    .Append(" wantLen=").Append(wantLength.ToString("F5"))
                    .Append(" haveLen=").Append(card.length.ToString("F5"))
-                   .Append(" wantBend=").Append(wantBend.ToString("F3"))
                    .Append(" haveBend=").Append(card.bendAngle.ToString("F3"))
-                   .Append(" wantX=").Append(wantX.ToString("F3"))
-                   .Append(" haveX=").Append(card.GetOffsetX().ToString("F3"))
                    .Append(" sig=").Append(card.GetGeneratedMeshSignature())
-                   .Append(" vcount=").Append(filter.sharedMesh.vertexCount)
-                   .Append(" vhash=").Append(VertexHash(filter.sharedMesh));
+                   .Append(" baseHash=").Append(ArrayHash(baseVertices))
+                   .Append(" cardId=").Append(cardMeshId)
+                   .Append(" cardHash=").Append(cardHash)
+                   .Append(" filtId=").Append(filter.sharedMesh.GetInstanceID())
+                   .Append(" filtHash=").Append(VertexHash(filter.sharedMesh))
+                   .Append(" vcount=").Append(filter.sharedMesh.vertexCount);
         }
 
         string line = builder.ToString();
@@ -165,6 +198,23 @@ public class ClumperPostHandoffDiagnostics : MonoBehaviour
     static int CompareByInstanceId(HairCard a, HairCard b)
     {
         return a.GetInstanceID().CompareTo(b.GetInstanceID());
+    }
+
+    static int ArrayHash(Vector3[] vertices)
+    {
+        if (vertices == null) return 0;
+        unchecked
+        {
+            int hash = 17;
+            hash = hash * 31 + vertices.Length;
+            for (int i = 0; i < vertices.Length; i++)
+            {
+                hash = hash * 31 + vertices[i].x.GetHashCode();
+                hash = hash * 31 + vertices[i].y.GetHashCode();
+                hash = hash * 31 + vertices[i].z.GetHashCode();
+            }
+            return hash;
+        }
     }
 
     static int VertexHash(Mesh mesh)
@@ -367,6 +417,11 @@ public class ClumperPostHandoffDiagnostics : MonoBehaviour
         }
 
         if (clumpers == null) clumpers = FindFirstObjectByType<GroupClumperManager>();
+
+        if (cardMeshField == null)
+            cardMeshField = typeof(HairCard).GetField("mesh", flags);
+        if (cardBaseVerticesField == null)
+            cardBaseVerticesField = typeof(HairCard).GetField("baseVertices", flags);
     }
 
     bool ReadViewerBool(FieldInfo field)

@@ -417,10 +417,15 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
 
     static void WriteFullMesh(HairCard card, CleanMeshData source, Vector3[] vertices)
     {
-        MeshFilter mf = card != null ? card.GetComponent<MeshFilter>() : null;
-        if (mf == null || mf.mesh == null || source == null || vertices == null) return;
+        // HairCard.GetLiveMesh(), never MeshFilter.mesh. The MeshFilter getter INSTANTIATES:
+        // it duplicates the mesh and leaves the duplicate on the filter while HairCard goes on
+        // writing into the original. One evaluation pass here was enough to divorce every card
+        // in the group permanently - CLUMPER kept painting the rendered duplicate, GenerateMesh
+        // kept painting the orphan, and from then on no POST edit, slider move or clumper
+        // removal could ever change what was on screen again.
+        Mesh mesh = card != null ? card.GetLiveMesh() : null;
+        if (mesh == null || source == null || vertices == null) return;
 
-        Mesh mesh = mf.mesh;
         mesh.Clear();
         mesh.vertices = vertices;
         mesh.uv = source.uvs;
