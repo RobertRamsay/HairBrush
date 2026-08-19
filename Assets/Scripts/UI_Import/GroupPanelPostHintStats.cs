@@ -268,9 +268,9 @@ public class GroupPanelPostHintStats : MonoBehaviour
         Button labelControl = labelButton.GetComponent<Button>();
         if (labelControl != null) labelControl.targetGraphic = labelHit;
 
-        // The coloured group strip itself should select too. Child controls (UV/SOLO) still
-        // receive their own pointer clicks first, while otherwise-empty header space forwards
-        // to the same LabelButton callback used by clicking the name.
+        // The coloured group strip itself should preserve the LabelButton gestures too.
+        // Child controls (UV/SOLO) still receive their own pointer clicks first; otherwise-empty
+        // row space forwards left-click selection and right-click deletion to the legacy handlers.
         Image itemHit = item.GetComponent<Image>();
         if (itemHit != null) itemHit.raycastTarget = true;
         GroupHeaderBackgroundClickProxy proxy = item.GetComponent<GroupHeaderBackgroundClickProxy>();
@@ -329,17 +329,28 @@ public class GroupPanelPostHintStats : MonoBehaviour
 }
 
 // The group row already has the green/grey Image that visually reads as the tab, but the
-// original interaction only lived on the narrower LabelButton. Forward clicks on otherwise
-// empty row space into that existing callback. UV and SOLO remain independent child Buttons.
+// original interaction lives on LabelButton. Preserve those gestures across otherwise-empty
+// row space: left selects/renames through Button, right invokes the existing delete warning.
 public class GroupHeaderBackgroundClickProxy : MonoBehaviour, IPointerClickHandler
 {
     [NonSerialized] public Button labelButton;
 
     public void OnPointerClick(PointerEventData eventData)
     {
-        if (eventData == null || eventData.button != PointerEventData.InputButton.Left) return;
-        if (labelButton == null) return;
-        labelButton.onClick.Invoke();
-        eventData.Use();
+        if (eventData == null || labelButton == null) return;
+
+        if (eventData.button == PointerEventData.InputButton.Left)
+        {
+            labelButton.onClick.Invoke();
+            eventData.Use();
+            return;
+        }
+
+        if (eventData.button == PointerEventData.InputButton.Right)
+        {
+            CustomClickDetector detector = labelButton.GetComponent<CustomClickDetector>();
+            detector?.onRightClick?.Invoke();
+            eventData.Use();
+        }
     }
 }
