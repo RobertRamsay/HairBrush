@@ -9,7 +9,13 @@ using UnityEngine.UI;
 // Gives Ctrl+Click localized editing three independent controls:
 // Radius = full influence zone, Falloff = fade distance beyond Radius,
 // Strength = final edit multiplier. Also keeps the generated UI in sync.
-[DefaultExecutionOrder(2100)]
+// Runs BEFORE SelectionBrushVisualizer (order 2000): EnterSelectionMode (order -5000, in
+// PlacementBrushModeAuthority) unconditionally writes a legacy brushFalloffDistance=0.25 on
+// every new Ctrl+Click, which this script corrects back to the person's actual saved falloff.
+// If this ran after the visualizer instead, the preview ring would draw once at the oversized
+// legacy 0.25 radius before snapping down - a real, visible "preview is too big" bug, not
+// just a same-frame ordering technicality.
+[DefaultExecutionOrder(1900)]
 public class SelectionBrushScaleTuning : MonoBehaviour
 {
     private const float DefaultRadius = .03f;

@@ -62,6 +62,12 @@ public class PlacementBrushModeAuthority : MonoBehaviour
         Resolve();
         if (viewer == null) return;
 
+        // Keeps the displayed slider value correct if brushRadius was changed from outside this
+        // script (e.g. the [ ] hotkey) rather than through the slider itself - same pattern
+        // SelectionBrushScaleTuning already uses for the Ctrl+Click selection radius.
+        if (radiusSlider != null && !Mathf.Approximately(radiusSlider.value, brushRadius))
+            radiusSlider.SetValueWithoutNotify(brushRadius);
+
         if (Time.unscaledTime >= nextUIScan)
         {
             nextUIScan = Time.unscaledTime + .15f;
