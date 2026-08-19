@@ -20,6 +20,10 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
 
     private GroupClumperManager manager;
     private readonly Dictionary<int, int> lastGroupSignature = new Dictionary<int, int>();
+
+    // Last island each clumper (by id) successfully resolved to, so a transient raycast miss
+    // reuses the previous answer instead of silently dropping that clumper for the frame.
+    private readonly Dictionary<int, int> lastResolvedIsland = new Dictionary<int, int>();
     private readonly HashSet<int> overriddenGroups = new HashSet<int>();
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -72,8 +76,14 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
             if (lastGroupSignature.TryGetValue(groupId, out int previous) && previous == signature)
                 continue;
 
-            EvaluateGroup(groupId, groupClumpers, groupCards);
-            lastGroupSignature[groupId] = signature;
+            // Only cache the signature when the evaluation was trustworthy. A clumper whose
+            // island scope could not be resolved this frame contributes nothing, which writes
+            // the clean unclumped mesh - and caching that result would LATCH it: the signature
+            // never changes again on its own, so the group rests unclumped until some unrelated
+            // edit dirties it. Leaving the cache untouched makes the next frame retry instead.
+            bool trustworthy = EvaluateGroup(groupId, groupClumpers, groupCards);
+            if (trustworthy) lastGroupSignature[groupId] = signature;
+            else lastGroupSignature.Remove(groupId);
         }
 
         foreach (int stale in lastGroupSignature.Keys.Where(g => !groups.Contains(g)).ToArray())
@@ -95,13 +105,18 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         }
     }
 
-    void EvaluateGroup(int groupId, List<GroupClumperManager.GroupClumper> clumpers, HairCard[] groupCards)
+    // Returns false when this evaluation must not be cached - see the caller. That happens when
+    // a clumper's island scope could not be resolved, which is a transient physics probe result,
+    // not a real change in the group.
+    bool EvaluateGroup(int groupId, List<GroupClumperManager.GroupClumper> clumpers, HairCard[] groupCards)
     {
         if (groupCards == null || groupCards.Length == 0)
         {
             overriddenGroups.Remove(groupId);
-            return;
+            return true;
         }
+
+        bool scopeResolved = true;
 
         Dictionary<HairCard, CleanMeshData> clean = new Dictionary<HairCard, CleanMeshData>();
         Dictionary<HairCard, Vector3[]> working = new Dictionary<HairCard, Vector3[]>();
@@ -121,10 +136,30 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
             if (clumper == null || clumper.amount <= .0001f) continue;
             anyActive = true;
 
+            // SurfaceIslandScope.TryGetIslandAtWorldPoint is a Physics.Raycast over a .025 probe.
+            // A single miss used to drop this clumper's whole contribution for the frame, writing
+            // the clean unclumped mesh. Remember the last island this clumper resolved to and
+            // reuse it on a miss - the clumper has not moved, so the previous answer is still the
+            // right one. Only when there is no previous answer at all do we skip, and then the
+            // result is reported as untrustworthy so the caller retries instead of latching.
             bool contiguous = SurfaceIslandScope.IsClumperContiguous(clumper.groupId);
             int scopeIsland = -1;
-            if (contiguous && !SurfaceIslandScope.TryGetIslandAtWorldPoint(clumper.center, clumper.normal, out scopeIsland))
-                continue;
+            if (contiguous)
+            {
+                if (SurfaceIslandScope.TryGetIslandAtWorldPoint(clumper.center, clumper.normal, out scopeIsland))
+                {
+                    lastResolvedIsland[clumper.id] = scopeIsland;
+                }
+                else if (lastResolvedIsland.TryGetValue(clumper.id, out int cachedIsland))
+                {
+                    scopeIsland = cachedIsland;
+                }
+                else
+                {
+                    scopeResolved = false;
+                    continue;
+                }
+            }
 
             HairCard[] scopedCards = groupCards.Where(c =>
                 c != null && clean.ContainsKey(c) &&
@@ -160,6 +195,8 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
 
         if (anyActive) overriddenGroups.Add(groupId);
         else overriddenGroups.Remove(groupId);
+
+        return scopeResolved;
     }
 
     static int ComputeGroupSignature(int groupId, List<GroupClumperManager.GroupClumper> clumpers, HairCard[] cards)
