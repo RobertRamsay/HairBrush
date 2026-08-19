@@ -70,6 +70,118 @@ public class ClumperPostHandoffDiagnostics : MonoBehaviour
 
         LogHandoff(currentGroup, groupCards);
         LogPosts(currentGroup, groupCards);
+        LogMesh(currentGroup, groupCards);
+    }
+
+    // v3. The v2 run proved POST evaluation is healthy: activeId is bound, the delta tracks the
+    // slider, and hundreds of cards are inside every affector's reach - yet nothing moves, and
+    // the clump shape does not even relax when the clumper is deleted. That means the failure is
+    // downstream of ApplyAll, in the card-state -> mesh chain. This isolates which link.
+    //
+    // Three columns, sampled on a few stable cards:
+    //
+    //   want=   canonical + POST effect, i.e. what ApplyAll SHOULD have written into the card.
+    //   have=   the card's actual live field.
+    //   sig=    HairCard.generatedMeshSignature. Set at the TOP of GenerateMesh, before the
+    //           clump-override early-return, so it moves whenever GenerateMesh is entered at all.
+    //   vhash=  a hash of the live MeshFilter.mesh vertices. This is what is on screen.
+    //
+    // Reading it:
+    //   want != have            ApplyAll is not writing card state. PostAffectorManager.LateUpdate
+    //                           is dying before ApplyAll (very likely an exception in
+    //                           UpdateCanonicalBases - check the console with errors UNFILTERED).
+    //   want == have, sig same  ApplyEvaluatedState is not calling GenerateMesh, or GenerateMesh
+    //                           is bailing at its first line (mesh == null || segments < 1).
+    //   sig moves, vhash same   GenerateMesh is entered but returns at the clump-override guard,
+    //                           or something rewrites the mesh afterwards. Check activeClump.
+    //   vhash moves, no visuals The mesh is updating and the problem is rendering/bounds.
+    private float nextMeshScan = 0f;
+    private string lastMeshLine = "";
+
+    void LogMesh(int currentGroup, List<HairCard> groupCards)
+    {
+        if (Time.unscaledTime < nextMeshScan) return;
+        nextMeshScan = Time.unscaledTime + .25f;
+        if (groupCards.Count == 0) return;
+
+        List<PostAffectorManager.PostAffector> list = null;
+        if (postGroupsField != null)
+        {
+            var groups = postGroupsField.GetValue(posts) as Dictionary<int, List<PostAffectorManager.PostAffector>>;
+            if (groups != null) groups.TryGetValue(currentGroup, out list);
+        }
+
+        // Stable sample: lowest instance IDs, so the same cards are reported every time.
+        groupCards.Sort(CompareByInstanceId);
+
+        StringBuilder builder = new StringBuilder();
+        builder.Append("MESH group=").Append(currentGroup)
+               .Append(" activeClump=").Append(GroupClumperManager.HasActiveClumper(currentGroup));
+
+        int sampled = 0;
+        foreach (HairCard card in groupCards)
+        {
+            if (sampled >= 3) break;
+            MeshFilter filter = card.GetComponent<MeshFilter>();
+            if (filter == null || filter.sharedMesh == null) continue;
+            sampled++;
+
+            HairCard.GroomState canonical = card.GetCanonicalState();
+
+            float wantLength = canonical.length;
+            float wantBend = canonical.bend;
+            float wantX = canonical.x;
+            if (list != null)
+            {
+                foreach (PostAffectorManager.PostAffector a in list)
+                {
+                    if (a == null) continue;
+                    float w = SpatialWeight(card, a) * Mathf.Clamp01(a.weight);
+                    if (w <= .000001f) continue;
+                    wantLength += a.delta.length * w;
+                    wantBend += a.delta.bend * w;
+                    wantX += a.delta.x * w;
+                }
+            }
+
+            builder.Append("\n  card#").Append(card.GetInstanceID())
+                   .Append(" wantLen=").Append(wantLength.ToString("F5"))
+                   .Append(" haveLen=").Append(card.length.ToString("F5"))
+                   .Append(" wantBend=").Append(wantBend.ToString("F3"))
+                   .Append(" haveBend=").Append(card.bendAngle.ToString("F3"))
+                   .Append(" wantX=").Append(wantX.ToString("F3"))
+                   .Append(" haveX=").Append(card.GetOffsetX().ToString("F3"))
+                   .Append(" sig=").Append(card.GetGeneratedMeshSignature())
+                   .Append(" vcount=").Append(filter.sharedMesh.vertexCount)
+                   .Append(" vhash=").Append(VertexHash(filter.sharedMesh));
+        }
+
+        string line = builder.ToString();
+        if (line == lastMeshLine) return;
+        lastMeshLine = line;
+        Debug.Log(line);
+    }
+
+    static int CompareByInstanceId(HairCard a, HairCard b)
+    {
+        return a.GetInstanceID().CompareTo(b.GetInstanceID());
+    }
+
+    static int VertexHash(Mesh mesh)
+    {
+        Vector3[] vertices = mesh.vertices;
+        unchecked
+        {
+            int hash = 17;
+            hash = hash * 31 + vertices.Length;
+            for (int i = 0; i < vertices.Length; i++)
+            {
+                hash = hash * 31 + vertices[i].x.GetHashCode();
+                hash = hash * 31 + vertices[i].y.GetHashCode();
+                hash = hash * 31 + vertices[i].z.GetHashCode();
+            }
+            return hash;
+        }
     }
 
     void LogHandoff(int currentGroup, List<HairCard> groupCards)
