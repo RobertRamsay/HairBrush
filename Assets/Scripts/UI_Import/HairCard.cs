@@ -128,6 +128,17 @@ public class HairCard : MonoBehaviour
         externalClumpOverrideActive = false;
     }
 
+    // Whether this card is still rendering a CLUMPER-derived mesh.
+    //
+    // ThreeColumnClumperMeshAuthority needs this in its dirty-check. Its signature is built from
+    // SOURCE state only, so it cannot see that a card has been re-generated back to clean
+    // geometry and had its override dropped. When that happens on a frame whose source signature
+    // is unchanged, the clumper skips and the card renders unclumped for that frame.
+    public bool HasExternalClumpOverride()
+    {
+        return externalClumpOverrideActive;
+    }
+
     public void ClearPostShapeProfileContributions()
     {
         postShapeProfileContributions.Clear();

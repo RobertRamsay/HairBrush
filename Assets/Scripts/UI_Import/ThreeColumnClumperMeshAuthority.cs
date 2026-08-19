@@ -81,8 +81,15 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
             // the clean unclumped mesh - and caching that result would LATCH it: the signature
             // never changes again on its own, so the group rests unclumped until some unrelated
             // edit dirties it. Leaving the cache untouched makes the next frame retry instead.
+            //
+            // Cache the signature computed AFTER the evaluation, not the one computed before it.
+            // EvaluateGroup re-marks every card's clump override, so the post-evaluation signature
+            // describes the state the group was actually left in. Caching the pre-evaluation value
+            // stored a signature the group no longer had, which meant the very next frame always
+            // looked dirty - and, worse, a frame where POST had dropped the overrides could hash
+            // back to the cached value and be skipped.
             bool trustworthy = EvaluateGroup(groupId, groupClumpers, groupCards);
-            if (trustworthy) lastGroupSignature[groupId] = signature;
+            if (trustworthy) lastGroupSignature[groupId] = ComputeGroupSignature(groupId, groupClumpers, groupCards);
             else lastGroupSignature.Remove(groupId);
         }
 
@@ -247,6 +254,22 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
                     if (card == null) continue;
                     hash = Mix(hash, card.GetInstanceID());
                     hash = Mix(hash, card.GetGeneratedMeshSignature());
+
+                    // Whether the card is still rendering OUR mesh is part of what makes this
+                    // group clean, and it is not derivable from the source state.
+                    //
+                    // PostAffectorManager (order 3300) and PostVarianceAffectorBridge (3500) can
+                    // both write the same card in one frame. The first write changes the card's
+                    // source signature, which drops the clump override and rebuilds clean
+                    // geometry; the second write restores the ORIGINAL source signature. By the
+                    // time this authority runs at 5255 the source hash is byte-identical to the
+                    // cached one, so the group looked clean and was skipped - leaving every
+                    // POST-covered card rendering unclumped until the next slider tick dirtied
+                    // it again. That is the two-state mesh flip-flop: 875 overrides held one
+                    // frame, 404 the next, with an unchanged group signature across both.
+                    int overrideHeld = 0;
+                    if (card.HasExternalClumpOverride()) overrideHeld = 1;
+                    hash = Mix(hash, overrideHeld);
 
                     Vector3 root = RootWorld(card);
                     hash = Mix(hash, root.x.GetHashCode());
