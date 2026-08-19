@@ -16,8 +16,16 @@ public class PostVarianceAffectorBridge : MonoBehaviour
     private static readonly string[] Channels = { "Length", "Width", "Bend", "Twist", "AngleX", "AngleY", "AngleZ" };
     private static readonly string[] RowNames = { "Length_VarianceRow", "Width_VarianceRow", "Bend_VarianceRow", "Twist_VarianceRow", "Angle X_VarianceRow", "Angle Y_VarianceRow", "Angle Z_VarianceRow" };
 
+    private sealed class CardVarianceState
+    {
+        public HairCard.GroomState baseState;
+        public HairCard.GroomState lastApplied;
+        public bool hasApplied;
+    }
+
     private readonly Dictionary<int, List<VarianceChannelSaveData>> localByPost = new();
     private readonly Dictionary<int, List<VarianceChannelSaveData>> groupBase = new();
+    private readonly Dictionary<HairCard, CardVarianceState> renderedByCard = new();
 
     private PostAffectorManager posts;
     private GroomVarianceController variance;
@@ -99,15 +107,33 @@ public class PostVarianceAffectorBridge : MonoBehaviour
         if (posts == null || viewer == null) return;
 
         Dictionary<int, List<PostAffectorManager.PostAffector>> groups = GetGroups();
-        if (groups == null || groups.Count == 0) return;
+        if (groups == null) return;
 
-        // PostAffectorManager has already evaluated canonical -> POST for this frame.
-        // Local variance is a final evaluated-only layer. Never call SetParameters here:
-        // that is an authored/root write and would feed the variance back into canonical,
-        // causing the same delta to accumulate again on every frame.
+        foreach (HairCard dead in renderedByCard.Keys.Where(c => c == null).ToArray())
+            renderedByCard.Remove(dead);
+
+        // PostAffectorManager evaluates canonical -> POST before this bridge. Local variance is
+        // an evaluated-only final layer. The important rule is that variance must be applied to
+        // a stable POST result, never to the card that already contains last frame's variance.
+        // PostAffectorManager can now legitimately skip an unchanged write, so remember the base
+        // state that produced our last rendered result and reuse it while the upstream state is
+        // unchanged. This prevents deterministic variance from accumulating into animation.
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
         {
-            if (!groups.TryGetValue(card.groupId, out List<PostAffectorManager.PostAffector> list)) continue;
+            HairCard.GroomState current = ReadRenderedState(card);
+            renderedByCard.TryGetValue(card, out CardVarianceState tracked);
+
+            HairCard.GroomState baseState = tracked != null && tracked.hasApplied && StatesEqual(current, tracked.lastApplied)
+                ? tracked.baseState
+                : current;
+
+            if (!groups.TryGetValue(card.groupId, out List<PostAffectorManager.PostAffector> list) || list == null)
+            {
+                if (tracked != null && tracked.hasApplied && !StatesEqual(current, baseState))
+                    card.ApplyEvaluatedState(baseState);
+                renderedByCard.Remove(card);
+                continue;
+            }
 
             float dLength = 0f, dWidth = 0f, dBend = 0f, dTwist = 0f, dX = 0f, dY = 0f, dZ = 0f;
             foreach (PostAffectorManager.PostAffector a in list)
@@ -125,27 +151,83 @@ public class PostVarianceAffectorBridge : MonoBehaviour
                 dZ += RandomDelta(card, a, local, "AngleZ") * spatial;
             }
 
-            if (Mathf.Abs(dLength) + Mathf.Abs(dWidth) + Mathf.Abs(dBend) + Mathf.Abs(dTwist) + Mathf.Abs(dX) + Mathf.Abs(dY) + Mathf.Abs(dZ) <= .000001f)
-                continue;
+            bool hasVariance = Mathf.Abs(dLength) + Mathf.Abs(dWidth) + Mathf.Abs(dBend) + Mathf.Abs(dTwist) +
+                               Mathf.Abs(dX) + Mathf.Abs(dY) + Mathf.Abs(dZ) > .000001f;
 
-            HairCard.GroomState evaluated = new HairCard.GroomState
+            HairCard.GroomState evaluated = baseState;
+            if (hasVariance)
             {
-                length = Mathf.Max(.0001f, card.length + dLength),
-                width = Mathf.Max(.0005f, card.width + dWidth),
-                segments = card.segments,
-                bend = card.bendAngle + dBend,
-                twist = card.twistAngle + dTwist,
-                depth = card.GetEmbedDepth(),
-                x = NormalizeAngle(card.GetOffsetX() + dX),
-                y = NormalizeAngle(card.GetOffsetY() + dY),
-                z = NormalizeAngle(card.GetOffsetZ() + dZ),
-                uScale = card.uScale,
-                vScale = card.vScale,
-                uOffset = card.uOffset,
-                vOffset = card.vOffset
-            };
-            card.ApplyEvaluatedState(evaluated);
+                evaluated.length = Mathf.Max(.0001f, baseState.length + dLength);
+                evaluated.width = Mathf.Max(.0005f, baseState.width + dWidth);
+                evaluated.bend = baseState.bend + dBend;
+                evaluated.twist = baseState.twist + dTwist;
+                evaluated.x = NormalizeAngle(baseState.x + dX);
+                evaluated.y = NormalizeAngle(baseState.y + dY);
+                evaluated.z = NormalizeAngle(baseState.z + dZ);
+            }
+
+            if (!StatesEqual(current, evaluated))
+                card.ApplyEvaluatedState(evaluated);
+
+            if (hasVariance)
+            {
+                if (tracked == null)
+                {
+                    tracked = new CardVarianceState();
+                    renderedByCard[card] = tracked;
+                }
+                tracked.baseState = baseState;
+                tracked.lastApplied = evaluated;
+                tracked.hasApplied = true;
+            }
+            else
+            {
+                // If VAR is returned to zero, the evaluated base above is written once and the
+                // tracking entry is dropped. That avoids leaving the last varied result stuck.
+                renderedByCard.Remove(card);
+            }
         }
+    }
+
+    static HairCard.GroomState ReadRenderedState(HairCard card)
+    {
+        return new HairCard.GroomState
+        {
+            length = card.length,
+            width = card.width,
+            segments = card.segments,
+            bend = card.bendAngle,
+            twist = card.twistAngle,
+            depth = card.GetEmbedDepth(),
+            x = card.GetOffsetX(),
+            y = card.GetOffsetY(),
+            z = card.GetOffsetZ(),
+            uScale = card.uScale,
+            vScale = card.vScale,
+            uOffset = card.uOffset,
+            vOffset = card.vOffset,
+            curlFrequency = card.curlFrequency,
+            curlDiameter = card.curlDiameter
+        };
+    }
+
+    static bool StatesEqual(HairCard.GroomState a, HairCard.GroomState b)
+    {
+        return Mathf.Approximately(a.length, b.length) &&
+               Mathf.Approximately(a.width, b.width) &&
+               a.segments == b.segments &&
+               Mathf.Approximately(a.bend, b.bend) &&
+               Mathf.Approximately(a.twist, b.twist) &&
+               Mathf.Approximately(a.depth, b.depth) &&
+               Mathf.Approximately(a.x, b.x) &&
+               Mathf.Approximately(a.y, b.y) &&
+               Mathf.Approximately(a.z, b.z) &&
+               Mathf.Approximately(a.uScale, b.uScale) &&
+               Mathf.Approximately(a.vScale, b.vScale) &&
+               Mathf.Approximately(a.uOffset, b.uOffset) &&
+               Mathf.Approximately(a.vOffset, b.vOffset) &&
+               Mathf.Approximately(a.curlFrequency, b.curlFrequency) &&
+               Mathf.Approximately(a.curlDiameter, b.curlDiameter);
     }
 
     void EnsureRefs()
@@ -167,6 +249,7 @@ public class PostVarianceAffectorBridge : MonoBehaviour
         if (pending == null || pending == cachedPending) return;
         cachedPending = pending;
         localByPost.Clear();
+        renderedByCard.Clear();
         if (pending.groups == null) return;
         foreach (GroupSaveData g in pending.groups)
         {
