@@ -84,11 +84,22 @@ public class PostShapeCurveBridge : MonoBehaviour
 
         Dictionary<int, List<PostAffectorManager.PostAffector>> groups = GetGroups();
         HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
+
+        // While a POST's curve editor is presented, its curve shape can change under
+        // GenerateMesh every frame (graph drags write into the POST CurveSet) WITHOUT the
+        // contribution weights below changing at all - so live editing must keep rebuilding
+        // per frame. Outside of that, the curves are static: root-curve edits already fan out
+        // through GroomShapeCurveRegistry.RefreshGroup explicitly, so a card only needs a
+        // rebuild here when its computed contribution set (POST weights/positions) changed.
+        // That turns the steady-state cost from N full mesh rebuilds per frame into N small
+        // list comparisons.
+        bool liveCurveEditing = presentedPostId >= 0;
+
         foreach (HairCard card in cards)
         {
             if (card == null) continue;
-            card.ClearPostShapeProfileContributions();
 
+            scratchContributions.Clear();
             if (groups != null && groups.TryGetValue(card.groupId, out List<PostAffectorManager.PostAffector> list) && list != null)
             {
                 foreach (PostAffectorManager.PostAffector post in list)
@@ -100,14 +111,26 @@ public class PostShapeCurveBridge : MonoBehaviour
                     // Ensure a newly-created POST starts as a snapshot of the current group
                     // profile. From that point onward its curves are independent.
                     GetOrCreatePost(post.id, post.groupId);
-                    card.AddPostShapeProfileContribution(
-                        post.id,
-                        post.delta.bend * w,
-                        post.delta.x * w,
-                        post.delta.y * w,
-                        post.delta.z * w);
+                    float bend = post.delta.bend * w;
+                    float x = post.delta.x * w;
+                    float y = post.delta.y * w;
+                    float z = post.delta.z * w;
+                    if (Mathf.Abs(bend) + Mathf.Abs(x) + Mathf.Abs(y) + Mathf.Abs(z) <= .000001f) continue;
+                    scratchContributions.Add(new HairCard.PostShapeProfileContribution
+                    {
+                        postId = post.id,
+                        bend = bend,
+                        x = x,
+                        y = y,
+                        z = z
+                    });
                 }
             }
+
+            if (!liveCurveEditing && card.PostShapeProfileContributionsEqual(scratchContributions))
+                continue;
+
+            card.SetPostShapeProfileContributions(scratchContributions);
 
             // PostAffectorManager already wrote the scalar evaluated state earlier in
             // LateUpdate. Regenerate only the mesh so the newly attached profile provenance
@@ -115,6 +138,9 @@ public class PostShapeCurveBridge : MonoBehaviour
             card.GenerateMesh();
         }
     }
+
+    // Reused across all cards each frame to avoid per-card list allocations in the hot loop.
+    private readonly List<HairCard.PostShapeProfileContribution> scratchContributions = new List<HairCard.PostShapeProfileContribution>();
 
     public static float EvaluateRoot(int groupId, GroomShapeCurveChannel channel, float t)
     {

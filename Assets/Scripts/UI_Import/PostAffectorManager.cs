@@ -249,10 +249,33 @@ public class PostAffectorManager : MonoBehaviour
                 CopyUV(ref result, canonicalUV);
             }
 
-            WriteEvaluatedCard(card, result);
+            // Skip the expensive per-card write/mesh-rebuild when this frame's evaluated state
+            // is identical to what was already applied last frame. With any POST present this
+            // loop runs every frame forever, but the result only actually changes while a
+            // control is being dragged - so this turns the steady-state cost of N full mesh
+            // regenerations per frame into N struct comparisons.
+            if (!state.hasFinal || !StatesEqual(state.lastFinal, result))
+                WriteEvaluatedCard(card, result);
             state.lastFinal = result;
             state.hasFinal = true;
         }
+    }
+
+    static bool StatesEqual(ControlState a, ControlState b)
+    {
+        return Mathf.Approximately(a.length, b.length) &&
+               Mathf.Approximately(a.width, b.width) &&
+               Mathf.Approximately(a.segments, b.segments) &&
+               Mathf.Approximately(a.bend, b.bend) &&
+               Mathf.Approximately(a.twist, b.twist) &&
+               Mathf.Approximately(a.depth, b.depth) &&
+               Mathf.Approximately(a.x, b.x) &&
+               Mathf.Approximately(a.y, b.y) &&
+               Mathf.Approximately(a.z, b.z) &&
+               Mathf.Approximately(a.uScale, b.uScale) &&
+               Mathf.Approximately(a.vScale, b.vScale) &&
+               Mathf.Approximately(a.uOffset, b.uOffset) &&
+               Mathf.Approximately(a.vOffset, b.vOffset);
     }
 
     ControlState EffectForCard(HairCard card, List<PostAffector> list)
