@@ -632,7 +632,8 @@ public class ModelViewer : MonoBehaviour
     public void SyncShapeSlidersToGroupRoot(int groupId)
     {
         if (rootStateAuthority == null) rootStateAuthority = FindFirstObjectByType<GroomRootStateAuthority>();
-        bool found = rootStateAuthority != null && rootStateAuthority.TryGetRootState(groupId, out GroomRootStateAuthority.RootState state);
+        GroomRootStateAuthority.RootState state = default;
+        bool found = rootStateAuthority != null && rootStateAuthority.TryGetRootState(groupId, out state);
 
         if (!found)
         {
