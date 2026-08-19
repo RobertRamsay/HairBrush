@@ -594,7 +594,9 @@ public class PostAffectorManager : MonoBehaviour
 
         GameObject select = AddButton(row.transform, "POST " + number, 72f);
         select.GetComponent<Button>().onClick.AddListener(() => SelectAffector(a));
-        TextMeshProUGUI wt = AddText(row.transform, "WEIGHT", 10, 45f);
+        // 8pt in 48px: "WEIGHT" measures well inside the box, so TMP never wraps it onto a
+        // second line. At 10pt/45px it did, which is what produced the "WEIG / HT" split.
+        TextMeshProUGUI wt = AddText(row.transform, "WEIGHT", 8, 48f);
         wt.alignment = TextAlignmentOptions.Center;
 
         Slider slider = AddWeightSlider(row.transform, a.weight, 128f);
@@ -611,7 +613,10 @@ public class PostAffectorManager : MonoBehaviour
             }
         });
 
-        GameObject remove = AddButton(row.transform, "[-]", 34f);
+        // "DEL" instead of "[-]", 40px wide so the three glyphs sit inside the button with a
+        // little breathing room at either end. AddButton names the GameObject after its label,
+        // so ModifierNeutralizeBeforeDeleteAuthority now looks for this name too.
+        GameObject remove = AddButton(row.transform, "DEL", 40f);
         remove.GetComponent<Button>().onClick.AddListener(() => RemoveAffector(a));
         return row;
     }
@@ -788,7 +793,9 @@ public class PostAffectorManager : MonoBehaviour
         GameObject h = new GameObject("Handle", typeof(RectTransform), typeof(Image));
         h.transform.SetParent(ha.transform, false);
         RectTransform hr = h.GetComponent<RectTransform>();
-        hr.sizeDelta = new Vector2(9, 16);
+        // Half the previous height. 16 made the handle taller than the row's track looked
+        // designed for; 8 reads as a notch on the bar rather than a bar of its own.
+        hr.sizeDelta = new Vector2(9, 8);
         h.GetComponent<Image>().color = Color.white;
         s.handleRect = hr;
         return s;

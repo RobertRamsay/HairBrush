@@ -204,7 +204,8 @@ public class GroupClumperManager : MonoBehaviour
         GameObject select = AddButton(row.transform, "CLUMP " + clumper.id, 118f);
         select.GetComponent<Button>().onClick.AddListener(() => SelectClumper(clumper.groupId, clumper.id));
         AddText(row.transform, ModeShort(clumper.mode), 10, 88f);
-        GameObject neutral = AddButton(row.transform, "[-]", 34f);
+        // Matches the POST rows: "DEL" rather than "[-]", 40px so nothing clips.
+        GameObject neutral = AddButton(row.transform, "DEL", 40f);
         neutral.GetComponent<Button>().onClick.AddListener(() => RemoveClumper(clumper));
         return row;
     }

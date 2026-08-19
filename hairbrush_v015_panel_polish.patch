@@ -1,0 +1,83 @@
+diff --git a/Assets/Scripts/UI_Import/ClumperRowModeMirror.cs b/Assets/Scripts/UI_Import/ClumperRowModeMirror.cs
+index 006fbf5..5eed4d4 100644
+--- a/Assets/Scripts/UI_Import/ClumperRowModeMirror.cs
++++ b/Assets/Scripts/UI_Import/ClumperRowModeMirror.cs
+@@ -42,7 +42,7 @@ public class ClumperRowModeMirror : MonoBehaviour
+             {
+                 if (text == null) continue;
+                 // The CLUMPER button label and remove button are not the summary label.
+-                if (text.text == "CLUMPER" || text.text == "[-]") continue;
++                if (text.text == "CLUMPER" || text.text == "DEL" || text.text == "[-]") continue;
+                 if (text.text == "SINGLE" || text.text == "EVEN" || text.text == "POINT")
+                 {
+                     if (text.text != wanted) text.text = wanted;
+diff --git a/Assets/Scripts/UI_Import/GroupClumperManager.cs b/Assets/Scripts/UI_Import/GroupClumperManager.cs
+index 5f02961..d78a36d 100644
+--- a/Assets/Scripts/UI_Import/GroupClumperManager.cs
++++ b/Assets/Scripts/UI_Import/GroupClumperManager.cs
+@@ -204,7 +204,8 @@ public class GroupClumperManager : MonoBehaviour
+         GameObject select = AddButton(row.transform, "CLUMP " + clumper.id, 118f);
+         select.GetComponent<Button>().onClick.AddListener(() => SelectClumper(clumper.groupId, clumper.id));
+         AddText(row.transform, ModeShort(clumper.mode), 10, 88f);
+-        GameObject neutral = AddButton(row.transform, "[-]", 34f);
++        // Matches the POST rows: "DEL" rather than "[-]", 40px so nothing clips.
++        GameObject neutral = AddButton(row.transform, "DEL", 40f);
+         neutral.GetComponent<Button>().onClick.AddListener(() => RemoveClumper(clumper));
+         return row;
+     }
+diff --git a/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs b/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs
+index a85cfb2..5160c32 100644
+--- a/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs
++++ b/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs
+@@ -81,7 +81,12 @@ public class ModifierNeutralizeBeforeDeleteAuthority : MonoBehaviour
+     {
+         foreach (Button button in row.GetComponentsInChildren<Button>(true))
+         {
+-            if (button == null || button.gameObject.name != "[-]") continue;
++            // The remove button's GameObject is named after its label. That label became "DEL";
++            // "[-]" stays accepted so a row built by an older build is still hooked. Without this
++            // the whole pre-delete neutralize step would silently stop running.
++            if (button == null) continue;
++            string buttonName = button.gameObject.name;
++            if (buttonName != "DEL" && buttonName != "[-]") continue;
+             ModifierDeleteNeutralizeHook hook = button.GetComponent<ModifierDeleteNeutralizeHook>();
+             if (hook == null) hook = button.gameObject.AddComponent<ModifierDeleteNeutralizeHook>();
+             hook.Configure(kind, gid, id, clumperManager, clumperGroupsField, postManager, postGroupsField, postApplyAllMethod);
+diff --git a/Assets/Scripts/UI_Import/PostAffectorManager.cs b/Assets/Scripts/UI_Import/PostAffectorManager.cs
+index 6748280..2c1dc2f 100644
+--- a/Assets/Scripts/UI_Import/PostAffectorManager.cs
++++ b/Assets/Scripts/UI_Import/PostAffectorManager.cs
+@@ -594,7 +594,9 @@ public class PostAffectorManager : MonoBehaviour
+ 
+         GameObject select = AddButton(row.transform, "POST " + number, 72f);
+         select.GetComponent<Button>().onClick.AddListener(() => SelectAffector(a));
+-        TextMeshProUGUI wt = AddText(row.transform, "WEIGHT", 10, 45f);
++        // 8pt in 48px: "WEIGHT" measures well inside the box, so TMP never wraps it onto a
++        // second line. At 10pt/45px it did, which is what produced the "WEIG / HT" split.
++        TextMeshProUGUI wt = AddText(row.transform, "WEIGHT", 8, 48f);
+         wt.alignment = TextAlignmentOptions.Center;
+ 
+         Slider slider = AddWeightSlider(row.transform, a.weight, 128f);
+@@ -611,7 +613,10 @@ public class PostAffectorManager : MonoBehaviour
+             }
+         });
+ 
+-        GameObject remove = AddButton(row.transform, "[-]", 34f);
++        // "DEL" instead of "[-]", 40px wide so the three glyphs sit inside the button with a
++        // little breathing room at either end. AddButton names the GameObject after its label,
++        // so ModifierNeutralizeBeforeDeleteAuthority now looks for this name too.
++        GameObject remove = AddButton(row.transform, "DEL", 40f);
+         remove.GetComponent<Button>().onClick.AddListener(() => RemoveAffector(a));
+         return row;
+     }
+@@ -788,7 +793,9 @@ public class PostAffectorManager : MonoBehaviour
+         GameObject h = new GameObject("Handle", typeof(RectTransform), typeof(Image));
+         h.transform.SetParent(ha.transform, false);
+         RectTransform hr = h.GetComponent<RectTransform>();
+-        hr.sizeDelta = new Vector2(9, 16);
++        // Half the previous height. 16 made the handle taller than the row's track looked
++        // designed for; 8 reads as a notch on the bar rather than a bar of its own.
++        hr.sizeDelta = new Vector2(9, 8);
+         h.GetComponent<Image>().color = Color.white;
+         s.handleRect = hr;
+         return s;

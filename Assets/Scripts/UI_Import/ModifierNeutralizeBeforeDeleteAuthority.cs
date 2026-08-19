@@ -81,7 +81,12 @@ public class ModifierNeutralizeBeforeDeleteAuthority : MonoBehaviour
     {
         foreach (Button button in row.GetComponentsInChildren<Button>(true))
         {
-            if (button == null || button.gameObject.name != "[-]") continue;
+            // The remove button's GameObject is named after its label. That label became "DEL";
+            // "[-]" stays accepted so a row built by an older build is still hooked. Without this
+            // the whole pre-delete neutralize step would silently stop running.
+            if (button == null) continue;
+            string buttonName = button.gameObject.name;
+            if (buttonName != "DEL" && buttonName != "[-]") continue;
             ModifierDeleteNeutralizeHook hook = button.GetComponent<ModifierDeleteNeutralizeHook>();
             if (hook == null) hook = button.gameObject.AddComponent<ModifierDeleteNeutralizeHook>();
             hook.Configure(kind, gid, id, clumperManager, clumperGroupsField, postManager, postGroupsField, postApplyAllMethod);

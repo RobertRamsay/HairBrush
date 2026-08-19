@@ -1,0 +1,162 @@
+diff --git a/Assets/Scripts/UI_Import/ClumperRowModeMirror.cs b/Assets/Scripts/UI_Import/ClumperRowModeMirror.cs
+index 5eed4d4..5cba6a8 100644
+--- a/Assets/Scripts/UI_Import/ClumperRowModeMirror.cs
++++ b/Assets/Scripts/UI_Import/ClumperRowModeMirror.cs
+@@ -1,5 +1,4 @@
+-using System.Collections;
+-using System.Reflection;
++using System.Collections.Generic;
+ using TMPro;
+ using UnityEngine;
+ 
+@@ -10,7 +9,6 @@ using UnityEngine;
+ public class ClumperRowModeMirror : MonoBehaviour
+ {
+     private GroupClumperManager manager;
+-    private FieldInfo byGroupField;
+ 
+     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+     static void Spawn()
+@@ -24,16 +22,26 @@ public class ClumperRowModeMirror : MonoBehaviour
+     void LateUpdate()
+     {
+         Resolve();
+-        if (manager == null || byGroupField == null) return;
+-        if (byGroupField.GetValue(manager) is not IDictionary dict) return;
++        if (manager == null) return;
+ 
+         foreach (RectTransform row in FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+         {
+             if (row == null || !row.name.StartsWith("GroupClumper_")) continue;
+-            if (!int.TryParse(row.name.Substring("GroupClumper_".Length), out int groupId)) continue;
+-            if (!dict.Contains(groupId)) continue;
+ 
+-            GroupClumperManager.GroupClumper clumper = dict[groupId] as GroupClumperManager.GroupClumper;
++            // The row is named "GroupClumper_{groupId}_{clumperId}". Parsing everything after
++            // the prefix produced "0_1", int.TryParse failed, and this loop `continue`d on EVERY
++            // row - which is why the SINGLE / EVEN / POINT summary never changed when the mode
++            // was switched in the right panel. Match on the CLUMPER id, not the group: a group
++            // can hold several clumpers and they do not have to share a mode.
++            string[] parts = row.name.Split('_');
++            if (parts.Length < 3) continue;
++            if (!int.TryParse(parts[2], out int clumperId)) continue;
++
++            GroupClumperManager.GroupClumper clumper = null;
++            foreach (GroupClumperManager.GroupClumper candidate in manager.GetAllClumpers())
++            {
++                if (candidate != null && candidate.id == clumperId) { clumper = candidate; break; }
++            }
+             if (clumper == null) continue;
+ 
+             string wanted = ModeShort(clumper.mode);
+@@ -56,8 +64,6 @@ public class ClumperRowModeMirror : MonoBehaviour
+     {
+         if (manager != null) return;
+         manager = FindFirstObjectByType<GroupClumperManager>();
+-        if (manager == null) return;
+-        byGroupField = typeof(GroupClumperManager).GetField("byGroup", BindingFlags.Instance | BindingFlags.NonPublic);
+     }
+ 
+     static string ModeShort(GroupClumperManager.ClumpMode mode)
+diff --git a/Assets/Scripts/UI_Import/ModelViewer.cs b/Assets/Scripts/UI_Import/ModelViewer.cs
+index 116d9ec..1313209 100644
+--- a/Assets/Scripts/UI_Import/ModelViewer.cs
++++ b/Assets/Scripts/UI_Import/ModelViewer.cs
+@@ -528,7 +528,9 @@ public class ModelViewer : MonoBehaviour
+         panelRect.anchorMin = new Vector2(0, 0);
+         panelRect.anchorMax = new Vector2(0, 1);
+         panelRect.pivot = new Vector2(0, 0.5f);
+-        panelRect.sizeDelta = new Vector2(300, 0);
++        // 300 could not fit a POST row's five columns once the remove button became "DEL":
++        // the row overflowed and the last column was clipped by the panel edge.
++        panelRect.sizeDelta = new Vector2(360, 0);
+         panelRect.anchoredPosition = new Vector2(15, 0);
+         groupPanelGO.GetComponent<Image>().color = new Color(0.15f, 0.15f, 0.15f, 0.85f);
+         VerticalLayoutGroup vLayout = groupPanelGO.AddComponent<VerticalLayoutGroup>();
+diff --git a/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs b/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs
+index 5160c32..e5b2ee8 100644
+--- a/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs
++++ b/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs
+@@ -62,9 +62,16 @@ public class ModifierNeutralizeBeforeDeleteAuthority : MonoBehaviour
+         {
+             if (row == null) continue;
+ 
+-            if (row.name.StartsWith("GroupClumper_") && int.TryParse(row.name.Substring("GroupClumper_".Length), out int clumpGid))
++            // Clumper rows are named "GroupClumper_{groupId}_{clumperId}". Parsing everything
++            // after the prefix gave "0_1", int.TryParse failed, and NO clumper row was ever
++            // hooked - so the "go to 0, then be removed" step has never actually run for a
++            // CLUMPER. Split properly, and carry the clumper id through so the right one is
++            // neutralised when a group holds more than one.
++            if (row.name.StartsWith("GroupClumper_"))
+             {
+-                HookRow(row, ModifierDeleteNeutralizeHook.Kind.Clumper, clumpGid, -1);
++                string[] parts = row.name.Split('_');
++                if (parts.Length >= 3 && int.TryParse(parts[1], out int clumpGid) && int.TryParse(parts[2], out int clumpId))
++                    HookRow(row, ModifierDeleteNeutralizeHook.Kind.Clumper, clumpGid, clumpId);
+                 continue;
+             }
+ 
+@@ -132,10 +139,15 @@ public class ModifierDeleteNeutralizeHook : MonoBehaviour, IPointerDownHandler
+         var groups = clumperGroupsField.GetValue(clumperManager) as Dictionary<int, List<GroupClumperManager.GroupClumper>>;
+         if (groups == null || !groups.TryGetValue(groupId, out List<GroupClumperManager.GroupClumper> list) || list == null) return;
+ 
++        // Take the clumper this button belongs to. Picking the first in the group silently
++        // neutralised the wrong one whenever a group held more than one clumper.
+         GroupClumperManager.GroupClumper target = null;
+         foreach (GroupClumperManager.GroupClumper c in list)
+         {
+-            if (c != null) { target = c; break; }
++            if (c == null) continue;
++            if (modifierId >= 0 && c.id != modifierId) continue;
++            target = c;
++            break;
+         }
+         if (target == null) return;
+ 
+diff --git a/Assets/Scripts/UI_Import/PostAffectorUXFix.cs b/Assets/Scripts/UI_Import/PostAffectorUXFix.cs
+index 18bed18..356f1b0 100644
+--- a/Assets/Scripts/UI_Import/PostAffectorUXFix.cs
++++ b/Assets/Scripts/UI_Import/PostAffectorUXFix.cs
+@@ -95,14 +95,37 @@ public class PostAffectorUXFix : MonoBehaviour
+                 layout.childForceExpandWidth = false;
+             }
+ 
+-            SetWidth(row.GetChild(0), 58f); // POST n
+-            SetWidth(row.GetChild(1), 40f); // WEIGHT label
+-            SetWidth(row.GetChild(2), 88f); // slider
+-            SetWidth(row.GetChild(3), 28f); // numeric value
+-            SetWidth(row.GetChild(4), 30f); // [-]
++            // THIS is what actually decides the POST row's column widths. BuildRow's numbers are
++            // overwritten here every .05s, so any sizing change has to be made in this method or
++            // it silently has no effect.
++            //
++            // Panel is 360 wide with 10px VerticalLayoutGroup padding either side -> 340 usable.
++            // Minus this row's 4+4 padding and 4 gaps of 4 -> 316 for the five columns. The 300
++            // below leaves a little slack at the right so DEL never touches the panel edge.
++            SetWidth(row.GetChild(0), 58f);  // POST n
++            SetWidth(row.GetChild(1), 52f);  // WEIGHT label
++            SetWidth(row.GetChild(2), 116f); // slider
++            SetWidth(row.GetChild(3), 30f);  // numeric value
++            SetWidth(row.GetChild(4), 44f);  // DEL
++
++            ForceSingleLineWeightLabel(row.GetChild(1));
+         }
+     }
+ 
++    // "WEIGHT" kept breaking to "WEIGH / T". Widening the box alone was not enough to be sure of
++    // it across font assets and canvas scales, so pin the size here (this component wins) and use
++    // TMP's <nobr> tag, which forbids the break outright rather than hoping the box is wide
++    // enough. Using the tag avoids TextMeshPro's wrapping API, which has been renamed between
++    // versions and would tie this file to one of them.
++    static void ForceSingleLineWeightLabel(Transform child)
++    {
++        if (child == null) return;
++        TMPro.TextMeshProUGUI label = child.GetComponent<TMPro.TextMeshProUGUI>();
++        if (label == null) return;
++        if (label.fontSize > 8f) label.fontSize = 8f;
++        if (label.text == "WEIGHT") label.text = "<nobr>WEIGHT</nobr>";
++    }
++
+     static void SetWidth(Transform child, float width)
+     {
+         RectTransform rect = child as RectTransform;

@@ -42,7 +42,7 @@ public class ClumperRowModeMirror : MonoBehaviour
             {
                 if (text == null) continue;
                 // The CLUMPER button label and remove button are not the summary label.
-                if (text.text == "CLUMPER" || text.text == "[-]") continue;
+                if (text.text == "CLUMPER" || text.text == "DEL" || text.text == "[-]") continue;
                 if (text.text == "SINGLE" || text.text == "EVEN" || text.text == "POINT")
                 {
                     if (text.text != wanted) text.text = wanted;
