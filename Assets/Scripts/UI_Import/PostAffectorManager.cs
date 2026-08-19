@@ -653,6 +653,16 @@ public class PostAffectorManager : MonoBehaviour
 
     public List<PostAffectorSaveData> ExportGroup(int groupId)
     {
+        // Save can be invoked by a UI callback before this manager gets its next Update().
+        // Capture the selected POST directly from the current controls first so tiny/FINE
+        // Length edits (and any other just-edited POST value) cannot miss the save snapshot.
+        EnsureViewer();
+        if (viewer != null && activeGroup == groupId && GetActive() != null &&
+            HasSelection() && viewer.currentGroupId == groupId)
+        {
+            MaintainActiveAuthoring();
+        }
+
         List<PostAffectorSaveData> result = new List<PostAffectorSaveData>();
         if (!groups.TryGetValue(groupId, out List<PostAffector> list)) return result;
         foreach (PostAffector a in list)
