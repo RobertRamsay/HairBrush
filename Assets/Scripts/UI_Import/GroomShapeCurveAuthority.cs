@@ -578,7 +578,7 @@ public class GroomShapeCurveAuthority : MonoBehaviour
         text.alignment = align;
         text.color = Color.white;
         text.raycastTarget = false;
-        text.enableWordWrapping = false;
+        text.textWrappingMode = TextWrappingModes.NoWrap;
         return text;
     }
 

@@ -94,7 +94,7 @@ public class StatusToastAuthority : MonoBehaviour
         label.alignment = TextAlignmentOptions.Center;
         label.fontSize = 20f;
         label.color = Color.white;
-        label.enableWordWrapping = true;
+        label.textWrappingMode = TextWrappingModes.Normal;
 
         canvasGO.SetActive(false);
     }

@@ -244,7 +244,7 @@ public class MaterialEditorManager : MonoBehaviour
         TMPro.TextMeshProUGUI file = CreateSubLabel(textBlock.transform, "Current: " + currentName, 32f);
         file.fontSize = 10f;
         file.color = new Color(.72f, .72f, .72f);
-        file.enableWordWrapping = true;
+        file.textWrappingMode = TMPro.TextWrappingModes.Normal;
         file.overflowMode = TMPro.TextOverflowModes.Truncate;
 
         // Only ~56px remains after the Info column within the panel's fixed 300px width (see
@@ -291,7 +291,7 @@ public class MaterialEditorManager : MonoBehaviour
         labelTmp.fontSize = 12f;
         labelTmp.color = Color.white;
         labelTmp.alignment = TMPro.TextAlignmentOptions.MidlineLeft;
-        labelTmp.enableWordWrapping = false;
+        labelTmp.textWrappingMode = TMPro.TextWrappingModes.NoWrap;
 
         GameObject sliderGO = new GameObject(label + "Slider", typeof(RectTransform), typeof(Slider), typeof(LayoutElement));
         sliderGO.transform.SetParent(row.transform, false);
@@ -545,7 +545,7 @@ public class MaterialEditorManager : MonoBehaviour
         tmp.fontSize = 11f;
         tmp.color = Color.white;
         tmp.alignment = TMPro.TextAlignmentOptions.MidlineLeft;
-        tmp.enableWordWrapping = false;
+        tmp.textWrappingMode = TMPro.TextWrappingModes.NoWrap;
         return tmp;
     }
 

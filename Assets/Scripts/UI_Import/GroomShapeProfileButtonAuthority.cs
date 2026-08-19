@@ -120,7 +120,7 @@ public class GroomShapeProfileButtonAuthority : MonoBehaviour
         text.alignment = TextAlignmentOptions.MidlineLeft;
         text.color = Color.white;
         text.raycastTarget = false;
-        text.enableWordWrapping = false;
+        text.textWrappingMode = TextWrappingModes.NoWrap;
         text.overflowMode = TextOverflowModes.Ellipsis;
 
         if (oldLabel != null) Destroy(oldLabel.gameObject);
@@ -145,7 +145,7 @@ public class GroomShapeProfileButtonAuthority : MonoBehaviour
             text.fontSizeMax = 10f;
             text.fontSizeMin = 8f;
             text.enableAutoSizing = true;
-            text.enableWordWrapping = false;
+            text.textWrappingMode = TextWrappingModes.NoWrap;
             text.overflowMode = TextOverflowModes.Ellipsis;
         }
     }
@@ -168,7 +168,7 @@ public class GroomShapeProfileButtonAuthority : MonoBehaviour
         text.enableAutoSizing = true;
         text.fontSizeMin = minSize;
         text.fontSizeMax = maxSize;
-        text.enableWordWrapping = false;
+        text.textWrappingMode = TextWrappingModes.NoWrap;
         text.overflowMode = TextOverflowModes.Ellipsis;
     }
 }

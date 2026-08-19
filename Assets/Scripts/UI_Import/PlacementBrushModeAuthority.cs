@@ -387,7 +387,7 @@ public class PlacementBrushModeAuthority : MonoBehaviour
         modeText.fontStyle = FontStyles.Bold;
         modeText.alignment = TextAlignmentOptions.Center;
         modeText.color = Color.white;
-        modeText.enableWordWrapping = false;
+        modeText.textWrappingMode = TextWrappingModes.NoWrap;
         modeText.raycastTarget = false;
 
         Transform top = panel.Find("TopControlsRow");

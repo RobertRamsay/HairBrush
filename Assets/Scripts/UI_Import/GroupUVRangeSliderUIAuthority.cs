@@ -311,7 +311,7 @@ public class GroupUVRangeSliderUIAuthority : MonoBehaviour
         text.enableAutoSizing = true;
         text.fontSizeMin = minSize;
         text.fontSizeMax = maxSize;
-        text.enableWordWrapping = false;
+        text.textWrappingMode = TextWrappingModes.NoWrap;
         text.overflowMode = TextOverflowModes.Ellipsis;
     }
 
@@ -322,7 +322,7 @@ public class GroupUVRangeSliderUIAuthority : MonoBehaviour
         text.enableAutoSizing = true;
         text.fontSizeMin = 8f;
         text.fontSizeMax = 11f;
-        text.enableWordWrapping = false;
+        text.textWrappingMode = TextWrappingModes.NoWrap;
         text.overflowMode = TextOverflowModes.Ellipsis;
     }
 
@@ -334,7 +334,7 @@ public class GroupUVRangeSliderUIAuthority : MonoBehaviour
         text.enableAutoSizing = true;
         text.fontSizeMin = minSize;
         text.fontSizeMax = maxSize;
-        text.enableWordWrapping = false;
+        text.textWrappingMode = TextWrappingModes.NoWrap;
         text.overflowMode = TextOverflowModes.Ellipsis;
     }
 }

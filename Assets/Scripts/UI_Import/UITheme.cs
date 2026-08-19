@@ -134,7 +134,7 @@ public static class UITheme
             label.enableAutoSizing = false;
             label.fontSize = 11f;
             label.alignment = TextAlignmentOptions.Center;
-            label.enableWordWrapping = false;
+            label.textWrappingMode = TextWrappingModes.NoWrap;
             label.overflowMode = TextOverflowModes.Overflow;
             label.margin = Vector4.zero;
             label.color = TextBright;
@@ -185,7 +185,7 @@ public static class UITheme
         if (label == null) return;
 
         // Cap auto-sizing to shrink-only, bounded by whatever the label's own author picked -
-        // never grow past their intended size, and never touch enableWordWrapping here: some
+        // never grow past their intended size, and never touch textWrappingMode here: some
         // labels (e.g. GroomShapeCurveAuthority's popup buttons) are deliberately built to rely
         // on wrapping to stay readable at a fixed narrow width, and forcing wrap off pushed them
         // straight into the ellipsis fallback below instead of the two-line layout they need.

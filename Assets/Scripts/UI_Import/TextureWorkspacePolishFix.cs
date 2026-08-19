@@ -104,7 +104,7 @@ public class TextureWorkspacePolishFix : MonoBehaviour
                 foreach (TextMeshProUGUI tmp in info.GetComponentsInChildren<TextMeshProUGUI>(true))
                 {
                     if (tmp == null || !tmp.text.StartsWith("Current:")) continue;
-                    tmp.enableWordWrapping = false;
+                    tmp.textWrappingMode = TextWrappingModes.NoWrap;
                     tmp.overflowMode = TextOverflowModes.Overflow;
                     tmp.enableAutoSizing = true;
                     tmp.fontSize = 18f;

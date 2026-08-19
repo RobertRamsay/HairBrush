@@ -870,7 +870,7 @@ public class TextureUVRectWorkspace : MonoBehaviour
             label.color = Color.white;
             label.outlineColor = Color.black;
             label.outlineWidth = .2f;
-            label.enableWordWrapping = false;
+            label.textWrappingMode = TextWrappingModes.NoWrap;
             label.raycastTarget = false;
             rectangleLabels[data.id] = label;
         }
@@ -1072,7 +1072,7 @@ public class TextureUVRectWorkspace : MonoBehaviour
         label.fontSize = 11.5f;
         label.color = Color.white;
         label.alignment = TextAlignmentOptions.MidlineLeft;
-        label.enableWordWrapping = false;
+        label.textWrappingMode = TextWrappingModes.NoWrap;
         label.overflowMode = TextOverflowModes.Ellipsis;
         label.raycastTarget = false;
 

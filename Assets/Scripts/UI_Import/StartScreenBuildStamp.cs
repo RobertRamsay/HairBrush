@@ -111,7 +111,7 @@ public class StartScreenBuildStamp : MonoBehaviour
         text.alignment = TextAlignmentOptions.Bottom;
         text.color = new Color(1f, 1f, 1f, 0.42f);
         text.raycastTarget = false;
-        text.enableWordWrapping = false;
+        text.textWrappingMode = TextWrappingModes.NoWrap;
         text.overflowMode = TextOverflowModes.Overflow;
     }
 

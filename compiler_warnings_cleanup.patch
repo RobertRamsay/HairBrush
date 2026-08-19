@@ -1,0 +1,236 @@
+diff --git a/Assets/Scripts/UI_Import/GroomShapeCurveAuthority.cs b/Assets/Scripts/UI_Import/GroomShapeCurveAuthority.cs
+index 2d760e0..aef90bb 100644
+--- a/Assets/Scripts/UI_Import/GroomShapeCurveAuthority.cs
++++ b/Assets/Scripts/UI_Import/GroomShapeCurveAuthority.cs
+@@ -578,7 +578,7 @@ public class GroomShapeCurveAuthority : MonoBehaviour
+         text.alignment = align;
+         text.color = Color.white;
+         text.raycastTarget = false;
+-        text.enableWordWrapping = false;
++        text.textWrappingMode = TextWrappingModes.NoWrap;
+         return text;
+     }
+ 
+diff --git a/Assets/Scripts/UI_Import/GroomShapeProfileButtonAuthority.cs b/Assets/Scripts/UI_Import/GroomShapeProfileButtonAuthority.cs
+index e1c0df9..87b7a50 100644
+--- a/Assets/Scripts/UI_Import/GroomShapeProfileButtonAuthority.cs
++++ b/Assets/Scripts/UI_Import/GroomShapeProfileButtonAuthority.cs
+@@ -120,7 +120,7 @@ public class GroomShapeProfileButtonAuthority : MonoBehaviour
+         text.alignment = TextAlignmentOptions.MidlineLeft;
+         text.color = Color.white;
+         text.raycastTarget = false;
+-        text.enableWordWrapping = false;
++        text.textWrappingMode = TextWrappingModes.NoWrap;
+         text.overflowMode = TextOverflowModes.Ellipsis;
+ 
+         if (oldLabel != null) Destroy(oldLabel.gameObject);
+@@ -145,7 +145,7 @@ public class GroomShapeProfileButtonAuthority : MonoBehaviour
+             text.fontSizeMax = 10f;
+             text.fontSizeMin = 8f;
+             text.enableAutoSizing = true;
+-            text.enableWordWrapping = false;
++            text.textWrappingMode = TextWrappingModes.NoWrap;
+             text.overflowMode = TextOverflowModes.Ellipsis;
+         }
+     }
+@@ -168,7 +168,7 @@ public class GroomShapeProfileButtonAuthority : MonoBehaviour
+         text.enableAutoSizing = true;
+         text.fontSizeMin = minSize;
+         text.fontSizeMax = maxSize;
+-        text.enableWordWrapping = false;
++        text.textWrappingMode = TextWrappingModes.NoWrap;
+         text.overflowMode = TextOverflowModes.Ellipsis;
+     }
+ }
+diff --git a/Assets/Scripts/UI_Import/GroupClumperManager.cs b/Assets/Scripts/UI_Import/GroupClumperManager.cs
+index fd9d063..d4ad34f 100644
+--- a/Assets/Scripts/UI_Import/GroupClumperManager.cs
++++ b/Assets/Scripts/UI_Import/GroupClumperManager.cs
+@@ -39,7 +39,6 @@ public class GroupClumperManager : MonoBehaviour
+     private int selectedGroup = -1;
+     private int selectedClumperId = -1;
+     private int nextClumperId = 1;
+-    private int lastTabClickFrame = -1;
+     private float nextUIScan;
+     private GameObject controlsRoot;
+ 
+diff --git a/Assets/Scripts/UI_Import/GroupUVRangeSliderUIAuthority.cs b/Assets/Scripts/UI_Import/GroupUVRangeSliderUIAuthority.cs
+index 62546ec..c03f48e 100644
+--- a/Assets/Scripts/UI_Import/GroupUVRangeSliderUIAuthority.cs
++++ b/Assets/Scripts/UI_Import/GroupUVRangeSliderUIAuthority.cs
+@@ -311,7 +311,7 @@ public class GroupUVRangeSliderUIAuthority : MonoBehaviour
+         text.enableAutoSizing = true;
+         text.fontSizeMin = minSize;
+         text.fontSizeMax = maxSize;
+-        text.enableWordWrapping = false;
++        text.textWrappingMode = TextWrappingModes.NoWrap;
+         text.overflowMode = TextOverflowModes.Ellipsis;
+     }
+ 
+@@ -322,7 +322,7 @@ public class GroupUVRangeSliderUIAuthority : MonoBehaviour
+         text.enableAutoSizing = true;
+         text.fontSizeMin = 8f;
+         text.fontSizeMax = 11f;
+-        text.enableWordWrapping = false;
++        text.textWrappingMode = TextWrappingModes.NoWrap;
+         text.overflowMode = TextOverflowModes.Ellipsis;
+     }
+ 
+@@ -334,7 +334,7 @@ public class GroupUVRangeSliderUIAuthority : MonoBehaviour
+         text.enableAutoSizing = true;
+         text.fontSizeMin = minSize;
+         text.fontSizeMax = maxSize;
+-        text.enableWordWrapping = false;
++        text.textWrappingMode = TextWrappingModes.NoWrap;
+         text.overflowMode = TextOverflowModes.Ellipsis;
+     }
+ }
+diff --git a/Assets/Scripts/UI_Import/MaterialEditorManager.cs b/Assets/Scripts/UI_Import/MaterialEditorManager.cs
+index 7ff4637..218ccd0 100644
+--- a/Assets/Scripts/UI_Import/MaterialEditorManager.cs
++++ b/Assets/Scripts/UI_Import/MaterialEditorManager.cs
+@@ -244,7 +244,7 @@ public class MaterialEditorManager : MonoBehaviour
+         TMPro.TextMeshProUGUI file = CreateSubLabel(textBlock.transform, "Current: " + currentName, 32f);
+         file.fontSize = 10f;
+         file.color = new Color(.72f, .72f, .72f);
+-        file.enableWordWrapping = true;
++        file.textWrappingMode = TMPro.TextWrappingModes.Normal;
+         file.overflowMode = TMPro.TextOverflowModes.Truncate;
+ 
+         // Only ~56px remains after the Info column within the panel's fixed 300px width (see
+@@ -291,7 +291,7 @@ public class MaterialEditorManager : MonoBehaviour
+         labelTmp.fontSize = 12f;
+         labelTmp.color = Color.white;
+         labelTmp.alignment = TMPro.TextAlignmentOptions.MidlineLeft;
+-        labelTmp.enableWordWrapping = false;
++        labelTmp.textWrappingMode = TMPro.TextWrappingModes.NoWrap;
+ 
+         GameObject sliderGO = new GameObject(label + "Slider", typeof(RectTransform), typeof(Slider), typeof(LayoutElement));
+         sliderGO.transform.SetParent(row.transform, false);
+@@ -545,7 +545,7 @@ public class MaterialEditorManager : MonoBehaviour
+         tmp.fontSize = 11f;
+         tmp.color = Color.white;
+         tmp.alignment = TMPro.TextAlignmentOptions.MidlineLeft;
+-        tmp.enableWordWrapping = false;
++        tmp.textWrappingMode = TMPro.TextWrappingModes.NoWrap;
+         return tmp;
+     }
+ 
+diff --git a/Assets/Scripts/UI_Import/PlacementBrushModeAuthority.cs b/Assets/Scripts/UI_Import/PlacementBrushModeAuthority.cs
+index c4edc15..762fefe 100644
+--- a/Assets/Scripts/UI_Import/PlacementBrushModeAuthority.cs
++++ b/Assets/Scripts/UI_Import/PlacementBrushModeAuthority.cs
+@@ -387,7 +387,7 @@ public class PlacementBrushModeAuthority : MonoBehaviour
+         modeText.fontStyle = FontStyles.Bold;
+         modeText.alignment = TextAlignmentOptions.Center;
+         modeText.color = Color.white;
+-        modeText.enableWordWrapping = false;
++        modeText.textWrappingMode = TextWrappingModes.NoWrap;
+         modeText.raycastTarget = false;
+ 
+         Transform top = panel.Find("TopControlsRow");
+diff --git a/Assets/Scripts/UI_Import/StartScreenBuildStamp.cs b/Assets/Scripts/UI_Import/StartScreenBuildStamp.cs
+index 0a806c5..d1dd05e 100644
+--- a/Assets/Scripts/UI_Import/StartScreenBuildStamp.cs
++++ b/Assets/Scripts/UI_Import/StartScreenBuildStamp.cs
+@@ -111,7 +111,7 @@ public class StartScreenBuildStamp : MonoBehaviour
+         text.alignment = TextAlignmentOptions.Bottom;
+         text.color = new Color(1f, 1f, 1f, 0.42f);
+         text.raycastTarget = false;
+-        text.enableWordWrapping = false;
++        text.textWrappingMode = TextWrappingModes.NoWrap;
+         text.overflowMode = TextOverflowModes.Overflow;
+     }
+ 
+diff --git a/Assets/Scripts/UI_Import/StatusToast.cs b/Assets/Scripts/UI_Import/StatusToast.cs
+index 5462c1e..152951f 100644
+--- a/Assets/Scripts/UI_Import/StatusToast.cs
++++ b/Assets/Scripts/UI_Import/StatusToast.cs
+@@ -94,7 +94,7 @@ public class StatusToastAuthority : MonoBehaviour
+         label.alignment = TextAlignmentOptions.Center;
+         label.fontSize = 20f;
+         label.color = Color.white;
+-        label.enableWordWrapping = true;
++        label.textWrappingMode = TextWrappingModes.Normal;
+ 
+         canvasGO.SetActive(false);
+     }
+diff --git a/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs b/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs
+index 7d2945c..d06f9b7 100644
+--- a/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs
++++ b/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs
+@@ -870,7 +870,7 @@ public class TextureUVRectWorkspace : MonoBehaviour
+             label.color = Color.white;
+             label.outlineColor = Color.black;
+             label.outlineWidth = .2f;
+-            label.enableWordWrapping = false;
++            label.textWrappingMode = TextWrappingModes.NoWrap;
+             label.raycastTarget = false;
+             rectangleLabels[data.id] = label;
+         }
+@@ -1072,7 +1072,7 @@ public class TextureUVRectWorkspace : MonoBehaviour
+         label.fontSize = 11.5f;
+         label.color = Color.white;
+         label.alignment = TextAlignmentOptions.MidlineLeft;
+-        label.enableWordWrapping = false;
++        label.textWrappingMode = TextWrappingModes.NoWrap;
+         label.overflowMode = TextOverflowModes.Ellipsis;
+         label.raycastTarget = false;
+ 
+diff --git a/Assets/Scripts/UI_Import/TextureWorkspacePolishFix.cs b/Assets/Scripts/UI_Import/TextureWorkspacePolishFix.cs
+index d237d83..bc53234 100644
+--- a/Assets/Scripts/UI_Import/TextureWorkspacePolishFix.cs
++++ b/Assets/Scripts/UI_Import/TextureWorkspacePolishFix.cs
+@@ -104,7 +104,7 @@ public class TextureWorkspacePolishFix : MonoBehaviour
+                 foreach (TextMeshProUGUI tmp in info.GetComponentsInChildren<TextMeshProUGUI>(true))
+                 {
+                     if (tmp == null || !tmp.text.StartsWith("Current:")) continue;
+-                    tmp.enableWordWrapping = false;
++                    tmp.textWrappingMode = TextWrappingModes.NoWrap;
+                     tmp.overflowMode = TextOverflowModes.Overflow;
+                     tmp.enableAutoSizing = true;
+                     tmp.fontSize = 18f;
+diff --git a/Assets/Scripts/UI_Import/UITheme.cs b/Assets/Scripts/UI_Import/UITheme.cs
+index 0d180df..0789f55 100644
+--- a/Assets/Scripts/UI_Import/UITheme.cs
++++ b/Assets/Scripts/UI_Import/UITheme.cs
+@@ -134,7 +134,7 @@ public static class UITheme
+             label.enableAutoSizing = false;
+             label.fontSize = 11f;
+             label.alignment = TextAlignmentOptions.Center;
+-            label.enableWordWrapping = false;
++            label.textWrappingMode = TextWrappingModes.NoWrap;
+             label.overflowMode = TextOverflowModes.Overflow;
+             label.margin = Vector4.zero;
+             label.color = TextBright;
+@@ -185,7 +185,7 @@ public static class UITheme
+         if (label == null) return;
+ 
+         // Cap auto-sizing to shrink-only, bounded by whatever the label's own author picked -
+-        // never grow past their intended size, and never touch enableWordWrapping here: some
++        // never grow past their intended size, and never touch textWrappingMode here: some
+         // labels (e.g. GroomShapeCurveAuthority's popup buttons) are deliberately built to rely
+         // on wrapping to stay readable at a fixed narrow width, and forcing wrap off pushed them
+         // straight into the ellipsis fallback below instead of the two-line layout they need.
+diff --git a/Assets/Scripts/UI_Import/WorkspaceExportUtilityAuthority.cs b/Assets/Scripts/UI_Import/WorkspaceExportUtilityAuthority.cs
+index ea136c2..f74c905 100644
+--- a/Assets/Scripts/UI_Import/WorkspaceExportUtilityAuthority.cs
++++ b/Assets/Scripts/UI_Import/WorkspaceExportUtilityAuthority.cs
+@@ -118,7 +118,7 @@ public class WorkspaceExportUtilityAuthority : MonoBehaviour
+             TextMeshProUGUI text = child.GetComponentInChildren<TextMeshProUGUI>(true);
+             if (text != null)
+             {
+-                text.enableWordWrapping = false;
++                text.textWrappingMode = TextWrappingModes.NoWrap;
+                 text.overflowMode = TextOverflowModes.Ellipsis;
+                 text.fontSize = 14f;
+             }
+@@ -165,7 +165,7 @@ public class WorkspaceExportUtilityAuthority : MonoBehaviour
+         text.fontStyle = FontStyles.Bold;
+         text.alignment = TextAlignmentOptions.Center;
+         text.color = Color.white;
+-        text.enableWordWrapping = false;
++        text.textWrappingMode = TextWrappingModes.NoWrap;
+         text.overflowMode = TextOverflowModes.Ellipsis;
+         text.raycastTarget = false;
+         return go;

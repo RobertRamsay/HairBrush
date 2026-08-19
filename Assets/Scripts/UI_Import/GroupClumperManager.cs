@@ -39,7 +39,6 @@ public class GroupClumperManager : MonoBehaviour
     private int selectedGroup = -1;
     private int selectedClumperId = -1;
     private int nextClumperId = 1;
-    private int lastTabClickFrame = -1;
     private float nextUIScan;
     private GameObject controlsRoot;
 

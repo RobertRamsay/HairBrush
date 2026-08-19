@@ -118,7 +118,7 @@ public class WorkspaceExportUtilityAuthority : MonoBehaviour
             TextMeshProUGUI text = child.GetComponentInChildren<TextMeshProUGUI>(true);
             if (text != null)
             {
-                text.enableWordWrapping = false;
+                text.textWrappingMode = TextWrappingModes.NoWrap;
                 text.overflowMode = TextOverflowModes.Ellipsis;
                 text.fontSize = 14f;
             }
@@ -165,7 +165,7 @@ public class WorkspaceExportUtilityAuthority : MonoBehaviour
         text.fontStyle = FontStyles.Bold;
         text.alignment = TextAlignmentOptions.Center;
         text.color = Color.white;
-        text.enableWordWrapping = false;
+        text.textWrappingMode = TextWrappingModes.NoWrap;
         text.overflowMode = TextOverflowModes.Ellipsis;
         text.raycastTarget = false;
         return go;
