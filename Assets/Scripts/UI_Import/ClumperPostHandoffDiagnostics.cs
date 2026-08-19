@@ -103,7 +103,7 @@ public class ClumperPostHandoffDiagnostics : MonoBehaviour
     void LogMesh(int currentGroup, List<HairCard> groupCards)
     {
         if (Time.unscaledTime < nextMeshScan) return;
-        nextMeshScan = Time.unscaledTime + .25f;
+        nextMeshScan = Time.unscaledTime + .10f;
         if (groupCards.Count == 0) return;
 
         List<PostAffectorManager.PostAffector> list = null;
@@ -116,9 +116,31 @@ public class ClumperPostHandoffDiagnostics : MonoBehaviour
         // Stable sample: lowest instance IDs, so the same cards are reported every time.
         groupCards.Sort(CompareByInstanceId);
 
+        // v5. Sampling three cards by instance id was a bad choice: two of the three sit outside
+        // the clumper's reach and are never displaced, so the sample was nearly blind to the
+        // pop. Count how many cards in the WHOLE group the clumper actually displaced this
+        // frame, by comparing each card's live mesh against its own clean baseVertices. If that
+        // count oscillates while the slider is still, the clump is dropping cards in and out -
+        // and `displaced` says how many. `contiguous` says whether the island-scope path (the
+        // per-card SurfaceIslandScope.SameIsland raycast) is even in play.
+        int displaced = 0;
+        int measured = 0;
+        foreach (HairCard card in groupCards)
+        {
+            MeshFilter cardFilter = card.GetComponent<MeshFilter>();
+            if (cardFilter == null || cardFilter.sharedMesh == null) continue;
+            Vector3[] cardBase = null;
+            if (cardBaseVerticesField != null) cardBase = cardBaseVerticesField.GetValue(card) as Vector3[];
+            if (cardBase == null) continue;
+            measured++;
+            if (VertexHash(cardFilter.sharedMesh) != ArrayHash(cardBase)) displaced++;
+        }
+
         StringBuilder builder = new StringBuilder();
         builder.Append("MESH group=").Append(currentGroup)
-               .Append(" activeClump=").Append(GroupClumperManager.HasActiveClumper(currentGroup));
+               .Append(" activeClump=").Append(GroupClumperManager.HasActiveClumper(currentGroup))
+               .Append(" contiguous=").Append(SurfaceIslandScope.IsClumperContiguous(currentGroup))
+               .Append(" displaced=").Append(displaced).Append("/").Append(measured);
 
         int sampled = 0;
         foreach (HairCard card in groupCards)
