@@ -1,0 +1,25 @@
+diff --git a/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs b/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
+index 29af38e..2bdb995 100644
+--- a/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
++++ b/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
+@@ -161,9 +161,19 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
+                 }
+             }
+ 
++            // Order MUST be deterministic before BuildLeaders. groupCards comes from
++            // FindObjectsByType, whose ordering Unity does not guarantee and which can differ
++            // between frames. BuildLeaders indexes straight into this array for the non-Singular
++            // modes - `cards[seed % cards.Length]` for DispersedEvenly, and the weighted pool
++            // for FromPoint - so an unstable order silently picks DIFFERENT leaders on different
++            // frames. Same clumper, same settings, different clump: whole bands of cards swap
++            // between leaders and appear to pop in and out. Sorting by instance id makes leader
++            // selection a pure function of the clumper's own seed, as it was always meant to be.
+             HairCard[] scopedCards = groupCards.Where(c =>
+                 c != null && clean.ContainsKey(c) &&
+-                (!contiguous || SurfaceIslandScope.SameIsland(c, scopeIsland))).ToArray();
++                (!contiguous || SurfaceIslandScope.SameIsland(c, scopeIsland)))
++                .OrderBy(c => c.GetInstanceID())
++                .ToArray();
+             if (scopedCards.Length < 2) continue;
+ 
+             List<HairCard> leaders = BuildLeaders(clumper, scopedCards);
