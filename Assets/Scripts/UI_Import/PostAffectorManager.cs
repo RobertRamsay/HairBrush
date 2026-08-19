@@ -256,44 +256,6 @@ public class PostAffectorManager : MonoBehaviour
         }
     }
 
-    // CLUMPER is a downstream mesh authority. When the last active clumper releases a group,
-    // rebuild that group's rendered state from canonical + POST immediately instead of relying
-    // on whatever mesh happened to be left behind by the clump evaluator.
-    //
-    // Refresh baseState from HairCard's canonical state first: ApplyAll normally gets that
-    // refresh from UpdateCanonicalBases(), but a clump release can happen later in the frame.
-    // Using the cached base here is exactly how valid slider changes can remain invisible until
-    // another clumper forces a new evaluation.
-    public void ReapplyGroup(int groupId)
-    {
-        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
-        {
-            if (card == null || card.groupId != groupId) continue;
-
-            ControlState canonical = ReadCanonical(card);
-            if (!cardStates.TryGetValue(card, out CardState state))
-            {
-                state = new CardState { baseState = canonical, lastFinal = canonical, hasFinal = false };
-                cardStates[card] = state;
-            }
-            else
-            {
-                state.baseState = canonical;
-            }
-
-            ControlState result = canonical;
-            if (groups.TryGetValue(groupId, out List<PostAffector> list))
-                result = Add(result, EffectForCard(card, list));
-
-            if (UsesPredeterminedUVs(groupId))
-                CopyUV(ref result, canonical);
-
-            WriteEvaluatedCard(card, result);
-            state.lastFinal = result;
-            state.hasFinal = true;
-        }
-    }
-
     ControlState EffectForCard(HairCard card, List<PostAffector> list)
     {
         ControlState effect = new ControlState();

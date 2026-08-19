@@ -259,30 +259,21 @@ public class GroupClumperManager : MonoBehaviour
         clumper.amount = 0f;
         Invalidate(clumper);
 
-        // Only release the group's mesh authority when this was the last active clumper.
-        // If another clumper is still > 0, ThreeColumnClumperMeshAuthority remains the final
-        // authority and will recompute the group from the changed clumper set in LateUpdate.
-        bool releasingGroup = !HasActiveClumper(clumper.groupId);
-        if (releasingGroup)
+        // Clear every card's clump override flag immediately. The deferred data removal below
+        // creates a timing gap where ThreeColumnClumperMeshAuthority's RestoreRemovedGroups
+        // can't reliably do this itself: the neutralize phase (amount=0) causes it to remove
+        // the group from its own overriddenGroups tracking, so by the time the actual data
+        // disappears on the next frame, it no longer knows this group needs restoring. Without
+        // this, every card is left with externalClumpOverrideActive=true permanently, and
+        // GenerateMesh's signature-match guard silently discards every subsequent mesh write
+        // from POST, sliders, or anything else — the exact "nothing changes when I drag"
+        // symptom.
+        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
         {
-            HairCard[] groupCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None)
-                .Where(card => card != null && card.groupId == clumper.groupId)
-                .ToArray();
-
-            foreach (HairCard card in groupCards)
+            if (card != null && card.groupId == clumper.groupId)
+            {
                 card.ClearExternalClumpOverride();
-
-            // Re-publish the real final pipeline immediately. A plain GenerateMesh here only
-            // guarantees the canonical/base mesh; POST owns the evaluated final state.
-            PostAffectorManager postManager = FindFirstObjectByType<PostAffectorManager>();
-            if (postManager != null)
-            {
-                postManager.ReapplyGroup(clumper.groupId);
-            }
-            else
-            {
-                foreach (HairCard card in groupCards)
-                    card.GenerateMesh();
+                card.GenerateMesh();
             }
         }
 

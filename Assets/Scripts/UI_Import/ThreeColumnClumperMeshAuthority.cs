@@ -19,7 +19,6 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
     }
 
     private GroupClumperManager manager;
-    private PostAffectorManager postManager;
     private readonly Dictionary<int, int> lastGroupSignature = new Dictionary<int, int>();
     private readonly HashSet<int> overriddenGroups = new HashSet<int>();
 
@@ -85,26 +84,12 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
     {
         foreach (int oldGroup in overriddenGroups.Where(g => !currentGroups.Contains(g)).ToArray())
         {
-            HairCard[] groupCards = allCards
-                .Where(card => card != null && card.groupId == oldGroup)
-                .ToArray();
-
-            // Release CLUMPER ownership first. Reapply POST afterwards so the final visible mesh
-            // is canonical + POST, not whichever derived clump/clean mesh happened to be last.
-            foreach (HairCard card in groupCards)
+            foreach (HairCard card in allCards)
+            {
+                if (card == null || card.groupId != oldGroup) continue;
                 card.ClearExternalClumpOverride();
-
-            if (postManager == null) postManager = FindFirstObjectByType<PostAffectorManager>();
-            if (postManager != null)
-            {
-                postManager.ReapplyGroup(oldGroup);
+                card.GenerateMesh();
             }
-            else
-            {
-                foreach (HairCard card in groupCards)
-                    card.GenerateMesh();
-            }
-
             overriddenGroups.Remove(oldGroup);
             lastGroupSignature.Remove(oldGroup);
         }

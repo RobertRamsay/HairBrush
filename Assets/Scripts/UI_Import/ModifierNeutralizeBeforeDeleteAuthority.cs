@@ -137,24 +137,16 @@ public class ModifierDeleteNeutralizeHook : MonoBehaviour, IPointerDownHandler
         target.amount = 0f;
         target.lastTopologyHash = 0;
         if (target.leaders != null) target.leaders.Clear();
-        bool releasingGroup = !GroupClumperManager.HasActiveClumper(groupId);
 
         HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
         int reset = 0;
         foreach (HairCard card in cards)
         {
             if (card == null || card.groupId != groupId) continue;
-
-            // Do not write a reconstructed "clean" mesh directly into MeshFilter.mesh here.
-            // That bypasses POST and can strand an upstream-only result on screen after delete.
-            if (releasingGroup) card.ClearExternalClumpOverride();
+            WriteCleanThreeColumnMesh(card);
             card.ClearClumpModifier();
             reset++;
         }
-
-        if (releasingGroup && postManager != null)
-            postManager.ReapplyGroup(groupId);
-
         Debug.Log("CLUMPER pre-delete neutralized group " + groupId + ": reset " + reset + " HairCards.");
     }
 
