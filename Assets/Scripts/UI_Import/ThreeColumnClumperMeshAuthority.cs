@@ -418,8 +418,6 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         Vector2[] uvs = new Vector2[vertexCount];
         int[] triangles = new int[segments * 12];
 
-        float halfWidth = Mathf.Max(.0005f, card.width) * .5f;
-        float ridge = card.GetCrossSectionRidgeHeight();
 
         // Segment density remap, spine and path-following section frames come straight
         // from HairCard, so this "clean" reconstruction cannot drift from GenerateMesh.
@@ -435,7 +433,11 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         {
             float t = segmentT[i];
             float z = t * cardLength;
-            float span = halfWidth * card.flattenFactor;
+            // Shared with GenerateMesh so a Width taper reaches clumped cards too. Computed
+            // per row because the Width profile curve is a function of t.
+            float span;
+            float ridge;
+            HairCard.EvaluateCrossSection(card, t, out span, out ridge);
             int index = i * columns;
 
             // HairCard.EvaluateCurl is the shared coil definition, so this rebuild keeps

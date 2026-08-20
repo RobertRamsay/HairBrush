@@ -205,8 +205,6 @@ public class ModifierDeleteNeutralizeHook : MonoBehaviour, IPointerDownHandler
         const int columns = HairCard.CrossSectionColumns;
         int segments = Mathf.Clamp(card.segments, 1, 60);
         Vector3[] vertices = new Vector3[(segments + 1) * columns];
-        float halfWidth = Mathf.Max(.0005f, card.width) * .5f;
-        float ridge = card.GetCrossSectionRidgeHeight();
 
         // Segment density remap, spine and path-following section frames come straight
         // from HairCard, so this reconstruction cannot drift from GenerateMesh. It once
@@ -223,7 +221,11 @@ public class ModifierDeleteNeutralizeHook : MonoBehaviour, IPointerDownHandler
         {
             float t = segmentT[i];
             float z = t * cardLength;
-            float span = halfWidth * card.flattenFactor;
+            // Shared with GenerateMesh, same reason as the clumper rebuild: a neutralised
+            // card must not quietly revert to the untapered shape.
+            float span;
+            float ridge;
+            HairCard.EvaluateCrossSection(card, t, out span, out ridge);
             int index = i * columns;
 
             // HairCard.EvaluateCurl is the shared coil definition, so the neutralised

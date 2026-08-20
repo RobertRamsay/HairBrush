@@ -174,6 +174,10 @@ public class PostPredeterminedUVSaveData
     // Segment density: where segments cluster along the length. Not a magnitude multiplier
     // like the curves above - a 0..1 -> 0..1 remap (see HairCard.GenerateMesh).
     public List<GroomCurveKeySaveData> segmentDensityCurve=new();
+    // Group-root 0..1 width taper. Root-only, like Curl and Segment Density. An empty list -
+    // which is what every project saved before this channel existed deserializes to - imports
+    // as a flat x1 multiplier, so old files render bit-identically. No migration needed.
+    public List<GroomCurveKeySaveData> widthCurve=new();
 
     // Rendering only: true culls back faces for this group's cards. Stored as
     // "singleSided" rather than "doubleSided" so a project saved before this existed

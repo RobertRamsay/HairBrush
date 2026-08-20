@@ -38,6 +38,7 @@ public class GroomShapeProfileButtonAuthority : MonoBehaviour
         UpgradeRow("ShapeCurve_CurlFrequency_Row", GroomShapeCurveChannel.CurlFrequency);
         UpgradeRow("ShapeCurve_CurlDiameter_Row", GroomShapeCurveChannel.CurlDiameter);
         UpgradeRow("ShapeCurve_SegmentDensity_Row", GroomShapeCurveChannel.SegmentDensity);
+        UpgradeRow("ShapeCurve_Width_Row", GroomShapeCurveChannel.Width);
         NormalizeOpenCurveEditor();
     }
 

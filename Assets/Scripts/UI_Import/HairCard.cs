@@ -70,6 +70,44 @@ public class HairCard : MonoBehaviour
     // is the roll the flat cross-section should carry at t, about the card's own
     // length axis, and must be applied to the section BEFORE the offset: the roll
     // shapes the section, the offset moves it.
+    // Below this, a row's three columns collapse onto one point: zero-area triangles, and
+    // RecalculateNormals then produces garbage for that row, which reads on screen as a black
+    // band at the tip. Curl guards its own degenerate case the same way (curlDiameter <= 0).
+    public const float MinimumWidthMultiplier = .001f;
+
+    // Single source of truth for the card's cross-section at t.
+    //
+    // GenerateMesh and BOTH mesh reconstructions - ThreeColumnClumperMeshAuthority.
+    // BuildCleanMesh and ModifierNeutralizeBeforeDeleteAuthority.WriteCleanThreeColumnMesh -
+    // call this, so the three cannot drift apart. That is the same guarantee EvaluateCurl and
+    // BuildSegmentFrames already give for the coil and the spine, and it exists for the same
+    // reason: this project has twice shipped a feature into GenerateMesh only, and twice had
+    // clumped cards silently render the pre-feature shape.
+    //
+    // Width was the third thing computed independently in three places, and the three did not
+    // even agree: GenerateMesh used a raw `width * .5f` while both reconstructions used
+    // `Mathf.Max(.0005f, width) * .5f`, so cards under 0.001 wide were already fractionally
+    // wider once clumped. Folding it in here settles that too.
+    public static void EvaluateCrossSection(HairCard card, float t, out float halfSpan, out float ridge)
+    {
+        halfSpan = 0f;
+        ridge = 0f;
+        if (card == null) return;
+
+        // Root-only profile curve, same as Curl and Segment Density - see the channel enum.
+        // GroomShapeCurveRegistry.Evaluate clamps every channel to 0..1, so this can only ever
+        // narrow the card, never widen it past the Width slider.
+        float widthMultiplier = PostShapeCurveBridge.EvaluateRoot(card.groupId, GroomShapeCurveChannel.Width, t);
+        widthMultiplier = Mathf.Max(MinimumWidthMultiplier, widthMultiplier);
+
+        halfSpan = Mathf.Max(.0005f, card.width) * .5f * card.flattenFactor * widthMultiplier;
+
+        // Scaled by the SAME multiplier so the cross-section stays self-similar along the
+        // length. The ridge is defined as a fixed ratio of width; leaving it un-tapered would
+        // turn a narrowed tip into a tall thin spike rather than a smaller copy of the root.
+        ridge = card.GetCrossSectionRidgeHeight() * widthMultiplier;
+    }
+
     public static void EvaluateCurl(
         int groupId,
         float curlFrequency,
@@ -1072,8 +1110,6 @@ public class HairCard : MonoBehaviour
         baseVertices = new Vector3[numVertices];
         Vector2[] uvs = new Vector2[numVertices];
         int[] triangles = new int[segments * 12];
-        float halfWidth = width * 0.5f;
-        float ridgeHeight = GetCrossSectionRidgeHeight();
 
         // Segment density remap, spine and section frames all resolved up front - the
         // frame at a row needs its neighbours' spine points, so it cannot be done
@@ -1098,7 +1134,10 @@ public class HairCard : MonoBehaviour
             if (vScale < 0f) baseV = absVScale - baseV;
             float finalV = baseV + vOffset;
             int index = i * columns;
-            float currentWidth = halfWidth * flattenFactor;
+            // Per row now - the Width profile curve makes both of these functions of t.
+            float currentWidth;
+            float ridgeHeight;
+            EvaluateCrossSection(this, t, out currentWidth, out ridgeHeight);
 
             // Curl is resolved before the cross-section is built, because the section
             // has to be banked into the turn as it is laid down rather than rotated
