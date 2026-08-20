@@ -76,6 +76,27 @@ public class HairCard : MonoBehaviour
     // band at the tip. Curl guards its own degenerate case the same way (curlDiameter <= 0).
     public const float MinimumWidthMultiplier = .001f;
 
+    // Minimum vertex rows per full cycle of a periodic modifier (Wave, Curl).
+    //
+    // A card only has `segments + 1` rows, and every periodic modifier is SAMPLED at those
+    // rows - so the card's tessellation is a hard ceiling on the frequency it can express.
+    // Push past it and the result is not "a tighter wave", it is an aliased one: the apparent
+    // frequency folds back DOWN as the slider goes up, and at exactly segments/2 the samples
+    // land on the zero crossings and the wave disappears altogether. At the default 12
+    // segments that made frequency 6 render perfectly flat, and 7 through 10 render as 5, 4,
+    // 3 and 2 - so the top half of the slider ran backwards and had a dead spot in the middle.
+    //
+    // Two samples per cycle is the Nyquist floor and still looks like a zigzag rather than a
+    // wave, so the usable limit is a little above it.
+    public const float MinimumRowsPerCycle = 2.5f;
+
+    // Highest frequency this card's tessellation can actually render.
+    // Raise Segments to unlock more: 12 segments allows 4.8, 24 allows 9.6, 32 allows 12.8.
+    public static float MaxRepresentableTurns(int segments)
+    {
+        return Mathf.Max(1f, segments / MinimumRowsPerCycle);
+    }
+
     // Single source of truth for the card's cross-section at t.
     //
     // GenerateMesh and BOTH mesh reconstructions - ThreeColumnClumperMeshAuthority.
@@ -155,6 +176,12 @@ public class HairCard : MonoBehaviour
         if (!GroomShapeCurveRegistry.IsFlatOne(groupId, GroomShapeCurveChannel.WaveFrequency))
             turns *= PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.WaveFrequency, t);
 
+        // Clamped to what the card's rows can carry. Without this the slider is not merely
+        // capped at the top - it actively runs backwards past the halfway point and dies at
+        // segments/2, which reads as "moving this does nothing".
+        float maxTurns = MaxRepresentableTurns(card.segments);
+        turns = Mathf.Clamp(turns, -maxTurns, maxTurns);
+
         float direction = Mathf.Clamp01(card.waveDirection);
         if (!GroomShapeCurveRegistry.IsFlatOne(groupId, GroomShapeCurveChannel.WaveDirection))
             direction *= PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.WaveDirection, t);
@@ -196,6 +223,12 @@ public class HairCard : MonoBehaviour
         float turns = curlFrequency;
         if (!GroomShapeCurveRegistry.IsFlatOne(groupId, GroomShapeCurveChannel.CurlFrequency))
             turns *= PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.CurlFrequency, t);
+
+        // Same tessellation ceiling as the wave - the coil is sampled at the same rows, so it
+        // aliases the same way. This is almost certainly what "curl frequency does nothing"
+        // was: past segments/2.5 the coil stops tightening and starts unwinding again.
+        float maxTurns = MaxRepresentableTurns(card.segments);
+        turns = Mathf.Clamp(turns, -maxTurns, maxTurns);
 
         float radius = curlDiameter * .5f;
         if (!GroomShapeCurveRegistry.IsFlatOne(groupId, GroomShapeCurveChannel.CurlDiameter))
