@@ -123,6 +123,6 @@ public class StartScreenBuildStamp : MonoBehaviour
         // This is intentionally the run/build-visible date rather than a hard-coded release string.
         // Application.version remains the authoritative version number from Player Settings.
         string date = DateTime.Now.ToString("yyyy.MM.dd");
-        return $"HAIRBRUSH ALPHA  •  v{version}  •  {mode}  {date}";
+        return $"HAIRBRUSH BETA  •  v{version}  •  {mode}  {date}";
     }
 }

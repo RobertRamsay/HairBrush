@@ -103,7 +103,10 @@ public class SingleModeSwitchAuthority : MonoBehaviour
         le.preferredHeight = 44f;
         le.flexibleHeight = 0f;
 
-        AddBrandText(header.transform, "BrandTitle", "HAIRBRUSH - ALPHA 1.0", 15f, FontStyles.Bold,
+        // No version number here on purpose: StyleBrandHeader below rewrites this label
+        // every time the header is restyled, so the two used to disagree ("ALPHA 1.0"
+        // against "ALPHA") - and the build stamp is where the real version lives.
+        AddBrandText(header.transform, "BrandTitle", "HAIRBRUSH - BETA", 15f, FontStyles.Bold,
             new Color(.96f, .96f, .96f, 1f), new Vector2(0f, .45f), new Vector2(1f, 1f));
         AddBrandText(header.transform, "BrandSubtitle", "by POLYTRICITY LTD 2026", 10f, FontStyles.Normal,
             new Color(.72f, .76f, .82f, 1f), new Vector2(0f, 0f), new Vector2(1f, .46f));
@@ -136,7 +139,7 @@ public class SingleModeSwitchAuthority : MonoBehaviour
     static void StyleBrandHeader(Transform header)
     {
         TextMeshProUGUI title = header.Find("BrandTitle")?.GetComponent<TextMeshProUGUI>();
-        if (title != null) title.text = "HAIRBRUSH - ALPHA";
+        if (title != null) title.text = "HAIRBRUSH - BETA";
         TextMeshProUGUI subtitle = header.Find("BrandSubtitle")?.GetComponent<TextMeshProUGUI>();
         if (subtitle != null) subtitle.text = "by POLYTRICITY LTD 2026";
     }
