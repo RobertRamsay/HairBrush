@@ -56,7 +56,13 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
     private const float CardBottom = .24f;
     private const float CardTop = .60f;
 
-    // Everything below is in canvas units and stacks from the card's top edge.
+    // Everything below is authored in SCREEN PIXELS and converted by U().
+    //
+    // The start screen's canvas is Constant Pixel Size with a scale factor of 5.43, so a
+    // canvas unit is not a pixel here - it is five and a half of them. Sizes that read
+    // correctly on the grooming canvas came out roughly five times too big on this one.
+    // Dividing by the canvas's own scale factor makes these numbers mean what they say,
+    // and keeps meaning it if that factor is ever changed.
     private const float Pad = 12f;
     private const float TitleTop = 12f;
     private const float TitleHeight = 20f;
@@ -77,6 +83,9 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
     private const float LineFont = 11f;
     private const float NoteFont = 11f;
     private const float ButtonFont = 12f;
+
+    // Screen pixels per canvas unit for the canvas this panel was built on.
+    private static float unit = 1f;
 
     private ModelViewer viewer;
     private GameObject panel;
@@ -301,6 +310,11 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         panelCanvas.overrideSorting = true;
         panelCanvas.sortingOrder = 200;
 
+        // Constant Pixel Size means scaleFactor is exactly the units-per-pixel multiplier.
+        float scale = canvas.scaleFactor;
+        if (scale <= .01f) scale = 1f;
+        unit = 1f / scale;
+
         Stretch(panel.GetComponent<RectTransform>());
         panel.GetComponent<Image>().color = new Color(0f, 0f, 0f, .55f);
 
@@ -316,17 +330,17 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         cardRect.offsetMax = Vector2.zero;
         ApplyNineSlice(card.GetComponent<Image>(), UITheme.FineEdgeSprite, UITheme.PanelDark);
 
-        TextMeshProUGUI title = AddBand(card.transform, "Title", TitleTop, TitleHeight);
-        StyleLine(title, "WELCOME TO HAIRBRUSH BETA", TitleFont, FontStyles.Bold, UITheme.TextBright);
+        TextMeshProUGUI title = AddBand(card.transform, "Title", U(TitleTop), U(TitleHeight));
+        StyleLine(title, "WELCOME TO HAIRBRUSH BETA", U(TitleFont), FontStyles.Bold, UITheme.TextBright);
 
         AddDivider(card.transform);
 
-        TextMeshProUGUI version = AddBand(card.transform, "Version", VersionTop, LineHeight);
+        TextMeshProUGUI version = AddBand(card.transform, "Version", U(VersionTop), U(LineHeight));
         StyleLine(version, "What's new in " + ReleaseHeading + "   (v" + Application.version + ")",
-            LineFont, FontStyles.Bold, UITheme.FillCyan);
+            U(LineFont), FontStyles.Bold, UITheme.FillCyan);
 
-        updateLabel = AddBand(card.transform, "UpdateStatus", UpdateTop, LineHeight);
-        StyleLine(updateLabel, "Checking for updates...", LineFont, FontStyles.Bold, UITheme.TextMuted);
+        updateLabel = AddBand(card.transform, "UpdateStatus", U(UpdateTop), U(LineHeight));
+        StyleLine(updateLabel, "Checking for updates...", U(LineFont), FontStyles.Bold, UITheme.TextMuted);
 
         BuildNotes(card.transform);
         BuildSuppressToggle(card.transform);
@@ -345,13 +359,14 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         RectTransform rect = well.GetComponent<RectTransform>();
         rect.anchorMin = Vector2.zero;
         rect.anchorMax = Vector2.one;
-        rect.offsetMin = new Vector2(Pad, FooterHeight + Pad + 6f);
-        rect.offsetMax = new Vector2(-Pad, -NotesTop);
+        rect.offsetMin = new Vector2(U(Pad), U(FooterHeight + Pad + 6f));
+        rect.offsetMax = new Vector2(-U(Pad), -U(NotesTop));
         ApplyNineSlice(well.GetComponent<Image>(), UITheme.FineEdgeSprite, UITheme.TrackDark);
 
         VerticalLayoutGroup layout = well.GetComponent<VerticalLayoutGroup>();
-        layout.padding = new RectOffset(10, 10, 7, 7);
-        layout.spacing = 3f;
+        int inset = Mathf.RoundToInt(U(9f));
+        layout.padding = new RectOffset(inset, inset, inset, inset);
+        layout.spacing = U(3f);
         layout.childControlWidth = true;
         layout.childControlHeight = true;
         layout.childForceExpandHeight = false;
@@ -371,7 +386,7 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         GameObject buttonGO = new GameObject("CloseButton", typeof(RectTransform), typeof(Image), typeof(Button));
         buttonGO.transform.SetParent(parent, false);
         PinToCorner(buttonGO.GetComponent<RectTransform>(), new Vector2(1f, 0f),
-            new Vector2(-Pad, Pad), new Vector2(StartButtonWidth, FooterHeight));
+            new Vector2(-U(Pad), U(Pad)), new Vector2(U(StartButtonWidth), U(FooterHeight)));
 
         Button button = buttonGO.GetComponent<Button>();
         button.onClick.AddListener(Close);
@@ -380,7 +395,7 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         UITheme.StyleButton(button);
 
         TextMeshProUGUI label = AddStretchedText(buttonGO.transform, "Text");
-        StyleLine(label, "START GROOMING", ButtonFont, FontStyles.Bold, UITheme.TextBright);
+        StyleLine(label, "START GROOMING", U(ButtonFont), FontStyles.Bold, UITheme.TextBright);
         label.alignment = TextAlignmentOptions.Center;
     }
 
@@ -389,7 +404,7 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         GameObject toggleGO = new GameObject("SuppressToggle", typeof(RectTransform), typeof(Toggle));
         toggleGO.transform.SetParent(parent, false);
         PinToCorner(toggleGO.GetComponent<RectTransform>(), new Vector2(0f, 0f),
-            new Vector2(Pad, Pad), new Vector2(SuppressWidth, FooterHeight));
+            new Vector2(U(Pad), U(Pad)), new Vector2(U(SuppressWidth), U(FooterHeight)));
 
         GameObject boxGO = new GameObject("Box", typeof(RectTransform), typeof(Image));
         boxGO.transform.SetParent(toggleGO.transform, false);
@@ -398,7 +413,7 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         box.anchorMax = new Vector2(0f, .5f);
         box.pivot = new Vector2(0f, .5f);
         box.anchoredPosition = Vector2.zero;
-        box.sizeDelta = new Vector2(BoxSize, BoxSize);
+        box.sizeDelta = new Vector2(U(BoxSize), U(BoxSize));
         ApplyNineSlice(boxGO.GetComponent<Image>(), UITheme.FineEdgeSprite, Color.white);
 
         GameObject tickGO = new GameObject("Tick", typeof(RectTransform), typeof(Image));
@@ -406,8 +421,8 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         RectTransform tick = tickGO.GetComponent<RectTransform>();
         tick.anchorMin = Vector2.zero;
         tick.anchorMax = Vector2.one;
-        tick.offsetMin = new Vector2(3f, 3f);
-        tick.offsetMax = new Vector2(-3f, -3f);
+        tick.offsetMin = new Vector2(U(3f), U(3f));
+        tick.offsetMax = new Vector2(-U(3f), -U(3f));
         tickGO.GetComponent<Image>().color = UITheme.ButtonPressed;
 
         GameObject captionGO = new GameObject("Caption", typeof(RectTransform), typeof(TextMeshProUGUI));
@@ -415,11 +430,11 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         RectTransform caption = captionGO.GetComponent<RectTransform>();
         caption.anchorMin = Vector2.zero;
         caption.anchorMax = Vector2.one;
-        caption.offsetMin = new Vector2(BoxSize + 7f, 0f);
+        caption.offsetMin = new Vector2(U(BoxSize + 7f), 0f);
         caption.offsetMax = Vector2.zero;
 
         StyleLine(captionGO.GetComponent<TextMeshProUGUI>(),
-            "Don't show this again for v" + Application.version, LineFont, FontStyles.Normal, UITheme.TextMuted);
+            "Don't show this again for v" + Application.version, U(LineFont), FontStyles.Normal, UITheme.TextMuted);
 
         suppressToggle = toggleGO.GetComponent<Toggle>();
         suppressToggle.targetGraphic = boxGO.GetComponent<Image>();
@@ -467,6 +482,12 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
 
     // ------------------------------------------------------------------------- UI helpers
 
+    // Screen pixels -> canvas units for the canvas this panel is on.
+    static float U(float pixels)
+    {
+        return pixels * unit;
+    }
+
     static void Stretch(RectTransform rect)
     {
         rect.anchorMin = Vector2.zero;
@@ -494,8 +515,8 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         rect.anchorMin = new Vector2(0f, 1f);
         rect.anchorMax = new Vector2(1f, 1f);
         rect.pivot = new Vector2(.5f, 1f);
-        rect.offsetMin = new Vector2(Pad, -(top + height));
-        rect.offsetMax = new Vector2(-Pad, -top);
+        rect.offsetMin = new Vector2(U(Pad), -(top + height));
+        rect.offsetMax = new Vector2(-U(Pad), -top);
 
         return go.GetComponent<TextMeshProUGUI>();
     }
@@ -509,8 +530,8 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         rect.anchorMin = new Vector2(0f, 1f);
         rect.anchorMax = new Vector2(1f, 1f);
         rect.pivot = new Vector2(.5f, 1f);
-        rect.offsetMin = new Vector2(Pad, -(DividerTop + DividerHeight));
-        rect.offsetMax = new Vector2(-Pad, -DividerTop);
+        rect.offsetMin = new Vector2(U(Pad), -U(DividerTop + DividerHeight));
+        rect.offsetMax = new Vector2(-U(Pad), -U(DividerTop));
 
         Image image = go.GetComponent<Image>();
         ApplyNineSlice(image, UITheme.DividerSprite, Color.white);
@@ -556,12 +577,12 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         go.transform.SetParent(parent, false);
 
         LayoutElement layout = go.GetComponent<LayoutElement>();
-        layout.minHeight = NoteFont + 4f;
-        layout.preferredHeight = NoteFont + 4f;
+        layout.minHeight = U(NoteFont + 4f);
+        layout.preferredHeight = U(NoteFont + 4f);
 
         TextMeshProUGUI label = go.GetComponent<TextMeshProUGUI>();
         label.text = text;
-        label.fontSize = NoteFont;
+        label.fontSize = U(NoteFont);
         label.fontStyle = FontStyles.Normal;
         label.color = UITheme.TextBright;
         label.alignment = TextAlignmentOptions.MidlineLeft;
