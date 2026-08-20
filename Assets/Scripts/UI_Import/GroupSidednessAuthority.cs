@@ -87,6 +87,10 @@ public class GroupSidednessAuthority : MonoBehaviour
         nextScan = Time.unscaledTime + ScanInterval;
 
         MaintainGroupButtons();
+
+        // Keeps the shared single-sided clone in step with whatever the base hair
+        // material currently is - textures included - after a Texture Editor change.
+        HairCard.RefreshSingleSidedVariants();
         ApplyAll();
     }
 

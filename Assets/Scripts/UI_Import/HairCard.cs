@@ -653,6 +653,26 @@ public class HairCard : MonoBehaviour
     // other SS card rather than becoming hundreds of unique materials.
     private static readonly Dictionary<Material, Material> singleSidedVariants = new Dictionary<Material, Material>();
 
+    // Now that _Cull is a real shader property, the single-sided clone is a genuine
+    // second material and can drift from its source: change a texture or a tint on the
+    // base material and the clone keeps the old one. Re-copying every property is cheap
+    // (there is normally exactly one clone) and keeps the SS groups looking identical to
+    // the DS groups in everything except which faces get drawn.
+    public static void RefreshSingleSidedVariants()
+    {
+        foreach (KeyValuePair<Material, Material> pair in singleSidedVariants)
+        {
+            Material source = pair.Key;
+            Material variant = pair.Value;
+            if (source == null || variant == null) continue;
+
+            variant.CopyPropertiesFromMaterial(source);
+            if (variant.HasProperty("_Cull")) variant.SetFloat("_Cull", 2f);
+            variant.DisableKeyword("_DOUBLESIDED_ON");
+            variant.enableInstancing = true;
+        }
+    }
+
     static Material SingleSidedVariant(Material source)
     {
         if (source == null) return null;

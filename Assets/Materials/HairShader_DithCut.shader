@@ -5,6 +5,13 @@ Shader "HairShader_dithCut"
 	Properties
 	{
 		[HideInInspector] _Cutoff("Alpha Cutoff", Range(0, 1)) = 0.5
+
+		// Exposed so per-group SS/DS rendering can drive it (see GroupSidednessAuthority).
+		// Amplify writes the SubShader render state as literals, so the generated shader
+		// had a hardcoded "Cull Off" and no property at all - the _Cull value sitting in
+		// the .mat files was inert, left over from the old URP/Lit material.
+		// 0 = Off (double sided), 1 = Front, 2 = Back (single sided).
+		[Enum(UnityEngine.Rendering.CullMode)] _Cull("Cull Mode", Float) = 0
 		_Albedo( "Albedo", 2D ) = "white" {}
 		[Normal] _Normal( "Normal", 2D ) = "bump" {}
 		_OpacityMask( "OpacityMask", 2D ) = "white" {}
@@ -67,7 +74,11 @@ Shader "HairShader_dithCut"
 
 	LOD 0
 
-		Cull Off
+		// Drives every render pass that does not declare its own Cull: Forward,
+		// ShadowCaster, DepthOnly, DepthNormals, Universal2D, ScenePickingPass and
+		// MotionVectors. Meta and SceneSelectionPass keep their own Cull Off - both are
+		// editor-only (lightmap bake, scene picking) and want every face regardless.
+		Cull [_Cull]
 		ZWrite On
 		ZTest LEqual
 		Offset 0 , 0
