@@ -1,0 +1,161 @@
+diff --git a/Assets/Scripts/UI_Import/GroomRootStateAuthority.cs b/Assets/Scripts/UI_Import/GroomRootStateAuthority.cs
+index cbfc518..abbd1f5 100644
+--- a/Assets/Scripts/UI_Import/GroomRootStateAuthority.cs
++++ b/Assets/Scripts/UI_Import/GroomRootStateAuthority.cs
+@@ -192,4 +192,17 @@ public class GroomRootStateAuthority : MonoBehaviour
+         wasSelected = false;
+         if (viewer != null) roots[viewer.currentGroupId] = ReadViewer();
+     }
++
++    // Drops every stored root WITHOUT re-capturing the viewer's current slider values.
++    //
++    // ClearStoredRoots above deliberately re-seeds from the viewer, which is right when
++    // the session is being reset to a known state. Project load is the opposite case:
++    // the sliders still hold the previous session's values at that moment, so re-seeding
++    // would hand the loaded groups a root belonging to whatever was on screen before.
++    // Forgetting outright lets each group fall back to sampling its own loaded cards.
++    public void ForgetStoredRoots()
++    {
++        roots.Clear();
++        wasSelected = false;
++    }
+ }
+diff --git a/Assets/Scripts/UI_Import/ModelViewer.cs b/Assets/Scripts/UI_Import/ModelViewer.cs
+index 9df12cc..ad43422 100644
+--- a/Assets/Scripts/UI_Import/ModelViewer.cs
++++ b/Assets/Scripts/UI_Import/ModelViewer.cs
+@@ -631,6 +631,17 @@ public class ModelViewer : MonoBehaviour
+     // every shape slider the same "known resting point" guarantee SelectAffector already gives
+     // when switching between POSTs. Also called (via SyncGroomingSlidersToCurrent) when leaving
+     // POST/CLUMPER editing back to plain group context.
++    static float MedianOf(List<HairCard.GroomState> states, Func<HairCard.GroomState, float> selector)
++    {
++        List<float> values = new List<float>(states.Count);
++        foreach (HairCard.GroomState state in states) values.Add(selector(state));
++        values.Sort();
++
++        int middle = values.Count / 2;
++        if (values.Count % 2 == 1) return values[middle];
++        return (values[middle - 1] + values[middle]) * .5f;
++    }
++
+     public void SyncShapeSlidersToGroupRoot(int groupId)
+     {
+         if (rootStateAuthority == null) rootStateAuthority = FindFirstObjectByType<GroomRootStateAuthority>();
+@@ -639,17 +650,37 @@ public class ModelViewer : MonoBehaviour
+ 
+         if (!found)
+         {
+-            // No stored root yet for this group (never entered/exited a POST or CLUMPER on it) -
+-            // fall back to sampling any existing card's own canonical state.
+-            HairCard sample = FindObjectsByType<HairCard>(FindObjectsSortMode.None).FirstOrDefault(c => c.groupId == groupId);
+-            if (sample != null)
++            // No stored root yet for this group (a freshly loaded project, or a group
++            // that has never entered/exited a POST or CLUMPER) - recover it from the
++            // cards themselves, which carry the real authored values.
++            //
++            // Every field is taken as the MEDIAN across the group's cards rather than
++            // from one arbitrary card. With variance switched on, the first card found
++            // is as likely as not to be an outlier, and adopting it would quietly make
++            // every newly placed hair an outlier too. GetCanonicalState is the value
++            // before POST/CLUMPER deltas, so modified cards do not skew it either.
++            List<HairCard.GroomState> sampled = new List<HairCard.GroomState>();
++            foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
++            {
++                if (card == null || card.groupId != groupId) continue;
++                sampled.Add(card.GetCanonicalState());
++            }
++
++            if (sampled.Count > 0)
+             {
+-                HairCard.GroomState s = sample.GetCanonicalState();
+                 state = new GroomRootStateAuthority.RootState
+                 {
+-                    length = s.length, width = s.width, segments = s.segments, bend = s.bend, twist = s.twist,
+-                    depth = s.depth, x = s.x, y = s.y, z = s.z,
+-                    curlFrequency = s.curlFrequency, curlDiameter = s.curlDiameter
++                    length = MedianOf(sampled, s => s.length),
++                    width = MedianOf(sampled, s => s.width),
++                    segments = Mathf.RoundToInt(MedianOf(sampled, s => s.segments)),
++                    bend = MedianOf(sampled, s => s.bend),
++                    twist = MedianOf(sampled, s => s.twist),
++                    depth = MedianOf(sampled, s => s.depth),
++                    x = MedianOf(sampled, s => s.x),
++                    y = MedianOf(sampled, s => s.y),
++                    z = MedianOf(sampled, s => s.z),
++                    curlFrequency = MedianOf(sampled, s => s.curlFrequency),
++                    curlDiameter = MedianOf(sampled, s => s.curlDiameter)
+                 };
+                 found = true;
+             }
+@@ -1263,6 +1294,17 @@ public class ModelViewer : MonoBehaviour
+         if (activeSliderPanel == null) BuildRuntimeGroomingUI();
+         BuildGroupManagementUI();
+         isGroomingMode = true;
++
++        // Come up with the first group properly selected, so the sliders show that
++        // group's own settings and the next hair placed inherits them. See the same
++        // step in RuntimeNavigationProjectIO.SelectLoadedGroup.
++        if (rootStateAuthority == null) rootStateAuthority = FindFirstObjectByType<GroomRootStateAuthority>();
++        if (rootStateAuthority != null) rootStateAuthority.ForgetStoredRoots();
++
++        int firstGroupId = 0;
++        if (allGroupIds.Count > 0) firstGroupId = allGroupIds.OrderBy(g => g).First();
++        SelectGroup(firstGroupId);
++
+         Debug.Log("Project loaded successfully from: " + path);
+ #endif
+     }
+diff --git a/Assets/Scripts/UI_Import/RuntimeNavigationProjectIO.cs b/Assets/Scripts/UI_Import/RuntimeNavigationProjectIO.cs
+index 49fcfb8..5e60cb9 100644
+--- a/Assets/Scripts/UI_Import/RuntimeNavigationProjectIO.cs
++++ b/Assets/Scripts/UI_Import/RuntimeNavigationProjectIO.cs
+@@ -190,10 +190,48 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
+         MethodInfo buildGroups=typeof(ModelViewer).GetMethod("BuildGroupManagementUI",BindingFlags.Instance|BindingFlags.NonPublic);buildGroups?.Invoke(viewer,null);
+         SetField("isGroomingMode",true);
+         foreach(GroupSaveData g in data.groups)modifiers?.RestoreGroup(g);
++        SelectLoadedGroup(data);
+         RepairAngleControls(true);
+         Debug.Log("Project loaded successfully from: "+path);
+     }
+ 
++    // A loaded project must come up exactly as if the user had just clicked its first
++    // group: that group highlighted, and every shape slider showing THAT GROUP'S own
++    // authored settings, ready to tweak and ready for the next hair placed to inherit.
++    //
++    // Load used to assign viewer.currentGroupId directly, which skips SelectGroup and
++    // therefore skips SyncShapeSlidersToGroupRoot entirely. The sliders were left on
++    // the file's single global slider block, which is whatever happened to be on screen
++    // when Save was pressed - a POST's values, a half-finished experiment, anything.
++    // That is how a curly project could load looking perfect and then place dead
++    // straight cards: the curl lived on the cards, but the sliders never learned it.
++    void SelectLoadedGroup(HairProjectSaveData data)
++    {
++        if(viewer==null)return;
++
++        // Any root states still cached belong to the session being replaced. Forget them
++        // before selecting, so the group recovers its settings from its own loaded cards
++        // instead of inheriting the previous project's.
++        GroomRootStateAuthority rootState=FindFirstObjectByType<GroomRootStateAuthority>();
++        if(rootState!=null)rootState.ForgetStoredRoots();
++
++        int groupId=int.MaxValue;
++        if(data!=null&&data.groups!=null)
++            foreach(GroupSaveData g in data.groups)
++                if(g!=null&&g.groupId<groupId)groupId=g.groupId;
++
++        // Older saves may carry no group block at all - take it from the cards instead.
++        if(groupId==int.MaxValue)
++            foreach(HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
++                if(card!=null&&card.groupId<groupId)groupId=card.groupId;
++
++        if(groupId==int.MaxValue)groupId=0;
++
++        MethodInfo selectGroup=typeof(ModelViewer).GetMethod("SelectGroup",BindingFlags.Instance|BindingFlags.NonPublic);
++        if(selectGroup!=null)selectGroup.Invoke(viewer,new object[]{groupId});
++        else{viewer.currentGroupId=groupId;viewer.SyncShapeSlidersToGroupRoot(groupId);}
++    }
++
+     void RepairAngleControls(bool forceValues=false)
+     {
+         if(viewer==null||viewer.groomingSliderPanelGO==null)return;

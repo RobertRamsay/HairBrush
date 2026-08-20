@@ -192,4 +192,17 @@ public class GroomRootStateAuthority : MonoBehaviour
         wasSelected = false;
         if (viewer != null) roots[viewer.currentGroupId] = ReadViewer();
     }
+
+    // Drops every stored root WITHOUT re-capturing the viewer's current slider values.
+    //
+    // ClearStoredRoots above deliberately re-seeds from the viewer, which is right when
+    // the session is being reset to a known state. Project load is the opposite case:
+    // the sliders still hold the previous session's values at that moment, so re-seeding
+    // would hand the loaded groups a root belonging to whatever was on screen before.
+    // Forgetting outright lets each group fall back to sampling its own loaded cards.
+    public void ForgetStoredRoots()
+    {
+        roots.Clear();
+        wasSelected = false;
+    }
 }

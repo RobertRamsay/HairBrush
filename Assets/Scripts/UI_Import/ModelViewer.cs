@@ -631,6 +631,17 @@ public class ModelViewer : MonoBehaviour
     // every shape slider the same "known resting point" guarantee SelectAffector already gives
     // when switching between POSTs. Also called (via SyncGroomingSlidersToCurrent) when leaving
     // POST/CLUMPER editing back to plain group context.
+    static float MedianOf(List<HairCard.GroomState> states, Func<HairCard.GroomState, float> selector)
+    {
+        List<float> values = new List<float>(states.Count);
+        foreach (HairCard.GroomState state in states) values.Add(selector(state));
+        values.Sort();
+
+        int middle = values.Count / 2;
+        if (values.Count % 2 == 1) return values[middle];
+        return (values[middle - 1] + values[middle]) * .5f;
+    }
+
     public void SyncShapeSlidersToGroupRoot(int groupId)
     {
         if (rootStateAuthority == null) rootStateAuthority = FindFirstObjectByType<GroomRootStateAuthority>();
@@ -639,17 +650,37 @@ public class ModelViewer : MonoBehaviour
 
         if (!found)
         {
-            // No stored root yet for this group (never entered/exited a POST or CLUMPER on it) -
-            // fall back to sampling any existing card's own canonical state.
-            HairCard sample = FindObjectsByType<HairCard>(FindObjectsSortMode.None).FirstOrDefault(c => c.groupId == groupId);
-            if (sample != null)
+            // No stored root yet for this group (a freshly loaded project, or a group
+            // that has never entered/exited a POST or CLUMPER) - recover it from the
+            // cards themselves, which carry the real authored values.
+            //
+            // Every field is taken as the MEDIAN across the group's cards rather than
+            // from one arbitrary card. With variance switched on, the first card found
+            // is as likely as not to be an outlier, and adopting it would quietly make
+            // every newly placed hair an outlier too. GetCanonicalState is the value
+            // before POST/CLUMPER deltas, so modified cards do not skew it either.
+            List<HairCard.GroomState> sampled = new List<HairCard.GroomState>();
+            foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
             {
-                HairCard.GroomState s = sample.GetCanonicalState();
+                if (card == null || card.groupId != groupId) continue;
+                sampled.Add(card.GetCanonicalState());
+            }
+
+            if (sampled.Count > 0)
+            {
                 state = new GroomRootStateAuthority.RootState
                 {
-                    length = s.length, width = s.width, segments = s.segments, bend = s.bend, twist = s.twist,
-                    depth = s.depth, x = s.x, y = s.y, z = s.z,
-                    curlFrequency = s.curlFrequency, curlDiameter = s.curlDiameter
+                    length = MedianOf(sampled, s => s.length),
+                    width = MedianOf(sampled, s => s.width),
+                    segments = Mathf.RoundToInt(MedianOf(sampled, s => s.segments)),
+                    bend = MedianOf(sampled, s => s.bend),
+                    twist = MedianOf(sampled, s => s.twist),
+                    depth = MedianOf(sampled, s => s.depth),
+                    x = MedianOf(sampled, s => s.x),
+                    y = MedianOf(sampled, s => s.y),
+                    z = MedianOf(sampled, s => s.z),
+                    curlFrequency = MedianOf(sampled, s => s.curlFrequency),
+                    curlDiameter = MedianOf(sampled, s => s.curlDiameter)
                 };
                 found = true;
             }
@@ -1263,6 +1294,17 @@ public class ModelViewer : MonoBehaviour
         if (activeSliderPanel == null) BuildRuntimeGroomingUI();
         BuildGroupManagementUI();
         isGroomingMode = true;
+
+        // Come up with the first group properly selected, so the sliders show that
+        // group's own settings and the next hair placed inherits them. See the same
+        // step in RuntimeNavigationProjectIO.SelectLoadedGroup.
+        if (rootStateAuthority == null) rootStateAuthority = FindFirstObjectByType<GroomRootStateAuthority>();
+        if (rootStateAuthority != null) rootStateAuthority.ForgetStoredRoots();
+
+        int firstGroupId = 0;
+        if (allGroupIds.Count > 0) firstGroupId = allGroupIds.OrderBy(g => g).First();
+        SelectGroup(firstGroupId);
+
         Debug.Log("Project loaded successfully from: " + path);
 #endif
     }

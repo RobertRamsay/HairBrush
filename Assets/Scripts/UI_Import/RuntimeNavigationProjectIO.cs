@@ -190,8 +190,46 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
         MethodInfo buildGroups=typeof(ModelViewer).GetMethod("BuildGroupManagementUI",BindingFlags.Instance|BindingFlags.NonPublic);buildGroups?.Invoke(viewer,null);
         SetField("isGroomingMode",true);
         foreach(GroupSaveData g in data.groups)modifiers?.RestoreGroup(g);
+        SelectLoadedGroup(data);
         RepairAngleControls(true);
         Debug.Log("Project loaded successfully from: "+path);
+    }
+
+    // A loaded project must come up exactly as if the user had just clicked its first
+    // group: that group highlighted, and every shape slider showing THAT GROUP'S own
+    // authored settings, ready to tweak and ready for the next hair placed to inherit.
+    //
+    // Load used to assign viewer.currentGroupId directly, which skips SelectGroup and
+    // therefore skips SyncShapeSlidersToGroupRoot entirely. The sliders were left on
+    // the file's single global slider block, which is whatever happened to be on screen
+    // when Save was pressed - a POST's values, a half-finished experiment, anything.
+    // That is how a curly project could load looking perfect and then place dead
+    // straight cards: the curl lived on the cards, but the sliders never learned it.
+    void SelectLoadedGroup(HairProjectSaveData data)
+    {
+        if(viewer==null)return;
+
+        // Any root states still cached belong to the session being replaced. Forget them
+        // before selecting, so the group recovers its settings from its own loaded cards
+        // instead of inheriting the previous project's.
+        GroomRootStateAuthority rootState=FindFirstObjectByType<GroomRootStateAuthority>();
+        if(rootState!=null)rootState.ForgetStoredRoots();
+
+        int groupId=int.MaxValue;
+        if(data!=null&&data.groups!=null)
+            foreach(GroupSaveData g in data.groups)
+                if(g!=null&&g.groupId<groupId)groupId=g.groupId;
+
+        // Older saves may carry no group block at all - take it from the cards instead.
+        if(groupId==int.MaxValue)
+            foreach(HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
+                if(card!=null&&card.groupId<groupId)groupId=card.groupId;
+
+        if(groupId==int.MaxValue)groupId=0;
+
+        MethodInfo selectGroup=typeof(ModelViewer).GetMethod("SelectGroup",BindingFlags.Instance|BindingFlags.NonPublic);
+        if(selectGroup!=null)selectGroup.Invoke(viewer,new object[]{groupId});
+        else{viewer.currentGroupId=groupId;viewer.SyncShapeSlidersToGroupRoot(groupId);}
     }
 
     void RepairAngleControls(bool forceValues=false)
