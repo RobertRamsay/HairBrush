@@ -956,6 +956,8 @@ public class ModelViewer : MonoBehaviour
     void HandleGrooming()
     {
         if (!isGroomingMode || Mouse.current == null || isTextureEditorMode) return;
+        // SHIFT/ALT/CTRL are name characters and modifiers while a text box is open.
+        if (GroupNameInlineEditAuthority.IsEnteringText) return;
         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
         bool isHoldingAlt = Keyboard.current != null && (Keyboard.current.leftAltKey.isPressed || Keyboard.current.rightAltKey.isPressed);
         bool isHoldingCtrl = Keyboard.current != null && Keyboard.current.ctrlKey.isPressed;

@@ -88,6 +88,14 @@ public class PlacementBrushModeAuthority : MonoBehaviour
 
         if (Keyboard.current == null || Mouse.current == null) return;
 
+        // Keystrokes belong to the text box while the user is entering text -
+        // renaming a group must not cycle the placement mode on every SHIFT.
+        if (GroupNameInlineEditAuthority.IsEnteringText)
+        {
+            HideBrushPreview();
+            return;
+        }
+
         bool shiftPressed = Keyboard.current.leftShiftKey.wasPressedThisFrame || Keyboard.current.rightShiftKey.wasPressedThisFrame;
         if (shiftPressed)
         {

@@ -193,9 +193,17 @@ public class GroupPanelPostHintStats : MonoBehaviour
             string cardWord = cardCount == 1 ? "card" : "cards";
             string polyWord = polyCount == 1 ? "poly" : "polys";
 
-            nameText.text = string.IsNullOrWhiteSpace(friendly)
-                ? "GROUP " + gid
-                : "G" + gid + "_" + friendly;
+            // The row shows the name on its own - the numeric id is still the real
+            // identity behind the scenes, it just does not need to be spelled out
+            // on a group the user has explicitly named.
+            if (string.IsNullOrWhiteSpace(friendly))
+            {
+                nameText.text = "GROUP " + gid;
+            }
+            else
+            {
+                nameText.text = friendly;
+            }
             statsText.text = cardCount.ToString("N0") + " " + cardWord + "\n" +
                              polyCount.ToString("N0") + " " + polyWord;
 

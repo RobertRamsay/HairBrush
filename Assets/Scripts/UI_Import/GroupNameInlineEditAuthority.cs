@@ -27,12 +27,14 @@ using UnityEngine.UI;
 public class GroupNameInlineEditAuthority : MonoBehaviour
 {
     private const int NameCharacterLimit = 32;
-    private const float CaretBlinkRate = 1.5f;
+    private const float CaretBlinkRate = 1.2f;
+    private const int CaretWidth = 3;
 
-    // Windows-Explorer style: the existing name starts selected so typing
-    // replaces it outright. Set this to false to place the caret at the end
-    // of the existing name instead.
-    private const bool SelectAllOnOpen = true;
+    // The caret sits at the end of the existing name so the flashing bar is the
+    // first thing you see. Set this to true for Windows-Explorer style instead,
+    // where the whole name starts selected and typing replaces it outright -
+    // note that TMP hides the caret while a selection is active.
+    private const bool SelectAllOnOpen = false;
 
     private static GroupNameInlineEditAuthority instance;
 
@@ -45,10 +47,10 @@ public class GroupNameInlineEditAuthority : MonoBehaviour
     private TMP_InputField field;
     private TextMeshProUGUI hiddenNameText;
     private RectTransform hiddenNameRect;
+    private Graphic caretGraphic;
     private bool teardownInProgress;
 
-    // Other authorities can poll this to suppress single-key hotkeys while a
-    // group name is being typed.
+    // True only while this inline group-name editor is open.
     public static bool IsEditing
     {
         get
@@ -56,6 +58,25 @@ public class GroupNameInlineEditAuthority : MonoBehaviour
             if (instance == null) return false;
             if (instance.field == null) return false;
             return instance.editingGroupId >= 0;
+        }
+    }
+
+    // General "is the user entering text?" guard. True while the inline
+    // group-name editor is open, and also while any other runtime text box has
+    // focus (variance seed, UV min/max/seed, ...). Tool hotkeys - SHIFT to cycle
+    // placement mode, 1/2 for single/double sided, [ ] for brush radius - should
+    // all check this before acting on a keystroke.
+    public static bool IsEnteringText
+    {
+        get
+        {
+            if (IsEditing) return true;
+            if (EventSystem.current == null) return false;
+
+            GameObject selected = EventSystem.current.currentSelectedGameObject;
+            if (selected == null) return false;
+
+            return selected.GetComponent<TMP_InputField>() != null;
         }
     }
 
@@ -131,11 +152,32 @@ public class GroupNameInlineEditAuthority : MonoBehaviour
 
         // GroupPanelPostHintStats re-lays-out every row roughly ten times a
         // second, so keep the original label hidden and keep the editor pinned
-        // over exactly the rect that label occupies.
+        // over exactly the rect that label occupies. CopyRect only writes when a
+        // value actually differs - re-assigning identical anchors every frame
+        // kept dirtying the layout underneath TMP and ate the caret.
         if (hiddenNameText != null) hiddenNameText.enabled = false;
         if (hiddenNameRect != null) CopyRect(hiddenNameRect, field.transform as RectTransform);
 
+        MaintainCaret();
         HandleClearShortcut();
+    }
+
+    // TMP builds its caret object lazily, one frame or more after the field is
+    // activated, and parents it behind the text. Pull it to the front and force
+    // it opaque so the flashing bar is unmistakable against the dark field.
+    void MaintainCaret()
+    {
+        if (caretGraphic == null)
+        {
+            TMP_SelectionCaret found = field.GetComponentInChildren<TMP_SelectionCaret>(true);
+            if (found == null) return;
+            caretGraphic = found;
+            caretGraphic.transform.SetAsLastSibling();
+            caretGraphic.raycastTarget = false;
+        }
+
+        if (caretGraphic.color.a < 1f)
+            caretGraphic.color = new Color(1f, 1f, 1f, 1f);
     }
 
     void OpenEditor(int groupId)
@@ -160,7 +202,8 @@ public class GroupNameInlineEditAuthority : MonoBehaviour
         if (names != null)
         {
             string stored;
-            if (names.TryGetValue(groupId, out stored)) originalStoredName = stored;
+            if (names.TryGetValue(groupId, out stored))
+                originalStoredName = NormalizeFriendlyName(groupId, stored);
         }
 
         editingGroupId = groupId;
@@ -209,26 +252,52 @@ public class GroupNameInlineEditAuthority : MonoBehaviour
         text.richText = false;
         text.raycastTarget = false;
 
+        GameObject placeholderGO = new GameObject("Placeholder", typeof(RectTransform), typeof(TextMeshProUGUI));
+        placeholderGO.transform.SetParent(viewportGO.transform, false);
+        TextMeshProUGUI placeholder = placeholderGO.GetComponent<TextMeshProUGUI>();
+        RectTransform placeholderRect = placeholder.rectTransform;
+        placeholderRect.anchorMin = Vector2.zero;
+        placeholderRect.anchorMax = Vector2.one;
+        placeholderRect.pivot = new Vector2(.5f, .5f);
+        placeholderRect.offsetMin = Vector2.zero;
+        placeholderRect.offsetMax = Vector2.zero;
+        if (source.font != null) placeholder.font = source.font;
+        placeholder.text = "GROUP " + editingGroupId;
+        placeholder.fontSize = 14f;
+        placeholder.fontStyle = FontStyles.Bold;
+        placeholder.color = new Color(1f, 1f, 1f, .35f);
+        placeholder.alignment = TextAlignmentOptions.MidlineLeft;
+        placeholder.textWrappingMode = TextWrappingModes.NoWrap;
+        placeholder.overflowMode = TextOverflowModes.Overflow;
+        placeholder.richText = false;
+        placeholder.raycastTarget = false;
+
         field = fieldGO.GetComponent<TMP_InputField>();
         field.textViewport = viewport;
         field.textComponent = text;
+        field.placeholder = placeholder;
         field.targetGraphic = background;
         field.transition = Selectable.Transition.None;
         field.lineType = TMP_InputField.LineType.SingleLine;
         field.contentType = TMP_InputField.ContentType.Standard;
         field.richText = false;
         field.characterLimit = NameCharacterLimit;
-        field.caretWidth = 2;
+        field.caretWidth = CaretWidth;
         field.customCaretColor = true;
         field.caretColor = Color.white;
         field.caretBlinkRate = CaretBlinkRate;
         field.selectionColor = new Color(.25f, .65f, 1f, .45f);
         field.restoreOriginalTextOnEscape = true;
         field.onFocusSelectAll = SelectAllOnOpen;
-        field.text = source.text;
+
+        // Seed from the stored friendly name, not from the rendered label, so the
+        // field holds exactly what gets saved back.
+        field.text = originalStoredName;
         field.onEndEdit.AddListener(HandleEndEdit);
 
+        // Same activation order the variance seed boxes already use at runtime.
         if (EventSystem.current != null) EventSystem.current.SetSelectedGameObject(fieldGO);
+        field.Select();
         field.ActivateInputField();
         if (!SelectAllOnOpen) field.MoveTextEnd(false);
     }
@@ -321,6 +390,7 @@ public class GroupNameInlineEditAuthority : MonoBehaviour
 
         if (hiddenNameText != null) hiddenNameText.enabled = true;
 
+        caretGraphic = null;
         hiddenNameText = null;
         hiddenNameRect = null;
         editingGroupId = -1;
@@ -331,11 +401,11 @@ public class GroupNameInlineEditAuthority : MonoBehaviour
     static void CopyRect(RectTransform source, RectTransform target)
     {
         if (source == null || target == null) return;
-        target.anchorMin = source.anchorMin;
-        target.anchorMax = source.anchorMax;
-        target.pivot = source.pivot;
-        target.offsetMin = source.offsetMin;
-        target.offsetMax = source.offsetMax;
+        if (target.anchorMin != source.anchorMin) target.anchorMin = source.anchorMin;
+        if (target.anchorMax != source.anchorMax) target.anchorMax = source.anchorMax;
+        if (target.pivot != source.pivot) target.pivot = source.pivot;
+        if (target.offsetMin != source.offsetMin) target.offsetMin = source.offsetMin;
+        if (target.offsetMax != source.offsetMax) target.offsetMax = source.offsetMax;
     }
 
     // Group names end up inside a rich-text label, so drop anything that could
