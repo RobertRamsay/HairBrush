@@ -58,13 +58,29 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
     private const int VersionCheckTimeoutSeconds = 8;
 
     private const string PanelName = "WelcomeWhatsNewPanel";
-    private const float PanelWidth = 720f;
-    private const float PanelHeight = 560f;
+
+    // Card geometry as a fraction of the screen, so it stays a wide banner at any
+    // resolution rather than a fixed pixel box that shrinks on a large display.
+    private const float CardMarginX = .12f;
+    private const float CardMarginBottom = .26f;
+    private const float CardMarginTop = .72f;
+
+    private const float Pad = 16f;
+    private const float TitleHeight = 26f;
+    private const float DividerHeight = 3f;
+    private const float LineHeight = 18f;
+
+    // Buttons a single line tall with tight padding, per the rest of the tool.
+    private const float FooterHeight = 26f;
+    private const float StartButtonWidth = 190f;
+    private const float SuppressWidth = 300f;
+    private const float BoxSize = 18f;
 
     private ModelViewer viewer;
     private GameObject panel;
     private TextMeshProUGUI updateLabel;
     private Toggle suppressToggle;
+    private readonly List<GameObject> hiddenMenuButtons = new List<GameObject>();
     private bool evaluated;
     private bool updateChecked;
 
@@ -83,6 +99,7 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         panel = null;
         updateLabel = null;
         suppressToggle = null;
+        hiddenMenuButtons.Clear();
         evaluated = false;
         updateChecked = false;
     }
@@ -187,7 +204,7 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
             // Offline, blocked, or the file moved - say nothing rather than cry wolf.
             if (request.result != UnityWebRequest.Result.Success)
             {
-                SetUpdateText(string.Empty, new Color(.72f, .78f, .86f, 1f));
+                SetUpdateText(string.Empty, UITheme.TextMuted);
                 yield break;
             }
 
@@ -201,7 +218,7 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
             }
             else
             {
-                SetUpdateText("You are on the latest version.", new Color(.62f, .78f, .66f, 1f));
+                SetUpdateText("You are on the latest version.", new Color(.62f, .82f, .70f, 1f));
             }
         }
     }
@@ -264,12 +281,15 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
 
     // ------------------------------------------------------------------------------- UI
 
+    // Regions are anchored explicitly rather than stacked in a VerticalLayoutGroup. The
+    // card is a fixed shape and the only part that needs to grow is the notes area, so
+    // pinning each band to the card's edges is both simpler and exact - no relying on
+    // flexible-height distribution to land where the design says it should.
     void Build(Canvas canvas)
     {
         Transform existing = canvas.transform.Find(PanelName);
         if (existing != null) Destroy(existing.gameObject);
 
-        // Full-screen dimmer, so the panel reads as modal and nothing behind it is clickable.
         // Canvas first: GraphicRaycaster auto-adds one, and Canvas is DisallowMultipleComponent,
         // so listing it after the raycaster would fail to add.
         panel = new GameObject(PanelName, typeof(RectTransform), typeof(Canvas), typeof(GraphicRaycaster), typeof(Image));
@@ -284,55 +304,64 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         dim.anchorMax = Vector2.one;
         dim.offsetMin = Vector2.zero;
         dim.offsetMax = Vector2.zero;
-        panel.GetComponent<Image>().color = new Color(0f, 0f, 0f, .72f);
+        panel.GetComponent<Image>().color = new Color(0f, 0f, 0f, .55f);
 
-        GameObject card = new GameObject("Card", typeof(RectTransform), typeof(Image), typeof(VerticalLayoutGroup));
+        // The card sits over the menu buttons, so those are hidden while it is up.
+        HideMenuButtons();
+
+        GameObject card = new GameObject("Card", typeof(RectTransform), typeof(Image));
         card.transform.SetParent(panel.transform, false);
         RectTransform cardRect = card.GetComponent<RectTransform>();
-        cardRect.anchorMin = new Vector2(.5f, .5f);
-        cardRect.anchorMax = new Vector2(.5f, .5f);
-        cardRect.pivot = new Vector2(.5f, .5f);
-        cardRect.sizeDelta = new Vector2(PanelWidth, PanelHeight);
-        card.GetComponent<Image>().color = new Color(.13f, .14f, .16f, 1f);
+        cardRect.anchorMin = new Vector2(CardMarginX, CardMarginBottom);
+        cardRect.anchorMax = new Vector2(1f - CardMarginX, CardMarginTop);
+        cardRect.offsetMin = Vector2.zero;
+        cardRect.offsetMax = Vector2.zero;
+        ApplyNineSlice(card.GetComponent<Image>(), UITheme.FineEdgeSprite, UITheme.PanelDark);
 
-        VerticalLayoutGroup cardLayout = card.GetComponent<VerticalLayoutGroup>();
-        cardLayout.padding = new RectOffset(26, 26, 22, 20);
-        cardLayout.spacing = 10f;
-        cardLayout.childControlWidth = true;
-        cardLayout.childControlHeight = false;
-        cardLayout.childForceExpandHeight = false;
+        float y = -Pad;
 
-        AddLabel(card.transform, "Title", "WELCOME TO HAIRBRUSH BETA", 24f, FontStyles.Bold,
-            Color.white, TextAlignmentOptions.MidlineLeft, 34f);
-        AddLabel(card.transform, "Version", "What's new in " + ReleaseHeading + "   (v" + Application.version + ")", 14f,
-            FontStyles.Bold, new Color(.62f, .82f, .88f, 1f), TextAlignmentOptions.MidlineLeft, 22f);
+        TextMeshProUGUI title = AddBand(card.transform, "Title", y, TitleHeight);
+        StyleText(title, "WELCOME TO HAIRBRUSH BETA", 20f, FontStyles.Bold, UITheme.TextBright);
+        y -= TitleHeight + 4f;
 
-        updateLabel = AddLabel(card.transform, "UpdateStatus", "Checking for updates...", 13f, FontStyles.Bold,
-            new Color(.72f, .78f, .86f, 1f), TextAlignmentOptions.MidlineLeft, 20f);
+        AddDivider(card.transform, y);
+        y -= DividerHeight + 6f;
 
-        BuildNotes(card.transform);
+        TextMeshProUGUI version = AddBand(card.transform, "Version", y, LineHeight);
+        StyleText(version, "What's new in " + ReleaseHeading + "   (v" + Application.version + ")", 13f,
+            FontStyles.Bold, UITheme.FillCyan);
+        y -= LineHeight + 2f;
+
+        updateLabel = AddBand(card.transform, "UpdateStatus", y, LineHeight);
+        StyleText(updateLabel, "Checking for updates...", 12f, FontStyles.Bold, UITheme.TextMuted);
+        y -= LineHeight + 8f;
+
+        BuildNotes(card.transform, y);
         BuildFooter(card.transform);
 
         StartCoroutine(CheckForUpdate());
     }
 
-    void BuildNotes(Transform parent)
+    // Notes fill everything between the header block above and the footer below.
+    void BuildNotes(Transform parent, float top)
     {
-        GameObject scrollGO = new GameObject("NotesScroll", typeof(RectTransform), typeof(Image), typeof(ScrollRect), typeof(LayoutElement));
+        GameObject scrollGO = new GameObject("NotesScroll", typeof(RectTransform), typeof(Image), typeof(ScrollRect));
         scrollGO.transform.SetParent(parent, false);
-        scrollGO.GetComponent<Image>().color = new Color(.09f, .10f, .11f, 1f);
 
-        LayoutElement scrollLayout = scrollGO.GetComponent<LayoutElement>();
-        scrollLayout.flexibleHeight = 1f;
-        scrollLayout.preferredHeight = 360f;
+        RectTransform scrollRect = scrollGO.GetComponent<RectTransform>();
+        scrollRect.anchorMin = new Vector2(0f, 0f);
+        scrollRect.anchorMax = new Vector2(1f, 1f);
+        scrollRect.offsetMin = new Vector2(Pad, Pad + FooterHeight + 8f);
+        scrollRect.offsetMax = new Vector2(-Pad, top);
+        ApplyNineSlice(scrollGO.GetComponent<Image>(), UITheme.FineEdgeSprite, UITheme.TrackDark);
 
         GameObject viewportGO = new GameObject("Viewport", typeof(RectTransform), typeof(RectMask2D));
         viewportGO.transform.SetParent(scrollGO.transform, false);
         RectTransform viewport = viewportGO.GetComponent<RectTransform>();
         viewport.anchorMin = Vector2.zero;
         viewport.anchorMax = Vector2.one;
-        viewport.offsetMin = new Vector2(12f, 10f);
-        viewport.offsetMax = new Vector2(-12f, -10f);
+        viewport.offsetMin = new Vector2(12f, 8f);
+        viewport.offsetMax = new Vector2(-12f, -8f);
 
         GameObject contentGO = new GameObject("Content", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
         contentGO.transform.SetParent(viewportGO.transform, false);
@@ -343,7 +372,7 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         content.sizeDelta = Vector2.zero;
 
         VerticalLayoutGroup contentLayout = contentGO.GetComponent<VerticalLayoutGroup>();
-        contentLayout.spacing = 6f;
+        contentLayout.spacing = 5f;
         contentLayout.childControlWidth = true;
         contentLayout.childControlHeight = true;
         contentLayout.childForceExpandHeight = false;
@@ -362,13 +391,11 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
             // A line with no lower-case letters is a section heading, not a bullet.
             if (note == note.ToUpperInvariant())
             {
-                AddNote(contentGO.transform, "Section" + index, note, 13f, FontStyles.Bold,
-                    new Color(.62f, .82f, .88f, 1f));
+                AddNote(contentGO.transform, "Section" + index, note, 12f, FontStyles.Bold, UITheme.FillCyan);
                 continue;
             }
 
-            AddNote(contentGO.transform, "Note" + index, "•  " + note, 13f, FontStyles.Normal,
-                new Color(.86f, .88f, .92f, 1f));
+            AddNote(contentGO.transform, "Note" + index, "•  " + note, 12f, FontStyles.Normal, UITheme.TextBright);
         }
 
         ScrollRect scroll = scrollGO.GetComponent<ScrollRect>();
@@ -383,45 +410,40 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
 
     void BuildFooter(Transform parent)
     {
-        GameObject footer = new GameObject("Footer", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
-        footer.transform.SetParent(parent, false);
+        BuildSuppressToggle(parent);
 
-        LayoutElement footerLayout = footer.GetComponent<LayoutElement>();
-        footerLayout.minHeight = 38f;
-        footerLayout.preferredHeight = 38f;
+        GameObject buttonGO = new GameObject("CloseButton", typeof(RectTransform), typeof(Image), typeof(Button));
+        buttonGO.transform.SetParent(parent, false);
 
-        HorizontalLayoutGroup layout = footer.GetComponent<HorizontalLayoutGroup>();
-        layout.spacing = 12f;
-        layout.childControlWidth = false;
-        layout.childControlHeight = true;
-        layout.childForceExpandWidth = false;
-        layout.childAlignment = TextAnchor.MiddleLeft;
+        RectTransform rect = buttonGO.GetComponent<RectTransform>();
+        rect.anchorMin = new Vector2(1f, 0f);
+        rect.anchorMax = new Vector2(1f, 0f);
+        rect.pivot = new Vector2(1f, 0f);
+        rect.anchoredPosition = new Vector2(-Pad, Pad);
+        rect.sizeDelta = new Vector2(StartButtonWidth, FooterHeight);
 
-        BuildSuppressToggle(footer.transform);
+        Button button = buttonGO.GetComponent<Button>();
+        button.onClick.AddListener(Close);
 
-        GameObject spacer = new GameObject("Spacer", typeof(RectTransform), typeof(LayoutElement));
-        spacer.transform.SetParent(footer.transform, false);
-        spacer.GetComponent<LayoutElement>().flexibleWidth = 1f;
+        // Same 9-slice skin, hover and click states as every other button in the tool.
+        UITheme.StyleButton(button);
 
-        GameObject buttonGO = new GameObject("CloseButton", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
-        buttonGO.transform.SetParent(footer.transform, false);
-        LayoutElement buttonLayout = buttonGO.GetComponent<LayoutElement>();
-        buttonLayout.minWidth = 150f;
-        buttonLayout.preferredWidth = 150f;
-        buttonGO.GetComponent<Image>().color = new Color(.20f, .50f, .80f, 1f);
-        buttonGO.GetComponent<Button>().onClick.AddListener(Close);
-
-        AddLabel(buttonGO.transform, "Text", "START GROOMING", 15f, FontStyles.Bold,
-            Color.white, TextAlignmentOptions.Center, 0f, true);
+        TextMeshProUGUI label = AddStretchedText(buttonGO.transform, "Text");
+        StyleText(label, "START GROOMING", 14f, FontStyles.Bold, UITheme.TextBright);
+        label.alignment = TextAlignmentOptions.Center;
     }
 
     void BuildSuppressToggle(Transform parent)
     {
-        GameObject toggleGO = new GameObject("SuppressToggle", typeof(RectTransform), typeof(Toggle), typeof(LayoutElement));
+        GameObject toggleGO = new GameObject("SuppressToggle", typeof(RectTransform), typeof(Toggle));
         toggleGO.transform.SetParent(parent, false);
-        LayoutElement toggleLayout = toggleGO.GetComponent<LayoutElement>();
-        toggleLayout.minWidth = 300f;
-        toggleLayout.preferredWidth = 300f;
+
+        RectTransform rect = toggleGO.GetComponent<RectTransform>();
+        rect.anchorMin = new Vector2(0f, 0f);
+        rect.anchorMax = new Vector2(0f, 0f);
+        rect.pivot = new Vector2(0f, 0f);
+        rect.anchoredPosition = new Vector2(Pad, Pad);
+        rect.sizeDelta = new Vector2(SuppressWidth, FooterHeight);
 
         GameObject boxGO = new GameObject("Box", typeof(RectTransform), typeof(Image));
         boxGO.transform.SetParent(toggleGO.transform, false);
@@ -429,9 +451,9 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         box.anchorMin = new Vector2(0f, .5f);
         box.anchorMax = new Vector2(0f, .5f);
         box.pivot = new Vector2(0f, .5f);
-        box.anchoredPosition = new Vector2(0f, 0f);
-        box.sizeDelta = new Vector2(20f, 20f);
-        boxGO.GetComponent<Image>().color = new Color(.24f, .25f, .28f, 1f);
+        box.anchoredPosition = Vector2.zero;
+        box.sizeDelta = new Vector2(BoxSize, BoxSize);
+        ApplyNineSlice(boxGO.GetComponent<Image>(), UITheme.FineEdgeSprite, Color.white);
 
         GameObject tickGO = new GameObject("Tick", typeof(RectTransform), typeof(Image));
         tickGO.transform.SetParent(boxGO.transform, false);
@@ -440,19 +462,48 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         tick.anchorMax = Vector2.one;
         tick.offsetMin = new Vector2(4f, 4f);
         tick.offsetMax = new Vector2(-4f, -4f);
-        tickGO.GetComponent<Image>().color = new Color(.30f, .72f, .82f, 1f);
+        tickGO.GetComponent<Image>().color = UITheme.ButtonPressed;
 
-        TextMeshProUGUI caption = AddLabel(toggleGO.transform, "Caption",
-            "Don't show this again for v" + Application.version, 13f, FontStyles.Normal,
-            new Color(.80f, .84f, .90f, 1f), TextAlignmentOptions.MidlineLeft, 0f, true);
-        RectTransform captionRect = caption.rectTransform;
-        captionRect.offsetMin = new Vector2(28f, 0f);
-        captionRect.offsetMax = new Vector2(0f, 0f);
+        GameObject captionGO = new GameObject("Caption", typeof(RectTransform), typeof(TextMeshProUGUI));
+        captionGO.transform.SetParent(toggleGO.transform, false);
+        RectTransform caption = captionGO.GetComponent<RectTransform>();
+        caption.anchorMin = Vector2.zero;
+        caption.anchorMax = Vector2.one;
+        caption.offsetMin = new Vector2(BoxSize + 8f, 0f);
+        caption.offsetMax = Vector2.zero;
+
+        TextMeshProUGUI captionText = captionGO.GetComponent<TextMeshProUGUI>();
+        StyleText(captionText, "Don't show this again for v" + Application.version, 12f, FontStyles.Normal, UITheme.TextMuted);
 
         suppressToggle = toggleGO.GetComponent<Toggle>();
         suppressToggle.targetGraphic = boxGO.GetComponent<Image>();
         suppressToggle.graphic = tickGO.GetComponent<Image>();
         suppressToggle.isOn = false;
+    }
+
+    // ------------------------------------------------------------------- menu visibility
+
+    void HideMenuButtons()
+    {
+        hiddenMenuButtons.Clear();
+        if (viewer == null || viewer.uiContainer == null) return;
+
+        // Only the action buttons - the logo and the brand header stay on show behind the card.
+        foreach (Button button in viewer.uiContainer.GetComponentsInChildren<Button>(true))
+        {
+            if (button == null || !button.gameObject.activeSelf) continue;
+            hiddenMenuButtons.Add(button.gameObject);
+            button.gameObject.SetActive(false);
+        }
+    }
+
+    void RestoreMenuButtons()
+    {
+        foreach (GameObject go in hiddenMenuButtons)
+        {
+            if (go != null) go.SetActive(true);
+        }
+        hiddenMenuButtons.Clear();
     }
 
     void Close()
@@ -462,40 +513,85 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         if (suppressToggle != null && suppressToggle.isOn)
             WriteSetting(SuppressKey, Application.version);
 
+        RestoreMenuButtons();
+
         if (panel != null) Destroy(panel);
         panel = null;
     }
 
-    static TextMeshProUGUI AddLabel(Transform parent, string name, string text, float size, FontStyles style,
-        Color colour, TextAlignmentOptions alignment, float height, bool stretch = false)
+    // ------------------------------------------------------------------------- UI helpers
+
+    static void ApplyNineSlice(Image image, Sprite sprite, Color colour)
+    {
+        if (image == null) return;
+        image.color = colour;
+
+        // Falls back to a flat fill if the sprites are missing, exactly as UITheme does.
+        if (sprite == null) return;
+        image.sprite = sprite;
+        image.type = Image.Type.Sliced;
+    }
+
+    // A full-width band pinned below the card's top edge.
+    static TextMeshProUGUI AddBand(Transform parent, string name, float top, float height)
     {
         GameObject go = new GameObject(name, typeof(RectTransform), typeof(TextMeshProUGUI));
         go.transform.SetParent(parent, false);
 
         RectTransform rect = go.GetComponent<RectTransform>();
-        if (stretch)
-        {
-            rect.anchorMin = Vector2.zero;
-            rect.anchorMax = Vector2.one;
-            rect.offsetMin = Vector2.zero;
-            rect.offsetMax = Vector2.zero;
-        }
-        else
-        {
-            rect.sizeDelta = new Vector2(0f, height);
-            LayoutElement layout = go.AddComponent<LayoutElement>();
-            layout.minHeight = height;
-            layout.preferredHeight = height;
-        }
+        rect.anchorMin = new Vector2(0f, 1f);
+        rect.anchorMax = new Vector2(1f, 1f);
+        rect.pivot = new Vector2(.5f, 1f);
+        rect.offsetMin = new Vector2(Pad, -height);
+        rect.offsetMax = new Vector2(-Pad, 0f);
+        rect.anchoredPosition = new Vector2(rect.anchoredPosition.x, top);
 
-        TextMeshProUGUI label = go.GetComponent<TextMeshProUGUI>();
+        return go.GetComponent<TextMeshProUGUI>();
+    }
+
+    static void AddDivider(Transform parent, float top)
+    {
+        GameObject go = new GameObject("Divider", typeof(RectTransform), typeof(Image));
+        go.transform.SetParent(parent, false);
+
+        RectTransform rect = go.GetComponent<RectTransform>();
+        rect.anchorMin = new Vector2(0f, 1f);
+        rect.anchorMax = new Vector2(1f, 1f);
+        rect.pivot = new Vector2(.5f, 1f);
+        rect.offsetMin = new Vector2(Pad, -DividerHeight);
+        rect.offsetMax = new Vector2(-Pad, 0f);
+        rect.anchoredPosition = new Vector2(rect.anchoredPosition.x, top);
+
+        Image image = go.GetComponent<Image>();
+        ApplyNineSlice(image, UITheme.DividerSprite, Color.white);
+        image.raycastTarget = false;
+    }
+
+    static TextMeshProUGUI AddStretchedText(Transform parent, string name)
+    {
+        GameObject go = new GameObject(name, typeof(RectTransform), typeof(TextMeshProUGUI));
+        go.transform.SetParent(parent, false);
+
+        RectTransform rect = go.GetComponent<RectTransform>();
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.one;
+        rect.offsetMin = Vector2.zero;
+        rect.offsetMax = Vector2.zero;
+
+        return go.GetComponent<TextMeshProUGUI>();
+    }
+
+    static void StyleText(TextMeshProUGUI label, string text, float size, FontStyles style, Color colour)
+    {
+        if (label == null) return;
         label.text = text;
         label.fontSize = size;
         label.fontStyle = style;
         label.color = colour;
-        label.alignment = alignment;
+        label.alignment = TextAlignmentOptions.MidlineLeft;
+        label.textWrappingMode = TextWrappingModes.NoWrap;
+        label.overflowMode = TextOverflowModes.Ellipsis;
         label.raycastTarget = false;
-        return label;
     }
 
     static void AddGap(Transform parent, string name)
@@ -503,8 +599,8 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         GameObject go = new GameObject(name, typeof(RectTransform), typeof(LayoutElement));
         go.transform.SetParent(parent, false);
         LayoutElement layout = go.GetComponent<LayoutElement>();
-        layout.minHeight = 10f;
-        layout.preferredHeight = 10f;
+        layout.minHeight = 9f;
+        layout.preferredHeight = 9f;
     }
 
     static void AddNote(Transform parent, string name, string text, float size, FontStyles style, Color colour)
