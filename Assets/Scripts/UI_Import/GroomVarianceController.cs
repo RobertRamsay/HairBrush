@@ -12,7 +12,7 @@ public class GroomVarianceController : MonoBehaviour
     // APPEND ONLY. SignedRandom mixes (int)c into the deterministic per-card hash, so the
     // ordinal of every channel is part of the persisted random stream. Inserting a channel
     // anywhere but the end silently re-randomises every card in every project ever saved.
-    private enum Channel { Length, Width, Bend, Twist, AngleX, AngleY, AngleZ, CurlFrequency, CurlDiameter, WaveAmplitude, WaveFrequency, WaveDirection }
+    private enum Channel { Length, Width, Bend, Twist, AngleX, AngleY, AngleZ, CurlFrequency, CurlDiameter, WaveAmplitude, WaveFrequency, WaveDirection, Arch }
 
     [Serializable] private class VarianceSetting { public float amount; public int seed; }
     private class VarianceRow { public Slider slider; public TextMeshProUGUI valueText; public TMP_InputField seedInput; }
@@ -138,7 +138,8 @@ public class GroomVarianceController : MonoBehaviour
             (Channel.CurlDiameter,  "Curl Diameter_Row",  "Curl Diameter_Row",  "Curl Diameter",  0.05f),
             (Channel.WaveAmplitude, "Wave Amplitude_Row", "Wave Amplitude_Row", "Wave Amplitude", 0.05f),
             (Channel.WaveFrequency, "Wave Frequency_Row", "Wave Frequency_Row", "Wave Frequency", 5f),
-            (Channel.WaveDirection, "Wave Direction_Row", "Wave Direction_Row", "Wave Direction", 0.5f)
+            (Channel.WaveDirection, "Wave Direction_Row", "Wave Direction_Row", "Wave Direction", 0.5f),
+            (Channel.Arch,          "Arch_Row",           "Arch_Row",           "Arch",           0.5f)
         };
 
         Dictionary<Channel, Transform> mainRows = new();
@@ -485,6 +486,7 @@ public class GroomVarianceController : MonoBehaviour
             case Channel.WaveAmplitude: state.waveAmplitude = Mathf.Max(0f, varied); break;
             case Channel.WaveFrequency: state.waveFrequency = varied; break;
             case Channel.WaveDirection: state.waveDirection = Mathf.Clamp01(varied); break;
+            case Channel.Arch: state.arch = Mathf.Max(0f, varied); break;
         }
 
         // Variance is upstream authored state. Write that canonical channel directly instead
@@ -512,6 +514,7 @@ public class GroomVarianceController : MonoBehaviour
                 Channel.WaveAmplitude => root.waveAmplitude,
                 Channel.WaveFrequency => root.waveFrequency,
                 Channel.WaveDirection => root.waveDirection,
+                Channel.Arch => root.arch,
                 _ => 0f
             };
         }
@@ -532,6 +535,7 @@ public class GroomVarianceController : MonoBehaviour
                 Channel.WaveAmplitude => viewer.currentWaveAmplitude,
                 Channel.WaveFrequency => viewer.currentWaveFrequency,
                 Channel.WaveDirection => viewer.currentWaveDirection,
+                Channel.Arch => viewer.currentArch,
                 _ => 0f
             };
         }
@@ -556,6 +560,7 @@ public class GroomVarianceController : MonoBehaviour
                 Channel.WaveAmplitude => state.waveAmplitude,
                 Channel.WaveFrequency => state.waveFrequency,
                 Channel.WaveDirection => state.waveDirection,
+                Channel.Arch => state.arch,
                 _ => 0f
             };
             VarianceSetting s = GetSetting(groupId, c);
@@ -586,7 +591,7 @@ public class GroomVarianceController : MonoBehaviour
 
     static void Mix(ref uint h, int v) { unchecked { h ^= (uint)v; h *= 16777619u; } }
     int CountCards(int id) => FindObjectsByType<HairCard>(FindObjectsSortMode.None).Count(c => c.groupId == id);
-    string ChannelLabel(Channel c) => c switch { Channel.Length => "Length", Channel.Width => "Width", Channel.Bend => "Bend", Channel.Twist => "Twist", Channel.AngleX => "Angle X", Channel.AngleY => "Angle Y", Channel.AngleZ => "Angle Z", Channel.CurlFrequency => "Curl Frequency", Channel.CurlDiameter => "Curl Diameter", Channel.WaveAmplitude => "Wave Amplitude", Channel.WaveFrequency => "Wave Frequency", Channel.WaveDirection => "Wave Direction", _ => c.ToString() };
+    string ChannelLabel(Channel c) => c switch { Channel.Length => "Length", Channel.Width => "Width", Channel.Bend => "Bend", Channel.Twist => "Twist", Channel.AngleX => "Angle X", Channel.AngleY => "Angle Y", Channel.AngleZ => "Angle Z", Channel.CurlFrequency => "Curl Frequency", Channel.CurlDiameter => "Curl Diameter", Channel.WaveAmplitude => "Wave Amplitude", Channel.WaveFrequency => "Wave Frequency", Channel.WaveDirection => "Wave Direction", Channel.Arch => "Arch", _ => c.ToString() };
     // Angular channels (Bend/Twist/AngleX-Z) show a degree symbol; everything else (including
     // Curl Frequency, a turn count, and Curl Diameter, a length-scale magnitude) is plain decimal.
     string FormatVariance(Channel c, float v) => c == Channel.Bend || c == Channel.Twist || c == Channel.AngleX || c == Channel.AngleY || c == Channel.AngleZ ? v.ToString("F1") + "°" : v.ToString("F3");

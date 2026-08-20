@@ -17,6 +17,7 @@ public class GroomRootStateAuthority : MonoBehaviour
         public float uScale, vScale, uOffset, vOffset;
         public float curlFrequency, curlDiameter;
         public float waveAmplitude, waveFrequency, waveDirection;
+        public float arch;
     }
 
     private readonly Dictionary<int, RootState> roots = new();
@@ -154,7 +155,8 @@ public class GroomRootStateAuthority : MonoBehaviour
             curlDiameter = viewer.currentCurlDiameter,
             waveAmplitude = viewer.currentWaveAmplitude,
             waveFrequency = viewer.currentWaveFrequency,
-            waveDirection = viewer.currentWaveDirection
+            waveDirection = viewer.currentWaveDirection,
+            arch = viewer.currentArch
         };
     }
 
@@ -178,6 +180,7 @@ public class GroomRootStateAuthority : MonoBehaviour
         viewer.currentWaveAmplitude = s.waveAmplitude;
         viewer.currentWaveFrequency = s.waveFrequency;
         viewer.currentWaveDirection = s.waveDirection;
+        viewer.currentArch = s.arch;
     }
 
     public bool TryGetRootState(int groupId, out RootState state)

@@ -17,7 +17,7 @@ using UnityEngine.UI;
 public class GroomSessionResetCoordinator : MonoBehaviour
 {
     private static readonly string[] VarianceChannels =
-        { "Length", "Width", "Bend", "Twist", "AngleX", "AngleY", "AngleZ", "CurlFrequency", "CurlDiameter", "WaveAmplitude", "WaveFrequency", "WaveDirection" };
+        { "Length", "Width", "Bend", "Twist", "AngleX", "AngleY", "AngleZ", "CurlFrequency", "CurlDiameter", "WaveAmplitude", "WaveFrequency", "WaveDirection", "Arch" };
     private static readonly string[] VarianceRows =
         { "Length_VarianceRow", "Width_VarianceRow", "Bend_VarianceRow", "Twist_VarianceRow", "Angle X_VarianceRow", "Angle Y_VarianceRow", "Angle Z_VarianceRow" };
 
@@ -194,7 +194,7 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         {
             if (card == null || card.groupId != groupId) continue;
             card.SetSelectionWeight(0f);
-            card.SetParameters(.2f, .01f, 12, 0f, 0f, 0f, 0f, 0f, .002f, 1f, 1f, 1f, 0f, 0f, 0f, 0f, 0f, 0f, 1f);
+            card.SetParameters(.2f, .01f, 12, 0f, 0f, 0f, 0f, 0f, .002f, 1f, 1f, 1f, 0f, 0f, 0f, 0f, 0f, 0f, 1f, HairCard.ArchNeutral);
         }
 
         SyncCoreSliderUI(ToControlState(defaults));
@@ -309,7 +309,8 @@ public class GroomSessionResetCoordinator : MonoBehaviour
             curlDiameter = 0f,
             waveAmplitude = 0f,
             waveFrequency = 0f,
-            waveDirection = 1f
+            waveDirection = 1f,
+            arch = HairCard.ArchNeutral
         };
     }
 
@@ -333,6 +334,7 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         viewer.currentWaveAmplitude = s.waveAmplitude;
         viewer.currentWaveFrequency = s.waveFrequency;
         viewer.currentWaveDirection = s.waveDirection;
+        viewer.currentArch = s.arch;
     }
 
     void WriteViewerControls(PostAffectorManager.ControlState s)
@@ -355,6 +357,7 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         viewer.currentWaveAmplitude = s.waveAmplitude;
         viewer.currentWaveFrequency = s.waveFrequency;
         viewer.currentWaveDirection = s.waveDirection;
+        viewer.currentArch = s.arch;
     }
 
     static PostAffectorManager.ControlState ToControlState(GroomRootStateAuthority.RootState s)
@@ -378,7 +381,8 @@ public class GroomSessionResetCoordinator : MonoBehaviour
             curlDiameter = s.curlDiameter,
             waveAmplitude = s.waveAmplitude,
             waveFrequency = s.waveFrequency,
-            waveDirection = s.waveDirection
+            waveDirection = s.waveDirection,
+            arch = s.arch
         };
     }
 
@@ -432,6 +436,7 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         SetCoreSlider(new[] { "Wave Amplitude_Slider" }, "Wave Amplitude", viewer.currentWaveAmplitude);
         SetCoreSlider(new[] { "Wave Frequency_Slider" }, "Wave Frequency", viewer.currentWaveFrequency);
         SetCoreSlider(new[] { "Wave Direction_Slider" }, "Wave Direction", viewer.currentWaveDirection);
+        SetCoreSlider(new[] { "Arch_Slider" }, "Arch", viewer.currentArch);
     }
 
     void SetCoreSlider(string[] names, string labelPrefix, float value)
@@ -565,6 +570,7 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         viewer.currentWaveAmplitude = 0f;
         viewer.currentWaveFrequency = 0f;
         viewer.currentWaveDirection = 1f;
+        viewer.currentArch = HairCard.ArchNeutral;
 
         if (viewer.groomingSliderPanelGO == null) return;
 
@@ -584,6 +590,7 @@ public class GroomSessionResetCoordinator : MonoBehaviour
             else if (n == "U Offset_Slider" || n == "V Offset_Slider") slider.SetValueWithoutNotify(0f);
             else if (n == "Curl Frequency_Slider" || n == "Curl Diameter_Slider" || n == "Wave Amplitude_Slider" || n == "Wave Frequency_Slider") slider.SetValueWithoutNotify(0f);
             else if (n == "Wave Direction_Slider") slider.SetValueWithoutNotify(1f);
+            else if (n == "Arch_Slider") slider.SetValueWithoutNotify(HairCard.ArchNeutral);
             else if (n == "VarianceSlider") slider.SetValueWithoutNotify(0f);
             slider.interactable = true;
         }

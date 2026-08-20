@@ -119,6 +119,10 @@ public class SliderRightClickResetInstaller : MonoBehaviour
             // it to 0 would quietly flip every wave in the group back to side-to-side.
             case "Wave Direction_Slider": value = 1f; return true;
 
+            // Neutral, not 0 - resetting Arch to zero would flatten the group rather than
+            // restore its default profile.
+            case "Arch_Slider": value = .5f; return true;
+
             case "LightAngle_Slider": value = 0f; return true;
             case "MetallicSlider": value = 0f; return true;
             case "SmoothnessSlider": value = .56f; return true;

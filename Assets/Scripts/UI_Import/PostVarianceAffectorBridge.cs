@@ -167,7 +167,8 @@ public class PostVarianceAffectorBridge : MonoBehaviour
                 curlDiameter = card.curlDiameter,
                 waveAmplitude = card.waveAmplitude,
                 waveFrequency = card.waveFrequency,
-                waveDirection = card.waveDirection
+                waveDirection = card.waveDirection,
+                arch = card.arch
             };
             card.ApplyEvaluatedState(evaluated);
         }

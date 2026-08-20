@@ -127,7 +127,7 @@ public class PostAffectorSurfaceMoveUX : MonoBehaviour
             if (previousWeight <= 0f && weight > 0f)
             {
                 card.CaptureBaseState(card.length, card.width, card.segments, card.bendAngle, card.twistAngle,
-                    card.GetEmbedDepth(), card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ(), card.curlFrequency, card.curlDiameter, card.waveAmplitude, card.waveFrequency, card.waveDirection);
+                    card.GetEmbedDepth(), card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ(), card.curlFrequency, card.curlDiameter, card.waveAmplitude, card.waveFrequency, card.waveDirection, card.arch);
             }
             card.SetSelectionWeight(weight);
         }

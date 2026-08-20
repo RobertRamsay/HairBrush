@@ -37,6 +37,7 @@ public class PostAffectorManager : MonoBehaviour
         public float uScale, vScale, uOffset, vOffset;
         public float curlFrequency, curlDiameter;
         public float waveAmplitude, waveFrequency, waveDirection;
+        public float arch;
     }
 
     private class CardState
@@ -346,6 +347,7 @@ public class PostAffectorManager : MonoBehaviour
         s.waveAmplitude = r.waveAmplitude;
         s.waveFrequency = r.waveFrequency;
         s.waveDirection = r.waveDirection;
+        s.arch = r.arch;
         return s;
     }
 
@@ -375,6 +377,7 @@ public class PostAffectorManager : MonoBehaviour
         if (!Near(a.waveAmplitude, b.waveAmplitude)) return false;
         if (!Near(a.waveFrequency, b.waveFrequency)) return false;
         if (!Near(a.waveDirection, b.waveDirection)) return false;
+        if (!Near(a.arch, b.arch)) return false;
         return true;
     }
 
@@ -575,7 +578,8 @@ public class PostAffectorManager : MonoBehaviour
             curlDiameter = Mathf.Max(0f, s.curlDiameter),
             waveAmplitude = Mathf.Max(0f, s.waveAmplitude),
             waveFrequency = s.waveFrequency,
-            waveDirection = Mathf.Clamp01(s.waveDirection)
+            waveDirection = Mathf.Clamp01(s.waveDirection),
+            arch = Mathf.Max(0f, s.arch)
         };
     }
 
@@ -705,6 +709,7 @@ public class PostAffectorManager : MonoBehaviour
                 case "Wave Amplitude_Slider": slider.SetValueWithoutNotify(viewer.currentWaveAmplitude); break;
                 case "Wave Frequency_Slider": slider.SetValueWithoutNotify(viewer.currentWaveFrequency); break;
                 case "Wave Direction_Slider": slider.SetValueWithoutNotify(viewer.currentWaveDirection); break;
+                case "Arch_Slider": slider.SetValueWithoutNotify(viewer.currentArch); break;
             }
         }
     }
@@ -853,7 +858,8 @@ public class PostAffectorManager : MonoBehaviour
         curlDiameter = viewer.currentCurlDiameter,
         waveAmplitude = viewer.currentWaveAmplitude,
         waveFrequency = viewer.currentWaveFrequency,
-        waveDirection = viewer.currentWaveDirection
+        waveDirection = viewer.currentWaveDirection,
+        arch = viewer.currentArch
     };
 
     ControlState ReadCanonical(HairCard c)
@@ -878,7 +884,8 @@ public class PostAffectorManager : MonoBehaviour
             curlDiameter = s.curlDiameter,
             waveAmplitude = s.waveAmplitude,
             waveFrequency = s.waveFrequency,
-            waveDirection = s.waveDirection
+            waveDirection = s.waveDirection,
+            arch = s.arch
         };
     }
 
@@ -902,6 +909,7 @@ public class PostAffectorManager : MonoBehaviour
         viewer.currentWaveAmplitude = s.waveAmplitude;
         viewer.currentWaveFrequency = s.waveFrequency;
         viewer.currentWaveDirection = s.waveDirection;
+        viewer.currentArch = s.arch;
     }
 
     static ControlState Add(ControlState a, ControlState b) => new ControlState
@@ -913,7 +921,7 @@ public class PostAffectorManager : MonoBehaviour
         uOffset = a.uOffset + b.uOffset, vOffset = a.vOffset + b.vOffset,
         curlFrequency = a.curlFrequency + b.curlFrequency, curlDiameter = a.curlDiameter + b.curlDiameter,
         waveAmplitude = a.waveAmplitude + b.waveAmplitude, waveFrequency = a.waveFrequency + b.waveFrequency,
-        waveDirection = a.waveDirection + b.waveDirection
+        waveDirection = a.waveDirection + b.waveDirection, arch = a.arch + b.arch
     };
 
     static ControlState Subtract(ControlState a, ControlState b) => new ControlState
@@ -925,7 +933,7 @@ public class PostAffectorManager : MonoBehaviour
         uOffset = a.uOffset - b.uOffset, vOffset = a.vOffset - b.vOffset,
         curlFrequency = a.curlFrequency - b.curlFrequency, curlDiameter = a.curlDiameter - b.curlDiameter,
         waveAmplitude = a.waveAmplitude - b.waveAmplitude, waveFrequency = a.waveFrequency - b.waveFrequency,
-        waveDirection = a.waveDirection - b.waveDirection
+        waveDirection = a.waveDirection - b.waveDirection, arch = a.arch - b.arch
     };
 
     static ControlState Scale(ControlState a, float s) => new ControlState
@@ -937,7 +945,7 @@ public class PostAffectorManager : MonoBehaviour
         uOffset = a.uOffset * s, vOffset = a.vOffset * s,
         curlFrequency = a.curlFrequency * s, curlDiameter = a.curlDiameter * s,
         waveAmplitude = a.waveAmplitude * s, waveFrequency = a.waveFrequency * s,
-        waveDirection = a.waveDirection * s
+        waveDirection = a.waveDirection * s, arch = a.arch * s
     };
 
     public List<PostAffectorSaveData> ExportGroup(int groupId)
@@ -1030,7 +1038,7 @@ public class PostAffectorManager : MonoBehaviour
         uScale = s.uScale, vScale = s.vScale, uOffset = s.uOffset, vOffset = s.vOffset,
         curlFrequency = s.curlFrequency, curlDiameter = s.curlDiameter,
         waveAmplitude = s.waveAmplitude, waveFrequency = s.waveFrequency,
-        waveDirection = s.waveDirection
+        waveDirection = s.waveDirection, arch = s.arch
     };
 
     static ControlState FromSave(PostAffectorControlSaveData s) => s == null ? new ControlState() : new ControlState
@@ -1040,6 +1048,6 @@ public class PostAffectorManager : MonoBehaviour
         uScale = s.uScale, vScale = s.vScale, uOffset = s.uOffset, vOffset = s.vOffset,
         curlFrequency = s.curlFrequency, curlDiameter = s.curlDiameter,
         waveAmplitude = s.waveAmplitude, waveFrequency = s.waveFrequency,
-        waveDirection = s.waveDirection
+        waveDirection = s.waveDirection, arch = s.arch
     };
 }

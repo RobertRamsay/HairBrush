@@ -37,6 +37,11 @@ public class HairCardSaveData
     // choice: the side-to-side original was the thing being replaced. Anyone who wants the old
     // look sets the slider to 0.
     public float waveDirection = 1f;
+    // Initialised to the neutral 0.5, NOT 0. JsonUtility runs field initialisers first and
+    // only overwrites keys present in the JSON, so a project saved before Arch existed lands
+    // here and renders exactly as it always did. A default of 0 would flatten every card in
+    // every legacy project to a plain ribbon.
+    public float arch = 0.5f;
 
     // SYMMETRY. A mirrored card evaluates its geometry through a local-X mirror, so this has
     // to survive a round trip or every mirrored card in a reloaded project would come back
@@ -123,6 +128,8 @@ public class GroupClumperSaveData
     // Zero for legacy projects, which is exactly the correct no-curl-delta default.
     public float curlFrequency,curlDiameter;
     public float waveAmplitude,waveFrequency,waveDirection;
+    // A POST DELTA, so 0 is correct here - it means 'this POST does not change the arch'.
+    public float arch;
 }
 
 [Serializable] public class PostAffectorSaveData
@@ -259,6 +266,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
     public float sliderWaveAmplitude;
     public float sliderWaveFrequency;
     public float sliderWaveDirection = 1f;
+    public float sliderArch = 0.5f;
 
     public void OnBeforeSerialize()
     {

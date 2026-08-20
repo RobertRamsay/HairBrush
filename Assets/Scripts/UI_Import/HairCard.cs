@@ -14,6 +14,7 @@ public class HairCard : MonoBehaviour
         public float uScale, vScale, uOffset, vOffset;
         public float curlFrequency, curlDiameter;
         public float waveAmplitude, waveFrequency, waveDirection;
+        public float arch;
     }
 
     // A POST keeps its authored scalar delta, but its Bend/X/Y/Z contribution can have a
@@ -29,6 +30,10 @@ public class HairCard : MonoBehaviour
     // Native card cross-section: left edge / raised centre / right edge. The ridge height
     // follows card width so narrow and wide cards keep the same shallow convex profile.
     public const float CrossSectionRidgeRatio = 0.18f;
+
+    // The arch value that leaves the cross-section exactly as it was before Arch existed.
+    // Also where a brand-new card, a reset group and a legacy project all land.
+    public const float ArchNeutral = 0.5f;
     public const int CrossSectionColumns = 3;
 
     // Curl banking. Without this the coil only displaces the centreline while every
@@ -175,7 +180,11 @@ public class HairCard : MonoBehaviour
         // Scaled by the SAME multiplier so the cross-section stays self-similar along the
         // length. The ridge is defined as a fixed ratio of width; leaving it un-tapered would
         // turn a narrowed tip into a tall thin spike rather than a smaller copy of the root.
-        ridge = card.GetCrossSectionRidgeHeight() * widthMultiplier;
+        // Arch scales the ridge about its neutral point: 0.5 -> x1 (exactly the shape the tool
+        // had before Arch existed), 0 -> flat ribbon, 1 -> double. Clamped at 0 only; a POST is
+        // free to drive it past what the slider itself allows.
+        float archScale = Mathf.Max(0f, card.arch) / ArchNeutral;
+        ridge = card.GetCrossSectionRidgeHeight() * widthMultiplier * archScale;
 
         // N-: invert the arch. The cross-section is left edge / raised centre / right edge, so
         // negating the centre's height turns the shallow convex profile concave - the A / V
@@ -513,6 +522,17 @@ public class HairCard : MonoBehaviour
     // rather than side to side. Set the slider to 0 for the previous look.
     public float waveDirection = 1f;
 
+    // ARCH: how pronounced the cross-section's convex profile is.
+    //
+    // 0.5 is neutral and reproduces exactly the shape the tool had before this existed - the
+    // ridge sitting at CrossSectionRidgeRatio of the width. 0 flattens the card to a plain
+    // ribbon, 1 doubles the arch. Centred rather than starting at zero on purpose, so the
+    // slider has headroom in BOTH directions from the look you already had.
+    //
+    // Unlike Curl and Wave this is a ControlState channel rather than a root-only one, which
+    // is what lets a POST affector drive it locally with spatial falloff.
+    public float arch = ArchNeutral;
+
     [Header("UV Settings")]
     public float uScale = 1.0f;
     public float vScale = 1.0f;
@@ -555,6 +575,7 @@ public class HairCard : MonoBehaviour
     private float baseLength, baseWidth, baseBend, baseTwist, baseEmbedDepth;
     private float baseCurlFrequency, baseCurlDiameter;
     private float baseWaveAmplitude, baseWaveFrequency, baseWaveDirection;
+    private float baseArch;
     private int baseSegments;
     private float baseOffsetX, baseOffsetY, baseOffsetZ;
     private Material cardMaterial;
@@ -796,6 +817,7 @@ public class HairCard : MonoBehaviour
         waveAmplitude = state.waveAmplitude;
         waveFrequency = state.waveFrequency;
         waveDirection = state.waveDirection;
+        arch = state.arch;
         if (surfaceNormal != Vector3.zero) UpdateTransformOrientation(currentEmbedDepth);
 
         // Guarded. PostAffectorManager, PostFreeCanonicalAuthority and
@@ -827,7 +849,8 @@ public class HairCard : MonoBehaviour
             curlDiameter = curlDiameter,
             waveAmplitude = waveAmplitude,
             waveFrequency = waveFrequency,
-            waveDirection = waveDirection
+            waveDirection = waveDirection,
+            arch = arch
         };
     }
 
@@ -842,6 +865,10 @@ public class HairCard : MonoBehaviour
         // a negative frequency simply runs the wave the other way, which is a usable result.
         state.waveAmplitude = Mathf.Max(0f, state.waveAmplitude);
         state.waveDirection = Mathf.Clamp01(state.waveDirection);
+        // No upper bound - a POST may push arch past the slider's range, the same way it can
+        // push Bend past 360. Negative is refused because an inverted arch is what the N- form
+        // flip is for, and two controls fighting over one inversion makes neither predictable.
+        state.arch = Mathf.Max(0f, state.arch);
         return state;
     }
 
@@ -936,7 +963,7 @@ public class HairCard : MonoBehaviour
         if (cardMaterial.HasProperty("_Color")) cardMaterial.SetColor("_Color", finalColor);
     }
 
-    public void SetParameters(float newLength, float newWidth, int newSegments, float newBend, float newTwist, float offsetX, float offsetY, float offsetZ, float newEmbedDepth, float strengthMultiplier = 1f, float newUScale = 1f, float newVScale = 1f, float newUOffset = 0f, float newVOffset = 0f, float newCurlFrequency = 0f, float newCurlDiameter = 0f, float newWaveAmplitude = 0f, float newWaveFrequency = 0f, float newWaveDirection = 1f)
+    public void SetParameters(float newLength, float newWidth, int newSegments, float newBend, float newTwist, float offsetX, float offsetY, float offsetZ, float newEmbedDepth, float strengthMultiplier = 1f, float newUScale = 1f, float newVScale = 1f, float newUOffset = 0f, float newVOffset = 0f, float newCurlFrequency = 0f, float newCurlDiameter = 0f, float newWaveAmplitude = 0f, float newWaveFrequency = 0f, float newWaveDirection = 1f, float newArch = ArchNeutral)
     {
         if (selectionWeight > 0f)
         {
@@ -955,6 +982,7 @@ public class HairCard : MonoBehaviour
             waveAmplitude = Mathf.Lerp(baseWaveAmplitude, newWaveAmplitude, w);
             waveFrequency = Mathf.Lerp(baseWaveFrequency, newWaveFrequency, w);
             waveDirection = Mathf.Lerp(baseWaveDirection, newWaveDirection, w);
+            arch = Mathf.Lerp(baseArch, newArch, w);
         }
         else
         {
@@ -972,6 +1000,7 @@ public class HairCard : MonoBehaviour
             waveAmplitude = newWaveAmplitude;
             waveFrequency = newWaveFrequency;
             waveDirection = newWaveDirection;
+            arch = newArch;
         }
         uScale = newUScale;
         vScale = newVScale;
@@ -993,7 +1022,7 @@ public class HairCard : MonoBehaviour
         GenerateMeshIfInputsChanged();
     }
 
-    public void CaptureBaseState(float activeLength, float activeWidth, int activeSegments, float activeBend, float activeTwist, float activeDepth, float ox, float oy, float oz, float activeCurlFrequency = 0f, float activeCurlDiameter = 0f, float activeWaveAmplitude = 0f, float activeWaveFrequency = 0f, float activeWaveDirection = 1f)
+    public void CaptureBaseState(float activeLength, float activeWidth, int activeSegments, float activeBend, float activeTwist, float activeDepth, float ox, float oy, float oz, float activeCurlFrequency = 0f, float activeCurlDiameter = 0f, float activeWaveAmplitude = 0f, float activeWaveFrequency = 0f, float activeWaveDirection = 1f, float activeArch = ArchNeutral)
     {
         baseLength = activeLength;
         baseWidth = activeWidth;
@@ -1009,6 +1038,7 @@ public class HairCard : MonoBehaviour
         baseWaveAmplitude = activeWaveAmplitude;
         baseWaveFrequency = activeWaveFrequency;
         baseWaveDirection = activeWaveDirection;
+        baseArch = activeArch;
     }
 
     public void SetSelectionWeight(float weight) { selectionWeight = Mathf.Clamp01(weight); UpdateVisualHighlight(); }
@@ -1263,6 +1293,7 @@ public class HairCard : MonoBehaviour
             hash = hash * 31 + waveAmplitude.GetHashCode();
             hash = hash * 31 + waveFrequency.GetHashCode();
             hash = hash * 31 + waveDirection.GetHashCode();
+            hash = hash * 31 + arch.GetHashCode();
             hash = hash * 31 + uScale.GetHashCode();
             hash = hash * 31 + vScale.GetHashCode();
             hash = hash * 31 + uOffset.GetHashCode();
