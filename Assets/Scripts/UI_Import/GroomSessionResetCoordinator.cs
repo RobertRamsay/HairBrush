@@ -183,6 +183,7 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.CurlFrequency);
         GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.CurlDiameter);
         GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.SegmentDensity);
+        GroupSidednessAuthority.Forget(groupId);
 
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
         {

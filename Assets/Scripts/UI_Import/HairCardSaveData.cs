@@ -167,6 +167,11 @@ public class PostPredeterminedUVSaveData
     // like the curves above - a 0..1 -> 0..1 remap (see HairCard.GenerateMesh).
     public List<GroomCurveKeySaveData> segmentDensityCurve=new();
 
+    // Rendering only: true culls back faces for this group's cards. Stored as
+    // "singleSided" rather than "doubleSided" so a project saved before this existed
+    // decodes the missing field to false, which is the historical double-sided look.
+    public bool singleSided;
+
     // Group UV source. Adjustable keeps the legacy group U/V controls. Predetermined
     // chooses one authored Texture Editor rectangle per card using the inclusive ID range
     // and a deterministic seed.
@@ -246,6 +251,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
         // group serialization, then restore the selected POST immediately afterward.
         PostShapeCurveBridge.BeginProjectCapture(this);
         GroomShapeCurveAuthority.Capture(this);
+        GroupSidednessAuthority.Capture(this);
         PostShapeCurveBridge.EndProjectCapture();
         MaterialProjectPersistenceBridge.Capture(this);
         MaterialUVRectAuthority.Capture(this);
@@ -272,6 +278,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
         PendingGroupUVRestore=this;
         PostPredeterminedUVAuthority.QueueRestore(this);
         GroomShapeCurveAuthority.QueueRestore(this);
+        GroupSidednessAuthority.QueueRestore(this);
         PostShapeCurveBridge.QueueRestore(this);
         MaterialProjectPersistenceBridge.PendingRestore=this;
         MaterialUVRectAuthority.QueueRestore(this);

@@ -42,7 +42,9 @@ public class HairCard : MonoBehaviour
     // 0 = the old unbanked behaviour.
     // Values above 1 over-rotate, which can be a useful stylisation.
     // This stacks with Twist; the twist slider still adds its own roll on top.
-    public const float CurlBankAmount = 1f;
+    // static readonly rather than const on purpose: as a const the compiler folds
+    // every guard below into a constant and reports the other branch as unreachable.
+    public static readonly float CurlBankAmount = 1f;
 
     // Bend used to rotate each cross-section by the authored bend/twist rotation and
     // nothing else. That rotation's forward axis is NOT the direction the bent spine
@@ -58,7 +60,8 @@ public class HairCard : MonoBehaviour
     // rotation that puts its forward axis on the spine's real tangent, so the curl
     // keeps its round cross-section however hard the card is bent. Set false for the
     // old behaviour.
-    public const bool BendFollowsPath = true;
+    // static readonly for the same reason as CurlBankAmount above.
+    public static readonly bool BendFollowsPath = true;
 
     // Single source of truth for the coil. GenerateMesh and the clumped-card mesh
     // rebuild in ThreeColumnClumperMeshAuthority both call this, so the two cannot
@@ -636,12 +639,42 @@ public class HairCard : MonoBehaviour
     // Lets MaterialEditorManager's periodic global-material enforcement skip this card instead
     // of erasing a genuine, active divergence (selection highlight or single-sided override)
     // every time it runs.
-    public bool HasDivergedMaterial() => cardMaterial != null;
+    public bool HasDivergedMaterial() => cardMaterial != null || !isDoubleSided;
 
     static Material SharedMaterial()
     {
         if (cachedViewer == null) cachedViewer = FindFirstObjectByType<ModelViewer>();
         return cachedViewer != null ? cachedViewer.hairCardMaterial : null;
+    }
+
+    // One single-sided clone per source material, shared by every card that wants it.
+    // Cull mode is material state and cannot be overridden per renderer, so a second
+    // material is unavoidable - but a whole group set to SS still batches with every
+    // other SS card rather than becoming hundreds of unique materials.
+    private static readonly Dictionary<Material, Material> singleSidedVariants = new Dictionary<Material, Material>();
+
+    static Material SingleSidedVariant(Material source)
+    {
+        if (source == null) return null;
+
+        Material variant;
+        if (singleSidedVariants.TryGetValue(source, out variant) && variant != null) return variant;
+
+        variant = new Material(source) { name = source.name + "_SingleSided" };
+        if (variant.HasProperty("_Cull")) variant.SetFloat("_Cull", 2f);
+        variant.DisableKeyword("_DOUBLESIDED_ON");
+        variant.enableInstancing = true;
+        singleSidedVariants[source] = variant;
+        return variant;
+    }
+
+    // What this card should be rendering with when it has no per-instance divergence.
+    Material EffectiveSharedMaterial()
+    {
+        Material shared = SharedMaterial();
+        if (shared == null) return null;
+        if (isDoubleSided) return shared;
+        return SingleSidedVariant(shared);
     }
 
     void SetupMaterial()
@@ -651,7 +684,9 @@ public class HairCard : MonoBehaviour
         cardMaterial = null;
         isDoubleSided = true;
 
-        Material shared = SharedMaterial();
+        isDoubleSided = !GroupSidednessAuthority.IsSingleSided(groupId);
+
+        Material shared = EffectiveSharedMaterial();
         if (shared != null) { mr.sharedMaterial = shared; return; }
 
         // No material chosen yet (very early startup, before MaterialEditorManager has run) -
@@ -674,7 +709,7 @@ public class HairCard : MonoBehaviour
         if (cardMaterial != null) return;
         MeshRenderer mr = GetComponent<MeshRenderer>();
         if (mr == null) return;
-        Material shared = SharedMaterial() ?? mr.sharedMaterial;
+        Material shared = EffectiveSharedMaterial() ?? mr.sharedMaterial;
         if (shared == null) return;
         cardMaterial = new Material(shared) { name = "HairCardInstance_" + GetInstanceID() };
         mr.sharedMaterial = cardMaterial;
@@ -685,20 +720,45 @@ public class HairCard : MonoBehaviour
     void RevertToSharedMaterialIfPossible()
     {
         if (cardMaterial == null) return;
-        if (selectionWeight > .0001f || !isDoubleSided) return;
+
+        // A selection highlight is the only thing that still needs a material of this
+        // card's own. Single-sidedness no longer does - it has a shared variant - so a
+        // single-sided card rejoins the batchable pool here just like any other.
+        if (selectionWeight > .0001f) return;
+
         MeshRenderer mr = GetComponent<MeshRenderer>();
-        Material shared = SharedMaterial();
+        Material shared = EffectiveSharedMaterial();
         if (mr != null && shared != null) mr.sharedMaterial = shared;
         Destroy(cardMaterial);
         cardMaterial = null;
     }
 
+    // Rendering only - no geometry or card state changes with this. Driven per group by
+    // GroupSidednessAuthority's SS/DS toggle.
     public void SetDoubleSided(bool enabled)
     {
         isDoubleSided = enabled;
-        if (enabled) { RevertToSharedMaterialIfPossible(); if (cardMaterial == null) return; }
-        else EnsurePerInstanceMaterial();
-        if (cardMaterial != null && cardMaterial.HasProperty("_Cull")) cardMaterial.SetFloat("_Cull", enabled ? 0f : 2f);
+
+        // A card with a live selection highlight owns its own material anyway, so just set
+        // the cull on that and leave the sharing alone until the highlight clears.
+        if (cardMaterial != null)
+        {
+            if (cardMaterial.HasProperty("_Cull"))
+            {
+                float cull = 2f;
+                if (enabled) cull = 0f;
+                cardMaterial.SetFloat("_Cull", cull);
+            }
+            RevertToSharedMaterialIfPossible();
+            return;
+        }
+
+        MeshRenderer mr = GetComponent<MeshRenderer>();
+        if (mr == null) return;
+
+        Material target = EffectiveSharedMaterial();
+        if (target == null) return;
+        if (mr.sharedMaterial != target) mr.sharedMaterial = target;
     }
 
     public void SetSegments(int newSegments)

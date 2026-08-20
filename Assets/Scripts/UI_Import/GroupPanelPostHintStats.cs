@@ -32,6 +32,7 @@ public class GroupPanelPostHintStats : MonoBehaviour
     private const float UtilityBottomInset = 6f;
     private const float UVButtonWidth = 74f;
     private const float SoloButtonWidth = 52f;
+    private const float SidednessButtonWidth = 40f;
     // Eight lines at fontSize 11. Bump this whenever a line is added to ApplyHintStyle,
     // or the last one gets clipped.
     private const float ControlsHintHeight = 100f;
@@ -400,6 +401,19 @@ public class GroupPanelPostHintStats : MonoBehaviour
             uvRect.pivot = new Vector2(1f, 0f);
             uvRect.anchoredPosition = new Vector2(-(UtilityRightInset + SoloButtonWidth + UtilityButtonGap), UtilityBottomInset);
             uvRect.sizeDelta = new Vector2(UVButtonWidth, UtilityButtonHeight);
+        }
+
+        // Rendering sidedness, immediately left of UV. Row reads Name | SS/DS | UV | SOLO.
+        Transform sidedness = item.Find(GroupSidednessAuthority.ButtonName);
+        if (sidedness is RectTransform sidednessRect)
+        {
+            sidednessRect.anchorMin = new Vector2(1f, 0f);
+            sidednessRect.anchorMax = new Vector2(1f, 0f);
+            sidednessRect.pivot = new Vector2(1f, 0f);
+            sidednessRect.anchoredPosition = new Vector2(
+                -(UtilityRightInset + SoloButtonWidth + UtilityButtonGap + UVButtonWidth + UtilityButtonGap),
+                UtilityBottomInset);
+            sidednessRect.sizeDelta = new Vector2(SidednessButtonWidth, UtilityButtonHeight);
         }
     }
 }

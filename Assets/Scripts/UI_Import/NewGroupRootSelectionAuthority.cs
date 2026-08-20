@@ -245,6 +245,9 @@ public class NewGroupRootSelectionAuthority : MonoBehaviour
         GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.CurlFrequency);
         GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.CurlDiameter);
         GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.SegmentDensity);
+
+        // A reused group id must not inherit the previous group's SS/DS rendering choice.
+        GroupSidednessAuthority.Forget(gid);
     }
 
     static void RemoveGroupEntry(FieldInfo field, object owner, int gid)
