@@ -668,11 +668,9 @@ public class ModelViewer : MonoBehaviour
         groupVScales[id] = currentVScale;
         groupUOffsets[id] = currentUOffset;
         groupVOffsets[id] = currentVOffset;
+        // Sets every current* field from the group's root state and then pushes the whole
+        // slider set - UV included, because the four UV fields were assigned just above.
         SyncShapeSlidersToGroupRoot(id);
-        if (uScaleSlider != null) uScaleSlider.SetValueWithoutNotify(currentUScale);
-        if (vScaleSlider != null) vScaleSlider.SetValueWithoutNotify(currentVScale);
-        if (uOffsetSlider != null) uOffsetSlider.SetValueWithoutNotify(currentUOffset);
-        if (vOffsetSlider != null) vOffsetSlider.SetValueWithoutNotify(currentVOffset);
         RefreshGroupListUI();
         if (flashGroupCoroutine != null) StopCoroutine(flashGroupCoroutine);
         flashGroupCoroutine = StartCoroutine(FlashActiveGroupRoutine(currentGroupId));
@@ -767,6 +765,23 @@ public class ModelViewer : MonoBehaviour
         currentWaveFrequency = state.waveFrequency;
         currentWaveDirection = state.waveDirection;
 
+        PushAllGroomSliders();
+    }
+
+    // THE one place every grooming slider is pushed from its backing field.
+    //
+    // This list used to be split in two - the shape sliders here, the four UV sliders inline in
+    // SelectGroup - and that split is exactly how it drifted: every parameter added since has
+    // needed a hand edit in both, and a miss shows up as "I clicked the group and that one
+    // slider kept its old value", which is easy to see and hard to attribute.
+    //
+    // Anything with a slider goes in here and nowhere else. A new parameter is then picked up
+    // by group selection, by POST/CLUMPER exit and by the modifier-exit restore for free.
+    //
+    // SetValueWithoutNotify throughout, never .value: these are all UI-follows-state pushes,
+    // and firing the change callbacks would write the values straight back out over the group.
+    void PushAllGroomSliders()
+    {
         if (lengthSlider != null) lengthSlider.SetValueWithoutNotify(currentLength);
         if (widthSlider != null) widthSlider.SetValueWithoutNotify(currentWidth);
         if (segmentsSlider != null) segmentsSlider.SetValueWithoutNotify(currentSegments);
@@ -781,6 +796,10 @@ public class ModelViewer : MonoBehaviour
         if (waveAmplitudeSlider != null) waveAmplitudeSlider.SetValueWithoutNotify(currentWaveAmplitude);
         if (waveFrequencySlider != null) waveFrequencySlider.SetValueWithoutNotify(currentWaveFrequency);
         if (waveDirectionSlider != null) waveDirectionSlider.SetValueWithoutNotify(currentWaveDirection);
+        if (uScaleSlider != null) uScaleSlider.SetValueWithoutNotify(currentUScale);
+        if (vScaleSlider != null) vScaleSlider.SetValueWithoutNotify(currentVScale);
+        if (uOffsetSlider != null) uOffsetSlider.SetValueWithoutNotify(currentUOffset);
+        if (vOffsetSlider != null) vOffsetSlider.SetValueWithoutNotify(currentVOffset);
     }
 
     IEnumerator FlashActiveGroupRoutine(int activeId)
