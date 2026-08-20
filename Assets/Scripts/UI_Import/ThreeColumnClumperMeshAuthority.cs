@@ -395,22 +395,17 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
             float span = halfWidth * card.flattenFactor;
             int index = i * columns;
 
-            Vector3 left = new Vector3(-span, 0f, z);
-            Vector3 center = new Vector3(0f, ridge, z);
-            Vector3 right = new Vector3(span, 0f, z);
+            // HairCard.EvaluateCurl is the shared coil definition, so this rebuild keeps
+            // both the offset and the bank roll identical to GenerateMesh. The bank
+            // shapes the section, then the offset moves it.
+            Vector3 curlOffset;
+            Quaternion bankRotation;
+            HairCard.EvaluateCurl(card.groupId, card.curlFrequency, card.curlDiameter, t, out curlOffset, out bankRotation);
 
-            if (card.curlFrequency != 0f && card.curlDiameter > 0f)
-            {
-                float freqMultiplier = PostShapeCurveBridge.EvaluateRoot(card.groupId, GroomShapeCurveChannel.CurlFrequency, t);
-                float diameterMultiplier = PostShapeCurveBridge.EvaluateRoot(card.groupId, GroomShapeCurveChannel.CurlDiameter, t);
-                float turns = card.curlFrequency * freqMultiplier;
-                float radius = card.curlDiameter * diameterMultiplier * .5f;
-                float angle = turns * t * Mathf.PI * 2f;
-                Vector3 curlOffset = new Vector3(radius * (Mathf.Cos(angle) - 1f), radius * Mathf.Sin(angle), 0f);
-                left += curlOffset;
-                center += curlOffset;
-                right += curlOffset;
-            }
+            Vector3 sectionOrigin = new Vector3(0f, 0f, z);
+            Vector3 left = sectionOrigin + bankRotation * new Vector3(-span, 0f, 0f) + curlOffset;
+            Vector3 center = sectionOrigin + bankRotation * new Vector3(0f, ridge, 0f) + curlOffset;
+            Vector3 right = sectionOrigin + bankRotation * new Vector3(span, 0f, 0f) + curlOffset;
 
             Quaternion authored = card.GetLengthProfileRotation(t);
             vertices[index] = authored * left;

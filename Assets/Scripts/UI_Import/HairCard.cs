@@ -31,6 +31,56 @@ public class HairCard : MonoBehaviour
     public const float CrossSectionRidgeRatio = 0.18f;
     public const int CrossSectionColumns = 3;
 
+    // Curl banking. Without this the coil only displaces the centreline while every
+    // cross-section keeps pointing the same way, so a curled card cycles between
+    // face-on and edge-on once per turn and reads as a twisting ribbon rather than
+    // a coil. Rolling each section about the card's own length axis by the curl
+    // angle keeps its relationship to the coil constant all the way to the tip -
+    // the way an aircraft banks into a turn instead of staying wings-level.
+    //
+    // 1 = fully banked (section angle tracks the curl angle exactly).
+    // 0 = the old unbanked behaviour.
+    // Values above 1 over-rotate, which can be a useful stylisation.
+    // This stacks with Twist; the twist slider still adds its own roll on top.
+    public const float CurlBankAmount = 1f;
+
+    // Single source of truth for the coil. GenerateMesh and the clumped-card mesh
+    // rebuild in ThreeColumnClumperMeshAuthority both call this, so the two cannot
+    // drift apart again the way they did when curl was first added.
+    //
+    // curlOffset is the sideways displacement of the centreline at t. bankRotation
+    // is the roll the flat cross-section should carry at t, about the card's own
+    // length axis, and must be applied to the section BEFORE the offset: the roll
+    // shapes the section, the offset moves it.
+    public static void EvaluateCurl(
+        int groupId,
+        float curlFrequency,
+        float curlDiameter,
+        float t,
+        out Vector3 curlOffset,
+        out Quaternion bankRotation)
+    {
+        curlOffset = Vector3.zero;
+        bankRotation = Quaternion.identity;
+
+        if (curlFrequency == 0f) return;
+        if (curlDiameter <= 0f) return;
+
+        // Root-only profile curves (see GroomShapeCurveAuthority) - no per-POST override.
+        float freqMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.CurlFrequency, t);
+        float diameterMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.CurlDiameter, t);
+        float turns = curlFrequency * freqMultiplier;
+        float radius = curlDiameter * diameterMultiplier * .5f;
+        float angle = turns * t * Mathf.PI * 2f;
+
+        // cos(0)-1 = 0 and sin(0) = 0, so this is exactly zero at the root (t=0),
+        // keeping the coil continuous with the card's actual root position.
+        curlOffset = new Vector3(radius * (Mathf.Cos(angle) - 1f), radius * Mathf.Sin(angle), 0f);
+
+        if (CurlBankAmount == 0f) return;
+        bankRotation = Quaternion.AngleAxis(angle * Mathf.Rad2Deg * CurlBankAmount, Vector3.forward);
+    }
+
     [Header("Grooming Parameters")]
     public float width = 0.01f;
     public float length = 0.2f;
@@ -546,9 +596,18 @@ public class HairCard : MonoBehaviour
             int index = i * columns;
             float currentWidth = halfWidth * flattenFactor;
 
-            Vector3 left = new Vector3(-currentWidth, 0f, z);
-            Vector3 center = new Vector3(0f, ridgeHeight, z);
-            Vector3 right = new Vector3(currentWidth, 0f, z);
+            // Curl is resolved before the cross-section is built, because the section
+            // has to be banked into the turn as it is laid down rather than rotated
+            // afterwards - rotating later would swing any clump displacement around
+            // with it.
+            Vector3 curlOffset;
+            Quaternion bankRotation;
+            EvaluateCurl(groupId, curlFrequency, curlDiameter, t, out curlOffset, out bankRotation);
+
+            Vector3 sectionOrigin = new Vector3(0f, 0f, z);
+            Vector3 left = sectionOrigin + bankRotation * new Vector3(-currentWidth, 0f, 0f);
+            Vector3 center = sectionOrigin + bankRotation * new Vector3(0f, ridgeHeight, 0f);
+            Vector3 right = sectionOrigin + bankRotation * new Vector3(currentWidth, 0f, 0f);
 
             if (clumpActive && t > 0f)
             {
@@ -567,21 +626,10 @@ public class HairCard : MonoBehaviour
             // centerline, sweeping around the card's own length axis as t increases. Applied
             // after width (currentWidth above) and before Bend/X/Y/Z's rotation below, so a
             // curled card still gets bent/angled as a whole on top of its own coil shape.
-            // Root-only profile curves (see GroomShapeCurveAuthority) - no per-POST override.
-            if (curlFrequency != 0f && curlDiameter > 0f)
-            {
-                float freqMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.CurlFrequency, t);
-                float diameterMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.CurlDiameter, t);
-                float turns = curlFrequency * freqMultiplier;
-                float radius = curlDiameter * diameterMultiplier * .5f;
-                float angle = turns * t * Mathf.PI * 2f;
-                // cos(0)-1 = 0 and sin(0) = 0, so this is exactly zero at the root (t=0),
-                // keeping the coil continuous with the card's actual root position.
-                Vector3 curlOffset = new Vector3(radius * (Mathf.Cos(angle) - 1f), radius * Mathf.Sin(angle), 0f);
-                left += curlOffset;
-                center += curlOffset;
-                right += curlOffset;
-            }
+            // The section was already banked into this same sweep when it was built.
+            left += curlOffset;
+            center += curlOffset;
+            right += curlOffset;
 
             Quaternion authoredRotation = GetLengthProfileRotation(t);
             left = authoredRotation * left;
