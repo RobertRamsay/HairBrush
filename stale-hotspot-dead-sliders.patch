@@ -1,0 +1,179 @@
+diff --git a/Assets/Scripts/UI_Import/ModelViewer.cs b/Assets/Scripts/UI_Import/ModelViewer.cs
+index 41b5029..b4f4112 100644
+--- a/Assets/Scripts/UI_Import/ModelViewer.cs
++++ b/Assets/Scripts/UI_Import/ModelViewer.cs
+@@ -190,7 +190,7 @@ public class ModelViewer : MonoBehaviour
+     {
+         float delta = val - currentLength;
+         currentLength = val;
+-        if (hasSelectionHotspot) UpdateActiveCard();
++        if (HasLiveSelection()) UpdateActiveCard();
+         else ApplyGroupUpdate(c => c.SetParameters(Mathf.Max(0.0001f, isRelativeMode ? c.length + delta : val), c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency, c.waveDirection, c.arch));
+     }
+ 
+@@ -198,7 +198,7 @@ public class ModelViewer : MonoBehaviour
+     {
+         float delta = val - currentWidth;
+         currentWidth = val;
+-        if (hasSelectionHotspot) UpdateActiveCard();
++        if (HasLiveSelection()) UpdateActiveCard();
+         else ApplyGroupUpdate(c => c.SetParameters(c.length, Mathf.Max(0.0005f, isRelativeMode ? c.width + delta : val), c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency, c.waveDirection, c.arch));
+     }
+ 
+@@ -206,7 +206,7 @@ public class ModelViewer : MonoBehaviour
+     {
+         float delta = val - currentCurlFrequency;
+         currentCurlFrequency = val;
+-        if (hasSelectionHotspot) UpdateActiveCard();
++        if (HasLiveSelection()) UpdateActiveCard();
+         else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, isRelativeMode ? c.curlFrequency + delta : val, c.curlDiameter, c.waveAmplitude, c.waveFrequency, c.waveDirection, c.arch));
+     }
+ 
+@@ -214,7 +214,7 @@ public class ModelViewer : MonoBehaviour
+     {
+         float delta = val - currentWaveAmplitude;
+         currentWaveAmplitude = val;
+-        if (hasSelectionHotspot) UpdateActiveCard();
++        if (HasLiveSelection()) UpdateActiveCard();
+         else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, Mathf.Max(0f, isRelativeMode ? c.waveAmplitude + delta : val), c.waveFrequency, c.waveDirection, c.arch));
+     }
+ 
+@@ -222,7 +222,7 @@ public class ModelViewer : MonoBehaviour
+     {
+         float delta = val - currentArch;
+         currentArch = val;
+-        if (hasSelectionHotspot) UpdateActiveCard();
++        if (HasLiveSelection()) UpdateActiveCard();
+         else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency, c.waveDirection, Mathf.Max(0f, isRelativeMode ? c.arch + delta : val)));
+     }
+ 
+@@ -230,7 +230,7 @@ public class ModelViewer : MonoBehaviour
+     {
+         float delta = val - currentWaveDirection;
+         currentWaveDirection = val;
+-        if (hasSelectionHotspot) UpdateActiveCard();
++        if (HasLiveSelection()) UpdateActiveCard();
+         else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency, Mathf.Clamp01(isRelativeMode ? c.waveDirection + delta : val), c.arch));
+     }
+ 
+@@ -238,7 +238,7 @@ public class ModelViewer : MonoBehaviour
+     {
+         float delta = val - currentWaveFrequency;
+         currentWaveFrequency = val;
+-        if (hasSelectionHotspot) UpdateActiveCard();
++        if (HasLiveSelection()) UpdateActiveCard();
+         else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, isRelativeMode ? c.waveFrequency + delta : val, c.waveDirection, c.arch));
+     }
+ 
+@@ -246,7 +246,7 @@ public class ModelViewer : MonoBehaviour
+     {
+         float delta = val - currentCurlDiameter;
+         currentCurlDiameter = val;
+-        if (hasSelectionHotspot) UpdateActiveCard();
++        if (HasLiveSelection()) UpdateActiveCard();
+         else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, Mathf.Max(0f, isRelativeMode ? c.curlDiameter + delta : val), c.waveAmplitude, c.waveFrequency, c.waveDirection, c.arch));
+     }
+ 
+@@ -255,7 +255,7 @@ public class ModelViewer : MonoBehaviour
+         int targetSegs = Mathf.RoundToInt(val);
+         int deltaSegs = targetSegs - currentSegments;
+         currentSegments = targetSegs;
+-        if (hasSelectionHotspot) UpdateActiveCard();
++        if (HasLiveSelection()) UpdateActiveCard();
+         else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, Mathf.Clamp(isRelativeMode ? c.segments + deltaSegs : targetSegs, 4, 60), c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency, c.waveDirection, c.arch));
+     }
+ 
+@@ -263,7 +263,7 @@ public class ModelViewer : MonoBehaviour
+     {
+         float delta = val - currentBend;
+         currentBend = val;
+-        if (hasSelectionHotspot) UpdateActiveCard();
++        if (HasLiveSelection()) UpdateActiveCard();
+         else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, isRelativeMode ? c.bendAngle + delta : val, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency, c.waveDirection, c.arch));
+     }
+ 
+@@ -271,7 +271,7 @@ public class ModelViewer : MonoBehaviour
+     {
+         float delta = val - currentTwist;
+         currentTwist = val;
+-        if (hasSelectionHotspot) UpdateActiveCard();
++        if (HasLiveSelection()) UpdateActiveCard();
+         else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, isRelativeMode ? c.twistAngle + delta : val, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency, c.waveDirection, c.arch));
+     }
+ 
+@@ -279,7 +279,7 @@ public class ModelViewer : MonoBehaviour
+     {
+         float delta = val - currentEmbedDepth;
+         currentEmbedDepth = val;
+-        if (hasSelectionHotspot) UpdateActiveCard();
++        if (HasLiveSelection()) UpdateActiveCard();
+         else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), Mathf.Max(0f, isRelativeMode ? c.GetEmbedDepth() + delta : val), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency, c.waveDirection, c.arch));
+     }
+ 
+@@ -287,7 +287,7 @@ public class ModelViewer : MonoBehaviour
+     {
+         float delta = val - currentOffsetX;
+         currentOffsetX = val;
+-        if (hasSelectionHotspot) UpdateActiveCard();
++        if (HasLiveSelection()) UpdateActiveCard();
+         else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, isRelativeMode ? c.GetOffsetX() + delta : val, c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency, c.waveDirection, c.arch));
+     }
+ 
+@@ -295,7 +295,7 @@ public class ModelViewer : MonoBehaviour
+     {
+         float delta = val - currentOffsetY;
+         currentOffsetY = val;
+-        if (hasSelectionHotspot) UpdateActiveCard();
++        if (HasLiveSelection()) UpdateActiveCard();
+         else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), isRelativeMode ? c.GetOffsetY() + delta : val, c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency, c.waveDirection, c.arch));
+     }
+ 
+@@ -303,7 +303,7 @@ public class ModelViewer : MonoBehaviour
+     {
+         float delta = val - currentOffsetZ;
+         currentOffsetZ = val;
+-        if (hasSelectionHotspot) UpdateActiveCard();
++        if (HasLiveSelection()) UpdateActiveCard();
+         else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), isRelativeMode ? c.GetOffsetZ() + delta : val, c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency, c.waveDirection, c.arch));
+     }
+ 
+@@ -1090,6 +1090,39 @@ public class ModelViewer : MonoBehaviour
+         return rowGO;
+     }
+ 
++    // Is there a LIVE localized selection - a hotspot that some card in this group actually
++    // carries weight for?
++    //
++    // hasSelectionHotspot on its own is not enough, and trusting it is why group-level slider
++    // edits could silently do nothing at all. PostFreeCanonicalAuthority calls
++    // SetSelectionWeight(0f) on every card of every group that has NO POSTs, every frame. So
++    // the moment the last POST is removed from a group, every card's weight is pinned to zero -
++    // while hasSelectionHotspot can still be true, because nothing on that path clears it
++    // (ClearSelectionHotspot is only reached by ctrl+clicking empty space, or by
++    // ClumperPostOwnershipAuthority, and that one only fires while a clumper is SELECTED).
++    //
++    // In that state every slider callback below routed to UpdateActiveCard(), which filters on
++    // selectionWeight > 0f and therefore matched ZERO cards. The slider moved, current* updated,
++    // and not one card was touched. No error, no visual change, nothing to attribute it to.
++    //
++    // Asking whether any card is actually weighted turns a stale flag into a harmless one.
++    bool HasLiveSelection()
++    {
++        if (!hasSelectionHotspot) return false;
++
++        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
++        {
++            if (card == null || card.groupId != currentGroupId) continue;
++            if (card.selectionWeight > 0f) return true;
++        }
++
++        // Claimed, but nothing carries weight - so there is no selection to edit. Drop the flag
++        // rather than re-scanning on every future slider event, and go through the real teardown
++        // so the brush rows and highlight state are cleaned up too.
++        ClearSelectionHotspot();
++        return false;
++    }
++
+     void UpdateActiveCard()
+     {
+         if (hasSelectionHotspot)
