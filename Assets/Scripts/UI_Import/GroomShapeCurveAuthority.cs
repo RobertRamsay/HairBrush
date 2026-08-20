@@ -125,7 +125,28 @@ public static class GroomShapeCurveRegistry
                 Finite(item.inTangent) ? item.inTangent : 0f,
                 Finite(item.outTangent) ? item.outTangent : 0f));
         }
+
+        // SEGMENT DENSITY used to be a position remap whose default was the identity
+        // diagonal y=t. Y is now segments-per-unit-length, where that same diagonal
+        // means "no rows at the root, densest at the tip". A project saved before the
+        // change with an untouched curve would therefore load looking quite different,
+        // so the legacy default is recognised and replaced with the new flat default.
+        // Anything actually authored is left exactly as it was drawn and reinterpreted.
+        if (channel == GroomShapeCurveChannel.SegmentDensity && IsLegacyIdentityRemap(keys))
+        {
+            Reset(groupId, channel);
+            return;
+        }
+
         SetCurve(groupId, channel, new AnimationCurve(keys.ToArray()));
+    }
+
+    static bool IsLegacyIdentityRemap(List<Keyframe> keys)
+    {
+        if (keys == null || keys.Count != 2) return false;
+        if (Mathf.Abs(keys[0].time) > .0001f || Mathf.Abs(keys[0].value) > .0001f) return false;
+        if (Mathf.Abs(keys[1].time - 1f) > .0001f || Mathf.Abs(keys[1].value - 1f) > .0001f) return false;
+        return true;
     }
 
     public static void RefreshGroup(int groupId)
@@ -145,14 +166,6 @@ public static class GroomShapeCurveRegistry
                 new Keyframe(0f, 0f, 0f, 0f),
                 new Keyframe(.5f, .25f, 1f, 1f),
                 new Keyframe(1f, 1f, 2f, 2f));
-        }
-        else if (channel == GroomShapeCurveChannel.SegmentDensity)
-        {
-            // Identity remap (y=t) - straight diagonal, so segments stay exactly evenly spaced
-            // by default, matching pre-existing behaviour until this is deliberately edited.
-            curve = new AnimationCurve(
-                new Keyframe(0f, 0f, 1f, 1f),
-                new Keyframe(1f, 1f, 1f, 1f));
         }
         else
         {

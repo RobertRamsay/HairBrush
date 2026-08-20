@@ -97,15 +97,90 @@ public class HairCard : MonoBehaviour
         bankRotation = Quaternion.AngleAxis(angle * Mathf.Rad2Deg * CurlBankAmount, Vector3.forward);
     }
 
-    // Resolves, for every segment row, where it sits along the length (the segment
-    // density remap), where the spine sits there, and the frame its cross-section
-    // should be placed in. Shared by GenerateMesh and both mesh reconstructions so
-    // the three cannot drift.
+    // How finely the density curve is integrated. A handful of keyframes is smooth
+    // enough that 64 trapezoids put every row within a ten-thousandth of the card's
+    // length of its exact place.
+    private const int SegmentDensitySamples = 64;
+
+    // Reused between rebuilds. Mesh generation is main-thread only, so one shared
+    // buffer avoids allocating this on every single card every frame.
+    private static readonly float[] segmentDensityCumulative = new float[SegmentDensitySamples + 1];
+
+    // Resolves where each segment row sits along the length from the SEGMENT DENSITY
+    // curve, where Y is "how many segments per unit length here".
+    //
+    // Rows are placed at the points that cut the area under the curve into equal
+    // shares, which is the inverse of its normalised cumulative area. Two useful
+    // consequences fall straight out of that:
+    //
+    //   - Height alone means nothing, only shape. A curve flat at 0.2 and a curve
+    //     flat at 1 both give perfectly even spacing, because the area accumulates
+    //     at a constant rate either way.
+    //   - Low on the left rising to high on the right puts few rows near the root
+    //     and packs them toward the tip. High on the left does the opposite.
+    //
+    // The segment COUNT is untouched by any of this - that is the Segments slider
+    // alone. The curve only decides where those rows land.
     //
     // Root and tip are pinned to exactly 0 and 1 so Length always produces the
-    // expected span even if the density curve doesn't touch its own corners, and t
-    // is forced non-decreasing so a badly-authored (non-monotonic) curve can never
-    // fold the mesh back on itself.
+    // expected span, and the cumulative area can only ever increase, so no curve
+    // can fold the mesh back on itself.
+    static void ResolveSegmentPositions(int groupId, int segments, float[] segmentT)
+    {
+        float step = 1f / SegmentDensitySamples;
+        float previousDensity = Mathf.Max(0f, PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.SegmentDensity, 0f));
+        segmentDensityCumulative[0] = 0f;
+
+        for (int k = 1; k <= SegmentDensitySamples; k++)
+        {
+            float x = (float)k / SegmentDensitySamples;
+            float density = Mathf.Max(0f, PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.SegmentDensity, x));
+            segmentDensityCumulative[k] = segmentDensityCumulative[k - 1] + (previousDensity + density) * .5f * step;
+            previousDensity = density;
+        }
+
+        float total = segmentDensityCumulative[SegmentDensitySamples];
+
+        // A curve that is zero everywhere says nothing about where rows belong.
+        // Fall back to even spacing rather than collapsing the card onto its root.
+        if (total <= 1e-6f)
+        {
+            for (int i = 0; i <= segments; i++) segmentT[i] = (float)i / segments;
+            return;
+        }
+
+        // Targets rise with i, so the search cursor only ever moves forward.
+        int cursor = 0;
+        for (int i = 0; i <= segments; i++)
+        {
+            if (i == 0)
+            {
+                segmentT[i] = 0f;
+                continue;
+            }
+
+            if (i == segments)
+            {
+                segmentT[i] = 1f;
+                continue;
+            }
+
+            float target = total * i / segments;
+            while (cursor < SegmentDensitySamples - 1 && segmentDensityCumulative[cursor + 1] < target) cursor++;
+
+            float spanStart = segmentDensityCumulative[cursor];
+            float spanEnd = segmentDensityCumulative[cursor + 1];
+            float within = 0f;
+            if (spanEnd > spanStart) within = Mathf.Clamp01((target - spanStart) / (spanEnd - spanStart));
+
+            segmentT[i] = Mathf.Clamp01(((float)cursor + within) * step);
+        }
+    }
+
+    // Resolves, for every segment row, where it sits along the length (see
+    // ResolveSegmentPositions), where the spine sits there, and the frame its
+    // cross-section should be placed in. Shared by GenerateMesh and both mesh
+    // reconstructions so the three cannot drift.
     public static void BuildSegmentFrames(
         HairCard card,
         int segments,
@@ -117,26 +192,11 @@ public class HairCard : MonoBehaviour
         if (card == null) return;
         if (segments < 1) return;
 
-        float previousSegmentT = 0f;
+        ResolveSegmentPositions(card.groupId, segments, segmentT);
+
         for (int i = 0; i <= segments; i++)
         {
-            float t;
-            if (i == 0)
-            {
-                t = 0f;
-            }
-            else if (i == segments)
-            {
-                t = 1f;
-            }
-            else
-            {
-                float u = (float)i / segments;
-                t = Mathf.Max(previousSegmentT, PostShapeCurveBridge.EvaluateRoot(card.groupId, GroomShapeCurveChannel.SegmentDensity, u));
-            }
-
-            previousSegmentT = t;
-            segmentT[i] = t;
+            float t = segmentT[i];
             segmentFrame[i] = card.GetLengthProfileRotation(t);
             segmentSpine[i] = segmentFrame[i] * new Vector3(0f, 0f, t * length);
         }
