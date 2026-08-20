@@ -164,7 +164,9 @@ public class PostVarianceAffectorBridge : MonoBehaviour
                 // a curly groom flattened out the moment variance became non-zero while the
                 // curl sliders carried on reading their authored values.
                 curlFrequency = card.curlFrequency,
-                curlDiameter = card.curlDiameter
+                curlDiameter = card.curlDiameter,
+                waveAmplitude = card.waveAmplitude,
+                waveFrequency = card.waveFrequency
             };
             card.ApplyEvaluatedState(evaluated);
         }

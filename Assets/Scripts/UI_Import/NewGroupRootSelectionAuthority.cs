@@ -244,6 +244,8 @@ public class NewGroupRootSelectionAuthority : MonoBehaviour
         GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.Z);
         GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.CurlFrequency);
         GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.CurlDiameter);
+        GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.WaveAmplitude);
+        GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.WaveFrequency);
         GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.SegmentDensity);
         // A recycled group id must not inherit the deleted group's width taper - same rule as
         // the SS/DS Forget below.

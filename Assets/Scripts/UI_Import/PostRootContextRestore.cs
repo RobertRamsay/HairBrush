@@ -108,6 +108,12 @@ public class PostRootContextRestore : MonoBehaviour
                 case "Curl Frequency_Slider":
                     slider.SetValueWithoutNotify(viewer.currentCurlFrequency);
                     break;
+                case "Wave Amplitude_Slider":
+                    slider.SetValueWithoutNotify(viewer.currentWaveAmplitude);
+                    break;
+                case "Wave Frequency_Slider":
+                    slider.SetValueWithoutNotify(viewer.currentWaveFrequency);
+                    break;
                 case "Curl Diameter_Slider":
                     slider.SetValueWithoutNotify(viewer.currentCurlDiameter);
                     break;

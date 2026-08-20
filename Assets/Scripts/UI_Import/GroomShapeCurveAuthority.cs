@@ -30,7 +30,10 @@ public enum GroomShapeCurveChannel
     //
     // Root-only, exactly like Curl and Segment Density: see PostShapeCurveBridge.EvaluateRoot,
     // whose per-POST snapshot CurveSet has fields for Bend/X/Y/Z ONLY.
-    Width
+    Width,
+    // Wave amplitude / frequency profiles. Root-only, same as Curl and Segment Density.
+    WaveAmplitude,
+    WaveFrequency
 }
 
 // Canonical group-root length profiles for shape angles. The slider remains the authored
@@ -49,6 +52,8 @@ public static class GroomShapeCurveRegistry
         public AnimationCurve curlDiameter = CreateDefault(GroomShapeCurveChannel.CurlDiameter);
         public AnimationCurve segmentDensity = CreateDefault(GroomShapeCurveChannel.SegmentDensity);
         public AnimationCurve widthProfile = CreateDefault(GroomShapeCurveChannel.Width);
+        public AnimationCurve waveAmplitude = CreateDefault(GroomShapeCurveChannel.WaveAmplitude);
+        public AnimationCurve waveFrequency = CreateDefault(GroomShapeCurveChannel.WaveFrequency);
     }
 
     private static readonly Dictionary<int, CurveSet> byGroup = new Dictionary<int, CurveSet>();
@@ -103,6 +108,8 @@ public static class GroomShapeCurveRegistry
             case GroomShapeCurveChannel.CurlFrequency: return set.curlFrequency;
             case GroomShapeCurveChannel.CurlDiameter: return set.curlDiameter;
             case GroomShapeCurveChannel.Width: return set.widthProfile;
+            case GroomShapeCurveChannel.WaveAmplitude: return set.waveAmplitude;
+            case GroomShapeCurveChannel.WaveFrequency: return set.waveFrequency;
             // Was `default: return set.segmentDensity;`. A channel with no case of its own
             // silently read and wrote the SEGMENT DENSITY curve - so editing Width would have
             // re-spaced the rows and editing Segment Density would have tapered the card, with
@@ -133,6 +140,8 @@ public static class GroomShapeCurveRegistry
             case GroomShapeCurveChannel.SegmentDensity: set.segmentDensity = clean; break;
             // This switch has no default, so a missing case is a silently DROPPED write.
             case GroomShapeCurveChannel.Width: set.widthProfile = clean; break;
+            case GroomShapeCurveChannel.WaveAmplitude: set.waveAmplitude = clean; break;
+            case GroomShapeCurveChannel.WaveFrequency: set.waveFrequency = clean; break;
         }
         BumpEpoch(groupId);
     }
@@ -346,6 +355,8 @@ public class GroomShapeCurveAuthority : MonoBehaviour
             group.curlDiameterCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.CurlDiameter);
             group.segmentDensityCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.SegmentDensity);
         group.widthCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.Width);
+        group.waveAmplitudeCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.WaveAmplitude);
+        group.waveFrequencyCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.WaveFrequency);
         }
     }
 
@@ -386,6 +397,8 @@ public class GroomShapeCurveAuthority : MonoBehaviour
         // Anchored to the Width slider's own row: ModelViewer builds slider rows as
         // labelText + "_Row", and the width slider's label is "Width".
         EnsureCurveRow("Width_Row", "WIDTH PROFILE", GroomShapeCurveChannel.Width);
+        EnsureCurveRow("Wave Amplitude_Row", "WAVE AMPLITUDE PROFILE", GroomShapeCurveChannel.WaveAmplitude);
+        EnsureCurveRow("Wave Frequency_Row", "WAVE FREQUENCY PROFILE", GroomShapeCurveChannel.WaveFrequency);
     }
 
     private void ResolveViewer()
@@ -436,6 +449,8 @@ public class GroomShapeCurveAuthority : MonoBehaviour
                 GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.CurlDiameter, group.curlDiameterCurve);
                 GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.SegmentDensity, group.segmentDensityCurve);
             GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.Width, group.widthCurve);
+            GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.WaveAmplitude, group.waveAmplitudeCurve);
+            GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.WaveFrequency, group.waveFrequencyCurve);
                 GroomShapeCurveRegistry.RefreshGroup(group.groupId);
             }
         }
@@ -571,6 +586,8 @@ public class GroomShapeCurveAuthority : MonoBehaviour
             case GroomShapeCurveChannel.CurlFrequency: return "CURL FREQUENCY";
             case GroomShapeCurveChannel.CurlDiameter: return "CURL DIAMETER";
             case GroomShapeCurveChannel.Width: return "WIDTH";
+            case GroomShapeCurveChannel.WaveAmplitude: return "WAVE AMPLITUDE";
+            case GroomShapeCurveChannel.WaveFrequency: return "WAVE FREQUENCY";
             default: return "SEGMENT DENSITY";
         }
     }

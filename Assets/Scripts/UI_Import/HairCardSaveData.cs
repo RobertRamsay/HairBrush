@@ -25,6 +25,12 @@ public class HairCardSaveData
     // Curl (spiral/coil) modifier - applied after width, before bend, in the shape pipeline.
     public float curlFrequency;
     public float curlDiameter;
+    // Zero for legacy projects, which is exactly the correct no-wave default: EvaluateWave
+    // early-outs on amplitude <= 0, so an older file renders bit-identically. JsonUtility runs
+    // field initialisers first and only overwrites keys present in the JSON, so a missing
+    // waveAmplitude/waveFrequency lands on 0f with no migration and no version bump.
+    public float waveAmplitude;
+    public float waveFrequency;
 
     // SYMMETRY. A mirrored card evaluates its geometry through a local-X mirror, so this has
     // to survive a round trip or every mirrored card in a reloaded project would come back
@@ -110,6 +116,7 @@ public class GroupClumperSaveData
     public float uScale,vScale,uOffset,vOffset;
     // Zero for legacy projects, which is exactly the correct no-curl-delta default.
     public float curlFrequency,curlDiameter;
+    public float waveAmplitude,waveFrequency;
 }
 
 [Serializable] public class PostAffectorSaveData
@@ -178,6 +185,9 @@ public class PostPredeterminedUVSaveData
     // which is what every project saved before this channel existed deserializes to - imports
     // as a flat x1 multiplier, so old files render bit-identically. No migration needed.
     public List<GroomCurveKeySaveData> widthCurve=new();
+    // Root-only wave profiles. Empty list -> flat x1, the same convention as every curve above.
+    public List<GroomCurveKeySaveData> waveAmplitudeCurve=new();
+    public List<GroomCurveKeySaveData> waveFrequencyCurve=new();
 
     // Rendering only: true culls back faces for this group's cards. Stored as
     // "singleSided" rather than "doubleSided" so a project saved before this existed
@@ -234,6 +244,8 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
     public float sliderVOffset;
     public float sliderCurlFrequency;
     public float sliderCurlDiameter;
+    public float sliderWaveAmplitude;
+    public float sliderWaveFrequency;
 
     public void OnBeforeSerialize()
     {

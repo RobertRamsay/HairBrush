@@ -447,10 +447,15 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
             Quaternion bankRotation;
             HairCard.EvaluateCurl(card.groupId, card.curlFrequency, card.curlDiameter, t, out curlOffset, out bankRotation, card.mirrored);
 
+            // Shared with GenerateMesh so a wavy card stays wavy once clumped or neutralised.
+            // Skipping this is how curl and segment density each silently reverted here before.
+            Vector3 waveOffset;
+            HairCard.EvaluateWave(card.groupId, card.waveAmplitude, card.waveFrequency, t, out waveOffset, card.mirrored);
+
             Vector3 sectionOrigin = new Vector3(0f, 0f, z);
-            Vector3 left = sectionOrigin + bankRotation * new Vector3(-span, 0f, 0f) + curlOffset;
-            Vector3 center = sectionOrigin + bankRotation * new Vector3(0f, ridge, 0f) + curlOffset;
-            Vector3 right = sectionOrigin + bankRotation * new Vector3(span, 0f, 0f) + curlOffset;
+            Vector3 left = sectionOrigin + bankRotation * new Vector3(-span, 0f, 0f) + curlOffset + waveOffset;
+            Vector3 center = sectionOrigin + bankRotation * new Vector3(0f, ridge, 0f) + curlOffset + waveOffset;
+            Vector3 right = sectionOrigin + bankRotation * new Vector3(span, 0f, 0f) + curlOffset + waveOffset;
 
             Vector3 spinePoint = segmentSpine[i];
             Quaternion sectionFrame = segmentFrame[i];

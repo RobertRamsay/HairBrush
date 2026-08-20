@@ -1,0 +1,1268 @@
+diff --git a/Assets/Scripts/UI_Import/CanonicalProjectStateBridge.cs b/Assets/Scripts/UI_Import/CanonicalProjectStateBridge.cs
+index e8c2c36..35b8e68 100644
+--- a/Assets/Scripts/UI_Import/CanonicalProjectStateBridge.cs
++++ b/Assets/Scripts/UI_Import/CanonicalProjectStateBridge.cs
+@@ -122,7 +122,7 @@ public class CanonicalProjectStateBridge : MonoBehaviour
+                 canonical.bend, canonical.twist, canonical.x, canonical.y, canonical.z,
+                 Mathf.Max(0f, canonical.depth), 1f,
+                 canonical.uScale, canonical.vScale, canonical.uOffset, canonical.vOffset,
+-                canonical.curlFrequency, canonical.curlDiameter);
++                canonical.curlFrequency, canonical.curlDiameter, canonical.waveAmplitude, canonical.waveFrequency);
+             card.SetSelectionWeight(oldSelection);
+ 
+             object state = states[card];
+@@ -166,7 +166,8 @@ public class CanonicalProjectStateBridge : MonoBehaviour
+     {
+         length=s.length, width=s.width, segments=s.segments, bend=s.bendAngle, twist=s.twistAngle, depth=s.embedDepth,
+         x=s.offsetX, y=s.offsetY, z=s.offsetZ, uScale=s.uScale, vScale=s.vScale, uOffset=s.uOffset, vOffset=s.vOffset,
+-        curlFrequency=s.curlFrequency, curlDiameter=s.curlDiameter
++        curlFrequency=s.curlFrequency, curlDiameter=s.curlDiameter,
++        waveAmplitude=s.waveAmplitude, waveFrequency=s.waveFrequency
+     };
+ 
+     static void WriteControl(HairCardSaveData s, PostAffectorManager.ControlState b)
+@@ -174,5 +175,6 @@ public class CanonicalProjectStateBridge : MonoBehaviour
+         s.length=b.length; s.width=b.width; s.segments=Mathf.RoundToInt(b.segments); s.bendAngle=b.bend; s.twistAngle=b.twist; s.embedDepth=b.depth;
+         s.offsetX=b.x; s.offsetY=b.y; s.offsetZ=b.z; s.uScale=b.uScale; s.vScale=b.vScale; s.uOffset=b.uOffset; s.vOffset=b.vOffset;
+         s.curlFrequency=b.curlFrequency; s.curlDiameter=b.curlDiameter;
++        s.waveAmplitude=b.waveAmplitude; s.waveFrequency=b.waveFrequency;
+     }
+ }
+\ No newline at end of file
+diff --git a/Assets/Scripts/UI_Import/GroomRootStateAuthority.cs b/Assets/Scripts/UI_Import/GroomRootStateAuthority.cs
+index abbd1f5..c16616f 100644
+--- a/Assets/Scripts/UI_Import/GroomRootStateAuthority.cs
++++ b/Assets/Scripts/UI_Import/GroomRootStateAuthority.cs
+@@ -16,6 +16,7 @@ public class GroomRootStateAuthority : MonoBehaviour
+         public float x, y, z;
+         public float uScale, vScale, uOffset, vOffset;
+         public float curlFrequency, curlDiameter;
++        public float waveAmplitude, waveFrequency;
+     }
+ 
+     private readonly Dictionary<int, RootState> roots = new();
+@@ -150,7 +151,9 @@ public class GroomRootStateAuthority : MonoBehaviour
+             uOffset = viewer.currentUOffset,
+             vOffset = viewer.currentVOffset,
+             curlFrequency = viewer.currentCurlFrequency,
+-            curlDiameter = viewer.currentCurlDiameter
++            curlDiameter = viewer.currentCurlDiameter,
++            waveAmplitude = viewer.currentWaveAmplitude,
++            waveFrequency = viewer.currentWaveFrequency
+         };
+     }
+ 
+@@ -171,6 +174,8 @@ public class GroomRootStateAuthority : MonoBehaviour
+         viewer.currentVOffset = s.vOffset;
+         viewer.currentCurlFrequency = s.curlFrequency;
+         viewer.currentCurlDiameter = s.curlDiameter;
++        viewer.currentWaveAmplitude = s.waveAmplitude;
++        viewer.currentWaveFrequency = s.waveFrequency;
+     }
+ 
+     public bool TryGetRootState(int groupId, out RootState state)
+diff --git a/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs b/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs
+index 7896214..b785466 100644
+--- a/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs
++++ b/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs
+@@ -17,7 +17,7 @@ using UnityEngine.UI;
+ public class GroomSessionResetCoordinator : MonoBehaviour
+ {
+     private static readonly string[] VarianceChannels =
+-        { "Length", "Width", "Bend", "Twist", "AngleX", "AngleY", "AngleZ", "CurlFrequency", "CurlDiameter" };
++        { "Length", "Width", "Bend", "Twist", "AngleX", "AngleY", "AngleZ", "CurlFrequency", "CurlDiameter", "WaveAmplitude", "WaveFrequency" };
+     private static readonly string[] VarianceRows =
+         { "Length_VarianceRow", "Width_VarianceRow", "Bend_VarianceRow", "Twist_VarianceRow", "Angle X_VarianceRow", "Angle Y_VarianceRow", "Angle Z_VarianceRow" };
+ 
+@@ -182,6 +182,8 @@ public class GroomSessionResetCoordinator : MonoBehaviour
+         GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.Z);
+         GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.CurlFrequency);
+         GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.CurlDiameter);
++        GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.WaveAmplitude);
++        GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.WaveFrequency);
+         GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.SegmentDensity);
+         GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.Width);
+         GroupSidednessAuthority.Forget(groupId);
+@@ -190,7 +192,7 @@ public class GroomSessionResetCoordinator : MonoBehaviour
+         {
+             if (card == null || card.groupId != groupId) continue;
+             card.SetSelectionWeight(0f);
+-            card.SetParameters(.2f, .01f, 12, 0f, 0f, 0f, 0f, 0f, .002f, 1f, 1f, 1f, 0f, 0f, 0f, 0f);
++            card.SetParameters(.2f, .01f, 12, 0f, 0f, 0f, 0f, 0f, .002f, 1f, 1f, 1f, 0f, 0f, 0f, 0f, 0f, 0f);
+         }
+ 
+         SyncCoreSliderUI(ToControlState(defaults));
+@@ -302,7 +304,9 @@ public class GroomSessionResetCoordinator : MonoBehaviour
+             uOffset = 0f,
+             vOffset = 0f,
+             curlFrequency = 0f,
+-            curlDiameter = 0f
++            curlDiameter = 0f,
++            waveAmplitude = 0f,
++            waveFrequency = 0f
+         };
+     }
+ 
+@@ -323,6 +327,8 @@ public class GroomSessionResetCoordinator : MonoBehaviour
+         viewer.currentVOffset = s.vOffset;
+         viewer.currentCurlFrequency = s.curlFrequency;
+         viewer.currentCurlDiameter = s.curlDiameter;
++        viewer.currentWaveAmplitude = s.waveAmplitude;
++        viewer.currentWaveFrequency = s.waveFrequency;
+     }
+ 
+     void WriteViewerControls(PostAffectorManager.ControlState s)
+@@ -342,6 +348,8 @@ public class GroomSessionResetCoordinator : MonoBehaviour
+         viewer.currentVOffset = s.vOffset;
+         viewer.currentCurlFrequency = s.curlFrequency;
+         viewer.currentCurlDiameter = s.curlDiameter;
++        viewer.currentWaveAmplitude = s.waveAmplitude;
++        viewer.currentWaveFrequency = s.waveFrequency;
+     }
+ 
+     static PostAffectorManager.ControlState ToControlState(GroomRootStateAuthority.RootState s)
+@@ -362,7 +370,9 @@ public class GroomSessionResetCoordinator : MonoBehaviour
+             uOffset = s.uOffset,
+             vOffset = s.vOffset,
+             curlFrequency = s.curlFrequency,
+-            curlDiameter = s.curlDiameter
++            curlDiameter = s.curlDiameter,
++            waveAmplitude = s.waveAmplitude,
++            waveFrequency = s.waveFrequency
+         };
+     }
+ 
+@@ -404,12 +414,17 @@ public class GroomSessionResetCoordinator : MonoBehaviour
+         SetCoreSlider(new[] { "V Scale_Slider" }, "V Scale", s.vScale);
+         SetCoreSlider(new[] { "U Offset_Slider" }, "U Offset", s.uOffset);
+         SetCoreSlider(new[] { "V Offset_Slider" }, "V Offset", s.vOffset);
+-        // ControlState (POST-level) has no curl fields - curl lives only at the root, so these
+-        // read straight from the viewer instead, which WriteViewerRoot has already reset by the
+-        // time this runs. Without this the curl sliders would keep showing their pre-reset value
+-        // even though the underlying state was correctly zeroed.
++        // These four read straight from the viewer rather than from `s`, because
++        // WriteViewerRoot/WriteViewerControls have already written the reset values there by
++        // the time this runs. Without them the sliders would keep showing their pre-reset
++        // value even though the underlying state was correctly zeroed.
++        //
++        // (The comment that used to sit here said ControlState has no curl fields. That was
++        // true once; it carries curl AND wave now, so don't lean on it when adding a channel.)
+         SetCoreSlider(new[] { "Curl Frequency_Slider" }, "Curl Frequency", viewer.currentCurlFrequency);
+         SetCoreSlider(new[] { "Curl Diameter_Slider" }, "Curl Diameter", viewer.currentCurlDiameter);
++        SetCoreSlider(new[] { "Wave Amplitude_Slider" }, "Wave Amplitude", viewer.currentWaveAmplitude);
++        SetCoreSlider(new[] { "Wave Frequency_Slider" }, "Wave Frequency", viewer.currentWaveFrequency);
+     }
+ 
+     void SetCoreSlider(string[] names, string labelPrefix, float value)
+@@ -540,6 +555,8 @@ public class GroomSessionResetCoordinator : MonoBehaviour
+         viewer.currentVOffset = 0f;
+         viewer.currentCurlFrequency = 0f;
+         viewer.currentCurlDiameter = 0f;
++        viewer.currentWaveAmplitude = 0f;
++        viewer.currentWaveFrequency = 0f;
+ 
+         if (viewer.groomingSliderPanelGO == null) return;
+ 
+@@ -557,7 +574,7 @@ public class GroomSessionResetCoordinator : MonoBehaviour
+                      n == "Angle X_Slider" || n == "Angle Y_Slider" || n == "Angle Z_Slider") slider.SetValueWithoutNotify(0f);
+             else if (n == "U Scale_Slider" || n == "V Scale_Slider") slider.SetValueWithoutNotify(1f);
+             else if (n == "U Offset_Slider" || n == "V Offset_Slider") slider.SetValueWithoutNotify(0f);
+-            else if (n == "Curl Frequency_Slider" || n == "Curl Diameter_Slider") slider.SetValueWithoutNotify(0f);
++            else if (n == "Curl Frequency_Slider" || n == "Curl Diameter_Slider" || n == "Wave Amplitude_Slider" || n == "Wave Frequency_Slider") slider.SetValueWithoutNotify(0f);
+             else if (n == "VarianceSlider") slider.SetValueWithoutNotify(0f);
+             slider.interactable = true;
+         }
+diff --git a/Assets/Scripts/UI_Import/GroomShapeCurveAuthority.cs b/Assets/Scripts/UI_Import/GroomShapeCurveAuthority.cs
+index 7b0513a..646de82 100644
+--- a/Assets/Scripts/UI_Import/GroomShapeCurveAuthority.cs
++++ b/Assets/Scripts/UI_Import/GroomShapeCurveAuthority.cs
+@@ -30,7 +30,10 @@ public enum GroomShapeCurveChannel
+     //
+     // Root-only, exactly like Curl and Segment Density: see PostShapeCurveBridge.EvaluateRoot,
+     // whose per-POST snapshot CurveSet has fields for Bend/X/Y/Z ONLY.
+-    Width
++    Width,
++    // Wave amplitude / frequency profiles. Root-only, same as Curl and Segment Density.
++    WaveAmplitude,
++    WaveFrequency
+ }
+ 
+ // Canonical group-root length profiles for shape angles. The slider remains the authored
+@@ -49,6 +52,8 @@ public static class GroomShapeCurveRegistry
+         public AnimationCurve curlDiameter = CreateDefault(GroomShapeCurveChannel.CurlDiameter);
+         public AnimationCurve segmentDensity = CreateDefault(GroomShapeCurveChannel.SegmentDensity);
+         public AnimationCurve widthProfile = CreateDefault(GroomShapeCurveChannel.Width);
++        public AnimationCurve waveAmplitude = CreateDefault(GroomShapeCurveChannel.WaveAmplitude);
++        public AnimationCurve waveFrequency = CreateDefault(GroomShapeCurveChannel.WaveFrequency);
+     }
+ 
+     private static readonly Dictionary<int, CurveSet> byGroup = new Dictionary<int, CurveSet>();
+@@ -103,6 +108,8 @@ public static class GroomShapeCurveRegistry
+             case GroomShapeCurveChannel.CurlFrequency: return set.curlFrequency;
+             case GroomShapeCurveChannel.CurlDiameter: return set.curlDiameter;
+             case GroomShapeCurveChannel.Width: return set.widthProfile;
++            case GroomShapeCurveChannel.WaveAmplitude: return set.waveAmplitude;
++            case GroomShapeCurveChannel.WaveFrequency: return set.waveFrequency;
+             // Was `default: return set.segmentDensity;`. A channel with no case of its own
+             // silently read and wrote the SEGMENT DENSITY curve - so editing Width would have
+             // re-spaced the rows and editing Segment Density would have tapered the card, with
+@@ -133,6 +140,8 @@ public static class GroomShapeCurveRegistry
+             case GroomShapeCurveChannel.SegmentDensity: set.segmentDensity = clean; break;
+             // This switch has no default, so a missing case is a silently DROPPED write.
+             case GroomShapeCurveChannel.Width: set.widthProfile = clean; break;
++            case GroomShapeCurveChannel.WaveAmplitude: set.waveAmplitude = clean; break;
++            case GroomShapeCurveChannel.WaveFrequency: set.waveFrequency = clean; break;
+         }
+         BumpEpoch(groupId);
+     }
+@@ -346,6 +355,8 @@ public class GroomShapeCurveAuthority : MonoBehaviour
+             group.curlDiameterCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.CurlDiameter);
+             group.segmentDensityCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.SegmentDensity);
+         group.widthCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.Width);
++        group.waveAmplitudeCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.WaveAmplitude);
++        group.waveFrequencyCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.WaveFrequency);
+         }
+     }
+ 
+@@ -386,6 +397,8 @@ public class GroomShapeCurveAuthority : MonoBehaviour
+         // Anchored to the Width slider's own row: ModelViewer builds slider rows as
+         // labelText + "_Row", and the width slider's label is "Width".
+         EnsureCurveRow("Width_Row", "WIDTH PROFILE", GroomShapeCurveChannel.Width);
++        EnsureCurveRow("Wave Amplitude_Row", "WAVE AMPLITUDE PROFILE", GroomShapeCurveChannel.WaveAmplitude);
++        EnsureCurveRow("Wave Frequency_Row", "WAVE FREQUENCY PROFILE", GroomShapeCurveChannel.WaveFrequency);
+     }
+ 
+     private void ResolveViewer()
+@@ -436,6 +449,8 @@ public class GroomShapeCurveAuthority : MonoBehaviour
+                 GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.CurlDiameter, group.curlDiameterCurve);
+                 GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.SegmentDensity, group.segmentDensityCurve);
+             GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.Width, group.widthCurve);
++            GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.WaveAmplitude, group.waveAmplitudeCurve);
++            GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.WaveFrequency, group.waveFrequencyCurve);
+                 GroomShapeCurveRegistry.RefreshGroup(group.groupId);
+             }
+         }
+@@ -571,6 +586,8 @@ public class GroomShapeCurveAuthority : MonoBehaviour
+             case GroomShapeCurveChannel.CurlFrequency: return "CURL FREQUENCY";
+             case GroomShapeCurveChannel.CurlDiameter: return "CURL DIAMETER";
+             case GroomShapeCurveChannel.Width: return "WIDTH";
++            case GroomShapeCurveChannel.WaveAmplitude: return "WAVE AMPLITUDE";
++            case GroomShapeCurveChannel.WaveFrequency: return "WAVE FREQUENCY";
+             default: return "SEGMENT DENSITY";
+         }
+     }
+diff --git a/Assets/Scripts/UI_Import/GroomShapeProfileButtonAuthority.cs b/Assets/Scripts/UI_Import/GroomShapeProfileButtonAuthority.cs
+index 4580515..e60d0f8 100644
+--- a/Assets/Scripts/UI_Import/GroomShapeProfileButtonAuthority.cs
++++ b/Assets/Scripts/UI_Import/GroomShapeProfileButtonAuthority.cs
+@@ -37,6 +37,8 @@ public class GroomShapeProfileButtonAuthority : MonoBehaviour
+         UpgradeRow("ShapeCurve_Z_Row", GroomShapeCurveChannel.Z);
+         UpgradeRow("ShapeCurve_CurlFrequency_Row", GroomShapeCurveChannel.CurlFrequency);
+         UpgradeRow("ShapeCurve_CurlDiameter_Row", GroomShapeCurveChannel.CurlDiameter);
++        UpgradeRow("ShapeCurve_WaveAmplitude_Row", GroomShapeCurveChannel.WaveAmplitude);
++        UpgradeRow("ShapeCurve_WaveFrequency_Row", GroomShapeCurveChannel.WaveFrequency);
+         UpgradeRow("ShapeCurve_SegmentDensity_Row", GroomShapeCurveChannel.SegmentDensity);
+         UpgradeRow("ShapeCurve_Width_Row", GroomShapeCurveChannel.Width);
+         NormalizeOpenCurveEditor();
+diff --git a/Assets/Scripts/UI_Import/GroomVarianceController.cs b/Assets/Scripts/UI_Import/GroomVarianceController.cs
+index 8b702ac..db56b26 100644
+--- a/Assets/Scripts/UI_Import/GroomVarianceController.cs
++++ b/Assets/Scripts/UI_Import/GroomVarianceController.cs
+@@ -9,7 +9,10 @@ using UnityEngine.UI;
+ // Owns its own runtime UI lifecycle: one panel instance, one variance row per channel.
+ public class GroomVarianceController : MonoBehaviour
+ {
+-    private enum Channel { Length, Width, Bend, Twist, AngleX, AngleY, AngleZ, CurlFrequency, CurlDiameter }
++    // APPEND ONLY. SignedRandom mixes (int)c into the deterministic per-card hash, so the
++    // ordinal of every channel is part of the persisted random stream. Inserting a channel
++    // anywhere but the end silently re-randomises every card in every project ever saved.
++    private enum Channel { Length, Width, Bend, Twist, AngleX, AngleY, AngleZ, CurlFrequency, CurlDiameter, WaveAmplitude, WaveFrequency }
+ 
+     [Serializable] private class VarianceSetting { public float amount; public int seed; }
+     private class VarianceRow { public Slider slider; public TextMeshProUGUI valueText; public TMP_InputField seedInput; }
+@@ -132,7 +135,9 @@ public class GroomVarianceController : MonoBehaviour
+             (Channel.AngleY,  "Angle Y_Row",     "Offset Y_Row",    "Angle Y",     360f),
+             (Channel.AngleZ,  "Angle Z_Row",     "Offset Z_Row",    "Angle Z",     360f),
+             (Channel.CurlFrequency, "Curl Frequency_Row", "Curl Frequency_Row", "Curl Frequency", 5f),
+-            (Channel.CurlDiameter,  "Curl Diameter_Row",  "Curl Diameter_Row",  "Curl Diameter",  0.05f)
++            (Channel.CurlDiameter,  "Curl Diameter_Row",  "Curl Diameter_Row",  "Curl Diameter",  0.05f),
++            (Channel.WaveAmplitude, "Wave Amplitude_Row", "Wave Amplitude_Row", "Wave Amplitude", 0.05f),
++            (Channel.WaveFrequency, "Wave Frequency_Row", "Wave Frequency_Row", "Wave Frequency", 5f)
+         };
+ 
+         Dictionary<Channel, Transform> mainRows = new();
+@@ -476,6 +481,8 @@ public class GroomVarianceController : MonoBehaviour
+             case Channel.AngleZ: state.z = varied; break;
+             case Channel.CurlFrequency: state.curlFrequency = varied; break;
+             case Channel.CurlDiameter: state.curlDiameter = Mathf.Max(0f, varied); break;
++            case Channel.WaveAmplitude: state.waveAmplitude = Mathf.Max(0f, varied); break;
++            case Channel.WaveFrequency: state.waveFrequency = varied; break;
+         }
+ 
+         // Variance is upstream authored state. Write that canonical channel directly instead
+@@ -500,6 +507,8 @@ public class GroomVarianceController : MonoBehaviour
+                 Channel.AngleZ => root.z,
+                 Channel.CurlFrequency => root.curlFrequency,
+                 Channel.CurlDiameter => root.curlDiameter,
++                Channel.WaveAmplitude => root.waveAmplitude,
++                Channel.WaveFrequency => root.waveFrequency,
+                 _ => 0f
+             };
+         }
+@@ -517,6 +526,8 @@ public class GroomVarianceController : MonoBehaviour
+                 Channel.AngleZ => viewer.currentOffsetZ,
+                 Channel.CurlFrequency => viewer.currentCurlFrequency,
+                 Channel.CurlDiameter => viewer.currentCurlDiameter,
++                Channel.WaveAmplitude => viewer.currentWaveAmplitude,
++                Channel.WaveFrequency => viewer.currentWaveFrequency,
+                 _ => 0f
+             };
+         }
+@@ -538,6 +549,8 @@ public class GroomVarianceController : MonoBehaviour
+                 Channel.AngleZ => state.z,
+                 Channel.CurlFrequency => state.curlFrequency,
+                 Channel.CurlDiameter => state.curlDiameter,
++                Channel.WaveAmplitude => state.waveAmplitude,
++                Channel.WaveFrequency => state.waveFrequency,
+                 _ => 0f
+             };
+             VarianceSetting s = GetSetting(groupId, c);
+@@ -568,7 +581,7 @@ public class GroomVarianceController : MonoBehaviour
+ 
+     static void Mix(ref uint h, int v) { unchecked { h ^= (uint)v; h *= 16777619u; } }
+     int CountCards(int id) => FindObjectsByType<HairCard>(FindObjectsSortMode.None).Count(c => c.groupId == id);
+-    string ChannelLabel(Channel c) => c switch { Channel.Length => "Length", Channel.Width => "Width", Channel.Bend => "Bend", Channel.Twist => "Twist", Channel.AngleX => "Angle X", Channel.AngleY => "Angle Y", Channel.AngleZ => "Angle Z", Channel.CurlFrequency => "Curl Frequency", Channel.CurlDiameter => "Curl Diameter", _ => c.ToString() };
++    string ChannelLabel(Channel c) => c switch { Channel.Length => "Length", Channel.Width => "Width", Channel.Bend => "Bend", Channel.Twist => "Twist", Channel.AngleX => "Angle X", Channel.AngleY => "Angle Y", Channel.AngleZ => "Angle Z", Channel.CurlFrequency => "Curl Frequency", Channel.CurlDiameter => "Curl Diameter", Channel.WaveAmplitude => "Wave Amplitude", Channel.WaveFrequency => "Wave Frequency", _ => c.ToString() };
+     // Angular channels (Bend/Twist/AngleX-Z) show a degree symbol; everything else (including
+     // Curl Frequency, a turn count, and Curl Diameter, a length-scale magnitude) is plain decimal.
+     string FormatVariance(Channel c, float v) => c == Channel.Bend || c == Channel.Twist || c == Channel.AngleX || c == Channel.AngleY || c == Channel.AngleZ ? v.ToString("F1") + "°" : v.ToString("F3");
+diff --git a/Assets/Scripts/UI_Import/HairCard.cs b/Assets/Scripts/UI_Import/HairCard.cs
+index 4235fe7..48ca961 100644
+--- a/Assets/Scripts/UI_Import/HairCard.cs
++++ b/Assets/Scripts/UI_Import/HairCard.cs
+@@ -13,6 +13,7 @@ public class HairCard : MonoBehaviour
+         public float x, y, z;
+         public float uScale, vScale, uOffset, vOffset;
+         public float curlFrequency, curlDiameter;
++        public float waveAmplitude, waveFrequency;
+     }
+ 
+     // A POST keeps its authored scalar delta, but its Bend/X/Y/Z contribution can have a
+@@ -108,6 +109,48 @@ public class HairCard : MonoBehaviour
+         ridge = card.GetCrossSectionRidgeHeight() * widthMultiplier;
+     }
+ 
++    // Single source of truth for the WAVE, exactly as EvaluateCurl is for the coil.
++    // GenerateMesh and both mesh reconstructions call this, so the three cannot drift.
++    //
++    // The wave is a PLANAR sinusoid: it displaces the cross-section along the card's own local
++    // X - side to side within the flat plane of the card - with the phase advancing along the
++    // length. That is what reads as waviness in silhouette, and it is deliberately different
++    // from Curl, which displaces in both X and Y and sweeps around the length axis to make a
++    // coil. The two stack cleanly because they act on different axes.
++    //
++    // To wave ACROSS the face of the card instead of side to side, move the amplitude from
++    // the x component to the y component of waveOffset below. That is the whole change.
++    //
++    // sin(0) = 0, so the wave is exactly zero at the root and the card stays anchored to the
++    // scalp however hard it is driven - the same property EvaluateCurl gets from cos(0)-1.
++    public static void EvaluateWave(
++        int groupId,
++        float waveAmplitude,
++        float waveFrequency,
++        float t,
++        out Vector3 waveOffset,
++        bool mirrored = false)
++    {
++        waveOffset = Vector3.zero;
++
++        if (waveAmplitude <= 0f) return;
++        if (waveFrequency == 0f) return;
++
++        // Root-only profile curves, same as Curl and Segment Density - no per-POST override.
++        float amplitudeMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.WaveAmplitude, t);
++        float frequencyMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.WaveFrequency, t);
++
++        float amplitude = waveAmplitude * amplitudeMultiplier;
++        float turns = waveFrequency * frequencyMultiplier;
++
++        // A mirrored card is a reflection through local X, and this displacement is purely in
++        // local X, so negating the amplitude IS the exact mirror - no phase correction needed.
++        // (Curl needs both its radius and its angle negated because it displaces in two axes.)
++        if (mirrored) amplitude = -amplitude;
++
++        waveOffset = new Vector3(amplitude * Mathf.Sin(turns * t * Mathf.PI * 2f), 0f, 0f);
++    }
++
+     public static void EvaluateCurl(
+         int groupId,
+         float curlFrequency,
+@@ -308,6 +351,14 @@ public class HairCard : MonoBehaviour
+     public float curlFrequency = 0f;
+     public float curlDiameter = 0f;
+ 
++    // WAVE: a planar sinusoid that snakes the card side to side within its own flat plane -
++    // amplitude in local X, phase advancing with t along the length. Deliberately NOT a coil:
++    // Curl already displaces in both X and Y and sweeps around the length axis, so the two
++    // compose rather than duplicate. Zero amplitude is off, which is what every project saved
++    // before this feature deserializes to.
++    public float waveAmplitude = 0f;
++    public float waveFrequency = 0f;
++
+     [Header("UV Settings")]
+     public float uScale = 1.0f;
+     public float vScale = 1.0f;
+@@ -349,6 +400,7 @@ public class HairCard : MonoBehaviour
+     private float storedOffsetX, storedOffsetY, storedOffsetZ;
+     private float baseLength, baseWidth, baseBend, baseTwist, baseEmbedDepth;
+     private float baseCurlFrequency, baseCurlDiameter;
++    private float baseWaveAmplitude, baseWaveFrequency;
+     private int baseSegments;
+     private float baseOffsetX, baseOffsetY, baseOffsetZ;
+     private Material cardMaterial;
+@@ -574,6 +626,8 @@ public class HairCard : MonoBehaviour
+         vOffset = state.vOffset;
+         curlFrequency = state.curlFrequency;
+         curlDiameter = state.curlDiameter;
++        waveAmplitude = state.waveAmplitude;
++        waveFrequency = state.waveFrequency;
+         if (surfaceNormal != Vector3.zero) UpdateTransformOrientation(currentEmbedDepth);
+ 
+         // Guarded. PostAffectorManager, PostFreeCanonicalAuthority and
+@@ -602,7 +656,9 @@ public class HairCard : MonoBehaviour
+             uOffset = uOffset,
+             vOffset = vOffset,
+             curlFrequency = curlFrequency,
+-            curlDiameter = curlDiameter
++            curlDiameter = curlDiameter,
++            waveAmplitude = waveAmplitude,
++            waveFrequency = waveFrequency
+         };
+     }
+ 
+@@ -613,6 +669,9 @@ public class HairCard : MonoBehaviour
+         state.segments = Mathf.Clamp(state.segments, 1, 60);
+         state.depth = Mathf.Max(0f, state.depth);
+         state.curlDiameter = Mathf.Max(0f, state.curlDiameter);
++        // Amplitude is a magnitude, so it clamps like curl diameter. Frequency stays signed -
++        // a negative frequency simply runs the wave the other way, which is a usable result.
++        state.waveAmplitude = Mathf.Max(0f, state.waveAmplitude);
+         return state;
+     }
+ 
+@@ -707,7 +766,7 @@ public class HairCard : MonoBehaviour
+         if (cardMaterial.HasProperty("_Color")) cardMaterial.SetColor("_Color", finalColor);
+     }
+ 
+-    public void SetParameters(float newLength, float newWidth, int newSegments, float newBend, float newTwist, float offsetX, float offsetY, float offsetZ, float newEmbedDepth, float strengthMultiplier = 1f, float newUScale = 1f, float newVScale = 1f, float newUOffset = 0f, float newVOffset = 0f, float newCurlFrequency = 0f, float newCurlDiameter = 0f)
++    public void SetParameters(float newLength, float newWidth, int newSegments, float newBend, float newTwist, float offsetX, float offsetY, float offsetZ, float newEmbedDepth, float strengthMultiplier = 1f, float newUScale = 1f, float newVScale = 1f, float newUOffset = 0f, float newVOffset = 0f, float newCurlFrequency = 0f, float newCurlDiameter = 0f, float newWaveAmplitude = 0f, float newWaveFrequency = 0f)
+     {
+         if (selectionWeight > 0f)
+         {
+@@ -723,6 +782,8 @@ public class HairCard : MonoBehaviour
+             currentEmbedDepth = Mathf.Lerp(baseEmbedDepth, newEmbedDepth, w);
+             curlFrequency = Mathf.Lerp(baseCurlFrequency, newCurlFrequency, w);
+             curlDiameter = Mathf.Lerp(baseCurlDiameter, newCurlDiameter, w);
++            waveAmplitude = Mathf.Lerp(baseWaveAmplitude, newWaveAmplitude, w);
++            waveFrequency = Mathf.Lerp(baseWaveFrequency, newWaveFrequency, w);
+         }
+         else
+         {
+@@ -737,6 +798,8 @@ public class HairCard : MonoBehaviour
+             currentEmbedDepth = newEmbedDepth;
+             curlFrequency = newCurlFrequency;
+             curlDiameter = newCurlDiameter;
++            waveAmplitude = newWaveAmplitude;
++            waveFrequency = newWaveFrequency;
+         }
+         uScale = newUScale;
+         vScale = newVScale;
+@@ -758,7 +821,7 @@ public class HairCard : MonoBehaviour
+         GenerateMeshIfInputsChanged();
+     }
+ 
+-    public void CaptureBaseState(float activeLength, float activeWidth, int activeSegments, float activeBend, float activeTwist, float activeDepth, float ox, float oy, float oz, float activeCurlFrequency = 0f, float activeCurlDiameter = 0f)
++    public void CaptureBaseState(float activeLength, float activeWidth, int activeSegments, float activeBend, float activeTwist, float activeDepth, float ox, float oy, float oz, float activeCurlFrequency = 0f, float activeCurlDiameter = 0f, float activeWaveAmplitude = 0f, float activeWaveFrequency = 0f)
+     {
+         baseLength = activeLength;
+         baseWidth = activeWidth;
+@@ -771,6 +834,8 @@ public class HairCard : MonoBehaviour
+         baseOffsetZ = oz;
+         baseCurlFrequency = activeCurlFrequency;
+         baseCurlDiameter = activeCurlDiameter;
++        baseWaveAmplitude = activeWaveAmplitude;
++        baseWaveFrequency = activeWaveFrequency;
+     }
+ 
+     public void SetSelectionWeight(float weight) { selectionWeight = Mathf.Clamp01(weight); UpdateVisualHighlight(); }
+@@ -1022,6 +1087,8 @@ public class HairCard : MonoBehaviour
+             hash = hash * 31 + storedOffsetZ.GetHashCode();
+             hash = hash * 31 + curlFrequency.GetHashCode();
+             hash = hash * 31 + curlDiameter.GetHashCode();
++            hash = hash * 31 + waveAmplitude.GetHashCode();
++            hash = hash * 31 + waveFrequency.GetHashCode();
+             hash = hash * 31 + uScale.GetHashCode();
+             hash = hash * 31 + vScale.GetHashCode();
+             hash = hash * 31 + uOffset.GetHashCode();
+@@ -1147,6 +1214,9 @@ public class HairCard : MonoBehaviour
+             Quaternion bankRotation;
+             EvaluateCurl(groupId, curlFrequency, curlDiameter, t, out curlOffset, out bankRotation, mirrored);
+ 
++            Vector3 waveOffset;
++            EvaluateWave(groupId, waveAmplitude, waveFrequency, t, out waveOffset, mirrored);
++
+             Vector3 sectionOrigin = new Vector3(0f, 0f, z);
+             Vector3 left = sectionOrigin + bankRotation * new Vector3(-currentWidth, 0f, 0f);
+             Vector3 center = sectionOrigin + bankRotation * new Vector3(0f, ridgeHeight, 0f);
+@@ -1174,6 +1244,14 @@ public class HairCard : MonoBehaviour
+             center += curlOffset;
+             right += curlOffset;
+ 
++            // Wave rides on top of curl. Both are displacements of the whole cross-section in
++            // the card's own local space, applied after the section has been built and banked
++            // and before the path-following frame places it, so a card can be curled AND wavy
++            // without either shape fighting the other.
++            left += waveOffset;
++            center += waveOffset;
++            right += waveOffset;
++
+             // The spine keeps exactly the position the authored bend/twist rotation
+             // always put it at. Only the section's own lateral extent - width, ridge,
+             // clump displacement, curl offset - is placed with the path-following
+diff --git a/Assets/Scripts/UI_Import/HairCardSaveData.cs b/Assets/Scripts/UI_Import/HairCardSaveData.cs
+index 7580dab..9f75584 100644
+--- a/Assets/Scripts/UI_Import/HairCardSaveData.cs
++++ b/Assets/Scripts/UI_Import/HairCardSaveData.cs
+@@ -25,6 +25,12 @@ public class HairCardSaveData
+     // Curl (spiral/coil) modifier - applied after width, before bend, in the shape pipeline.
+     public float curlFrequency;
+     public float curlDiameter;
++    // Zero for legacy projects, which is exactly the correct no-wave default: EvaluateWave
++    // early-outs on amplitude <= 0, so an older file renders bit-identically. JsonUtility runs
++    // field initialisers first and only overwrites keys present in the JSON, so a missing
++    // waveAmplitude/waveFrequency lands on 0f with no migration and no version bump.
++    public float waveAmplitude;
++    public float waveFrequency;
+ 
+     // SYMMETRY. A mirrored card evaluates its geometry through a local-X mirror, so this has
+     // to survive a round trip or every mirrored card in a reloaded project would come back
+@@ -110,6 +116,7 @@ public class GroupClumperSaveData
+     public float uScale,vScale,uOffset,vOffset;
+     // Zero for legacy projects, which is exactly the correct no-curl-delta default.
+     public float curlFrequency,curlDiameter;
++    public float waveAmplitude,waveFrequency;
+ }
+ 
+ [Serializable] public class PostAffectorSaveData
+@@ -178,6 +185,9 @@ public class PostPredeterminedUVSaveData
+     // which is what every project saved before this channel existed deserializes to - imports
+     // as a flat x1 multiplier, so old files render bit-identically. No migration needed.
+     public List<GroomCurveKeySaveData> widthCurve=new();
++    // Root-only wave profiles. Empty list -> flat x1, the same convention as every curve above.
++    public List<GroomCurveKeySaveData> waveAmplitudeCurve=new();
++    public List<GroomCurveKeySaveData> waveFrequencyCurve=new();
+ 
+     // Rendering only: true culls back faces for this group's cards. Stored as
+     // "singleSided" rather than "doubleSided" so a project saved before this existed
+@@ -234,6 +244,8 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
+     public float sliderVOffset;
+     public float sliderCurlFrequency;
+     public float sliderCurlDiameter;
++    public float sliderWaveAmplitude;
++    public float sliderWaveFrequency;
+ 
+     public void OnBeforeSerialize()
+     {
+diff --git a/Assets/Scripts/UI_Import/InlineGroomShapeCurveEditorAuthority.cs b/Assets/Scripts/UI_Import/InlineGroomShapeCurveEditorAuthority.cs
+index b9bba77..2791f68 100644
+--- a/Assets/Scripts/UI_Import/InlineGroomShapeCurveEditorAuthority.cs
++++ b/Assets/Scripts/UI_Import/InlineGroomShapeCurveEditorAuthority.cs
+@@ -106,6 +106,8 @@ public class InlineGroomShapeCurveEditorAuthority : MonoBehaviour
+         changed |= TightenProfileRow("ShapeCurve_Z_Row");
+         changed |= TightenProfileRow("ShapeCurve_CurlFrequency_Row");
+         changed |= TightenProfileRow("ShapeCurve_CurlDiameter_Row");
++        changed |= TightenProfileRow("ShapeCurve_WaveAmplitude_Row");
++        changed |= TightenProfileRow("ShapeCurve_WaveFrequency_Row");
+         changed |= TightenProfileRow("ShapeCurve_SegmentDensity_Row");
+         changed |= TightenProfileRow("ShapeCurve_Width_Row");
+         return changed;
+diff --git a/Assets/Scripts/UI_Import/ModelViewer.cs b/Assets/Scripts/UI_Import/ModelViewer.cs
+index 3acaf87..b11903e 100644
+--- a/Assets/Scripts/UI_Import/ModelViewer.cs
++++ b/Assets/Scripts/UI_Import/ModelViewer.cs
+@@ -57,6 +57,8 @@ public class ModelViewer : MonoBehaviour
+     public float currentVOffset = 0.0f;
+     public float currentCurlFrequency = 0f;
+     public float currentCurlDiameter = 0f;
++    public float currentWaveAmplitude = 0f;
++    public float currentWaveFrequency = 0f;
+ 
+     // Group Management
+     public int currentGroupId = 0;
+@@ -95,6 +97,8 @@ public class ModelViewer : MonoBehaviour
+     private Slider widthSlider;
+     private Slider curlFrequencySlider;
+     private Slider curlDiameterSlider;
++    private Slider waveAmplitudeSlider;
++    private Slider waveFrequencySlider;
+     private Slider segmentsSlider;
+     private Slider bendSlider;
+     private Slider twistSlider;
+@@ -183,7 +187,7 @@ public class ModelViewer : MonoBehaviour
+         float delta = val - currentLength;
+         currentLength = val;
+         if (hasSelectionHotspot) UpdateActiveCard();
+-        else ApplyGroupUpdate(c => c.SetParameters(Mathf.Max(0.0001f, isRelativeMode ? c.length + delta : val), c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
++        else ApplyGroupUpdate(c => c.SetParameters(Mathf.Max(0.0001f, isRelativeMode ? c.length + delta : val), c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency));
+     }
+ 
+     public void OnSliderWidthChanged(float val)
+@@ -191,7 +195,7 @@ public class ModelViewer : MonoBehaviour
+         float delta = val - currentWidth;
+         currentWidth = val;
+         if (hasSelectionHotspot) UpdateActiveCard();
+-        else ApplyGroupUpdate(c => c.SetParameters(c.length, Mathf.Max(0.0005f, isRelativeMode ? c.width + delta : val), c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
++        else ApplyGroupUpdate(c => c.SetParameters(c.length, Mathf.Max(0.0005f, isRelativeMode ? c.width + delta : val), c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency));
+     }
+ 
+     public void OnSliderCurlFrequencyChanged(float val)
+@@ -199,7 +203,23 @@ public class ModelViewer : MonoBehaviour
+         float delta = val - currentCurlFrequency;
+         currentCurlFrequency = val;
+         if (hasSelectionHotspot) UpdateActiveCard();
+-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, isRelativeMode ? c.curlFrequency + delta : val, c.curlDiameter));
++        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, isRelativeMode ? c.curlFrequency + delta : val, c.curlDiameter, c.waveAmplitude, c.waveFrequency));
++    }
++
++    public void OnSliderWaveAmplitudeChanged(float val)
++    {
++        float delta = val - currentWaveAmplitude;
++        currentWaveAmplitude = val;
++        if (hasSelectionHotspot) UpdateActiveCard();
++        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, Mathf.Max(0f, isRelativeMode ? c.waveAmplitude + delta : val), c.waveFrequency));
++    }
++
++    public void OnSliderWaveFrequencyChanged(float val)
++    {
++        float delta = val - currentWaveFrequency;
++        currentWaveFrequency = val;
++        if (hasSelectionHotspot) UpdateActiveCard();
++        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, isRelativeMode ? c.waveFrequency + delta : val));
+     }
+ 
+     public void OnSliderCurlDiameterChanged(float val)
+@@ -207,7 +227,7 @@ public class ModelViewer : MonoBehaviour
+         float delta = val - currentCurlDiameter;
+         currentCurlDiameter = val;
+         if (hasSelectionHotspot) UpdateActiveCard();
+-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, Mathf.Max(0f, isRelativeMode ? c.curlDiameter + delta : val)));
++        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, Mathf.Max(0f, isRelativeMode ? c.curlDiameter + delta : val), c.waveAmplitude, c.waveFrequency));
+     }
+ 
+     public void OnSliderSegmentsChanged(float val)
+@@ -216,7 +236,7 @@ public class ModelViewer : MonoBehaviour
+         int deltaSegs = targetSegs - currentSegments;
+         currentSegments = targetSegs;
+         if (hasSelectionHotspot) UpdateActiveCard();
+-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, Mathf.Clamp(isRelativeMode ? c.segments + deltaSegs : targetSegs, 4, 60), c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
++        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, Mathf.Clamp(isRelativeMode ? c.segments + deltaSegs : targetSegs, 4, 60), c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency));
+     }
+ 
+     public void OnSliderBendChanged(float val)
+@@ -224,7 +244,7 @@ public class ModelViewer : MonoBehaviour
+         float delta = val - currentBend;
+         currentBend = val;
+         if (hasSelectionHotspot) UpdateActiveCard();
+-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, isRelativeMode ? c.bendAngle + delta : val, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
++        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, isRelativeMode ? c.bendAngle + delta : val, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency));
+     }
+ 
+     public void OnSliderTwistChanged(float val)
+@@ -232,7 +252,7 @@ public class ModelViewer : MonoBehaviour
+         float delta = val - currentTwist;
+         currentTwist = val;
+         if (hasSelectionHotspot) UpdateActiveCard();
+-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, isRelativeMode ? c.twistAngle + delta : val, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
++        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, isRelativeMode ? c.twistAngle + delta : val, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency));
+     }
+ 
+     public void OnSliderEmbedDepthChanged(float val)
+@@ -240,7 +260,7 @@ public class ModelViewer : MonoBehaviour
+         float delta = val - currentEmbedDepth;
+         currentEmbedDepth = val;
+         if (hasSelectionHotspot) UpdateActiveCard();
+-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), Mathf.Max(0f, isRelativeMode ? c.GetEmbedDepth() + delta : val), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
++        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), Mathf.Max(0f, isRelativeMode ? c.GetEmbedDepth() + delta : val), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency));
+     }
+ 
+     public void OnSliderOffsetXChanged(float val)
+@@ -248,7 +268,7 @@ public class ModelViewer : MonoBehaviour
+         float delta = val - currentOffsetX;
+         currentOffsetX = val;
+         if (hasSelectionHotspot) UpdateActiveCard();
+-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, isRelativeMode ? c.GetOffsetX() + delta : val, c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
++        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, isRelativeMode ? c.GetOffsetX() + delta : val, c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency));
+     }
+ 
+     public void OnSliderOffsetYChanged(float val)
+@@ -256,7 +276,7 @@ public class ModelViewer : MonoBehaviour
+         float delta = val - currentOffsetY;
+         currentOffsetY = val;
+         if (hasSelectionHotspot) UpdateActiveCard();
+-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), isRelativeMode ? c.GetOffsetY() + delta : val, c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
++        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), isRelativeMode ? c.GetOffsetY() + delta : val, c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency));
+     }
+ 
+     public void OnSliderOffsetZChanged(float val)
+@@ -264,35 +284,35 @@ public class ModelViewer : MonoBehaviour
+         float delta = val - currentOffsetZ;
+         currentOffsetZ = val;
+         if (hasSelectionHotspot) UpdateActiveCard();
+-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), isRelativeMode ? c.GetOffsetZ() + delta : val, c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
++        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), isRelativeMode ? c.GetOffsetZ() + delta : val, c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency));
+     }
+ 
+     public void OnSliderUScaleChanged(float val)
+     {
+         currentUScale = val;
+         groupUScales[currentGroupId] = val;
+-        ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, val, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
++        ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, val, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency));
+     }
+ 
+     public void OnSliderVScaleChanged(float val)
+     {
+         currentVScale = val;
+         groupVScales[currentGroupId] = val;
+-        ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, val, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
++        ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, val, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency));
+     }
+ 
+     public void OnSliderUOffsetChanged(float val)
+     {
+         currentUOffset = val;
+         groupUOffsets[currentGroupId] = val;
+-        ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, val, c.vOffset, c.curlFrequency, c.curlDiameter));
++        ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, val, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency));
+     }
+ 
+     public void OnSliderVOffsetChanged(float val)
+     {
+         currentVOffset = val;
+         groupVOffsets[currentGroupId] = val;
+-        ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, val, c.curlFrequency, c.curlDiameter));
++        ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, val, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency));
+     }
+ 
+     void ResetAllSliders()
+@@ -301,6 +321,8 @@ public class ModelViewer : MonoBehaviour
+         currentWidth = 0.01f;
+         currentCurlFrequency = 0f;
+         currentCurlDiameter = 0f;
++        currentWaveAmplitude = 0f;
++        currentWaveFrequency = 0f;
+         currentSegments = 12;
+         currentBend = 0f;
+         currentTwist = 0f;
+@@ -320,6 +342,8 @@ public class ModelViewer : MonoBehaviour
+         if (widthSlider != null) widthSlider.value = currentWidth;
+         if (curlFrequencySlider != null) curlFrequencySlider.value = currentCurlFrequency;
+         if (curlDiameterSlider != null) curlDiameterSlider.value = currentCurlDiameter;
++        if (waveAmplitudeSlider != null) waveAmplitudeSlider.value = currentWaveAmplitude;
++        if (waveFrequencySlider != null) waveFrequencySlider.value = currentWaveFrequency;
+         if (segmentsSlider != null) segmentsSlider.value = currentSegments;
+         if (bendSlider != null) bendSlider.value = currentBend;
+         if (twistSlider != null) twistSlider.value = currentTwist;
+@@ -503,6 +527,12 @@ public class ModelViewer : MonoBehaviour
+         CreateSliderUI(panelGO.transform, "Width", 0.0005f, 0.05f, currentWidth, OnSliderWidthChanged, out widthSlider, 38, 16);
+         CreateSliderUI(panelGO.transform, "Curl Frequency", -10f, 10f, currentCurlFrequency, OnSliderCurlFrequencyChanged, out curlFrequencySlider, 38, 16);
+         CreateSliderUI(panelGO.transform, "Curl Diameter", 0f, 0.15f, currentCurlDiameter, OnSliderCurlDiameterChanged, out curlDiameterSlider, 38, 16);
++        // Label strings here are load-bearing: CreateSliderUI names the GameObject
++        // labelText + "_Slider", and PostRootContextRestore, PostAffectorManager and
++        // GroomSessionResetCoordinator all switch on those exact names. Amplitude mirrors
++        // Curl Diameter's range (a magnitude, min 0); frequency mirrors Curl Frequency (signed).
++        CreateSliderUI(panelGO.transform, "Wave Amplitude", 0f, 0.15f, currentWaveAmplitude, OnSliderWaveAmplitudeChanged, out waveAmplitudeSlider, 38, 16);
++        CreateSliderUI(panelGO.transform, "Wave Frequency", -10f, 10f, currentWaveFrequency, OnSliderWaveFrequencyChanged, out waveFrequencySlider, 38, 16);
+         CreateSliderUI(panelGO.transform, "Segments", 4, 60, currentSegments, OnSliderSegmentsChanged, out segmentsSlider, 38, 16);
+         CreateSliderUI(panelGO.transform, "Bend Angle", -360f, 360f, currentBend, OnSliderBendChanged, out bendSlider, 38, 16);
+         CreateSliderUI(panelGO.transform, "Twist Angle", -360f, 360f, currentTwist, OnSliderTwistChanged, out twistSlider, 38, 16);
+@@ -685,7 +715,9 @@ public class ModelViewer : MonoBehaviour
+                     y = MedianOf(sampled, s => s.y),
+                     z = MedianOf(sampled, s => s.z),
+                     curlFrequency = MedianOf(sampled, s => s.curlFrequency),
+-                    curlDiameter = MedianOf(sampled, s => s.curlDiameter)
++                    curlDiameter = MedianOf(sampled, s => s.curlDiameter),
++                    waveAmplitude = MedianOf(sampled, s => s.waveAmplitude),
++                    waveFrequency = MedianOf(sampled, s => s.waveFrequency)
+                 };
+                 found = true;
+             }
+@@ -697,7 +729,7 @@ public class ModelViewer : MonoBehaviour
+             state = new GroomRootStateAuthority.RootState
+             {
+                 length = .2f, width = .01f, segments = 12, bend = 0f, twist = 0f, depth = .002f,
+-                x = 0f, y = 0f, z = 0f, curlFrequency = 0f, curlDiameter = 0f
++                x = 0f, y = 0f, z = 0f, curlFrequency = 0f, curlDiameter = 0f, waveAmplitude = 0f, waveFrequency = 0f
+             };
+         }
+ 
+@@ -712,6 +744,8 @@ public class ModelViewer : MonoBehaviour
+         currentOffsetZ = state.z;
+         currentCurlFrequency = state.curlFrequency;
+         currentCurlDiameter = state.curlDiameter;
++        currentWaveAmplitude = state.waveAmplitude;
++        currentWaveFrequency = state.waveFrequency;
+ 
+         if (lengthSlider != null) lengthSlider.SetValueWithoutNotify(currentLength);
+         if (widthSlider != null) widthSlider.SetValueWithoutNotify(currentWidth);
+@@ -724,6 +758,8 @@ public class ModelViewer : MonoBehaviour
+         if (offsetZSlider != null) offsetZSlider.SetValueWithoutNotify(currentOffsetZ);
+         if (curlFrequencySlider != null) curlFrequencySlider.SetValueWithoutNotify(currentCurlFrequency);
+         if (curlDiameterSlider != null) curlDiameterSlider.SetValueWithoutNotify(currentCurlDiameter);
++        if (waveAmplitudeSlider != null) waveAmplitudeSlider.SetValueWithoutNotify(currentWaveAmplitude);
++        if (waveFrequencySlider != null) waveFrequencySlider.SetValueWithoutNotify(currentWaveFrequency);
+     }
+ 
+     IEnumerator FlashActiveGroupRoutine(int activeId)
+@@ -1002,9 +1038,9 @@ public class ModelViewer : MonoBehaviour
+         if (hasSelectionHotspot)
+         {
+             HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
+-            foreach (HairCard card in allCards) if (card.groupId == currentGroupId && card.selectionWeight > 0f) card.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, selectionStrength, currentUScale, currentVScale, currentUOffset, currentVOffset, currentCurlFrequency, currentCurlDiameter);
++            foreach (HairCard card in allCards) if (card.groupId == currentGroupId && card.selectionWeight > 0f) card.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, selectionStrength, currentUScale, currentVScale, currentUOffset, currentVOffset, currentCurlFrequency, currentCurlDiameter, currentWaveAmplitude, currentWaveFrequency);
+         }
+-        else if (lastPlacedCard != null) lastPlacedCard.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, 1f, currentUScale, currentVScale, currentUOffset, currentVOffset, currentCurlFrequency, currentCurlDiameter);
++        else if (lastPlacedCard != null) lastPlacedCard.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, 1f, currentUScale, currentVScale, currentUOffset, currentVOffset, currentCurlFrequency, currentCurlDiameter, currentWaveAmplitude, currentWaveFrequency);
+     }
+ 
+     void Update() { HandleCameraControls(); HandleGrooming(); }
+@@ -1045,7 +1081,7 @@ public class ModelViewer : MonoBehaviour
+                 groupVScales[newId] = currentVScale;
+                 groupUOffsets[newId] = currentUOffset;
+                 groupVOffsets[newId] = currentVOffset;
+-                foreach (var card in sessionPlacedCards) if (card != null) { card.groupId = newId; card.SetParameters(card.length, card.width, card.segments, card.bendAngle, card.twistAngle, card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ(), card.GetEmbedDepth(), 1f, currentUScale, currentVScale, currentUOffset, currentVOffset, card.curlFrequency, card.curlDiameter); }
++                foreach (var card in sessionPlacedCards) if (card != null) { card.groupId = newId; card.SetParameters(card.length, card.width, card.segments, card.bendAngle, card.twistAngle, card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ(), card.GetEmbedDepth(), 1f, currentUScale, currentVScale, currentUOffset, currentVOffset, card.curlFrequency, card.curlDiameter, card.waveAmplitude, card.waveFrequency); }
+                 // Those cards just changed group. Same reasoning as the New Group button:
+                 // a shift-drag that promotes itself into a fresh group is the start of new
+                 // work, so end the SOLO rather than have the cards you just drew vanish
+@@ -1087,9 +1123,9 @@ public class ModelViewer : MonoBehaviour
+         if (groupCards.Length > 0)
+         {
+             var nearestCards = groupCards.OrderBy(card => Vector3.Distance(brushCenter, card.transform.position)).Take(6).ToList();
+-            float totalWeight = 0f, avgLength = 0f, avgWidth = 0f, avgBend = 0f, avgTwist = 0f, avgCurlFrequency = 0f, avgCurlDiameter = 0f;
++            float totalWeight = 0f, avgLength = 0f, avgWidth = 0f, avgBend = 0f, avgTwist = 0f, avgCurlFrequency = 0f, avgCurlDiameter = 0f, avgWaveAmplitude = 0f, avgWaveFrequency = 0f;
+             int accumulatedSegments = 0;
+-            foreach (var card in nearestCards) { float dist = Vector3.Distance(brushCenter, card.transform.position); float weight = 1f / (dist + 0.0001f); totalWeight += weight; avgLength += card.length * weight; avgWidth += card.width * weight; avgBend += card.bendAngle * weight; avgTwist += card.twistAngle * weight; avgCurlFrequency += card.curlFrequency * weight; avgCurlDiameter += card.curlDiameter * weight; accumulatedSegments += card.segments; }
++            foreach (var card in nearestCards) { float dist = Vector3.Distance(brushCenter, card.transform.position); float weight = 1f / (dist + 0.0001f); totalWeight += weight; avgLength += card.length * weight; avgWidth += card.width * weight; avgBend += card.bendAngle * weight; avgTwist += card.twistAngle * weight; avgCurlFrequency += card.curlFrequency * weight; avgCurlDiameter += card.curlDiameter * weight; avgWaveAmplitude += card.waveAmplitude * weight; avgWaveFrequency += card.waveFrequency * weight; accumulatedSegments += card.segments; }
+             if (totalWeight > 0f)
+             {
+                 currentLength = avgLength / totalWeight;
+@@ -1098,6 +1134,8 @@ public class ModelViewer : MonoBehaviour
+                 currentTwist = avgTwist / totalWeight;
+                 currentCurlFrequency = avgCurlFrequency / totalWeight;
+                 currentCurlDiameter = avgCurlDiameter / totalWeight;
++                currentWaveAmplitude = avgWaveAmplitude / totalWeight;
++                currentWaveFrequency = avgWaveFrequency / totalWeight;
+                 currentSegments = Mathf.RoundToInt((float)accumulatedSegments / nearestCards.Count);
+                 if (lengthSlider != null) lengthSlider.SetValueWithoutNotify(currentLength);
+                 if (widthSlider != null) widthSlider.SetValueWithoutNotify(currentWidth);
+@@ -1105,6 +1143,8 @@ public class ModelViewer : MonoBehaviour
+                 if (twistSlider != null) twistSlider.SetValueWithoutNotify(currentTwist);
+                 if (curlFrequencySlider != null) curlFrequencySlider.SetValueWithoutNotify(currentCurlFrequency);
+                 if (curlDiameterSlider != null) curlDiameterSlider.SetValueWithoutNotify(currentCurlDiameter);
++        if (waveAmplitudeSlider != null) waveAmplitudeSlider.SetValueWithoutNotify(currentWaveAmplitude);
++        if (waveFrequencySlider != null) waveFrequencySlider.SetValueWithoutNotify(currentWaveFrequency);
+                 if (segmentsSlider != null) segmentsSlider.SetValueWithoutNotify(currentSegments);
+             }
+         }
+@@ -1134,7 +1174,7 @@ public class ModelViewer : MonoBehaviour
+         {
+             if (card.groupId != currentGroupId) { card.SetSelectionWeight(0f); continue; }
+             float distance = Vector3.Distance(brushCenter, card.transform.position);
+-            if (distance <= brushFalloffDistance) { float weight = Mathf.Clamp01(1f - (distance / brushFalloffDistance)); card.SetSelectionWeight(weight); card.CaptureBaseState(card.length, card.width, card.segments, card.bendAngle, card.twistAngle, card.GetEmbedDepth(), card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ(), card.curlFrequency, card.curlDiameter); }
++            if (distance <= brushFalloffDistance) { float weight = Mathf.Clamp01(1f - (distance / brushFalloffDistance)); card.SetSelectionWeight(weight); card.CaptureBaseState(card.length, card.width, card.segments, card.bendAngle, card.twistAngle, card.GetEmbedDepth(), card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ(), card.curlFrequency, card.curlDiameter, card.waveAmplitude, card.waveFrequency); }
+             else card.SetSelectionWeight(0f);
+         }
+     }
+@@ -1173,7 +1213,7 @@ public class ModelViewer : MonoBehaviour
+         card.mirrored = isMirrored;
+ 
+         card.SetPlacementData(position, normal, currentEmbedDepth, currentOffsetX, currentOffsetY, currentOffsetZ, currentGroupId);
+-        card.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, 1f, currentUScale, currentVScale, currentUOffset, currentVOffset, currentCurlFrequency, currentCurlDiameter);
++        card.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, 1f, currentUScale, currentVScale, currentUOffset, currentVOffset, currentCurlFrequency, currentCurlDiameter, currentWaveAmplitude, currentWaveFrequency);
+ 
+         // Deliberately only the primary card becomes lastPlacedCard. That reference is what
+         // the sliders steer when nothing is selected, and it would be surprising for a slider
+@@ -1242,6 +1282,8 @@ public class ModelViewer : MonoBehaviour
+         saveData.sliderVOffset = currentVOffset;
+         saveData.sliderCurlFrequency = currentCurlFrequency;
+         saveData.sliderCurlDiameter = currentCurlDiameter;
++        saveData.sliderWaveAmplitude = currentWaveAmplitude;
++        saveData.sliderWaveFrequency = currentWaveFrequency;
+         foreach (int id in allGroupIds)
+         {
+             GroupSaveData gData = new GroupSaveData();
+@@ -1281,6 +1323,8 @@ public class ModelViewer : MonoBehaviour
+             cardData.groupId = card.groupId;
+             cardData.curlFrequency = card.curlFrequency;
+             cardData.curlDiameter = card.curlDiameter;
++            cardData.waveAmplitude = card.waveAmplitude;
++            cardData.waveFrequency = card.waveFrequency;
+             cardData.mirrored = card.mirrored;
+             saveData.hairCards.Add(cardData);
+         }
+@@ -1332,6 +1376,8 @@ public class ModelViewer : MonoBehaviour
+         currentVOffset = saveData.sliderVOffset;
+         currentCurlFrequency = saveData.sliderCurlFrequency;
+         currentCurlDiameter = saveData.sliderCurlDiameter;
++        currentWaveAmplitude = saveData.sliderWaveAmplitude;
++        currentWaveFrequency = saveData.sliderWaveFrequency;
+         allGroupIds.Clear();
+         groupNames.Clear();
+         groupUScales.Clear();
+@@ -1358,7 +1404,7 @@ public class ModelViewer : MonoBehaviour
+             card.mirrored = cData.mirrored;
+             float u = cData.uScale != 0 ? cData.uScale : 1.0f;
+             float v = cData.vScale != 0 ? cData.vScale : 1.0f;
+-            card.SetParameters(cData.length, cData.width, cData.segments, cData.bendAngle, cData.twistAngle, cData.offsetX, cData.offsetY, cData.offsetZ, cData.embedDepth, 1f, u, v, cData.uOffset, cData.vOffset, cData.curlFrequency, cData.curlDiameter);
++            card.SetParameters(cData.length, cData.width, cData.segments, cData.bendAngle, cData.twistAngle, cData.offsetX, cData.offsetY, cData.offsetZ, cData.embedDepth, 1f, u, v, cData.uOffset, cData.vOffset, cData.curlFrequency, cData.curlDiameter, cData.waveAmplitude, cData.waveFrequency);
+             MeshRenderer mr = cardGO.GetComponent<MeshRenderer>();
+             if (hairCardMaterial != null) mr.sharedMaterial = hairCardMaterial;
+         }
+diff --git a/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs b/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs
+index 86fcd1c..c6e975a 100644
+--- a/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs
++++ b/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs
+@@ -235,10 +235,15 @@ public class ModifierDeleteNeutralizeHook : MonoBehaviour, IPointerDownHandler
+             Quaternion bankRotation;
+             HairCard.EvaluateCurl(card.groupId, card.curlFrequency, card.curlDiameter, t, out curlOffset, out bankRotation, card.mirrored);
+ 
++            // Shared with GenerateMesh so a wavy card stays wavy once clumped or neutralised.
++            // Skipping this is how curl and segment density each silently reverted here before.
++            Vector3 waveOffset;
++            HairCard.EvaluateWave(card.groupId, card.waveAmplitude, card.waveFrequency, t, out waveOffset, card.mirrored);
++
+             Vector3 sectionOrigin = new Vector3(0f, 0f, z);
+-            Vector3 left = sectionOrigin + bankRotation * new Vector3(-span, 0f, 0f) + curlOffset;
+-            Vector3 center = sectionOrigin + bankRotation * new Vector3(0f, ridge, 0f) + curlOffset;
+-            Vector3 right = sectionOrigin + bankRotation * new Vector3(span, 0f, 0f) + curlOffset;
++            Vector3 left = sectionOrigin + bankRotation * new Vector3(-span, 0f, 0f) + curlOffset + waveOffset;
++            Vector3 center = sectionOrigin + bankRotation * new Vector3(0f, ridge, 0f) + curlOffset + waveOffset;
++            Vector3 right = sectionOrigin + bankRotation * new Vector3(span, 0f, 0f) + curlOffset + waveOffset;
+ 
+             Vector3 spinePoint = segmentSpine[i];
+             Quaternion sectionFrame = segmentFrame[i];
+diff --git a/Assets/Scripts/UI_Import/NewGroupRootSelectionAuthority.cs b/Assets/Scripts/UI_Import/NewGroupRootSelectionAuthority.cs
+index 91c5e59..cd81704 100644
+--- a/Assets/Scripts/UI_Import/NewGroupRootSelectionAuthority.cs
++++ b/Assets/Scripts/UI_Import/NewGroupRootSelectionAuthority.cs
+@@ -244,6 +244,8 @@ public class NewGroupRootSelectionAuthority : MonoBehaviour
+         GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.Z);
+         GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.CurlFrequency);
+         GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.CurlDiameter);
++        GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.WaveAmplitude);
++        GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.WaveFrequency);
+         GroomShapeCurveRegistry.Reset(gid, GroomShapeCurveChannel.SegmentDensity);
+         // A recycled group id must not inherit the deleted group's width taper - same rule as
+         // the SS/DS Forget below.
+diff --git a/Assets/Scripts/UI_Import/PostAffectorManager.cs b/Assets/Scripts/UI_Import/PostAffectorManager.cs
+index 879294f..489bfc3 100644
+--- a/Assets/Scripts/UI_Import/PostAffectorManager.cs
++++ b/Assets/Scripts/UI_Import/PostAffectorManager.cs
+@@ -36,6 +36,7 @@ public class PostAffectorManager : MonoBehaviour
+         public float x, y, z;
+         public float uScale, vScale, uOffset, vOffset;
+         public float curlFrequency, curlDiameter;
++        public float waveAmplitude, waveFrequency;
+     }
+ 
+     private class CardState
+@@ -342,6 +343,8 @@ public class PostAffectorManager : MonoBehaviour
+         s.vOffset = r.vOffset;
+         s.curlFrequency = r.curlFrequency;
+         s.curlDiameter = r.curlDiameter;
++        s.waveAmplitude = r.waveAmplitude;
++        s.waveFrequency = r.waveFrequency;
+         return s;
+     }
+ 
+@@ -365,6 +368,11 @@ public class PostAffectorManager : MonoBehaviour
+         if (!Near(a.z, b.z)) return false;
+         if (!Near(a.curlFrequency, b.curlFrequency)) return false;
+         if (!Near(a.curlDiameter, b.curlDiameter)) return false;
++        // Omitting these would make a wave-only edit compare EQUAL to the previous shape, so
++        // the POST would decide it had no delta and annihilate it. Same failure the project
++        // already documented for other channels.
++        if (!Near(a.waveAmplitude, b.waveAmplitude)) return false;
++        if (!Near(a.waveFrequency, b.waveFrequency)) return false;
+         return true;
+     }
+ 
+@@ -562,7 +570,9 @@ public class PostAffectorManager : MonoBehaviour
+             uOffset = s.uOffset,
+             vOffset = s.vOffset,
+             curlFrequency = s.curlFrequency,
+-            curlDiameter = Mathf.Max(0f, s.curlDiameter)
++            curlDiameter = Mathf.Max(0f, s.curlDiameter),
++            waveAmplitude = Mathf.Max(0f, s.waveAmplitude),
++            waveFrequency = s.waveFrequency
+         };
+     }
+ 
+@@ -689,6 +699,8 @@ public class PostAffectorManager : MonoBehaviour
+                 case "V Offset_Slider": slider.SetValueWithoutNotify(viewer.currentVOffset); break;
+                 case "Curl Frequency_Slider": slider.SetValueWithoutNotify(viewer.currentCurlFrequency); break;
+                 case "Curl Diameter_Slider": slider.SetValueWithoutNotify(viewer.currentCurlDiameter); break;
++                case "Wave Amplitude_Slider": slider.SetValueWithoutNotify(viewer.currentWaveAmplitude); break;
++                case "Wave Frequency_Slider": slider.SetValueWithoutNotify(viewer.currentWaveFrequency); break;
+             }
+         }
+     }
+@@ -834,7 +846,9 @@ public class PostAffectorManager : MonoBehaviour
+         uOffset = viewer.currentUOffset,
+         vOffset = viewer.currentVOffset,
+         curlFrequency = viewer.currentCurlFrequency,
+-        curlDiameter = viewer.currentCurlDiameter
++        curlDiameter = viewer.currentCurlDiameter,
++        waveAmplitude = viewer.currentWaveAmplitude,
++        waveFrequency = viewer.currentWaveFrequency
+     };
+ 
+     ControlState ReadCanonical(HairCard c)
+@@ -856,7 +870,9 @@ public class PostAffectorManager : MonoBehaviour
+             uOffset = s.uOffset,
+             vOffset = s.vOffset,
+             curlFrequency = s.curlFrequency,
+-            curlDiameter = s.curlDiameter
++            curlDiameter = s.curlDiameter,
++            waveAmplitude = s.waveAmplitude,
++            waveFrequency = s.waveFrequency
+         };
+     }
+ 
+@@ -877,6 +893,8 @@ public class PostAffectorManager : MonoBehaviour
+         viewer.currentVOffset = s.vOffset;
+         viewer.currentCurlFrequency = s.curlFrequency;
+         viewer.currentCurlDiameter = s.curlDiameter;
++        viewer.currentWaveAmplitude = s.waveAmplitude;
++        viewer.currentWaveFrequency = s.waveFrequency;
+     }
+ 
+     static ControlState Add(ControlState a, ControlState b) => new ControlState
+@@ -886,7 +904,8 @@ public class PostAffectorManager : MonoBehaviour
+         x = a.x + b.x, y = a.y + b.y, z = a.z + b.z,
+         uScale = a.uScale + b.uScale, vScale = a.vScale + b.vScale,
+         uOffset = a.uOffset + b.uOffset, vOffset = a.vOffset + b.vOffset,
+-        curlFrequency = a.curlFrequency + b.curlFrequency, curlDiameter = a.curlDiameter + b.curlDiameter
++        curlFrequency = a.curlFrequency + b.curlFrequency, curlDiameter = a.curlDiameter + b.curlDiameter,
++        waveAmplitude = a.waveAmplitude + b.waveAmplitude, waveFrequency = a.waveFrequency + b.waveFrequency
+     };
+ 
+     static ControlState Subtract(ControlState a, ControlState b) => new ControlState
+@@ -896,7 +915,8 @@ public class PostAffectorManager : MonoBehaviour
+         x = a.x - b.x, y = a.y - b.y, z = a.z - b.z,
+         uScale = a.uScale - b.uScale, vScale = a.vScale - b.vScale,
+         uOffset = a.uOffset - b.uOffset, vOffset = a.vOffset - b.vOffset,
+-        curlFrequency = a.curlFrequency - b.curlFrequency, curlDiameter = a.curlDiameter - b.curlDiameter
++        curlFrequency = a.curlFrequency - b.curlFrequency, curlDiameter = a.curlDiameter - b.curlDiameter,
++        waveAmplitude = a.waveAmplitude - b.waveAmplitude, waveFrequency = a.waveFrequency - b.waveFrequency
+     };
+ 
+     static ControlState Scale(ControlState a, float s) => new ControlState
+@@ -906,7 +926,8 @@ public class PostAffectorManager : MonoBehaviour
+         x = a.x * s, y = a.y * s, z = a.z * s,
+         uScale = a.uScale * s, vScale = a.vScale * s,
+         uOffset = a.uOffset * s, vOffset = a.vOffset * s,
+-        curlFrequency = a.curlFrequency * s, curlDiameter = a.curlDiameter * s
++        curlFrequency = a.curlFrequency * s, curlDiameter = a.curlDiameter * s,
++        waveAmplitude = a.waveAmplitude * s, waveFrequency = a.waveFrequency * s
+     };
+ 
+     public List<PostAffectorSaveData> ExportGroup(int groupId)
+@@ -997,7 +1018,8 @@ public class PostAffectorManager : MonoBehaviour
+         length = s.length, width = s.width, segments = s.segments, bend = s.bend, twist = s.twist,
+         depth = s.depth, x = s.x, y = s.y, z = s.z,
+         uScale = s.uScale, vScale = s.vScale, uOffset = s.uOffset, vOffset = s.vOffset,
+-        curlFrequency = s.curlFrequency, curlDiameter = s.curlDiameter
++        curlFrequency = s.curlFrequency, curlDiameter = s.curlDiameter,
++        waveAmplitude = s.waveAmplitude, waveFrequency = s.waveFrequency
+     };
+ 
+     static ControlState FromSave(PostAffectorControlSaveData s) => s == null ? new ControlState() : new ControlState
+@@ -1005,6 +1027,7 @@ public class PostAffectorManager : MonoBehaviour
+         length = s.length, width = s.width, segments = s.segments, bend = s.bend, twist = s.twist,
+         depth = s.depth, x = s.x, y = s.y, z = s.z,
+         uScale = s.uScale, vScale = s.vScale, uOffset = s.uOffset, vOffset = s.vOffset,
+-        curlFrequency = s.curlFrequency, curlDiameter = s.curlDiameter
++        curlFrequency = s.curlFrequency, curlDiameter = s.curlDiameter,
++        waveAmplitude = s.waveAmplitude, waveFrequency = s.waveFrequency
+     };
+ }
+diff --git a/Assets/Scripts/UI_Import/PostAffectorSurfaceMoveUX.cs b/Assets/Scripts/UI_Import/PostAffectorSurfaceMoveUX.cs
+index 787eb20..8c8b0c0 100644
+--- a/Assets/Scripts/UI_Import/PostAffectorSurfaceMoveUX.cs
++++ b/Assets/Scripts/UI_Import/PostAffectorSurfaceMoveUX.cs
+@@ -127,7 +127,7 @@ public class PostAffectorSurfaceMoveUX : MonoBehaviour
+             if (previousWeight <= 0f && weight > 0f)
+             {
+                 card.CaptureBaseState(card.length, card.width, card.segments, card.bendAngle, card.twistAngle,
+-                    card.GetEmbedDepth(), card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ(), card.curlFrequency, card.curlDiameter);
++                    card.GetEmbedDepth(), card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ(), card.curlFrequency, card.curlDiameter, card.waveAmplitude, card.waveFrequency);
+             }
+             card.SetSelectionWeight(weight);
+         }
+diff --git a/Assets/Scripts/UI_Import/PostFinalRemovalLifecycleAuthority.cs b/Assets/Scripts/UI_Import/PostFinalRemovalLifecycleAuthority.cs
+index e43b99f..ae435b0 100644
+--- a/Assets/Scripts/UI_Import/PostFinalRemovalLifecycleAuthority.cs
++++ b/Assets/Scripts/UI_Import/PostFinalRemovalLifecycleAuthority.cs
+@@ -178,7 +178,9 @@ public class PostFinalRemovalLifecycleAuthority : MonoBehaviour
+             uOffset = s.uOffset,
+             vOffset = s.vOffset,
+             curlFrequency = s.curlFrequency,
+-            curlDiameter = Mathf.Max(0f, s.curlDiameter)
++            curlDiameter = Mathf.Max(0f, s.curlDiameter),
++            waveAmplitude = Mathf.Max(0f, s.waveAmplitude),
++            waveFrequency = s.waveFrequency
+         };
+     }
+ 
+diff --git a/Assets/Scripts/UI_Import/PostRootContextRestore.cs b/Assets/Scripts/UI_Import/PostRootContextRestore.cs
+index 26e841c..e37f662 100644
+--- a/Assets/Scripts/UI_Import/PostRootContextRestore.cs
++++ b/Assets/Scripts/UI_Import/PostRootContextRestore.cs
+@@ -108,6 +108,12 @@ public class PostRootContextRestore : MonoBehaviour
+                 case "Curl Frequency_Slider":
+                     slider.SetValueWithoutNotify(viewer.currentCurlFrequency);
+                     break;
++                case "Wave Amplitude_Slider":
++                    slider.SetValueWithoutNotify(viewer.currentWaveAmplitude);
++                    break;
++                case "Wave Frequency_Slider":
++                    slider.SetValueWithoutNotify(viewer.currentWaveFrequency);
++                    break;
+                 case "Curl Diameter_Slider":
+                     slider.SetValueWithoutNotify(viewer.currentCurlDiameter);
+                     break;
+diff --git a/Assets/Scripts/UI_Import/PostShapeCurveBridge.cs b/Assets/Scripts/UI_Import/PostShapeCurveBridge.cs
+index 477318d..3a6b64c 100644
+--- a/Assets/Scripts/UI_Import/PostShapeCurveBridge.cs
++++ b/Assets/Scripts/UI_Import/PostShapeCurveBridge.cs
+@@ -182,7 +182,9 @@ public class PostShapeCurveBridge : MonoBehaviour
+         return channel == GroomShapeCurveChannel.CurlFrequency
+             || channel == GroomShapeCurveChannel.CurlDiameter
+             || channel == GroomShapeCurveChannel.SegmentDensity
+-            || channel == GroomShapeCurveChannel.Width;
++            || channel == GroomShapeCurveChannel.Width
++            || channel == GroomShapeCurveChannel.WaveAmplitude
++            || channel == GroomShapeCurveChannel.WaveFrequency;
+     }
+ 
+     public static float EvaluatePost(int postId, GroomShapeCurveChannel channel, float t)
+diff --git a/Assets/Scripts/UI_Import/PostVarianceAffectorBridge.cs b/Assets/Scripts/UI_Import/PostVarianceAffectorBridge.cs
+index 009d287..5185a18 100644
+--- a/Assets/Scripts/UI_Import/PostVarianceAffectorBridge.cs
++++ b/Assets/Scripts/UI_Import/PostVarianceAffectorBridge.cs
+@@ -164,7 +164,9 @@ public class PostVarianceAffectorBridge : MonoBehaviour
+                 // a curly groom flattened out the moment variance became non-zero while the
+                 // curl sliders carried on reading their authored values.
+                 curlFrequency = card.curlFrequency,
+-                curlDiameter = card.curlDiameter
++                curlDiameter = card.curlDiameter,
++                waveAmplitude = card.waveAmplitude,
++                waveFrequency = card.waveFrequency
+             };
+             card.ApplyEvaluatedState(evaluated);
+         }
+diff --git a/Assets/Scripts/UI_Import/RuntimeNavigationProjectIO.cs b/Assets/Scripts/UI_Import/RuntimeNavigationProjectIO.cs
+index e9524cd..5da777b 100644
+--- a/Assets/Scripts/UI_Import/RuntimeNavigationProjectIO.cs
++++ b/Assets/Scripts/UI_Import/RuntimeNavigationProjectIO.cs
+@@ -120,6 +120,7 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
+         data.sliderOffsetX=viewer.currentOffsetX; data.sliderOffsetY=viewer.currentOffsetY; data.sliderOffsetZ=viewer.currentOffsetZ;
+         data.sliderUScale=viewer.currentUScale; data.sliderVScale=viewer.currentVScale; data.sliderUOffset=viewer.currentUOffset; data.sliderVOffset=viewer.currentVOffset;
+         data.sliderCurlFrequency=viewer.currentCurlFrequency; data.sliderCurlDiameter=viewer.currentCurlDiameter;
++        data.sliderWaveAmplitude=viewer.currentWaveAmplitude; data.sliderWaveFrequency=viewer.currentWaveFrequency;
+ 
+         HashSet<int> ids = GetField<HashSet<int>>("allGroupIds") ?? new HashSet<int>();
+         var names=GetField<Dictionary<int,string>>("groupNames"); var us=GetField<Dictionary<int,float>>("groupUScales"); var vs=GetField<Dictionary<int,float>>("groupVScales"); var uo=GetField<Dictionary<int,float>>("groupUOffsets"); var vo=GetField<Dictionary<int,float>>("groupVOffsets");
+@@ -140,7 +141,7 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
+                 length=card.length,width=card.width,segments=card.segments,bendAngle=card.bendAngle,twistAngle=card.twistAngle,flattenFactor=card.flattenFactor,
+                 embedDepth=card.GetEmbedDepth(),offsetX=card.GetOffsetX(),offsetY=card.GetOffsetY(),offsetZ=card.GetOffsetZ(),
+                 uScale=card.uScale,vScale=card.vScale,uOffset=card.uOffset,vOffset=card.vOffset,groupId=card.groupId,
+-                curlFrequency=card.curlFrequency,curlDiameter=card.curlDiameter,mirrored=card.mirrored
++                curlFrequency=card.curlFrequency,curlDiameter=card.curlDiameter,waveAmplitude=card.waveAmplitude,waveFrequency=card.waveFrequency,mirrored=card.mirrored
+             });
+         }
+         File.WriteAllText(path, JsonUtility.ToJson(data,true));
+@@ -169,6 +170,7 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
+ 
+         viewer.currentLength=data.sliderLength;viewer.currentWidth=data.sliderWidth;viewer.currentSegments=data.sliderSegments;viewer.currentBend=data.sliderBend;viewer.currentTwist=data.sliderTwist;viewer.currentEmbedDepth=data.sliderEmbedDepth;viewer.currentOffsetX=data.sliderOffsetX;viewer.currentOffsetY=data.sliderOffsetY;viewer.currentOffsetZ=data.sliderOffsetZ;viewer.currentUScale=data.sliderUScale;viewer.currentVScale=data.sliderVScale;viewer.currentUOffset=data.sliderUOffset;viewer.currentVOffset=data.sliderVOffset;
+         viewer.currentCurlFrequency=data.sliderCurlFrequency;viewer.currentCurlDiameter=data.sliderCurlDiameter;
++        viewer.currentWaveAmplitude=data.sliderWaveAmplitude;viewer.currentWaveFrequency=data.sliderWaveFrequency;
+ 
+         HashSet<int> ids=GetField<HashSet<int>>("allGroupIds");var names=GetField<Dictionary<int,string>>("groupNames");var us=GetField<Dictionary<int,float>>("groupUScales");var vs=GetField<Dictionary<int,float>>("groupVScales");var uo=GetField<Dictionary<int,float>>("groupUOffsets");var vo=GetField<Dictionary<int,float>>("groupVOffsets");ids?.Clear();names?.Clear();us?.Clear();vs?.Clear();uo?.Clear();vo?.Clear();
+         foreach(GroupSaveData g in data.groups){ids?.Add(g.groupId);if(names!=null)names[g.groupId]=g.groupName;if(us!=null)us[g.groupId]=g.uScale;if(vs!=null)vs[g.groupId]=g.vScale;if(uo!=null)uo[g.groupId]=g.uOffset;if(vo!=null)vo[g.groupId]=g.vOffset;}
+@@ -184,7 +186,7 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
+             Vector3 hit=new Vector3(c.hitX,c.hitY,c.hitZ);
+             Vector3 normal=new Vector3(c.normalX,c.normalY,c.normalZ).normalized;
+             card.SetPlacementData(hit,normal,c.embedDepth,c.offsetX,c.offsetY,c.offsetZ,c.groupId);
+-            card.SetParameters(c.length,c.width,c.segments,c.bendAngle,c.twistAngle,c.offsetX,c.offsetY,c.offsetZ,c.embedDepth,1f,c.uScale,c.vScale,c.uOffset,c.vOffset,c.curlFrequency,c.curlDiameter);
++            card.SetParameters(c.length,c.width,c.segments,c.bendAngle,c.twistAngle,c.offsetX,c.offsetY,c.offsetZ,c.embedDepth,1f,c.uScale,c.vScale,c.uOffset,c.vOffset,c.curlFrequency,c.curlDiameter,c.waveAmplitude,c.waveFrequency);
+             if(viewer.hairCardMaterial!=null)go.GetComponent<MeshRenderer>().sharedMaterial=viewer.hairCardMaterial;
+         }
+ 
+diff --git a/Assets/Scripts/UI_Import/SelectionBrushScaleTuning.cs b/Assets/Scripts/UI_Import/SelectionBrushScaleTuning.cs
+index c78aa4c..4a1a431 100644
+--- a/Assets/Scripts/UI_Import/SelectionBrushScaleTuning.cs
++++ b/Assets/Scripts/UI_Import/SelectionBrushScaleTuning.cs
+@@ -266,7 +266,7 @@ public class SelectionBrushScaleTuning : MonoBehaviour
+             if (previousWeight <= 0f && weight > 0f)
+             {
+                 card.CaptureBaseState(card.length, card.width, card.segments, card.bendAngle, card.twistAngle,
+-                    card.GetEmbedDepth(), card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ(), card.curlFrequency, card.curlDiameter);
++                    card.GetEmbedDepth(), card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ(), card.curlFrequency, card.curlDiameter, card.waveAmplitude, card.waveFrequency);
+             }
+             card.SetSelectionWeight(weight);
+         }
+diff --git a/Assets/Scripts/UI_Import/SelectionLocalizedEditAuthority.cs b/Assets/Scripts/UI_Import/SelectionLocalizedEditAuthority.cs
+index c44b039..843c3ec 100644
+--- a/Assets/Scripts/UI_Import/SelectionLocalizedEditAuthority.cs
++++ b/Assets/Scripts/UI_Import/SelectionLocalizedEditAuthority.cs
+@@ -114,12 +114,12 @@ public class SelectionLocalizedEditAuthority : MonoBehaviour
+             // so temporarily bypass that second interpolation.
+             float selectionWeight = card.selectionWeight;
+             card.SetSelectionWeight(0f);
+-            // Curl isn't part of this file's Controls/Snapshot weighted-blend system (unlike
++            // Curl and wave aren't part of this file's Controls/Snapshot weighted-blend system (unlike
+             // Length/Width/Bend/etc above) - passed through unchanged so it isn't silently
+             // reset to 0 by SetParameters' defaults. Brush-localized curl blending can be added
+             // here later if wanted, following the same pattern as the other channels above.
+             card.SetParameters(length, width, segments, bend, twist, x, y, z, depth, 1f,
+-                uScale, vScale, uOffset, vOffset, card.curlFrequency, card.curlDiameter);
++                uScale, vScale, uOffset, vOffset, card.curlFrequency, card.curlDiameter, card.waveAmplitude, card.waveFrequency);
+             card.SetSelectionWeight(selectionWeight);
+         }
+ 
+diff --git a/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs b/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
+index eb4a4dc..9a90083 100644
+--- a/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
++++ b/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
+@@ -447,10 +447,15 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
+             Quaternion bankRotation;
+             HairCard.EvaluateCurl(card.groupId, card.curlFrequency, card.curlDiameter, t, out curlOffset, out bankRotation, card.mirrored);
+ 
++            // Shared with GenerateMesh so a wavy card stays wavy once clumped or neutralised.
++            // Skipping this is how curl and segment density each silently reverted here before.
++            Vector3 waveOffset;
++            HairCard.EvaluateWave(card.groupId, card.waveAmplitude, card.waveFrequency, t, out waveOffset, card.mirrored);
++
+             Vector3 sectionOrigin = new Vector3(0f, 0f, z);
+-            Vector3 left = sectionOrigin + bankRotation * new Vector3(-span, 0f, 0f) + curlOffset;
+-            Vector3 center = sectionOrigin + bankRotation * new Vector3(0f, ridge, 0f) + curlOffset;
+-            Vector3 right = sectionOrigin + bankRotation * new Vector3(span, 0f, 0f) + curlOffset;
++            Vector3 left = sectionOrigin + bankRotation * new Vector3(-span, 0f, 0f) + curlOffset + waveOffset;
++            Vector3 center = sectionOrigin + bankRotation * new Vector3(0f, ridge, 0f) + curlOffset + waveOffset;
++            Vector3 right = sectionOrigin + bankRotation * new Vector3(span, 0f, 0f) + curlOffset + waveOffset;
+ 
+             Vector3 spinePoint = segmentSpine[i];
+             Quaternion sectionFrame = segmentFrame[i];

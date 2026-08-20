@@ -13,6 +13,7 @@ public class HairCard : MonoBehaviour
         public float x, y, z;
         public float uScale, vScale, uOffset, vOffset;
         public float curlFrequency, curlDiameter;
+        public float waveAmplitude, waveFrequency;
     }
 
     // A POST keeps its authored scalar delta, but its Bend/X/Y/Z contribution can have a
@@ -106,6 +107,48 @@ public class HairCard : MonoBehaviour
         // length. The ridge is defined as a fixed ratio of width; leaving it un-tapered would
         // turn a narrowed tip into a tall thin spike rather than a smaller copy of the root.
         ridge = card.GetCrossSectionRidgeHeight() * widthMultiplier;
+    }
+
+    // Single source of truth for the WAVE, exactly as EvaluateCurl is for the coil.
+    // GenerateMesh and both mesh reconstructions call this, so the three cannot drift.
+    //
+    // The wave is a PLANAR sinusoid: it displaces the cross-section along the card's own local
+    // X - side to side within the flat plane of the card - with the phase advancing along the
+    // length. That is what reads as waviness in silhouette, and it is deliberately different
+    // from Curl, which displaces in both X and Y and sweeps around the length axis to make a
+    // coil. The two stack cleanly because they act on different axes.
+    //
+    // To wave ACROSS the face of the card instead of side to side, move the amplitude from
+    // the x component to the y component of waveOffset below. That is the whole change.
+    //
+    // sin(0) = 0, so the wave is exactly zero at the root and the card stays anchored to the
+    // scalp however hard it is driven - the same property EvaluateCurl gets from cos(0)-1.
+    public static void EvaluateWave(
+        int groupId,
+        float waveAmplitude,
+        float waveFrequency,
+        float t,
+        out Vector3 waveOffset,
+        bool mirrored = false)
+    {
+        waveOffset = Vector3.zero;
+
+        if (waveAmplitude <= 0f) return;
+        if (waveFrequency == 0f) return;
+
+        // Root-only profile curves, same as Curl and Segment Density - no per-POST override.
+        float amplitudeMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.WaveAmplitude, t);
+        float frequencyMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.WaveFrequency, t);
+
+        float amplitude = waveAmplitude * amplitudeMultiplier;
+        float turns = waveFrequency * frequencyMultiplier;
+
+        // A mirrored card is a reflection through local X, and this displacement is purely in
+        // local X, so negating the amplitude IS the exact mirror - no phase correction needed.
+        // (Curl needs both its radius and its angle negated because it displaces in two axes.)
+        if (mirrored) amplitude = -amplitude;
+
+        waveOffset = new Vector3(amplitude * Mathf.Sin(turns * t * Mathf.PI * 2f), 0f, 0f);
     }
 
     public static void EvaluateCurl(
@@ -308,6 +351,14 @@ public class HairCard : MonoBehaviour
     public float curlFrequency = 0f;
     public float curlDiameter = 0f;
 
+    // WAVE: a planar sinusoid that snakes the card side to side within its own flat plane -
+    // amplitude in local X, phase advancing with t along the length. Deliberately NOT a coil:
+    // Curl already displaces in both X and Y and sweeps around the length axis, so the two
+    // compose rather than duplicate. Zero amplitude is off, which is what every project saved
+    // before this feature deserializes to.
+    public float waveAmplitude = 0f;
+    public float waveFrequency = 0f;
+
     [Header("UV Settings")]
     public float uScale = 1.0f;
     public float vScale = 1.0f;
@@ -349,6 +400,7 @@ public class HairCard : MonoBehaviour
     private float storedOffsetX, storedOffsetY, storedOffsetZ;
     private float baseLength, baseWidth, baseBend, baseTwist, baseEmbedDepth;
     private float baseCurlFrequency, baseCurlDiameter;
+    private float baseWaveAmplitude, baseWaveFrequency;
     private int baseSegments;
     private float baseOffsetX, baseOffsetY, baseOffsetZ;
     private Material cardMaterial;
@@ -574,6 +626,8 @@ public class HairCard : MonoBehaviour
         vOffset = state.vOffset;
         curlFrequency = state.curlFrequency;
         curlDiameter = state.curlDiameter;
+        waveAmplitude = state.waveAmplitude;
+        waveFrequency = state.waveFrequency;
         if (surfaceNormal != Vector3.zero) UpdateTransformOrientation(currentEmbedDepth);
 
         // Guarded. PostAffectorManager, PostFreeCanonicalAuthority and
@@ -602,7 +656,9 @@ public class HairCard : MonoBehaviour
             uOffset = uOffset,
             vOffset = vOffset,
             curlFrequency = curlFrequency,
-            curlDiameter = curlDiameter
+            curlDiameter = curlDiameter,
+            waveAmplitude = waveAmplitude,
+            waveFrequency = waveFrequency
         };
     }
 
@@ -613,6 +669,9 @@ public class HairCard : MonoBehaviour
         state.segments = Mathf.Clamp(state.segments, 1, 60);
         state.depth = Mathf.Max(0f, state.depth);
         state.curlDiameter = Mathf.Max(0f, state.curlDiameter);
+        // Amplitude is a magnitude, so it clamps like curl diameter. Frequency stays signed -
+        // a negative frequency simply runs the wave the other way, which is a usable result.
+        state.waveAmplitude = Mathf.Max(0f, state.waveAmplitude);
         return state;
     }
 
@@ -707,7 +766,7 @@ public class HairCard : MonoBehaviour
         if (cardMaterial.HasProperty("_Color")) cardMaterial.SetColor("_Color", finalColor);
     }
 
-    public void SetParameters(float newLength, float newWidth, int newSegments, float newBend, float newTwist, float offsetX, float offsetY, float offsetZ, float newEmbedDepth, float strengthMultiplier = 1f, float newUScale = 1f, float newVScale = 1f, float newUOffset = 0f, float newVOffset = 0f, float newCurlFrequency = 0f, float newCurlDiameter = 0f)
+    public void SetParameters(float newLength, float newWidth, int newSegments, float newBend, float newTwist, float offsetX, float offsetY, float offsetZ, float newEmbedDepth, float strengthMultiplier = 1f, float newUScale = 1f, float newVScale = 1f, float newUOffset = 0f, float newVOffset = 0f, float newCurlFrequency = 0f, float newCurlDiameter = 0f, float newWaveAmplitude = 0f, float newWaveFrequency = 0f)
     {
         if (selectionWeight > 0f)
         {
@@ -723,6 +782,8 @@ public class HairCard : MonoBehaviour
             currentEmbedDepth = Mathf.Lerp(baseEmbedDepth, newEmbedDepth, w);
             curlFrequency = Mathf.Lerp(baseCurlFrequency, newCurlFrequency, w);
             curlDiameter = Mathf.Lerp(baseCurlDiameter, newCurlDiameter, w);
+            waveAmplitude = Mathf.Lerp(baseWaveAmplitude, newWaveAmplitude, w);
+            waveFrequency = Mathf.Lerp(baseWaveFrequency, newWaveFrequency, w);
         }
         else
         {
@@ -737,6 +798,8 @@ public class HairCard : MonoBehaviour
             currentEmbedDepth = newEmbedDepth;
             curlFrequency = newCurlFrequency;
             curlDiameter = newCurlDiameter;
+            waveAmplitude = newWaveAmplitude;
+            waveFrequency = newWaveFrequency;
         }
         uScale = newUScale;
         vScale = newVScale;
@@ -758,7 +821,7 @@ public class HairCard : MonoBehaviour
         GenerateMeshIfInputsChanged();
     }
 
-    public void CaptureBaseState(float activeLength, float activeWidth, int activeSegments, float activeBend, float activeTwist, float activeDepth, float ox, float oy, float oz, float activeCurlFrequency = 0f, float activeCurlDiameter = 0f)
+    public void CaptureBaseState(float activeLength, float activeWidth, int activeSegments, float activeBend, float activeTwist, float activeDepth, float ox, float oy, float oz, float activeCurlFrequency = 0f, float activeCurlDiameter = 0f, float activeWaveAmplitude = 0f, float activeWaveFrequency = 0f)
     {
         baseLength = activeLength;
         baseWidth = activeWidth;
@@ -771,6 +834,8 @@ public class HairCard : MonoBehaviour
         baseOffsetZ = oz;
         baseCurlFrequency = activeCurlFrequency;
         baseCurlDiameter = activeCurlDiameter;
+        baseWaveAmplitude = activeWaveAmplitude;
+        baseWaveFrequency = activeWaveFrequency;
     }
 
     public void SetSelectionWeight(float weight) { selectionWeight = Mathf.Clamp01(weight); UpdateVisualHighlight(); }
@@ -1022,6 +1087,8 @@ public class HairCard : MonoBehaviour
             hash = hash * 31 + storedOffsetZ.GetHashCode();
             hash = hash * 31 + curlFrequency.GetHashCode();
             hash = hash * 31 + curlDiameter.GetHashCode();
+            hash = hash * 31 + waveAmplitude.GetHashCode();
+            hash = hash * 31 + waveFrequency.GetHashCode();
             hash = hash * 31 + uScale.GetHashCode();
             hash = hash * 31 + vScale.GetHashCode();
             hash = hash * 31 + uOffset.GetHashCode();
@@ -1147,6 +1214,9 @@ public class HairCard : MonoBehaviour
             Quaternion bankRotation;
             EvaluateCurl(groupId, curlFrequency, curlDiameter, t, out curlOffset, out bankRotation, mirrored);
 
+            Vector3 waveOffset;
+            EvaluateWave(groupId, waveAmplitude, waveFrequency, t, out waveOffset, mirrored);
+
             Vector3 sectionOrigin = new Vector3(0f, 0f, z);
             Vector3 left = sectionOrigin + bankRotation * new Vector3(-currentWidth, 0f, 0f);
             Vector3 center = sectionOrigin + bankRotation * new Vector3(0f, ridgeHeight, 0f);
@@ -1173,6 +1243,14 @@ public class HairCard : MonoBehaviour
             left += curlOffset;
             center += curlOffset;
             right += curlOffset;
+
+            // Wave rides on top of curl. Both are displacements of the whole cross-section in
+            // the card's own local space, applied after the section has been built and banked
+            // and before the path-following frame places it, so a card can be curled AND wavy
+            // without either shape fighting the other.
+            left += waveOffset;
+            center += waveOffset;
+            right += waveOffset;
 
             // The spine keeps exactly the position the authored bend/twist rotation
             // always put it at. Only the section's own lateral extent - width, ridge,
