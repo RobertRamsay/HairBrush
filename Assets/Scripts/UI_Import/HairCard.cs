@@ -76,7 +76,8 @@ public class HairCard : MonoBehaviour
         float curlDiameter,
         float t,
         out Vector3 curlOffset,
-        out Quaternion bankRotation)
+        out Quaternion bankRotation,
+        bool mirrored = false)
     {
         curlOffset = Vector3.zero;
         bankRotation = Quaternion.identity;
@@ -89,6 +90,21 @@ public class HairCard : MonoBehaviour
         float diameterMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.CurlDiameter, t);
         float turns = curlFrequency * freqMultiplier;
         float radius = curlDiameter * diameterMultiplier * .5f;
+
+        // A coil is handed, so a mirrored card's coil must wind the other way. Negating BOTH
+        // the radius and the sweep is what makes the reflection exact: the offset becomes
+        // (-r(cos a - 1), +r sin a, 0), which is precisely diag(-1,1,1) applied to the original,
+        // and the bank rotation about local Z flips with it.
+        //
+        // Negating the angle alone would give the right handedness but leave the coil bulging
+        // 180 degrees out of phase; negating curlDiameter on the card instead is not an option,
+        // because the guard above rejects a non-positive diameter outright.
+        if (mirrored)
+        {
+            radius = -radius;
+            turns = -turns;
+        }
+
         float angle = turns * t * Mathf.PI * 2f;
 
         // cos(0)-1 = 0 and sin(0) = 0, so this is exactly zero at the root (t=0),
@@ -262,6 +278,26 @@ public class HairCard : MonoBehaviour
 
     [Header("Grouping")]
     public int groupId = 0;
+
+    // SYMMETRY.
+    //
+    // A mirrored card is a NORMAL card whose geometry is evaluated through a local-X mirror.
+    // Nothing about the mirror is baked into its stored numbers: length, width, bend, twist,
+    // the three angle offsets and the curl values are all stored exactly as its partner's.
+    // The negation happens at evaluation time, here in HairCard.
+    //
+    // That is the whole point. ModelViewer's sliders push ABSOLUTE values to every card in the
+    // group (ApplyGroupUpdate), so a card that merely had its twist negated at placement time
+    // would be flattened back to its partner's value the first time any slider moved, and the
+    // two sides would silently drift into being identical rather than mirrored. Because the
+    // mirror is a property of the CARD and not of its numbers, group sliders, POSTs, clumpers
+    // and variance all carry on working untouched and the pair stays symmetric forever.
+    //
+    // The maths: mirroring the card's local X axis is the conjugation v -> S v S with
+    // S = diag(-1, 1, 1). Under it, rotations about local X keep their sign while rotations
+    // about local Y and Z flip. So: offsetX and bendAngle are UNCHANGED, offsetY, offsetZ and
+    // twistAngle are NEGATED, and the curl coil reverses its handedness.
+    public bool mirrored = false;
 
     [Header("Selection State")]
     [Range(0f, 1f)] public float selectionWeight = 0f;
@@ -442,11 +478,25 @@ public class HairCard : MonoBehaviour
                 (PostShapeCurveBridge.EvaluatePost(contribution.postId, GroomShapeCurveChannel.Y, t) - yMultiplier);
             profiledZ += contribution.z *
                 (PostShapeCurveBridge.EvaluatePost(contribution.postId, GroomShapeCurveChannel.Z, t) - zMultiplier);
+            // No sign flip needed here: profiledY and profiledZ are handed to MirroredEuler
+            // below, which negates the accumulated total. Flipping the contributions as well
+            // would cancel it back out.
         }
 
-        Quaternion fullOffset = Quaternion.Euler(storedOffsetX, storedOffsetY, storedOffsetZ);
-        Quaternion curvedOffset = Quaternion.Euler(profiledX, profiledY, profiledZ);
-        Quaternion bendAndTwist = Quaternion.Euler(profiledBend, 0f, twistAngle * t);
+        // Mirroring the whole profile chain, term by term. Every rotation here is built from
+        // Euler triples whose X component is a rotation about local X (sign preserved under the
+        // mirror) and whose Y and Z components rotate about local Y and Z (sign flipped). Twist
+        // is a roll about local Z, so it flips too; bend is about local X, so it does not.
+        //
+        // Doing it per-term rather than conjugating the finished quaternion matters, because the
+        // profile curves scale each component independently along the length - a mirror applied
+        // after profiling would not be the profile of the mirror.
+        Quaternion fullOffset = MirroredEuler(storedOffsetX, storedOffsetY, storedOffsetZ);
+        Quaternion curvedOffset = MirroredEuler(profiledX, profiledY, profiledZ);
+
+        float mirroredTwist = twistAngle;
+        if (mirrored) mirroredTwist = -twistAngle;
+        Quaternion bendAndTwist = Quaternion.Euler(profiledBend, 0f, mirroredTwist * t);
 
         return Quaternion.Inverse(fullOffset) * curvedOffset * bendAndTwist;
     }
@@ -582,7 +632,24 @@ public class HairCard : MonoBehaviour
     private void UpdateTransformOrientation(float embedDepth)
     {
         transform.position = spawnHitPoint - (surfaceNormal * embedDepth);
-        transform.rotation = Quaternion.LookRotation(surfaceNormal) * Quaternion.Euler(storedOffsetX, storedOffsetY, storedOffsetZ);
+
+        // surfaceNormal is ALREADY the mirrored normal for a mirrored card - the mirror of the
+        // placement is done once, at spawn. What is left to do here is the mirror of the card's
+        // own body, which is the S-conjugation of the authored angle triple.
+        //
+        // This is exact, not an approximation. LookRotation(M n) == M * LookRotation(n) * S for
+        // the world-X mirror M (both have forward M n, and world up is unchanged by M so both
+        // derive the same up), and Euler(ox, -oy, -oz) == S * Euler(ox, oy, oz) * S. Composing
+        // the two gives M * R * S, which is exactly the proper rotation whose local X axis is
+        // the reflection of the original's, i.e. a true mirror rather than a rotation.
+        transform.rotation = Quaternion.LookRotation(surfaceNormal) * MirroredEuler(storedOffsetX, storedOffsetY, storedOffsetZ);
+    }
+
+    // Euler(x, y, z) for a normal card; Euler(x, -y, -z) for a mirrored one.
+    private Quaternion MirroredEuler(float x, float y, float z)
+    {
+        if (!mirrored) return Quaternion.Euler(x, y, z);
+        return Quaternion.Euler(x, -y, -z);
     }
 
     public void UpdateVisualHighlight()
@@ -926,6 +993,9 @@ public class HairCard : MonoBehaviour
             // even when all of its own numbers are identical.
             hash = hash * 31 + groupId;
 
+            // Flipping a card between mirrored and normal changes every vertex it produces.
+            hash = hash * 31 + mirrored.GetHashCode();
+
             // POST profile provenance. The COUNT alone is not enough - a POST whose weight
             // changes rewrites bend/x/y/z with the count unchanged.
             hash = hash * 31 + postShapeProfileContributions.Count;
@@ -1036,7 +1106,7 @@ public class HairCard : MonoBehaviour
             // with it.
             Vector3 curlOffset;
             Quaternion bankRotation;
-            EvaluateCurl(groupId, curlFrequency, curlDiameter, t, out curlOffset, out bankRotation);
+            EvaluateCurl(groupId, curlFrequency, curlDiameter, t, out curlOffset, out bankRotation, mirrored);
 
             Vector3 sectionOrigin = new Vector3(0f, 0f, z);
             Vector3 left = sectionOrigin + bankRotation * new Vector3(-currentWidth, 0f, 0f);

@@ -1141,17 +1141,50 @@ public class ModelViewer : MonoBehaviour
 
     HairCard PinHairCard(Vector3 position, Vector3 normal)
     {
+        HairCard placed = SpawnHairCard(position, normal, false);
+
+        // SYMMETRY. Every placement mode in the project funnels through PinHairCard - the
+        // legacy click and shift-drag here in HandleGrooming, and PLACE / PAINT / SPRAY in
+        // PlacementBrushModeAuthority, which reaches this method by reflection. Hooking it
+        // once therefore covers all five without any of them needing to know symmetry exists.
+        //
+        // Note the mirrored card is spawned through SpawnHairCard, NOT through PinHairCard, so
+        // it cannot itself trigger another mirror. TryMirror also declines points near the
+        // midline, where a mirror would just stack a duplicate on top of the original.
+        Vector3 mirroredPosition;
+        Vector3 mirroredNormal;
+        if (GroomSymmetryAuthority.TryMirror(position, normal, out mirroredPosition, out mirroredNormal))
+            SpawnHairCard(mirroredPosition, mirroredNormal, true);
+
+        RefreshGroupListUI();
+        return placed;
+    }
+
+    // The actual spawn. `isMirrored` marks the card as living on the reflected side; see
+    // HairCard.mirrored for what that does and, more importantly, why the mirror is a flag on
+    // the card rather than a set of pre-negated numbers.
+    HairCard SpawnHairCard(Vector3 position, Vector3 normal, bool isMirrored)
+    {
         GameObject cardGO = new GameObject("HairCard_Strip", typeof(MeshFilter), typeof(MeshRenderer), typeof(HairCard));
         HairCard card = cardGO.GetComponent<HairCard>();
+
+        // Set BEFORE SetPlacementData, which orients the transform and captures canonical
+        // state - both of which read the flag.
+        card.mirrored = isMirrored;
+
         card.SetPlacementData(position, normal, currentEmbedDepth, currentOffsetX, currentOffsetY, currentOffsetZ, currentGroupId);
         card.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, 1f, currentUScale, currentVScale, currentUOffset, currentVOffset, currentCurlFrequency, currentCurlDiameter);
-        lastPlacedCard = card;
+
+        // Deliberately only the primary card becomes lastPlacedCard. That reference is what
+        // the sliders steer when nothing is selected, and it would be surprising for a slider
+        // to start driving the mirrored copy instead of the one you just painted.
+        if (!isMirrored) lastPlacedCard = card;
+
         MeshRenderer mr = cardGO.GetComponent<MeshRenderer>();
         if (hairCardMaterial != null) mr.sharedMaterial = hairCardMaterial;
         // A card born into a group SOLO is hiding must not appear. New renderers default to
         // enabled, so without this the groom leaks back one strand at a time.
         mr.enabled = GroupSoloVisibilityAuthority.IsGroupVisible(card.groupId);
-        RefreshGroupListUI();
         return card;
     }
 
@@ -1248,6 +1281,7 @@ public class ModelViewer : MonoBehaviour
             cardData.groupId = card.groupId;
             cardData.curlFrequency = card.curlFrequency;
             cardData.curlDiameter = card.curlDiameter;
+            cardData.mirrored = card.mirrored;
             saveData.hairCards.Add(cardData);
         }
         string json = JsonUtility.ToJson(saveData, true);
@@ -1320,6 +1354,8 @@ public class ModelViewer : MonoBehaviour
             card.transform.position = new Vector3(cData.posX, cData.posY, cData.posZ);
             card.transform.rotation = new Quaternion(cData.rotX, cData.rotY, cData.rotZ, cData.rotW);
             card.groupId = cData.groupId;
+            // Before SetParameters below, which rebuilds the mesh from it.
+            card.mirrored = cData.mirrored;
             float u = cData.uScale != 0 ? cData.uScale : 1.0f;
             float v = cData.vScale != 0 ? cData.vScale : 1.0f;
             card.SetParameters(cData.length, cData.width, cData.segments, cData.bendAngle, cData.twistAngle, cData.offsetX, cData.offsetY, cData.offsetZ, cData.embedDepth, 1f, u, v, cData.uOffset, cData.vOffset, cData.curlFrequency, cData.curlDiameter);

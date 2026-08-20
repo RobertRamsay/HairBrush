@@ -140,7 +140,7 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
                 length=card.length,width=card.width,segments=card.segments,bendAngle=card.bendAngle,twistAngle=card.twistAngle,flattenFactor=card.flattenFactor,
                 embedDepth=card.GetEmbedDepth(),offsetX=card.GetOffsetX(),offsetY=card.GetOffsetY(),offsetZ=card.GetOffsetZ(),
                 uScale=card.uScale,vScale=card.vScale,uOffset=card.uOffset,vOffset=card.vOffset,groupId=card.groupId,
-                curlFrequency=card.curlFrequency,curlDiameter=card.curlDiameter
+                curlFrequency=card.curlFrequency,curlDiameter=card.curlDiameter,mirrored=card.mirrored
             });
         }
         File.WriteAllText(path, JsonUtility.ToJson(data,true));
@@ -178,6 +178,9 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
         {
             GameObject go=new GameObject("HairCard_Strip",typeof(MeshFilter),typeof(MeshRenderer),typeof(HairCard));
             HairCard card=go.GetComponent<HairCard>();
+            // Restored BEFORE SetPlacementData/SetParameters, both of which orient and build
+            // from it. Set afterwards, the card would come up shaped like its partner.
+            card.mirrored=c.mirrored;
             Vector3 hit=new Vector3(c.hitX,c.hitY,c.hitZ);
             Vector3 normal=new Vector3(c.normalX,c.normalY,c.normalZ).normalized;
             card.SetPlacementData(hit,normal,c.embedDepth,c.offsetX,c.offsetY,c.offsetZ,c.groupId);

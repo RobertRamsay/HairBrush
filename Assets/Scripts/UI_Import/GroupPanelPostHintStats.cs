@@ -35,7 +35,7 @@ public class GroupPanelPostHintStats : MonoBehaviour
     private const float SidednessButtonWidth = 40f;
     // Eight lines at fontSize 11. Bump this whenever a line is added to ApplyHintStyle,
     // or the last one gets clipped.
-    private const float ControlsHintHeight = 100f;
+    private const float ControlsHintHeight = 113f;
 
     private const string InstructionsHeaderName = "InstructionsHeader";
     private const float InstructionsHeaderHeight = 26f;
@@ -154,7 +154,8 @@ public class GroupPanelPostHintStats : MonoBehaviour
                     "Double Click Group name to rename it.\n" +
                     "Click in space to come out of mode\n" +
                     "Right Click to remove a group\n" +
-                    "SPACE + Click to reposition Modifier";
+                    "SPACE + Click to reposition Modifier\n" +
+                    "SYMMETRY mirrors painting and erasing";
         hint.fontSize = 11f;
         hint.fontStyle = FontStyles.Bold;
         hint.alignment = TextAlignmentOptions.MidlineLeft;
@@ -188,6 +189,10 @@ public class GroupPanelPostHintStats : MonoBehaviour
         AddIfPresent(panel, SceneLightAngleAuthority.RowName);
         AddIfPresent(panel, InstructionsHeaderName);
         AddIfPresent(panel, "PostCreateHint");
+        // The SYMMETRY toggle sits directly under the instructions. Anything NOT listed here
+        // gets shoved around every scan as the listed children are reindexed past it, so a new
+        // panel child has to be named here or its position will not hold.
+        AddIfPresent(panel, GroomSymmetryAuthority.ButtonName);
         AddIfPresent(panel, "TitleText");
         AddIfPresent(panel, "NewGroupButton");
         AddIfPresent(panel, "GroupScrollView");

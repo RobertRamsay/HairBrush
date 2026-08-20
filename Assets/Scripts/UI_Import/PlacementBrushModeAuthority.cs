@@ -294,6 +294,27 @@ public class PlacementBrushModeAuthority : MonoBehaviour
 
     void EraseAt(Vector3 center)
     {
+        bool removed = EraseAtPoint(center);
+
+        // SYMMETRY. Erasing has to mirror too, or the two sides drift apart the moment you
+        // tidy anything up - you would be able to paint symmetrically but never correct
+        // symmetrically, which is worse than having no symmetry at all.
+        //
+        // Mirroring the BRUSH CENTRE rather than hunting for each card's partner is what makes
+        // this robust: it does not care whether the cards on the far side were placed by
+        // symmetry, painted by hand, or moved since, and it needs no pairing bookkeeping to
+        // go stale.
+        Vector3 mirroredCentre;
+        if (GroomSymmetryAuthority.TryMirrorPoint(center, out mirroredCentre))
+        {
+            if (EraseAtPoint(mirroredCentre)) removed = true;
+        }
+
+        if (removed) refreshGroupListMethod?.Invoke(viewer, null);
+    }
+
+    bool EraseAtPoint(Vector3 center)
+    {
         HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
         bool removed = false;
         for (int i = 0; i < cards.Length; i++)
@@ -308,7 +329,7 @@ public class PlacementBrushModeAuthority : MonoBehaviour
             Destroy(card.gameObject);
             removed = true;
         }
-        if (removed) refreshGroupListMethod?.Invoke(viewer, null);
+        return removed;
     }
 
     void SelectNearestGroup(Vector3 point)

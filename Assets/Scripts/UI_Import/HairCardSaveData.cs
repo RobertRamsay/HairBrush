@@ -25,6 +25,14 @@ public class HairCardSaveData
     // Curl (spiral/coil) modifier - applied after width, before bend, in the shape pipeline.
     public float curlFrequency;
     public float curlDiameter;
+
+    // SYMMETRY. A mirrored card evaluates its geometry through a local-X mirror, so this has
+    // to survive a round trip or every mirrored card in a reloaded project would come back
+    // shaped like its partner instead of like its reflection.
+    //
+    // Backward compatible: JsonUtility leaves a missing bool as false, so projects saved
+    // before symmetry existed load as all-unmirrored, which is exactly what they were.
+    public bool mirrored;
 }
 
 [Serializable] public class VarianceChannelSaveData { public string channel; public float amount; public int seed; }

@@ -443,7 +443,7 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
             // shapes the section, then the offset moves it.
             Vector3 curlOffset;
             Quaternion bankRotation;
-            HairCard.EvaluateCurl(card.groupId, card.curlFrequency, card.curlDiameter, t, out curlOffset, out bankRotation);
+            HairCard.EvaluateCurl(card.groupId, card.curlFrequency, card.curlDiameter, t, out curlOffset, out bankRotation, card.mirrored);
 
             Vector3 sectionOrigin = new Vector3(0f, 0f, z);
             Vector3 left = sectionOrigin + bankRotation * new Vector3(-span, 0f, 0f) + curlOffset;
