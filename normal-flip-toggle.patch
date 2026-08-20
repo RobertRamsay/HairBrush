@@ -1,0 +1,449 @@
+diff --git a/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs b/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs
+index e45aba9..93fed56 100644
+--- a/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs
++++ b/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs
+@@ -188,6 +188,7 @@ public class GroomSessionResetCoordinator : MonoBehaviour
+         GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.SegmentDensity);
+         GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.Width);
+         GroupSidednessAuthority.Forget(groupId);
++        GroupNormalFlipAuthority.Forget(groupId);
+ 
+         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
+         {
+diff --git a/Assets/Scripts/UI_Import/GroupNormalFlipAuthority.cs b/Assets/Scripts/UI_Import/GroupNormalFlipAuthority.cs
+new file mode 100644
+index 0000000..3bdc019
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/GroupNormalFlipAuthority.cs
+@@ -0,0 +1,205 @@
++using System.Collections.Generic;
++using TMPro;
++using UnityEngine;
++using UnityEngine.UI;
++
++// Per-group N+ / N- toggle, sitting on each Hair Group row just left of SS/DS.
++//
++// Unlike the sidedness toggle next to it, this is NOT purely a rendering choice. N- flips the
++// whole form:
++//
++//   1. The triangle winding reverses, which is what actually flips the surface normals.
++//   2. The cross-section ridge inverts, turning the card's shallow convex arch into a concave
++//      one - the A / V flip.
++//
++// The two are deliberately one control rather than two. Reversing the winding on its own
++// leaves the geometry arching one way while the lighting says the other, which reads as a
++// shading error rather than a choice; inverting the ridge on its own leaves a concave card lit
++// as though it were still convex. Together they are a genuine mirror of the surface, which is
++// the thing worth having a button for.
++//
++// Groups absent from the map render N+, which is the historical behaviour and what a project
++// saved before this feature existed decodes to.
++[DefaultExecutionOrder(6805)]
++public class GroupNormalFlipAuthority : MonoBehaviour
++{
++    public const string ButtonName = "GroupNormalFlipButton";
++
++    private const float ScanInterval = .10f;
++
++    private static readonly Dictionary<int, bool> flippedByGroup = new Dictionary<int, bool>();
++
++    private static HairProjectSaveData pendingRestore;
++    private static int pendingRestoreFrames;
++
++    private float nextScan;
++
++    // Statics survive "Enter Play Mode -> Disable Domain Reload", so a flip left on when play
++    // stopped would still be set when play started again, with no lit button to explain it.
++    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
++    static void ResetStatics()
++    {
++        flippedByGroup.Clear();
++        pendingRestore = null;
++        pendingRestoreFrames = 0;
++    }
++
++    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
++    static void Spawn()
++    {
++        if (FindFirstObjectByType<GroupNormalFlipAuthority>() != null) return;
++        GameObject go = new GameObject(nameof(GroupNormalFlipAuthority));
++        DontDestroyOnLoad(go);
++        go.AddComponent<GroupNormalFlipAuthority>();
++    }
++
++    // Read once per card per mesh rebuild, and folded into HairCard's mesh-input hash - which
++    // is what makes a toggle take effect without anything here having to hunt down the cards.
++    public static bool IsFlipped(int groupId)
++    {
++        bool flipped;
++        if (flippedByGroup.TryGetValue(groupId, out flipped)) return flipped;
++        return false;
++    }
++
++    public static void SetFlipped(int groupId, bool flipped)
++    {
++        flippedByGroup[groupId] = flipped;
++    }
++
++    public static void Forget(int groupId)
++    {
++        flippedByGroup.Remove(groupId);
++    }
++
++    public static void ForgetAll()
++    {
++        flippedByGroup.Clear();
++    }
++
++    public static void Capture(HairProjectSaveData data)
++    {
++        if (data == null || data.groups == null) return;
++        foreach (GroupSaveData group in data.groups)
++        {
++            if (group == null) continue;
++            group.normalFlipped = IsFlipped(group.groupId);
++        }
++    }
++
++    // Deferred for the same reason sidedness defers: the cards of a loaded project do not all
++    // exist on the frame load returns.
++    public static void QueueRestore(HairProjectSaveData data)
++    {
++        pendingRestore = data;
++        pendingRestoreFrames = 0;
++    }
++
++    void Update()
++    {
++        TryRestorePending();
++
++        if (Time.unscaledTime < nextScan) return;
++        nextScan = Time.unscaledTime + ScanInterval;
++
++        MaintainGroupButtons();
++    }
++
++    void TryRestorePending()
++    {
++        if (pendingRestore == null) return;
++        if (++pendingRestoreFrames < 2) return;
++
++        HairProjectSaveData data = pendingRestore;
++        pendingRestore = null;
++
++        flippedByGroup.Clear();
++        if (data.groups != null)
++        {
++            foreach (GroupSaveData group in data.groups)
++            {
++                if (group == null) continue;
++                flippedByGroup[group.groupId] = group.normalFlipped;
++            }
++        }
++    }
++
++    void MaintainGroupButtons()
++    {
++        foreach (RectTransform row in FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
++        {
++            if (row == null || !row.name.StartsWith("GroupItem_")) continue;
++            if (!int.TryParse(row.name.Substring("GroupItem_".Length), out int gid)) continue;
++
++            // Anchor off SOLO exactly as the sidedness button does. GroupPanelPostHintStats
++            // owns the final placement; this only has to land in the row.
++            Transform solo = row.Find("SoloButton");
++            if (solo == null) continue;
++
++            Transform existing = row.Find(ButtonName);
++
++            Button button;
++            TextMeshProUGUI text;
++
++            if (existing == null)
++            {
++                GameObject go = new GameObject(ButtonName, typeof(RectTransform), typeof(Image), typeof(Button));
++                go.transform.SetParent(row, false);
++                go.GetComponent<RectTransform>().sizeDelta = new Vector2(40f, 36f);
++                button = go.GetComponent<Button>();
++                int captured = gid;
++                button.onClick.AddListener(() => Toggle(captured));
++
++                GameObject textGO = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
++                textGO.transform.SetParent(go.transform, false);
++                RectTransform tr = textGO.GetComponent<RectTransform>();
++                tr.anchorMin = Vector2.zero;
++                tr.anchorMax = Vector2.one;
++                tr.offsetMin = Vector2.zero;
++                tr.offsetMax = Vector2.zero;
++                text = textGO.GetComponent<TextMeshProUGUI>();
++                text.fontSize = 10f;
++                text.fontStyle = FontStyles.Bold;
++                text.alignment = TextAlignmentOptions.Center;
++                text.color = Color.white;
++                text.raycastTarget = false;
++
++                // Keep the row reading Name | N+/N- | SS/DS | UV | SOLO.
++                go.transform.SetSiblingIndex(Mathf.Clamp(solo.GetSiblingIndex(), 0, row.childCount - 1));
++            }
++            else
++            {
++                button = existing.GetComponent<Button>();
++                text = existing.GetComponentInChildren<TextMeshProUGUI>(true);
++            }
++
++            bool flipped = IsFlipped(gid);
++            if (text != null)
++            {
++                string label = "N+";
++                if (flipped) label = "N-";
++                if (text.text != label) text.text = label;
++            }
++
++            if (button != null)
++            {
++                Image image = button.GetComponent<Image>();
++                if (image != null)
++                {
++                    Color colour = new Color(.28f, .28f, .28f, 1f);
++                    if (flipped) colour = new Color(.24f, .52f, .46f, 1f);
++                    if (image.color != colour) image.color = colour;
++                }
++            }
++        }
++    }
++
++    void Toggle(int groupId)
++    {
++        SetFlipped(groupId, !IsFlipped(groupId));
++
++        // Nothing needs to touch the cards. The flag is part of HairCard's mesh-input hash, so
++        // the next per-frame re-assertion sees a changed hash and rebuilds the group by itself.
++        nextScan = 0f;
++    }
++}
+diff --git a/Assets/Scripts/UI_Import/GroupNormalFlipAuthority.cs.meta b/Assets/Scripts/UI_Import/GroupNormalFlipAuthority.cs.meta
+new file mode 100644
+index 0000000..d930598
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/GroupNormalFlipAuthority.cs.meta
+@@ -0,0 +1,2 @@
++fileFormatVersion: 2
++guid: 8fa0ee6f5af6247a8edcf7200c379653
+diff --git a/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs b/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs
+index 86210af..7f5d324 100644
+--- a/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs
++++ b/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs
+@@ -33,6 +33,7 @@ public class GroupPanelPostHintStats : MonoBehaviour
+     private const float UVButtonWidth = 74f;
+     private const float SoloButtonWidth = 52f;
+     private const float SidednessButtonWidth = 40f;
++    private const float NormalFlipButtonWidth = 36f;
+     // Eight lines at fontSize 11. Bump this whenever a line is added to ApplyHintStyle,
+     // or the last one gets clipped.
+     private const float ControlsHintHeight = 113f;
+@@ -420,6 +421,21 @@ public class GroupPanelPostHintStats : MonoBehaviour
+                 UtilityBottomInset);
+             sidednessRect.sizeDelta = new Vector2(SidednessButtonWidth, UtilityButtonHeight);
+         }
++
++        // Normal / form flip, immediately left of SS/DS.
++        // Row reads Name | N+/N- | SS/DS | UV | SOLO.
++        Transform normalFlip = item.Find(GroupNormalFlipAuthority.ButtonName);
++        if (normalFlip is RectTransform normalFlipRect)
++        {
++            normalFlipRect.anchorMin = new Vector2(1f, 0f);
++            normalFlipRect.anchorMax = new Vector2(1f, 0f);
++            normalFlipRect.pivot = new Vector2(1f, 0f);
++            normalFlipRect.anchoredPosition = new Vector2(
++                -(UtilityRightInset + SoloButtonWidth + UtilityButtonGap + UVButtonWidth + UtilityButtonGap
++                  + SidednessButtonWidth + UtilityButtonGap),
++                UtilityBottomInset);
++            normalFlipRect.sizeDelta = new Vector2(NormalFlipButtonWidth, UtilityButtonHeight);
++        }
+     }
+ }
+ 
+diff --git a/Assets/Scripts/UI_Import/HairCard.cs b/Assets/Scripts/UI_Import/HairCard.cs
+index 627ca56..b2afb36 100644
+--- a/Assets/Scripts/UI_Import/HairCard.cs
++++ b/Assets/Scripts/UI_Import/HairCard.cs
+@@ -92,6 +92,48 @@ public class HairCard : MonoBehaviour
+ 
+     // Highest frequency this card's tessellation can actually render.
+     // Raise Segments to unlock more: 12 segments allows 4.8, 24 allows 9.6, 32 allows 12.8.
++    // Triangle winding for the three-column strip, in ONE place.
++    //
++    // GenerateMesh and BuildCleanMesh each used to lay these indices out themselves. That was
++    // survivable while there was only one winding; with N- there are two, and two hand-written
++    // copies of a winding rule is precisely how a clumped card ends up lit inside-out while an
++    // unclumped one is not.
++    //
++    // flipWinding reverses each triangle, which is what actually inverts the surface normals -
++    // RecalculateNormals derives them from winding, so there is nothing else to flip.
++    public static void BuildStripTriangles(int segments, bool flipWinding, int[] triangles)
++    {
++        if (triangles == null) return;
++        const int columns = CrossSectionColumns;
++
++        int triIndex = 0;
++        for (int i = 0; i < segments; i++)
++        {
++            int row = i * columns;
++            int next = row + columns;
++
++            // Left half of the convex strip, then the right half.
++            AddTriangle(triangles, ref triIndex, row, next, row + 1, flipWinding);
++            AddTriangle(triangles, ref triIndex, row + 1, next, next + 1, flipWinding);
++            AddTriangle(triangles, ref triIndex, row + 1, next + 1, row + 2, flipWinding);
++            AddTriangle(triangles, ref triIndex, row + 2, next + 1, next + 2, flipWinding);
++        }
++    }
++
++    static void AddTriangle(int[] triangles, ref int index, int a, int b, int c, bool flipWinding)
++    {
++        if (flipWinding)
++        {
++            triangles[index++] = a;
++            triangles[index++] = c;
++            triangles[index++] = b;
++            return;
++        }
++        triangles[index++] = a;
++        triangles[index++] = b;
++        triangles[index++] = c;
++    }
++
+     public static float MaxRepresentableTurns(int segments)
+     {
+         return Mathf.Max(1f, segments / MinimumRowsPerCycle);
+@@ -134,6 +176,12 @@ public class HairCard : MonoBehaviour
+         // length. The ridge is defined as a fixed ratio of width; leaving it un-tapered would
+         // turn a narrowed tip into a tall thin spike rather than a smaller copy of the root.
+         ridge = card.GetCrossSectionRidgeHeight() * widthMultiplier;
++
++        // N-: invert the arch. The cross-section is left edge / raised centre / right edge, so
++        // negating the centre's height turns the shallow convex profile concave - the A / V
++        // flip - and pairs with the reversed winding to give a properly mirrored surface
++        // rather than a correct-looking shape lit from the wrong side.
++        if (GroupNormalFlipAuthority.IsFlipped(card.groupId)) ridge = -ridge;
+     }
+ 
+     // Single source of truth for the WAVE, exactly as EvaluateCurl is for the coil.
+@@ -1268,6 +1316,11 @@ public class HairCard : MonoBehaviour
+             // cost more than the rebuild this is here to avoid. A monotonic stamp is the cheap,
+             // complete answer. Per-GROUP for the registry, so that editing one group's profile
+             // does not dirty every card in the scene.
++            // Per-GROUP form flip. Lives outside the card like the curve registries do, so it
++            // has to be hashed or toggling the button would change nothing until some unrelated
++            // edit happened to dirty the group.
++            hash = hash * 31 + GroupNormalFlipAuthority.IsFlipped(groupId).GetHashCode();
++
+             hash = hash * 31 + GroomShapeCurveRegistry.EpochFor(groupId);
+             hash = hash * 31 + PostShapeCurveBridge.Epoch;
+ 
+@@ -1393,28 +1446,7 @@ public class HairCard : MonoBehaviour
+             uvs[index + 2] = new Vector2(finalURight, finalV);
+         }
+ 
+-        int triIndex = 0;
+-        for (int i = 0; i < segments; i++)
+-        {
+-            int row = i * columns;
+-            int next = row + columns;
+-
+-            // Left half of the convex strip.
+-            triangles[triIndex++] = row;
+-            triangles[triIndex++] = next;
+-            triangles[triIndex++] = row + 1;
+-            triangles[triIndex++] = row + 1;
+-            triangles[triIndex++] = next;
+-            triangles[triIndex++] = next + 1;
+-
+-            // Right half.
+-            triangles[triIndex++] = row + 1;
+-            triangles[triIndex++] = next + 1;
+-            triangles[triIndex++] = row + 2;
+-            triangles[triIndex++] = row + 2;
+-            triangles[triIndex++] = next + 1;
+-            triangles[triIndex++] = next + 2;
+-        }
++        BuildStripTriangles(segments, GroupNormalFlipAuthority.IsFlipped(groupId), triangles);
+ 
+         int sourceSignature = ComputeGeneratedMeshSignature(baseVertices, uvs, segments);
+         generatedMeshSignature = sourceSignature;
+diff --git a/Assets/Scripts/UI_Import/HairCardSaveData.cs b/Assets/Scripts/UI_Import/HairCardSaveData.cs
+index 86c0bac..0069e27 100644
+--- a/Assets/Scripts/UI_Import/HairCardSaveData.cs
++++ b/Assets/Scripts/UI_Import/HairCardSaveData.cs
+@@ -201,6 +201,11 @@ public class PostPredeterminedUVSaveData
+     // decodes the missing field to false, which is the historical double-sided look.
+     public bool singleSided;
+ 
++    // Geometry AND shading: true reverses this group's triangle winding and inverts the
++    // cross-section ridge. Named for the flipped state so a project saved before this existed
++    // decodes the missing field to false, which is the original N+ form.
++    public bool normalFlipped;
++
+     // Group UV source. Adjustable keeps the legacy group U/V controls. Predetermined
+     // chooses one authored Texture Editor rectangle per card using the inclusive ID range
+     // and a deterministic seed.
+@@ -284,6 +289,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
+         PostShapeCurveBridge.BeginProjectCapture(this);
+         GroomShapeCurveAuthority.Capture(this);
+         GroupSidednessAuthority.Capture(this);
++        GroupNormalFlipAuthority.Capture(this);
+         PostShapeCurveBridge.EndProjectCapture();
+         MaterialProjectPersistenceBridge.Capture(this);
+         MaterialUVRectAuthority.Capture(this);
+@@ -311,6 +317,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
+         PostPredeterminedUVAuthority.QueueRestore(this);
+         GroomShapeCurveAuthority.QueueRestore(this);
+         GroupSidednessAuthority.QueueRestore(this);
++        GroupNormalFlipAuthority.QueueRestore(this);
+         PostShapeCurveBridge.QueueRestore(this);
+         MaterialProjectPersistenceBridge.PendingRestore=this;
+         MaterialUVRectAuthority.QueueRestore(this);
+diff --git a/Assets/Scripts/UI_Import/NewGroupRootSelectionAuthority.cs b/Assets/Scripts/UI_Import/NewGroupRootSelectionAuthority.cs
+index d1d0103..793e21d 100644
+--- a/Assets/Scripts/UI_Import/NewGroupRootSelectionAuthority.cs
++++ b/Assets/Scripts/UI_Import/NewGroupRootSelectionAuthority.cs
+@@ -254,6 +254,7 @@ public class NewGroupRootSelectionAuthority : MonoBehaviour
+ 
+         // A reused group id must not inherit the previous group's SS/DS rendering choice.
+         GroupSidednessAuthority.Forget(gid);
++        GroupNormalFlipAuthority.Forget(gid);
+     }
+ 
+     static void RemoveGroupEntry(FieldInfo field, object owner, int gid)
+diff --git a/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs b/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
+index 997683c..c0c7950 100644
+--- a/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
++++ b/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
+@@ -484,26 +484,7 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
+             uvs[index + 2] = new Vector2(finalURight, finalV);
+         }
+ 
+-        int triIndex = 0;
+-        for (int i = 0; i < segments; i++)
+-        {
+-            int row = i * columns;
+-            int next = row + columns;
+-
+-            triangles[triIndex++] = row;
+-            triangles[triIndex++] = next;
+-            triangles[triIndex++] = row + 1;
+-            triangles[triIndex++] = row + 1;
+-            triangles[triIndex++] = next;
+-            triangles[triIndex++] = next + 1;
+-
+-            triangles[triIndex++] = row + 1;
+-            triangles[triIndex++] = next + 1;
+-            triangles[triIndex++] = row + 2;
+-            triangles[triIndex++] = row + 2;
+-            triangles[triIndex++] = next + 1;
+-            triangles[triIndex++] = next + 2;
+-        }
++        HairCard.BuildStripTriangles(segments, GroupNormalFlipAuthority.IsFlipped(card.groupId), triangles);
+ 
+         return new CleanMeshData
+         {

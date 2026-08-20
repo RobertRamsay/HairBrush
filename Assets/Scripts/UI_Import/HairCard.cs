@@ -92,6 +92,48 @@ public class HairCard : MonoBehaviour
 
     // Highest frequency this card's tessellation can actually render.
     // Raise Segments to unlock more: 12 segments allows 4.8, 24 allows 9.6, 32 allows 12.8.
+    // Triangle winding for the three-column strip, in ONE place.
+    //
+    // GenerateMesh and BuildCleanMesh each used to lay these indices out themselves. That was
+    // survivable while there was only one winding; with N- there are two, and two hand-written
+    // copies of a winding rule is precisely how a clumped card ends up lit inside-out while an
+    // unclumped one is not.
+    //
+    // flipWinding reverses each triangle, which is what actually inverts the surface normals -
+    // RecalculateNormals derives them from winding, so there is nothing else to flip.
+    public static void BuildStripTriangles(int segments, bool flipWinding, int[] triangles)
+    {
+        if (triangles == null) return;
+        const int columns = CrossSectionColumns;
+
+        int triIndex = 0;
+        for (int i = 0; i < segments; i++)
+        {
+            int row = i * columns;
+            int next = row + columns;
+
+            // Left half of the convex strip, then the right half.
+            AddTriangle(triangles, ref triIndex, row, next, row + 1, flipWinding);
+            AddTriangle(triangles, ref triIndex, row + 1, next, next + 1, flipWinding);
+            AddTriangle(triangles, ref triIndex, row + 1, next + 1, row + 2, flipWinding);
+            AddTriangle(triangles, ref triIndex, row + 2, next + 1, next + 2, flipWinding);
+        }
+    }
+
+    static void AddTriangle(int[] triangles, ref int index, int a, int b, int c, bool flipWinding)
+    {
+        if (flipWinding)
+        {
+            triangles[index++] = a;
+            triangles[index++] = c;
+            triangles[index++] = b;
+            return;
+        }
+        triangles[index++] = a;
+        triangles[index++] = b;
+        triangles[index++] = c;
+    }
+
     public static float MaxRepresentableTurns(int segments)
     {
         return Mathf.Max(1f, segments / MinimumRowsPerCycle);
@@ -134,6 +176,12 @@ public class HairCard : MonoBehaviour
         // length. The ridge is defined as a fixed ratio of width; leaving it un-tapered would
         // turn a narrowed tip into a tall thin spike rather than a smaller copy of the root.
         ridge = card.GetCrossSectionRidgeHeight() * widthMultiplier;
+
+        // N-: invert the arch. The cross-section is left edge / raised centre / right edge, so
+        // negating the centre's height turns the shallow convex profile concave - the A / V
+        // flip - and pairs with the reversed winding to give a properly mirrored surface
+        // rather than a correct-looking shape lit from the wrong side.
+        if (GroupNormalFlipAuthority.IsFlipped(card.groupId)) ridge = -ridge;
     }
 
     // Single source of truth for the WAVE, exactly as EvaluateCurl is for the coil.
@@ -1268,6 +1316,11 @@ public class HairCard : MonoBehaviour
             // cost more than the rebuild this is here to avoid. A monotonic stamp is the cheap,
             // complete answer. Per-GROUP for the registry, so that editing one group's profile
             // does not dirty every card in the scene.
+            // Per-GROUP form flip. Lives outside the card like the curve registries do, so it
+            // has to be hashed or toggling the button would change nothing until some unrelated
+            // edit happened to dirty the group.
+            hash = hash * 31 + GroupNormalFlipAuthority.IsFlipped(groupId).GetHashCode();
+
             hash = hash * 31 + GroomShapeCurveRegistry.EpochFor(groupId);
             hash = hash * 31 + PostShapeCurveBridge.Epoch;
 
@@ -1393,28 +1446,7 @@ public class HairCard : MonoBehaviour
             uvs[index + 2] = new Vector2(finalURight, finalV);
         }
 
-        int triIndex = 0;
-        for (int i = 0; i < segments; i++)
-        {
-            int row = i * columns;
-            int next = row + columns;
-
-            // Left half of the convex strip.
-            triangles[triIndex++] = row;
-            triangles[triIndex++] = next;
-            triangles[triIndex++] = row + 1;
-            triangles[triIndex++] = row + 1;
-            triangles[triIndex++] = next;
-            triangles[triIndex++] = next + 1;
-
-            // Right half.
-            triangles[triIndex++] = row + 1;
-            triangles[triIndex++] = next + 1;
-            triangles[triIndex++] = row + 2;
-            triangles[triIndex++] = row + 2;
-            triangles[triIndex++] = next + 1;
-            triangles[triIndex++] = next + 2;
-        }
+        BuildStripTriangles(segments, GroupNormalFlipAuthority.IsFlipped(groupId), triangles);
 
         int sourceSignature = ComputeGeneratedMeshSignature(baseVertices, uvs, segments);
         generatedMeshSignature = sourceSignature;

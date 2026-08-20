@@ -201,6 +201,11 @@ public class PostPredeterminedUVSaveData
     // decodes the missing field to false, which is the historical double-sided look.
     public bool singleSided;
 
+    // Geometry AND shading: true reverses this group's triangle winding and inverts the
+    // cross-section ridge. Named for the flipped state so a project saved before this existed
+    // decodes the missing field to false, which is the original N+ form.
+    public bool normalFlipped;
+
     // Group UV source. Adjustable keeps the legacy group U/V controls. Predetermined
     // chooses one authored Texture Editor rectangle per card using the inclusive ID range
     // and a deterministic seed.
@@ -284,6 +289,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
         PostShapeCurveBridge.BeginProjectCapture(this);
         GroomShapeCurveAuthority.Capture(this);
         GroupSidednessAuthority.Capture(this);
+        GroupNormalFlipAuthority.Capture(this);
         PostShapeCurveBridge.EndProjectCapture();
         MaterialProjectPersistenceBridge.Capture(this);
         MaterialUVRectAuthority.Capture(this);
@@ -311,6 +317,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
         PostPredeterminedUVAuthority.QueueRestore(this);
         GroomShapeCurveAuthority.QueueRestore(this);
         GroupSidednessAuthority.QueueRestore(this);
+        GroupNormalFlipAuthority.QueueRestore(this);
         PostShapeCurveBridge.QueueRestore(this);
         MaterialProjectPersistenceBridge.PendingRestore=this;
         MaterialUVRectAuthority.QueueRestore(this);

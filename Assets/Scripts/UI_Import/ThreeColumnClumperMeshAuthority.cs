@@ -484,26 +484,7 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
             uvs[index + 2] = new Vector2(finalURight, finalV);
         }
 
-        int triIndex = 0;
-        for (int i = 0; i < segments; i++)
-        {
-            int row = i * columns;
-            int next = row + columns;
-
-            triangles[triIndex++] = row;
-            triangles[triIndex++] = next;
-            triangles[triIndex++] = row + 1;
-            triangles[triIndex++] = row + 1;
-            triangles[triIndex++] = next;
-            triangles[triIndex++] = next + 1;
-
-            triangles[triIndex++] = row + 1;
-            triangles[triIndex++] = next + 1;
-            triangles[triIndex++] = row + 2;
-            triangles[triIndex++] = row + 2;
-            triangles[triIndex++] = next + 1;
-            triangles[triIndex++] = next + 2;
-        }
+        HairCard.BuildStripTriangles(segments, GroupNormalFlipAuthority.IsFlipped(card.groupId), triangles);
 
         return new CleanMeshData
         {

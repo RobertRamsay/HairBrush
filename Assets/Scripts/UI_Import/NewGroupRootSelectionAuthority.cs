@@ -254,6 +254,7 @@ public class NewGroupRootSelectionAuthority : MonoBehaviour
 
         // A reused group id must not inherit the previous group's SS/DS rendering choice.
         GroupSidednessAuthority.Forget(gid);
+        GroupNormalFlipAuthority.Forget(gid);
     }
 
     static void RemoveGroupEntry(FieldInfo field, object owner, int gid)

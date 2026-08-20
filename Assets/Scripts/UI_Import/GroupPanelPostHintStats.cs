@@ -33,6 +33,7 @@ public class GroupPanelPostHintStats : MonoBehaviour
     private const float UVButtonWidth = 74f;
     private const float SoloButtonWidth = 52f;
     private const float SidednessButtonWidth = 40f;
+    private const float NormalFlipButtonWidth = 36f;
     // Eight lines at fontSize 11. Bump this whenever a line is added to ApplyHintStyle,
     // or the last one gets clipped.
     private const float ControlsHintHeight = 113f;
@@ -419,6 +420,21 @@ public class GroupPanelPostHintStats : MonoBehaviour
                 -(UtilityRightInset + SoloButtonWidth + UtilityButtonGap + UVButtonWidth + UtilityButtonGap),
                 UtilityBottomInset);
             sidednessRect.sizeDelta = new Vector2(SidednessButtonWidth, UtilityButtonHeight);
+        }
+
+        // Normal / form flip, immediately left of SS/DS.
+        // Row reads Name | N+/N- | SS/DS | UV | SOLO.
+        Transform normalFlip = item.Find(GroupNormalFlipAuthority.ButtonName);
+        if (normalFlip is RectTransform normalFlipRect)
+        {
+            normalFlipRect.anchorMin = new Vector2(1f, 0f);
+            normalFlipRect.anchorMax = new Vector2(1f, 0f);
+            normalFlipRect.pivot = new Vector2(1f, 0f);
+            normalFlipRect.anchoredPosition = new Vector2(
+                -(UtilityRightInset + SoloButtonWidth + UtilityButtonGap + UVButtonWidth + UtilityButtonGap
+                  + SidednessButtonWidth + UtilityButtonGap),
+                UtilityBottomInset);
+            normalFlipRect.sizeDelta = new Vector2(NormalFlipButtonWidth, UtilityButtonHeight);
         }
     }
 }
