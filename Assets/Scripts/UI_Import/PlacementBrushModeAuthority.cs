@@ -13,6 +13,22 @@ public class PlacementBrushModeAuthority : MonoBehaviour
 {
     public enum PlacementMode { Place = 0, Paint = 1, Spray = 2, Erase = 3 }
 
+    // The active mode, for anything that needs to display it (see
+    // PlacementModeBannerAuthority). Cycling stays owned by this component.
+    public PlacementMode CurrentMode { get { return mode; } }
+
+    // One line saying what a click actually does in each mode.
+    public static string DescribeMode(PlacementMode value)
+    {
+        switch (value)
+        {
+            case PlacementMode.Paint: return "continuous placing while held";
+            case PlacementMode.Spray: return "scatters cards in the brush radius";
+            case PlacementMode.Erase: return "removes cards in the brush radius";
+            default: return "one card per click";
+        }
+    }
+
     private ModelViewer viewer;
     private FieldInfo groomingModeField;
     private FieldInfo textureModeField;
