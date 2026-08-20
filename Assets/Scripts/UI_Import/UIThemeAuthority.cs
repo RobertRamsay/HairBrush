@@ -51,7 +51,11 @@ public class UIThemeAuthority : MonoBehaviour
             // Reroll buttons style themselves through UITheme.StyleRerollButton - the shared
             // pass must never touch any of them or its label treatment re-truncates the text.
             string goName = button.gameObject.name;
+            // The welcome panel's START button opts out too: it sizes itself to its own
+            // label and is one line tall, which ClampButtonSize's 26-32 canvas-unit floor
+            // would blow up into a giant square on the start screen's 5.43x canvas.
             if (goName == "RANDOMIZEButton" || goName == "RButton" || goName == "GroupUVRandomSeedButton") continue;
+            if (goName == WelcomeWhatsNewAuthority.StartButtonName) continue;
 
             if (!styledButtons.Contains(button))
             {

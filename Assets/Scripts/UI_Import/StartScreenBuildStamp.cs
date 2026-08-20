@@ -10,6 +10,16 @@ public class StartScreenBuildStamp : MonoBehaviour
     private const string ObjectName = "HairBrushBuildStamp";
     private const float ScanInterval = 0.5f;
 
+    // Authored as pixels at 1080p. The start screen's canvas is Constant Pixel Size, so a
+    // fixed size is the same number of pixels at 4K as at 1080p - it would read as a quarter
+    // of the size on a 4K display. Scaling by the canvas height against a 1080-high
+    // reference keeps the stamp the same proportion of the screen at any resolution.
+    private const float ReferenceHeight = 1080f;
+    private const float FontPixels = 14f;
+    private const float HeightPixels = 26f;
+    private const float BottomInsetPixels = 10f;
+    private const float SideInsetPixels = 24f;
+
     private float nextScan;
     private GameObject stampObject;
 
@@ -91,11 +101,16 @@ public class StartScreenBuildStamp : MonoBehaviour
             return;
         }
 
+        float unit = 1f;
+        RectTransform canvasRect = parent as RectTransform;
+        if (canvasRect == null) canvasRect = parent.GetComponentInParent<Canvas>()?.transform as RectTransform;
+        if (canvasRect != null && canvasRect.rect.height > 1f) unit = canvasRect.rect.height / ReferenceHeight;
+
         rect.anchorMin = new Vector2(0f, 0f);
         rect.anchorMax = new Vector2(1f, 0f);
         rect.pivot = new Vector2(0.5f, 0f);
-        rect.anchoredPosition = new Vector2(0f, 10f);
-        rect.sizeDelta = new Vector2(-24f, 24f);
+        rect.anchoredPosition = new Vector2(0f, BottomInsetPixels * unit);
+        rect.sizeDelta = new Vector2(-SideInsetPixels * unit, HeightPixels * unit);
 
         TextMeshProUGUI text = stampObject.GetComponent<TextMeshProUGUI>();
         if (text == null)
@@ -106,7 +121,7 @@ public class StartScreenBuildStamp : MonoBehaviour
         }
 
         text.text = BuildLabel();
-        text.fontSize = 11f;
+        text.fontSize = FontPixels * unit;
         text.fontStyle = FontStyles.Normal;
         text.alignment = TextAlignmentOptions.Bottom;
         text.color = new Color(1f, 1f, 1f, 0.42f);
