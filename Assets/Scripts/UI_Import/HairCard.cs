@@ -44,6 +44,22 @@ public class HairCard : MonoBehaviour
     // This stacks with Twist; the twist slider still adds its own roll on top.
     public const float CurlBankAmount = 1f;
 
+    // Bend used to rotate each cross-section by the authored bend/twist rotation and
+    // nothing else. That rotation's forward axis is NOT the direction the bent spine
+    // actually travels in - the spine point is rotation * (0,0,z), so as the bend
+    // angle changes along the length the true tangent swings away from the section's
+    // forward axis. Every section therefore sat at a slant to its own path, which
+    // squashes anything with lateral extent: a curl coil gets projected into an
+    // ellipse (down to about 54% of its width at a 90 degree bend), reading as a
+    // flattened, skewed curl.
+    //
+    // With this on, the spine is left exactly where it was - bend shapes the card
+    // the same way it always did - but each section is re-aimed by the minimal
+    // rotation that puts its forward axis on the spine's real tangent, so the curl
+    // keeps its round cross-section however hard the card is bent. Set false for the
+    // old behaviour.
+    public const bool BendFollowsPath = true;
+
     // Single source of truth for the coil. GenerateMesh and the clumped-card mesh
     // rebuild in ThreeColumnClumperMeshAuthority both call this, so the two cannot
     // drift apart again the way they did when curl was first added.
@@ -79,6 +95,87 @@ public class HairCard : MonoBehaviour
 
         if (CurlBankAmount == 0f) return;
         bankRotation = Quaternion.AngleAxis(angle * Mathf.Rad2Deg * CurlBankAmount, Vector3.forward);
+    }
+
+    // Resolves, for every segment row, where it sits along the length (the segment
+    // density remap), where the spine sits there, and the frame its cross-section
+    // should be placed in. Shared by GenerateMesh and both mesh reconstructions so
+    // the three cannot drift.
+    //
+    // Root and tip are pinned to exactly 0 and 1 so Length always produces the
+    // expected span even if the density curve doesn't touch its own corners, and t
+    // is forced non-decreasing so a badly-authored (non-monotonic) curve can never
+    // fold the mesh back on itself.
+    public static void BuildSegmentFrames(
+        HairCard card,
+        int segments,
+        float length,
+        float[] segmentT,
+        Vector3[] segmentSpine,
+        Quaternion[] segmentFrame)
+    {
+        if (card == null) return;
+        if (segments < 1) return;
+
+        float previousSegmentT = 0f;
+        for (int i = 0; i <= segments; i++)
+        {
+            float t;
+            if (i == 0)
+            {
+                t = 0f;
+            }
+            else if (i == segments)
+            {
+                t = 1f;
+            }
+            else
+            {
+                float u = (float)i / segments;
+                t = Mathf.Max(previousSegmentT, PostShapeCurveBridge.EvaluateRoot(card.groupId, GroomShapeCurveChannel.SegmentDensity, u));
+            }
+
+            previousSegmentT = t;
+            segmentT[i] = t;
+            segmentFrame[i] = card.GetLengthProfileRotation(t);
+            segmentSpine[i] = segmentFrame[i] * new Vector3(0f, 0f, t * length);
+        }
+
+        if (!BendFollowsPath) return;
+
+        // Second pass, because the tangent at a row needs its neighbours' spine
+        // points. Central difference inside, one-sided at the ends.
+        for (int i = 0; i <= segments; i++)
+        {
+            Vector3 tangent;
+            if (i == 0)
+            {
+                tangent = segmentSpine[1] - segmentSpine[0];
+            }
+            else if (i == segments)
+            {
+                tangent = segmentSpine[segments] - segmentSpine[segments - 1];
+            }
+            else
+            {
+                tangent = segmentSpine[i + 1] - segmentSpine[i - 1];
+            }
+
+            // Duplicate t values (a flat stretch in the density curve) leave two
+            // spine points on top of each other and no usable direction. Leave that
+            // row on its authored rotation rather than inventing one.
+            if (tangent.sqrMagnitude < 1e-12f) continue;
+
+            Vector3 forward = segmentFrame[i] * Vector3.forward;
+            Vector3 direction = tangent.normalized;
+
+            // A near-180-degree flip has no well-defined minimal rotation - Unity
+            // picks an arbitrary perpendicular axis and the section would cartwheel.
+            // Leave those rows on their authored rotation.
+            if (Vector3.Dot(forward, direction) < -.999f) continue;
+
+            segmentFrame[i] = Quaternion.FromToRotation(forward, direction) * segmentFrame[i];
+        }
     }
 
     [Header("Grooming Parameters")]
@@ -563,25 +660,17 @@ public class HairCard : MonoBehaviour
         float halfWidth = width * 0.5f;
         float ridgeHeight = GetCrossSectionRidgeHeight();
 
-        // Segment density remaps where segments actually sit along the length, instead of the
-        // plain uniform i/segments spacing every other value in this loop used to derive z from.
-        // Root and tip are forced to exactly 0 and 1 regardless of the curve's own endpoints, so
-        // "Length" always produces the expected total span even if the curve doesn't touch its
-        // own corners. previousSegmentT enforces non-decreasing t: a badly-authored (non-
-        // monotonic) density curve must never fold the mesh back on itself.
-        float previousSegmentT = 0f;
+        // Segment density remap, spine and section frames all resolved up front - the
+        // frame at a row needs its neighbours' spine points, so it cannot be done
+        // inline. See BuildSegmentFrames.
+        float[] segmentT = new float[segments + 1];
+        Vector3[] segmentSpine = new Vector3[segments + 1];
+        Quaternion[] segmentFrame = new Quaternion[segments + 1];
+        BuildSegmentFrames(this, segments, length, segmentT, segmentSpine, segmentFrame);
 
         for (int i = 0; i <= segments; i++)
         {
-            float t;
-            if (i == 0) t = 0f;
-            else if (i == segments) t = 1f;
-            else
-            {
-                float u = (float)i / segments;
-                t = Mathf.Max(previousSegmentT, PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.SegmentDensity, u));
-            }
-            previousSegmentT = t;
+            float t = segmentT[i];
             float z = t * length;
             float baseULeft = uScale < 0f ? 1f : 0f;
             float baseURight = uScale < 0f ? 0f : 1f;
@@ -631,14 +720,16 @@ public class HairCard : MonoBehaviour
             center += curlOffset;
             right += curlOffset;
 
-            Quaternion authoredRotation = GetLengthProfileRotation(t);
-            left = authoredRotation * left;
-            center = authoredRotation * center;
-            right = authoredRotation * right;
+            // The spine keeps exactly the position the authored bend/twist rotation
+            // always put it at. Only the section's own lateral extent - width, ridge,
+            // clump displacement, curl offset - is placed with the path-following
+            // frame, so bend shapes the card as before while the curl stays round.
+            Vector3 spinePoint = segmentSpine[i];
+            Quaternion sectionFrame = segmentFrame[i];
 
-            baseVertices[index] = left;
-            baseVertices[index + 1] = center;
-            baseVertices[index + 2] = right;
+            baseVertices[index] = spinePoint + sectionFrame * (left - sectionOrigin);
+            baseVertices[index + 1] = spinePoint + sectionFrame * (center - sectionOrigin);
+            baseVertices[index + 2] = spinePoint + sectionFrame * (right - sectionOrigin);
             uvs[index] = new Vector2(finalULeft, finalV);
             uvs[index + 1] = new Vector2(finalUCenter, finalV);
             uvs[index + 2] = new Vector2(finalURight, finalV);

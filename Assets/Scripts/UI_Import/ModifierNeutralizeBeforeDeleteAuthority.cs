@@ -208,25 +208,21 @@ public class ModifierDeleteNeutralizeHook : MonoBehaviour, IPointerDownHandler
         float halfWidth = Mathf.Max(.0005f, card.width) * .5f;
         float ridge = card.GetCrossSectionRidgeHeight();
 
-        // Mirrors HairCard.GenerateMesh's own segment-density remap, curl offset, and
-        // GetLengthProfileRotation exactly - this reconstruction predated Curl and Segment
-        // Density entirely and used a hardcoded bend-only rotation formula that also ignored
-        // X/Y/Z angle offsets and the Bend profile curve. Same fix as
-        // ThreeColumnClumperMeshAuthority.BuildCleanMesh, which had the identical gap.
-        float previousSegmentT = 0f;
+        // Segment density remap, spine and path-following section frames come straight
+        // from HairCard, so this reconstruction cannot drift from GenerateMesh. It once
+        // had its own copy that predated Curl and Segment Density entirely and used a
+        // hardcoded bend-only rotation ignoring X/Y/Z offsets and the Bend profile
+        // curve. Same fix as ThreeColumnClumperMeshAuthority.BuildCleanMesh.
+        float cardLength = Mathf.Max(.0001f, card.length);
+        float[] segmentT = new float[segments + 1];
+        Vector3[] segmentSpine = new Vector3[segments + 1];
+        Quaternion[] segmentFrame = new Quaternion[segments + 1];
+        HairCard.BuildSegmentFrames(card, segments, cardLength, segmentT, segmentSpine, segmentFrame);
 
         for (int i = 0; i <= segments; i++)
         {
-            float t;
-            if (i == 0) t = 0f;
-            else if (i == segments) t = 1f;
-            else
-            {
-                float u = (float)i / segments;
-                t = Mathf.Max(previousSegmentT, PostShapeCurveBridge.EvaluateRoot(card.groupId, GroomShapeCurveChannel.SegmentDensity, u));
-            }
-            previousSegmentT = t;
-            float z = t * Mathf.Max(.0001f, card.length);
+            float t = segmentT[i];
+            float z = t * cardLength;
             float span = halfWidth * card.flattenFactor;
             int index = i * columns;
 
@@ -242,10 +238,11 @@ public class ModifierDeleteNeutralizeHook : MonoBehaviour, IPointerDownHandler
             Vector3 center = sectionOrigin + bankRotation * new Vector3(0f, ridge, 0f) + curlOffset;
             Vector3 right = sectionOrigin + bankRotation * new Vector3(span, 0f, 0f) + curlOffset;
 
-            Quaternion authored = card.GetLengthProfileRotation(t);
-            vertices[index] = authored * left;
-            vertices[index + 1] = authored * center;
-            vertices[index + 2] = authored * right;
+            Vector3 spinePoint = segmentSpine[i];
+            Quaternion sectionFrame = segmentFrame[i];
+            vertices[index] = spinePoint + sectionFrame * (left - sectionOrigin);
+            vertices[index + 1] = spinePoint + sectionFrame * (center - sectionOrigin);
+            vertices[index + 2] = spinePoint + sectionFrame * (right - sectionOrigin);
         }
 
         // Same rule as ThreeColumnClumperMeshAuthority.WriteFullMesh: HairCard.GetLiveMesh(),

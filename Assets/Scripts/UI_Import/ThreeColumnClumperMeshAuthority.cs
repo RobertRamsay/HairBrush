@@ -372,26 +372,20 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         float halfWidth = Mathf.Max(.0005f, card.width) * .5f;
         float ridge = card.GetCrossSectionRidgeHeight();
 
-        // Mirrors HairCard.GenerateMesh's own segment-density remap and curl offset exactly -
-        // this "clean" reconstruction predates both features and was never updated to include
-        // them, so a clumped card silently lost its curl shape and always used uniform segment
-        // spacing regardless of its actual density profile. Root and tip stay pinned to exactly
-        // 0 and 1 for the same reason GenerateMesh pins them: so Length always produces the
-        // expected span even if the density curve doesn't touch its own corners.
-        float previousSegmentT = 0f;
+        // Segment density remap, spine and path-following section frames come straight
+        // from HairCard, so this "clean" reconstruction cannot drift from GenerateMesh.
+        // It once had its own copy of the loop, which is how a clumped card silently
+        // lost its curl shape and ignored its density profile entirely.
+        float cardLength = Mathf.Max(.0001f, card.length);
+        float[] segmentT = new float[segments + 1];
+        Vector3[] segmentSpine = new Vector3[segments + 1];
+        Quaternion[] segmentFrame = new Quaternion[segments + 1];
+        HairCard.BuildSegmentFrames(card, segments, cardLength, segmentT, segmentSpine, segmentFrame);
 
         for (int i = 0; i <= segments; i++)
         {
-            float t;
-            if (i == 0) t = 0f;
-            else if (i == segments) t = 1f;
-            else
-            {
-                float u = (float)i / segments;
-                t = Mathf.Max(previousSegmentT, PostShapeCurveBridge.EvaluateRoot(card.groupId, GroomShapeCurveChannel.SegmentDensity, u));
-            }
-            previousSegmentT = t;
-            float z = t * Mathf.Max(.0001f, card.length);
+            float t = segmentT[i];
+            float z = t * cardLength;
             float span = halfWidth * card.flattenFactor;
             int index = i * columns;
 
@@ -407,10 +401,11 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
             Vector3 center = sectionOrigin + bankRotation * new Vector3(0f, ridge, 0f) + curlOffset;
             Vector3 right = sectionOrigin + bankRotation * new Vector3(span, 0f, 0f) + curlOffset;
 
-            Quaternion authored = card.GetLengthProfileRotation(t);
-            vertices[index] = authored * left;
-            vertices[index + 1] = authored * center;
-            vertices[index + 2] = authored * right;
+            Vector3 spinePoint = segmentSpine[i];
+            Quaternion sectionFrame = segmentFrame[i];
+            vertices[index] = spinePoint + sectionFrame * (left - sectionOrigin);
+            vertices[index + 1] = spinePoint + sectionFrame * (center - sectionOrigin);
+            vertices[index + 2] = spinePoint + sectionFrame * (right - sectionOrigin);
 
             float baseULeft = card.uScale < 0f ? 1f : 0f;
             float baseURight = card.uScale < 0f ? 0f : 1f;
