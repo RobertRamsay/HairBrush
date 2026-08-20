@@ -32,12 +32,17 @@ public class GroupPanelPostHintStats : MonoBehaviour
     private const float UtilityBottomInset = 6f;
     private const float UVButtonWidth = 74f;
     private const float SoloButtonWidth = 52f;
-    // Nine lines at fontSize 11. Bump this whenever a line is added to ApplyHintStyle,
+    // Eight lines at fontSize 11. Bump this whenever a line is added to ApplyHintStyle,
     // or the last one gets clipped.
-    private const float ControlsHintHeight = 112f;
+    private const float ControlsHintHeight = 100f;
+
+    private const string InstructionsHeaderName = "InstructionsHeader";
+    private const float InstructionsHeaderHeight = 26f;
 
     private GameObject boundPanel;
     private TextMeshProUGUI hint;
+    private TextMeshProUGUI instructionsHeader;
+    private readonly List<Transform> ordered = new List<Transform>();
     private ModelViewer viewer;
     private FieldInfo groupNamesField;
     private float nextScan;
@@ -63,13 +68,14 @@ public class GroupPanelPostHintStats : MonoBehaviour
         {
             boundPanel = null;
             hint = null;
+            instructionsHeader = null;
             return;
         }
 
         if (boundPanel != panel || hint == null)
             Bind(panel);
 
-        MaintainHintOrder(panel.transform);
+        MaintainPanelOrder(panel.transform);
         UpdateGroupHeaders();
     }
 
@@ -105,7 +111,36 @@ public class GroupPanelPostHintStats : MonoBehaviour
         hint = go.GetComponent<TextMeshProUGUI>();
         ApplyHintStyle();
 
-        MaintainHintOrder(panel.transform);
+        MaintainPanelOrder(panel.transform);
+    }
+
+    // Section header for the hint block, styled to match the panel's "Hair Groups" title.
+    void EnsureInstructionsHeader(Transform panel)
+    {
+        if (instructionsHeader != null) return;
+
+        Transform existing = panel.Find(InstructionsHeaderName);
+        if (existing != null)
+        {
+            instructionsHeader = existing.GetComponent<TextMeshProUGUI>();
+            if (instructionsHeader != null) return;
+        }
+
+        GameObject go = new GameObject(InstructionsHeaderName, typeof(RectTransform), typeof(LayoutElement), typeof(TextMeshProUGUI));
+        go.transform.SetParent(panel, false);
+
+        LayoutElement layout = go.GetComponent<LayoutElement>();
+        layout.preferredHeight = InstructionsHeaderHeight;
+        layout.minHeight = InstructionsHeaderHeight;
+        go.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, InstructionsHeaderHeight);
+
+        instructionsHeader = go.GetComponent<TextMeshProUGUI>();
+        instructionsHeader.text = "INSTRUCTIONS";
+        instructionsHeader.fontSize = 18f;
+        instructionsHeader.fontStyle = FontStyles.Bold;
+        instructionsHeader.alignment = TextAlignmentOptions.MidlineLeft;
+        instructionsHeader.color = Color.white;
+        instructionsHeader.raycastTarget = false;
     }
 
     void ApplyHintStyle()
@@ -118,8 +153,7 @@ public class GroupPanelPostHintStats : MonoBehaviour
                     "Double Click Group name to rename it.\n" +
                     "Click in space to come out of mode\n" +
                     "Right Click to remove a group\n" +
-                    "SPACE + Click to reposition Modifier\n" +
-                    "LEFT / RIGHT arrows rotate the light";
+                    "SPACE + Click to reposition Modifier";
         hint.fontSize = 11f;
         hint.fontStyle = FontStyles.Bold;
         hint.alignment = TextAlignmentOptions.MidlineLeft;
@@ -136,14 +170,45 @@ public class GroupPanelPostHintStats : MonoBehaviour
         hint.rectTransform.sizeDelta = new Vector2(0f, ControlsHintHeight);
     }
 
-    void MaintainHintOrder(Transform panel)
+    // Owns the whole left-panel running order, not just the hint's place in it, because
+    // the pieces are built by four different scripts at four different moments and each
+    // one only ever knew where to put itself relative to whatever already existed.
+    //
+    //   MENU  ->  POLYGONS  ->  LIGHT ANGLE  ->  INSTRUCTIONS  ->  the hint text
+    //         ->  Hair Groups  ->  + GROUP  ->  the group list
+    void MaintainPanelOrder(Transform panel)
     {
-        if (hint == null || panel == null) return;
-        Transform polys = panel.Find("HairPolygonCounterText");
-        Transform title = panel.Find("TitleText");
-        int target = polys != null ? polys.GetSiblingIndex() + 1 : title != null ? title.GetSiblingIndex() + 1 : 0;
-        if (hint.transform.GetSiblingIndex() != target)
-            hint.transform.SetSiblingIndex(target);
+        if (panel == null) return;
+
+        EnsureInstructionsHeader(panel);
+
+        ordered.Clear();
+        AddIfPresent(panel, "HairPolygonCounterText");
+        AddIfPresent(panel, SceneLightAngleAuthority.RowName);
+        AddIfPresent(panel, InstructionsHeaderName);
+        AddIfPresent(panel, "PostCreateHint");
+        AddIfPresent(panel, "TitleText");
+        AddIfPresent(panel, "NewGroupButton");
+        AddIfPresent(panel, "GroupScrollView");
+
+        // The MENU button pins itself to index 0, so start immediately after it.
+        int index = 0;
+        Transform menu = panel.Find("MenuButton_Runtime");
+        if (menu == null) menu = panel.Find("WorkspaceMenuButton_Runtime");
+        if (menu != null) index = menu.GetSiblingIndex() + 1;
+
+        foreach (Transform child in ordered)
+        {
+            if (child.GetSiblingIndex() != index) child.SetSiblingIndex(index);
+            index++;
+        }
+    }
+
+    void AddIfPresent(Transform panel, string childName)
+    {
+        Transform child = panel.Find(childName);
+        if (child == null) return;
+        ordered.Add(child);
     }
 
     void UpdateGroupHeaders()
