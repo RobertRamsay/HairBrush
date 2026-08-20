@@ -25,16 +25,16 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
     // ---------------------------------------------------------------------------------
     // Release notes. Add a block at the top for each release; only the first is displayed.
     // ---------------------------------------------------------------------------------
-    private const string ReleaseHeading = "BETA 0.1.5";
+    private const string ReleaseHeading = "BETA 0.1.6";
 
     // Five at most, one line each - the panel does not scroll.
     private static readonly string[] ReleaseNotes =
     {
-        "Rename a group in place - double-click its name on the row.",
-        "SS/DS button per group for single- or double-sided rendering.",
-        "Curl banks into its coil, and bend now keeps curls round.",
-        "SEGMENT DENSITY curve finally means density, not position.",
-        "Light angle slider, brush mode readout, frozen panel header.",
+        "WAVE modifier - amplitude, frequency and direction profiles.",
+        "ARCH slider flattens or doubles the card cross-section.",
+        "SYMMETRY mirrors painting and erasing; N+/N- flips a group.",
+        "WIDTH profile curve; right-click any slider to reset it.",
+        "SOLO freezes hidden groups - much faster on heavy grooms.",
     };
 
     // ---------------------------------------------------------------------------------
