@@ -180,7 +180,8 @@ public class PostFinalRemovalLifecycleAuthority : MonoBehaviour
             curlFrequency = s.curlFrequency,
             curlDiameter = Mathf.Max(0f, s.curlDiameter),
             waveAmplitude = Mathf.Max(0f, s.waveAmplitude),
-            waveFrequency = s.waveFrequency
+            waveFrequency = s.waveFrequency,
+            waveDirection = s.waveDirection
         };
     }
 

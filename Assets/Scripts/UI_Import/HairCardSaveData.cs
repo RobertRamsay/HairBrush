@@ -31,6 +31,12 @@ public class HairCardSaveData
     // waveAmplitude/waveFrequency lands on 0f with no migration and no version bump.
     public float waveAmplitude;
     public float waveFrequency;
+    // Initialised to 1, unlike the two above. JsonUtility runs field initialisers first and
+    // only overwrites keys present in the JSON, so a project saved before Wave Direction
+    // existed deserializes to 1 (up/down) rather than 0 (side to side). That is the deliberate
+    // choice: the side-to-side original was the thing being replaced. Anyone who wants the old
+    // look sets the slider to 0.
+    public float waveDirection = 1f;
 
     // SYMMETRY. A mirrored card evaluates its geometry through a local-X mirror, so this has
     // to survive a round trip or every mirrored card in a reloaded project would come back
@@ -116,7 +122,7 @@ public class GroupClumperSaveData
     public float uScale,vScale,uOffset,vOffset;
     // Zero for legacy projects, which is exactly the correct no-curl-delta default.
     public float curlFrequency,curlDiameter;
-    public float waveAmplitude,waveFrequency;
+    public float waveAmplitude,waveFrequency,waveDirection;
 }
 
 [Serializable] public class PostAffectorSaveData
@@ -188,6 +194,7 @@ public class PostPredeterminedUVSaveData
     // Root-only wave profiles. Empty list -> flat x1, the same convention as every curve above.
     public List<GroomCurveKeySaveData> waveAmplitudeCurve=new();
     public List<GroomCurveKeySaveData> waveFrequencyCurve=new();
+    public List<GroomCurveKeySaveData> waveDirectionCurve=new();
 
     // Rendering only: true culls back faces for this group's cards. Stored as
     // "singleSided" rather than "doubleSided" so a project saved before this existed
@@ -246,6 +253,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
     public float sliderCurlDiameter;
     public float sliderWaveAmplitude;
     public float sliderWaveFrequency;
+    public float sliderWaveDirection = 1f;
 
     public void OnBeforeSerialize()
     {

@@ -184,7 +184,8 @@ public class PostShapeCurveBridge : MonoBehaviour
             || channel == GroomShapeCurveChannel.SegmentDensity
             || channel == GroomShapeCurveChannel.Width
             || channel == GroomShapeCurveChannel.WaveAmplitude
-            || channel == GroomShapeCurveChannel.WaveFrequency;
+            || channel == GroomShapeCurveChannel.WaveFrequency
+            || channel == GroomShapeCurveChannel.WaveDirection;
     }
 
     public static float EvaluatePost(int postId, GroomShapeCurveChannel channel, float t)

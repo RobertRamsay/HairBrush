@@ -13,7 +13,7 @@ public class HairCard : MonoBehaviour
         public float x, y, z;
         public float uScale, vScale, uOffset, vOffset;
         public float curlFrequency, curlDiameter;
-        public float waveAmplitude, waveFrequency;
+        public float waveAmplitude, waveFrequency, waveDirection;
     }
 
     // A POST keeps its authored scalar delta, but its Bend/X/Y/Z contribution can have a
@@ -98,8 +98,14 @@ public class HairCard : MonoBehaviour
         // Root-only profile curve, same as Curl and Segment Density - see the channel enum.
         // GroomShapeCurveRegistry.Evaluate clamps every channel to 0..1, so this can only ever
         // narrow the card, never widen it past the Width slider.
-        float widthMultiplier = PostShapeCurveBridge.EvaluateRoot(card.groupId, GroomShapeCurveChannel.Width, t);
-        widthMultiplier = Mathf.Max(MinimumWidthMultiplier, widthMultiplier);
+        // Untouched profile means the multiplier is exactly 1, so the evaluation is pure
+        // overhead - and this runs once per row per card per rebuild.
+        float widthMultiplier = 1f;
+        if (!GroomShapeCurveRegistry.IsFlatOne(card.groupId, GroomShapeCurveChannel.Width))
+        {
+            widthMultiplier = PostShapeCurveBridge.EvaluateRoot(card.groupId, GroomShapeCurveChannel.Width, t);
+            widthMultiplier = Mathf.Max(MinimumWidthMultiplier, widthMultiplier);
+        }
 
         halfSpan = Mathf.Max(.0005f, card.width) * .5f * card.flattenFactor * widthMultiplier;
 
@@ -124,31 +130,48 @@ public class HairCard : MonoBehaviour
     // sin(0) = 0, so the wave is exactly zero at the root and the card stays anchored to the
     // scalp however hard it is driven - the same property EvaluateCurl gets from cos(0)-1.
     public static void EvaluateWave(
-        int groupId,
-        float waveAmplitude,
-        float waveFrequency,
+        HairCard card,
         float t,
         out Vector3 waveOffset,
         bool mirrored = false)
     {
         waveOffset = Vector3.zero;
+        if (card == null) return;
 
-        if (waveAmplitude <= 0f) return;
-        if (waveFrequency == 0f) return;
+        // Both of these are exact "this contributes nothing" tests, so they cost two float
+        // compares and save two AnimationCurve evaluations plus a sin() per row per card.
+        if (card.waveAmplitude <= 0f) return;
+        if (card.waveFrequency == 0f) return;
 
-        // Root-only profile curves, same as Curl and Segment Density - no per-POST override.
-        float amplitudeMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.WaveAmplitude, t);
-        float frequencyMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.WaveFrequency, t);
+        int groupId = card.groupId;
 
-        float amplitude = waveAmplitude * amplitudeMultiplier;
-        float turns = waveFrequency * frequencyMultiplier;
+        // Skip the curve read entirely when nobody has drawn on that profile. Evaluate would
+        // return exactly 1 for a flat default curve, so multiplying by it is provably a no-op.
+        float amplitude = card.waveAmplitude;
+        if (!GroomShapeCurveRegistry.IsFlatOne(groupId, GroomShapeCurveChannel.WaveAmplitude))
+            amplitude *= PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.WaveAmplitude, t);
 
-        // A mirrored card is a reflection through local X, and this displacement is purely in
-        // local X, so negating the amplitude IS the exact mirror - no phase correction needed.
-        // (Curl needs both its radius and its angle negated because it displaces in two axes.)
-        if (mirrored) amplitude = -amplitude;
+        float turns = card.waveFrequency;
+        if (!GroomShapeCurveRegistry.IsFlatOne(groupId, GroomShapeCurveChannel.WaveFrequency))
+            turns *= PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.WaveFrequency, t);
 
-        waveOffset = new Vector3(amplitude * Mathf.Sin(turns * t * Mathf.PI * 2f), 0f, 0f);
+        float direction = Mathf.Clamp01(card.waveDirection);
+        if (!GroomShapeCurveRegistry.IsFlatOne(groupId, GroomShapeCurveChannel.WaveDirection))
+            direction *= PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.WaveDirection, t);
+
+        // 0 -> local X (side to side, in the card's flat plane), 1 -> local Y (up and down,
+        // across its face). Unit length at every angle, so amplitude is honest throughout.
+        float angle = direction * Mathf.PI * .5f;
+        float axisX = Mathf.Cos(angle);
+        float axisY = Mathf.Sin(angle);
+
+        // A mirrored card is a reflection through local X, so ONLY the X component flips.
+        // Negating the amplitude instead - which was right while the wave was X-only - would
+        // now wrongly flip the up/down component too and break symmetry on any diagonal.
+        if (mirrored) axisX = -axisX;
+
+        float displacement = amplitude * Mathf.Sin(turns * t * Mathf.PI * 2f);
+        waveOffset = new Vector3(axisX * displacement, axisY * displacement, 0f);
     }
 
     public static void EvaluateCurl(
@@ -167,10 +190,13 @@ public class HairCard : MonoBehaviour
         if (curlDiameter <= 0f) return;
 
         // Root-only profile curves (see GroomShapeCurveAuthority) - no per-POST override.
-        float freqMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.CurlFrequency, t);
-        float diameterMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.CurlDiameter, t);
-        float turns = curlFrequency * freqMultiplier;
-        float radius = curlDiameter * diameterMultiplier * .5f;
+        float turns = curlFrequency;
+        if (!GroomShapeCurveRegistry.IsFlatOne(groupId, GroomShapeCurveChannel.CurlFrequency))
+            turns *= PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.CurlFrequency, t);
+
+        float radius = curlDiameter * .5f;
+        if (!GroomShapeCurveRegistry.IsFlatOne(groupId, GroomShapeCurveChannel.CurlDiameter))
+            radius *= PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.CurlDiameter, t);
 
         // A coil is handed, so a mirrored card's coil must wind the other way. Negating BOTH
         // the radius and the sweep is what makes the reflection exact: the offset becomes
@@ -226,6 +252,17 @@ public class HairCard : MonoBehaviour
     // can fold the mesh back on itself.
     static void ResolveSegmentPositions(int groupId, int segments, float[] segmentT)
     {
+        // A flat x1 density curve means evenly spaced rows by definition, so the whole
+        // 64-sample cumulative integration below - and the search that walks it once per row -
+        // reduces to a divide. This is the largest single saving of the lot: it is ~65 curve
+        // evaluations per card per rebuild, paid on every groom whether or not anyone has ever
+        // opened the Segment Density profile.
+        if (GroomShapeCurveRegistry.IsFlatOne(groupId, GroomShapeCurveChannel.SegmentDensity))
+        {
+            for (int i = 0; i <= segments; i++) segmentT[i] = (float)i / segments;
+            return;
+        }
+
         float step = 1f / SegmentDensitySamples;
         float previousDensity = Mathf.Max(0f, PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.SegmentDensity, 0f));
         segmentDensityCumulative[0] = 0f;
@@ -359,6 +396,18 @@ public class HairCard : MonoBehaviour
     public float waveAmplitude = 0f;
     public float waveFrequency = 0f;
 
+    // 0 = side to side across the card's flat plane (the old <> behaviour), 1 = up and down
+    // across its face, anything between is a diagonal. Held as an ANGLE internally rather than
+    // a lerp between two axis vectors: lerping (1,0,0) toward (0,1,0) passes through a vector
+    // of length 0.707 at the midpoint, so a diagonal wave would visibly lose almost a third of
+    // its amplitude. An angle keeps the axis unit length at every setting, so the Amplitude
+    // slider means the same thing wherever this is parked.
+    //
+    // Defaults to 1 (up/down), NOT 0. A project saved by the first wave build has no
+    // waveDirection key at all, so it deserializes to this initializer and comes back up/down
+    // rather than side to side. Set the slider to 0 for the previous look.
+    public float waveDirection = 1f;
+
     [Header("UV Settings")]
     public float uScale = 1.0f;
     public float vScale = 1.0f;
@@ -400,7 +449,7 @@ public class HairCard : MonoBehaviour
     private float storedOffsetX, storedOffsetY, storedOffsetZ;
     private float baseLength, baseWidth, baseBend, baseTwist, baseEmbedDepth;
     private float baseCurlFrequency, baseCurlDiameter;
-    private float baseWaveAmplitude, baseWaveFrequency;
+    private float baseWaveAmplitude, baseWaveFrequency, baseWaveDirection;
     private int baseSegments;
     private float baseOffsetX, baseOffsetY, baseOffsetZ;
     private Material cardMaterial;
@@ -548,6 +597,19 @@ public class HairCard : MonoBehaviour
     public Quaternion GetLengthProfileRotation(float t)
     {
         t = Mathf.Clamp01(t);
+        // A card with no bend, no twist, no angle offsets and no POST profile contributions
+        // has an identity profile rotation at every t, and the four curve evaluations below
+        // cannot change that - a multiplier only ever scales zero. Four evaluations per row
+        // per card saved on every straight card in the scene.
+        //
+        // Deliberately an exact zero test on the SCALARS rather than a flat-curve test: these
+        // four channels have per-POST overrides and route through the POST snapshot, so the
+        // registry's flat-curve answer would not be the whole story. Zero times anything is.
+        if (bendAngle == 0f && twistAngle == 0f
+            && storedOffsetX == 0f && storedOffsetY == 0f && storedOffsetZ == 0f
+            && postShapeProfileContributions.Count == 0)
+            return Quaternion.identity;
+
         float bendMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.Bend, t);
         float xMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.X, t);
         float yMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.Y, t);
@@ -628,6 +690,7 @@ public class HairCard : MonoBehaviour
         curlDiameter = state.curlDiameter;
         waveAmplitude = state.waveAmplitude;
         waveFrequency = state.waveFrequency;
+        waveDirection = state.waveDirection;
         if (surfaceNormal != Vector3.zero) UpdateTransformOrientation(currentEmbedDepth);
 
         // Guarded. PostAffectorManager, PostFreeCanonicalAuthority and
@@ -658,7 +721,8 @@ public class HairCard : MonoBehaviour
             curlFrequency = curlFrequency,
             curlDiameter = curlDiameter,
             waveAmplitude = waveAmplitude,
-            waveFrequency = waveFrequency
+            waveFrequency = waveFrequency,
+            waveDirection = waveDirection
         };
     }
 
@@ -672,6 +736,7 @@ public class HairCard : MonoBehaviour
         // Amplitude is a magnitude, so it clamps like curl diameter. Frequency stays signed -
         // a negative frequency simply runs the wave the other way, which is a usable result.
         state.waveAmplitude = Mathf.Max(0f, state.waveAmplitude);
+        state.waveDirection = Mathf.Clamp01(state.waveDirection);
         return state;
     }
 
@@ -766,7 +831,7 @@ public class HairCard : MonoBehaviour
         if (cardMaterial.HasProperty("_Color")) cardMaterial.SetColor("_Color", finalColor);
     }
 
-    public void SetParameters(float newLength, float newWidth, int newSegments, float newBend, float newTwist, float offsetX, float offsetY, float offsetZ, float newEmbedDepth, float strengthMultiplier = 1f, float newUScale = 1f, float newVScale = 1f, float newUOffset = 0f, float newVOffset = 0f, float newCurlFrequency = 0f, float newCurlDiameter = 0f, float newWaveAmplitude = 0f, float newWaveFrequency = 0f)
+    public void SetParameters(float newLength, float newWidth, int newSegments, float newBend, float newTwist, float offsetX, float offsetY, float offsetZ, float newEmbedDepth, float strengthMultiplier = 1f, float newUScale = 1f, float newVScale = 1f, float newUOffset = 0f, float newVOffset = 0f, float newCurlFrequency = 0f, float newCurlDiameter = 0f, float newWaveAmplitude = 0f, float newWaveFrequency = 0f, float newWaveDirection = 1f)
     {
         if (selectionWeight > 0f)
         {
@@ -784,6 +849,7 @@ public class HairCard : MonoBehaviour
             curlDiameter = Mathf.Lerp(baseCurlDiameter, newCurlDiameter, w);
             waveAmplitude = Mathf.Lerp(baseWaveAmplitude, newWaveAmplitude, w);
             waveFrequency = Mathf.Lerp(baseWaveFrequency, newWaveFrequency, w);
+            waveDirection = Mathf.Lerp(baseWaveDirection, newWaveDirection, w);
         }
         else
         {
@@ -800,6 +866,7 @@ public class HairCard : MonoBehaviour
             curlDiameter = newCurlDiameter;
             waveAmplitude = newWaveAmplitude;
             waveFrequency = newWaveFrequency;
+            waveDirection = newWaveDirection;
         }
         uScale = newUScale;
         vScale = newVScale;
@@ -821,7 +888,7 @@ public class HairCard : MonoBehaviour
         GenerateMeshIfInputsChanged();
     }
 
-    public void CaptureBaseState(float activeLength, float activeWidth, int activeSegments, float activeBend, float activeTwist, float activeDepth, float ox, float oy, float oz, float activeCurlFrequency = 0f, float activeCurlDiameter = 0f, float activeWaveAmplitude = 0f, float activeWaveFrequency = 0f)
+    public void CaptureBaseState(float activeLength, float activeWidth, int activeSegments, float activeBend, float activeTwist, float activeDepth, float ox, float oy, float oz, float activeCurlFrequency = 0f, float activeCurlDiameter = 0f, float activeWaveAmplitude = 0f, float activeWaveFrequency = 0f, float activeWaveDirection = 1f)
     {
         baseLength = activeLength;
         baseWidth = activeWidth;
@@ -836,6 +903,7 @@ public class HairCard : MonoBehaviour
         baseCurlDiameter = activeCurlDiameter;
         baseWaveAmplitude = activeWaveAmplitude;
         baseWaveFrequency = activeWaveFrequency;
+        baseWaveDirection = activeWaveDirection;
     }
 
     public void SetSelectionWeight(float weight) { selectionWeight = Mathf.Clamp01(weight); UpdateVisualHighlight(); }
@@ -1089,6 +1157,7 @@ public class HairCard : MonoBehaviour
             hash = hash * 31 + curlDiameter.GetHashCode();
             hash = hash * 31 + waveAmplitude.GetHashCode();
             hash = hash * 31 + waveFrequency.GetHashCode();
+            hash = hash * 31 + waveDirection.GetHashCode();
             hash = hash * 31 + uScale.GetHashCode();
             hash = hash * 31 + vScale.GetHashCode();
             hash = hash * 31 + uOffset.GetHashCode();
@@ -1215,7 +1284,7 @@ public class HairCard : MonoBehaviour
             EvaluateCurl(groupId, curlFrequency, curlDiameter, t, out curlOffset, out bankRotation, mirrored);
 
             Vector3 waveOffset;
-            EvaluateWave(groupId, waveAmplitude, waveFrequency, t, out waveOffset, mirrored);
+            EvaluateWave(this, t, out waveOffset, mirrored);
 
             Vector3 sectionOrigin = new Vector3(0f, 0f, z);
             Vector3 left = sectionOrigin + bankRotation * new Vector3(-currentWidth, 0f, 0f);

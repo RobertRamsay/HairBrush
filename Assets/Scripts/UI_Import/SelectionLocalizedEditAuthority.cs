@@ -119,7 +119,7 @@ public class SelectionLocalizedEditAuthority : MonoBehaviour
             // reset to 0 by SetParameters' defaults. Brush-localized curl blending can be added
             // here later if wanted, following the same pattern as the other channels above.
             card.SetParameters(length, width, segments, bend, twist, x, y, z, depth, 1f,
-                uScale, vScale, uOffset, vOffset, card.curlFrequency, card.curlDiameter, card.waveAmplitude, card.waveFrequency);
+                uScale, vScale, uOffset, vOffset, card.curlFrequency, card.curlDiameter, card.waveAmplitude, card.waveFrequency, card.waveDirection);
             card.SetSelectionWeight(selectionWeight);
         }
 

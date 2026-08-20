@@ -450,7 +450,7 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
             // Shared with GenerateMesh so a wavy card stays wavy once clumped or neutralised.
             // Skipping this is how curl and segment density each silently reverted here before.
             Vector3 waveOffset;
-            HairCard.EvaluateWave(card.groupId, card.waveAmplitude, card.waveFrequency, t, out waveOffset, card.mirrored);
+            HairCard.EvaluateWave(card, t, out waveOffset, card.mirrored);
 
             Vector3 sectionOrigin = new Vector3(0f, 0f, z);
             Vector3 left = sectionOrigin + bankRotation * new Vector3(-span, 0f, 0f) + curlOffset + waveOffset;

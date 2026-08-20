@@ -108,6 +108,7 @@ public class InlineGroomShapeCurveEditorAuthority : MonoBehaviour
         changed |= TightenProfileRow("ShapeCurve_CurlDiameter_Row");
         changed |= TightenProfileRow("ShapeCurve_WaveAmplitude_Row");
         changed |= TightenProfileRow("ShapeCurve_WaveFrequency_Row");
+        changed |= TightenProfileRow("ShapeCurve_WaveDirection_Row");
         changed |= TightenProfileRow("ShapeCurve_SegmentDensity_Row");
         changed |= TightenProfileRow("ShapeCurve_Width_Row");
         return changed;
