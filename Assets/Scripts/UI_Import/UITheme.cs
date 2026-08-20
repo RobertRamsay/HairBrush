@@ -68,7 +68,17 @@ public static class UITheme
         if (button == null) return;
 
         Image image = button.GetComponent<Image>();
-        if (image == null) image = button.gameObject.AddComponent<Image>();
+        if (image == null)
+        {
+            // A GameObject can only hold one Graphic. Buttons that already carry a
+            // different one - a legacy Text, for instance, as used by Unity's own
+            // runtime widgets - cannot be given an Image, and AddComponent returns
+            // null there. Leave those alone instead of logging an error and then
+            // dereferencing null on every single frame.
+            if (button.GetComponent<Graphic>() != null) return;
+            image = button.gameObject.AddComponent<Image>();
+            if (image == null) return;
+        }
         button.targetGraphic = image;
 
         if (Ensure())
