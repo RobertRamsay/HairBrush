@@ -405,8 +405,20 @@ public class HairCard : MonoBehaviour
     void Update()
     {
         if (Keyboard.current == null) return;
+        // The 1/2 single-sided/double-sided hotkeys must not fire while the user is
+        // typing into a UI text field - for example the inline group-name editor,
+        // where "1" and "2" are just characters in a name.
+        if (IsTypingInTextField()) return;
         if (Keyboard.current.digit1Key.wasPressedThisFrame || Keyboard.current.numpad1Key.wasPressedThisFrame) SetDoubleSided(false);
         if (Keyboard.current.digit2Key.wasPressedThisFrame || Keyboard.current.numpad2Key.wasPressedThisFrame) SetDoubleSided(true);
+    }
+
+    static bool IsTypingInTextField()
+    {
+        if (UnityEngine.EventSystems.EventSystem.current == null) return false;
+        GameObject selected = UnityEngine.EventSystems.EventSystem.current.currentSelectedGameObject;
+        if (selected == null) return false;
+        return selected.GetComponent<TMPro.TMP_InputField>() != null;
     }
 
     // MaterialEditorManager.ApplyAssignments() is the single authoritative source for which

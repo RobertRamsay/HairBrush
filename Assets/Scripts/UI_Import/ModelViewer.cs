@@ -847,11 +847,10 @@ public class ModelViewer : MonoBehaviour
 
     void PromptRenameGroup(int gid)
     {
-#if UNITY_EDITOR
-        string currentName = groupNames.ContainsKey(gid) ? groupNames[gid] : ("Group " + gid);
-        string newName = EditorInputDialog.Show("Rename Group", "Enter new name for group:", currentName);
-        if (!string.IsNullOrEmpty(newName)) { groupNames[gid] = newName; RefreshGroupListUI(); }
-#endif
+        // Runtime inline rename - works in the standalone build as well as in the
+        // editor. The group button's own name line turns into a live text field
+        // with a blinking caret instead of opening an editor-only modal dialog.
+        GroupNameInlineEditAuthority.BeginEdit(gid);
     }
 
     void PromptDeleteGroup(int gid)
