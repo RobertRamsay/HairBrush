@@ -19,6 +19,11 @@ public class CanonicalProjectStateBridge : MonoBehaviour
     private HairProjectSaveData pending;
     private int settleFrames;
 
+    // True while a canonical restore is queued or waiting out its settle frames. Card
+    // state is not trustworthy until this goes false: group variance has already been
+    // re-applied over it and the real per-card values have not been put back yet.
+    public bool HasPendingRestore { get { return pending != null; } }
+
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
     {

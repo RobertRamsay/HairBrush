@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -189,8 +190,16 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
         viewer.BuildRuntimeGroomingUI();
         MethodInfo buildGroups=typeof(ModelViewer).GetMethod("BuildGroupManagementUI",BindingFlags.Instance|BindingFlags.NonPublic);buildGroups?.Invoke(viewer,null);
         SetField("isGroomingMode",true);
+        // Any root states still cached belong to the session being replaced. Forget them
+        // BEFORE RestoreGroup, because restoring a group's variance immediately re-applies
+        // it to every card, and the base it varies around is read from those roots first.
+        // Left in place, the incoming project's cards get varied around the outgoing
+        // project's numbers.
+        GroomRootStateAuthority rootState=FindFirstObjectByType<GroomRootStateAuthority>();
+        if(rootState!=null)rootState.ForgetStoredRoots();
+
         foreach(GroupSaveData g in data.groups)modifiers?.RestoreGroup(g);
-        SelectLoadedGroup(data);
+        StartCoroutine(SelectLoadedGroupWhenSettled(data));
         RepairAngleControls(true);
         Debug.Log("Project loaded successfully from: "+path);
     }
@@ -205,13 +214,50 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
     // when Save was pressed - a POST's values, a half-finished experiment, anything.
     // That is how a curly project could load looking perfect and then place dead
     // straight cards: the curl lived on the cards, but the sliders never learned it.
+    // The group's settings are recovered from its own cards, so they can only be read
+    // once those cards genuinely hold their saved values - and at the end of load they
+    // do not.
+    //
+    // RestoreGroup re-applies the group's variance the moment it is imported, varying
+    // every card around whatever base is on hand at that instant, which is the file's
+    // single global slider block. That overwrites each card's canonical state.
+    // CanonicalProjectStateBridge is the safety net that puts the real per-card values
+    // back, but it deliberately waits for the modifier restore and a settle frame, so it
+    // lands two or more frames after load returns.
+    //
+    // Sampling in between reads the clobbered values. That is why a curly project came
+    // up with near-zero curl sliders while the cards on screen looked perfectly correct,
+    // and why nudging the curl sliders afterwards "unified" everything - that nudge was
+    // the first time the group's real base reached the cards.
+    IEnumerator SelectLoadedGroupWhenSettled(HairProjectSaveData data)
+    {
+        // Highlight the group immediately so the panel is never left without a selection.
+        SelectLoadedGroup(data);
+
+        // Wait out any queued canonical restore. An older project that never queues one
+        // falls straight through; the frame guard covers a restore that cannot finish.
+        CanonicalProjectStateBridge bridge=FindFirstObjectByType<CanonicalProjectStateBridge>();
+        int frames=0;
+        while(frames<600&&(CanonicalProjectStateBridge.PendingCanonicalRestore!=null||(bridge!=null&&bridge.HasPendingRestore)))
+        {
+            frames++;
+            yield return null;
+        }
+
+        // One more frame so the restore's own SetParameters calls have settled.
+        yield return null;
+
+        // Now the cards hold their saved values, so the group's real settings can be read
+        // off them. This also re-forgets the roots captured from the clobbered state.
+        SelectLoadedGroup(data);
+    }
+
     void SelectLoadedGroup(HairProjectSaveData data)
     {
         if(viewer==null)return;
 
-        // Any root states still cached belong to the session being replaced. Forget them
-        // before selecting, so the group recovers its settings from its own loaded cards
-        // instead of inheriting the previous project's.
+        // Drop any root captured from the intermediate state so the group is recovered
+        // from its own cards rather than from whatever the sliders were showing.
         GroomRootStateAuthority rootState=FindFirstObjectByType<GroomRootStateAuthority>();
         if(rootState!=null)rootState.ForgetStoredRoots();
 
