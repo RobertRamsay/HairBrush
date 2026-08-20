@@ -175,9 +175,7 @@ public class HairCard : MonoBehaviour
     }
 
     public static void EvaluateCurl(
-        int groupId,
-        float curlFrequency,
-        float curlDiameter,
+        HairCard card,
         float t,
         out Vector3 curlOffset,
         out Quaternion bankRotation,
@@ -185,6 +183,11 @@ public class HairCard : MonoBehaviour
     {
         curlOffset = Vector3.zero;
         bankRotation = Quaternion.identity;
+        if (card == null) return;
+
+        float curlFrequency = card.curlFrequency;
+        float curlDiameter = card.curlDiameter;
+        int groupId = card.groupId;
 
         if (curlFrequency == 0f) return;
         if (curlDiameter <= 0f) return;
@@ -219,7 +222,28 @@ public class HairCard : MonoBehaviour
         curlOffset = new Vector3(radius * (Mathf.Cos(angle) - 1f), radius * Mathf.Sin(angle), 0f);
 
         if (CurlBankAmount == 0f) return;
-        bankRotation = Quaternion.AngleAxis(angle * Mathf.Rad2Deg * CurlBankAmount, Vector3.forward);
+
+        // THE SNAP FIX. The bank roll used to be computed from the sweep angle alone, with no
+        // reference to the radius at all - so it went from nothing at diameter 0 to its FULL
+        // value the instant the diameter guard above was cleared. At diameter 0.001 the coil
+        // itself is half a thousandth of a unit wide and invisible, while every cross-section
+        // was already rolling through the complete curl angle: at frequency 5 that is five full
+        // turns of ribbon twist appearing out of nowhere. That is the pop.
+        //
+        // Banking exists to keep the coil's cross-section round as it sweeps. When the coil is
+        // far narrower than the card itself there is no coil to keep round, so the roll should
+        // not be there. Fading it in against the card's own half-width gives a scale-correct
+        // ramp: by the time the coil radius matches the half-width the bank is at full strength
+        // and behaves exactly as before, and everything below that eases in smoothly.
+        float halfSpan;
+        float ridge;
+        EvaluateCrossSection(card, t, out halfSpan, out ridge);
+
+        float bankFade = 1f;
+        if (halfSpan > .000001f) bankFade = Mathf.Clamp01(Mathf.Abs(radius) / halfSpan);
+        if (bankFade <= .0001f) return;
+
+        bankRotation = Quaternion.AngleAxis(angle * Mathf.Rad2Deg * CurlBankAmount * bankFade, Vector3.forward);
     }
 
     // How finely the density curve is integrated. A handful of keyframes is smooth
@@ -1281,7 +1305,7 @@ public class HairCard : MonoBehaviour
             // with it.
             Vector3 curlOffset;
             Quaternion bankRotation;
-            EvaluateCurl(groupId, curlFrequency, curlDiameter, t, out curlOffset, out bankRotation, mirrored);
+            EvaluateCurl(this, t, out curlOffset, out bankRotation, mirrored);
 
             Vector3 waveOffset;
             EvaluateWave(this, t, out waveOffset, mirrored);

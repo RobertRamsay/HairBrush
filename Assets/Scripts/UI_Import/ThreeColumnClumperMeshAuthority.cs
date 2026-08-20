@@ -16,6 +16,11 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         public Vector3[] vertices;
         public Vector2[] uvs;
         public int[] triangles;
+
+        // The card's SPINE, before curl and wave displace the cross-sections off it. Kept
+        // because clumping needs to move strands together WITHOUT flattening the shapes that
+        // ride on that spine - see ApplyClumpAdditive.
+        public Vector3[] spine;
     }
 
     private GroupClumperManager manager;
@@ -221,7 +226,7 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
 
                 float influence = Mathf.Clamp01(clumper.amount * ZoneWeight(card, clumper));
                 if (influence <= .0001f) continue;
-                ApplyClumpAdditive(card, current, sourceData.vertices, leader, leaderData.vertices, influence);
+                ApplyClumpAdditive(card, current, sourceData, leader, leaderData, influence);
             }
         }
 
@@ -445,7 +450,7 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
             // shapes the section, then the offset moves it.
             Vector3 curlOffset;
             Quaternion bankRotation;
-            HairCard.EvaluateCurl(card.groupId, card.curlFrequency, card.curlDiameter, t, out curlOffset, out bankRotation, card.mirrored);
+            HairCard.EvaluateCurl(card, t, out curlOffset, out bankRotation, card.mirrored);
 
             // Shared with GenerateMesh so a wavy card stays wavy once clumped or neutralised.
             // Skipping this is how curl and segment density each silently reverted here before.
@@ -504,14 +509,34 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         {
             vertices = vertices,
             uvs = uvs,
-            triangles = triangles
+            triangles = triangles,
+            spine = segmentSpine
         };
     }
 
-    static void ApplyClumpAdditive(HairCard source, Vector3[] current, Vector3[] sourceClean, HairCard leader, Vector3[] leaderClean, float influence)
+    static void ApplyClumpAdditive(HairCard source, Vector3[] current, CleanMeshData sourceData, HairCard leader, CleanMeshData leaderData, float influence)
     {
         const int columns = HairCard.CrossSectionColumns;
-        if (current == null || sourceClean == null || leaderClean == null || current.Length != sourceClean.Length) return;
+        if (current == null || sourceData == null || leaderData == null) return;
+
+        Vector3[] sourceClean = sourceData.vertices;
+        Vector3[] leaderClean = leaderData.vertices;
+        if (sourceClean == null || leaderClean == null || current.Length != sourceClean.Length) return;
+
+        // Clump toward the leader's SPINE, measured from our own SPINE - not centre to centre.
+        //
+        // The centre of a row is the spine PLUS whatever curl and wave have displaced it by, so
+        // a centre-to-centre pull does not merely move the strand: at full influence it sets
+        // our centreline equal to the leader's, which substitutes the leader's coil for ours.
+        // Every card in the group then renders the same single shape. That is why curl looks
+        // like it stops responding once a clumper is in play - the parameter is still being
+        // evaluated, its result is just being overwritten a stage later.
+        //
+        // Differencing spine to spine makes the clump a pure translation of the strand's PATH.
+        // Curl, wave and the banked cross-section all ride along on top of it untouched, which
+        // is also how real hair clumps: strands gather without losing their own waviness.
+        bool haveSpines = sourceData.spine != null && leaderData.spine != null;
+
         int rows = current.Length / columns;
         for (int row = 1; row < rows; row++)
         {
@@ -521,14 +546,38 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
             if (w <= .0001f) continue;
 
             int index = row * columns;
-            Vector3 ownCenter = (sourceClean[index] + sourceClean[index + 2]) * .5f;
-            Vector3 leaderWorld = SampleCentreWorld(leader, leaderClean, t);
+
+            Vector3 ownAnchor;
+            Vector3 leaderWorld;
+            if (haveSpines)
+            {
+                ownAnchor = SampleSpine(sourceData.spine, t);
+                leaderWorld = leader.transform.TransformPoint(SampleSpine(leaderData.spine, t));
+            }
+            else
+            {
+                // Older cached data with no spine recorded: fall back to the previous
+                // centre-to-centre behaviour rather than dropping the clump entirely.
+                ownAnchor = (sourceClean[index] + sourceClean[index + 2]) * .5f;
+                leaderWorld = SampleCentreWorld(leader, leaderClean, t);
+            }
+
             Vector3 leaderLocal = source.transform.InverseTransformPoint(leaderWorld);
-            Vector3 delta = (leaderLocal - ownCenter) * w;
+            Vector3 delta = (leaderLocal - ownAnchor) * w;
             current[index] += delta;
             current[index + 1] += delta;
             current[index + 2] += delta;
         }
+    }
+
+    // Same interpolation SampleCentreWorld does, over the spine array instead of the vertices.
+    static Vector3 SampleSpine(Vector3[] spine, float t)
+    {
+        if (spine == null || spine.Length == 0) return Vector3.zero;
+        float rowF = Mathf.Clamp01(t) * (spine.Length - 1);
+        int a = Mathf.Clamp(Mathf.FloorToInt(rowF), 0, spine.Length - 1);
+        int b = Mathf.Min(a + 1, spine.Length - 1);
+        return Vector3.Lerp(spine[a], spine[b], rowF - a);
     }
 
     static void WriteFullMesh(HairCard card, CleanMeshData source, Vector3[] vertices)

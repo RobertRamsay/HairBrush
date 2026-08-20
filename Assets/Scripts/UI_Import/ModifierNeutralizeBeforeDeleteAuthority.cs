@@ -233,7 +233,7 @@ public class ModifierDeleteNeutralizeHook : MonoBehaviour, IPointerDownHandler
             // The bank shapes the section, then the offset moves it.
             Vector3 curlOffset;
             Quaternion bankRotation;
-            HairCard.EvaluateCurl(card.groupId, card.curlFrequency, card.curlDiameter, t, out curlOffset, out bankRotation, card.mirrored);
+            HairCard.EvaluateCurl(card, t, out curlOffset, out bankRotation, card.mirrored);
 
             // Shared with GenerateMesh so a wavy card stays wavy once clumped or neutralised.
             // Skipping this is how curl and segment density each silently reverted here before.
