@@ -23,6 +23,30 @@ public class PostShapeCurveBridge : MonoBehaviour
     private static PostShapeCurveBridge live;
     private static HairProjectSaveData queuedRestore;
 
+    // Monotonic change stamp for HairCard's mesh-input dirty-check.
+    //
+    // EvaluateRoot and EvaluatePost do not merely read curve data - they CHOOSE which source
+    // to read from, based on this bridge's presentation context. Selecting a POST swaps the
+    // group's root curves for that POST's private set for every card in the group, and not one
+    // field on any of those cards changes. Without this stamp a dirty-check would see nothing
+    // move and the whole group would keep its old shape.
+    //
+    // Deliberately NOT bumped from SavePresentedRegistryToPost, which runs every frame while a
+    // POST is presented: it only copies the registry into byPost, and any real change to the
+    // registry already moves GroomShapeCurveRegistry's own stamp. Bumping there would move
+    // this one every frame and disable the dirty-check for the entire scene.
+    private static int epoch;
+
+    public static int Epoch
+    {
+        get { return epoch; }
+    }
+
+    static void BumpEpoch()
+    {
+        unchecked { epoch++; }
+    }
+
     private readonly Dictionary<int, CurveSet> byPost = new Dictionary<int, CurveSet>();
     private readonly Dictionary<int, CurveSet> rootWhilePost = new Dictionary<int, CurveSet>();
     private readonly Dictionary<int, int> legacyPostGroups = new Dictionary<int, int>();
@@ -54,11 +78,13 @@ public class PostShapeCurveBridge : MonoBehaviour
     void Awake()
     {
         live = this;
+        BumpEpoch();
     }
 
     void OnDestroy()
     {
         if (live == this) live = null;
+        BumpEpoch();
     }
 
     void Update()
@@ -231,6 +257,7 @@ public class PostShapeCurveBridge : MonoBehaviour
         presentedGroupId = -1;
         restoreReadyFrames = 0;
         legacyWaitFrames = 0;
+        BumpEpoch();
     }
 
     void TryRestoreQueued()
@@ -246,6 +273,7 @@ public class PostShapeCurveBridge : MonoBehaviour
         byPost.Clear();
         rootWhilePost.Clear();
         legacyPostGroups.Clear();
+        BumpEpoch();
 
         if (data.groups != null)
         {
@@ -288,6 +316,10 @@ public class PostShapeCurveBridge : MonoBehaviour
         foreach (KeyValuePair<int, int> pair in legacyPostGroups.ToArray())
             byPost[pair.Key] = CaptureRootSet(pair.Value);
         legacyPostGroups.Clear();
+
+        // Rewrites byPost several frames after a legacy project load, changing what
+        // EvaluatePost returns without touching the registry - so nothing else would notice.
+        BumpEpoch();
     }
 
     void SyncPresentedCurveContext()
@@ -316,6 +348,7 @@ public class PostShapeCurveBridge : MonoBehaviour
         WriteSetToRegistry(activeGroup, postSet);
         presentedPostId = activeId;
         presentedGroupId = activeGroup;
+        BumpEpoch();
 
         GroomShapeCurveEditor editor = FindFirstObjectByType<GroomShapeCurveEditor>();
         if (editor != null) editor.RefreshAll();
@@ -330,6 +363,7 @@ public class PostShapeCurveBridge : MonoBehaviour
         rootWhilePost.Remove(presentedGroupId);
         presentedPostId = -1;
         presentedGroupId = -1;
+        BumpEpoch();
 
         GroomShapeCurveEditor editor = FindFirstObjectByType<GroomShapeCurveEditor>();
         if (editor != null) editor.RefreshAll();
@@ -350,6 +384,7 @@ public class PostShapeCurveBridge : MonoBehaviour
         // that POST's private copy.
         CurveSet created = CaptureRootSet(groupId);
         byPost[postId] = created;
+        BumpEpoch();
         return created;
     }
 

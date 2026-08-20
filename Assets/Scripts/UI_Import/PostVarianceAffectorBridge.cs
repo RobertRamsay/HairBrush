@@ -107,6 +107,19 @@ public class PostVarianceAffectorBridge : MonoBehaviour
         // causing the same delta to accumulate again on every frame.
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
         {
+            // Frozen by SOLO - and this one is not merely an optimisation, it is required for
+            // correctness. Unlike its siblings, this bridge ACCUMULATES: it reads the card's
+            // CURRENT values and adds a delta on top (card.length + dLength, and so on). That
+            // is only idempotent because PostAffectorManager, at execution order 3300, resets
+            // those fields from canonical + POST every frame before this runs at 3500.
+            //
+            // Freeze the resetter and not the accumulator and a hidden group's length, width,
+            // bend and twist grow without bound for as long as SOLO keeps it hidden - and,
+            // because the fields really do change every frame, those invisible cards would be
+            // the only ones in the scene still paying a full mesh rebuild per frame. Exactly
+            // backwards. So this gate goes in alongside the others.
+            if (GroupSoloVisibilityAuthority.IsCardFrozen(card)) continue;
+
             if (!groups.TryGetValue(card.groupId, out List<PostAffectorManager.PostAffector> list)) continue;
 
             float dLength = 0f, dWidth = 0f, dBend = 0f, dTwist = 0f, dX = 0f, dY = 0f, dZ = 0f;
@@ -142,7 +155,16 @@ public class PostVarianceAffectorBridge : MonoBehaviour
                 uScale = card.uScale,
                 vScale = card.vScale,
                 uOffset = card.uOffset,
-                vOffset = card.vOffset
+                vOffset = card.vOffset,
+
+                // BUG FIX, unrelated to performance but found while auditing this path.
+                // These two were missing from the initialiser, so they defaulted to 0f - and
+                // ApplyEvaluatedState writes EVERY field of the state onto the card. The
+                // result: any card touched by a variance POST had its curl silently wiped, so
+                // a curly groom flattened out the moment variance became non-zero while the
+                // curl sliders carried on reading their authored values.
+                curlFrequency = card.curlFrequency,
+                curlDiameter = card.curlDiameter
             };
             card.ApplyEvaluatedState(evaluated);
         }

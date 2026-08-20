@@ -26,6 +26,10 @@ public class GroomVarianceController : MonoBehaviour
     private GameObject installedPanel;
     private int lastGroupId = int.MinValue;
     private int lastCardCount = -1;
+
+    // -1 can never equal HairCard.RegistryVersion on the first pass, so the tracker below
+    // always runs once before it is allowed to start skipping.
+    private int lastSeenCardRegistryVersion = -1;
     private float nextInstallAttempt;
 
     public void Init(ModelViewer owner) { viewer = owner; }
@@ -107,6 +111,9 @@ public class GroomVarianceController : MonoBehaviour
         knownCardIds.Clear();
         lastGroupId = int.MinValue;
         lastCardCount = -1;
+        // Reset alongside lastCardCount, so a torn-down and reinstalled controller is forced
+        // to re-examine membership rather than trusting a version stamp from the old session.
+        lastSeenCardRegistryVersion = -1;
         nextInstallAttempt = 0f;
     }
 
@@ -381,6 +388,25 @@ public class GroomVarianceController : MonoBehaviour
 
     void TrackCardMembershipAndApplyNewCards(int groupId)
     {
+        // Cheap gate first. This method is called unconditionally every frame, and it used to
+        // pay a full scene scan, a LINQ filter, an array allocation and an N-element Any()
+        // probe BEFORE reaching its own early-out - which, in the steady state, is every
+        // single frame. No card has been created or destroyed since the last look means
+        // membership cannot have changed, and one integer compare settles it.
+        //
+        // Deliberately a monotonic version rather than a count compare: destroy one card and
+        // create another in the same frame - a re-brush, a group reassign - and the count is
+        // unchanged while membership differs, so the new cards would silently never receive
+        // their variance and would render flat next to their neighbours. Note also that
+        // Destroy() is deferred to end of frame, so the Awake and OnDestroy of a swap can land
+        // in different frames; a version counter handles that, a count compare does not.
+        //
+        // groupId is still re-checked below, because a card can change group without any card
+        // entering or leaving the scene - see ModelViewer's shift-drag promotion. That path
+        // goes through SelectGroup, which resets this tracker.
+        if (HairCard.RegistryVersion == lastSeenCardRegistryVersion) return;
+        lastSeenCardRegistryVersion = HairCard.RegistryVersion;
+
         HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None).Where(c => c.groupId == groupId).ToArray();
         bool membershipChanged = cards.Length != lastCardCount || cards.Any(c => !knownCardIds.Contains(c.GetInstanceID()));
         if (!membershipChanged) return;
@@ -626,14 +652,21 @@ public class GroomVarianceBootstrap : MonoBehaviour
 
     void Update()
     {
+        // Once bound, there is nothing left to do. This ran a scene type-scan AND a
+        // GetComponent every frame for the entire session to re-discover a binding that was
+        // established on the first frame and never changes afterwards.
+        //
+        // The null test is Unity's overloaded ==, so a destroyed viewer still compares equal
+        // to null and rebinding resumes. (Nothing in the project destroys or replaces
+        // ModelViewer - there is no SceneManager use anywhere and no OnDestroy on it - but
+        // leaning on the Unity null check costs nothing and keeps the rebind path honest.)
+        if (boundViewer != null) return;
+
         ModelViewer viewer = FindFirstObjectByType<ModelViewer>();
         if (viewer == null) return;
         GroomVarianceController controller = viewer.GetComponent<GroomVarianceController>();
         if (controller == null) controller = viewer.gameObject.AddComponent<GroomVarianceController>();
-        if (boundViewer != viewer)
-        {
-            boundViewer = viewer;
-            controller.Init(viewer);
-        }
+        boundViewer = viewer;
+        controller.Init(viewer);
     }
 }

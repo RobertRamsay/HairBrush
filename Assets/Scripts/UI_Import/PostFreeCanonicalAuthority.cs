@@ -52,19 +52,26 @@ public class PostFreeCanonicalAuthority : MonoBehaviour
         {
             if (card == null || groupsWithPosts.Contains(card.groupId)) continue;
 
-            // Frozen by SOLO. This sweep ends in ApplyEvaluatedState -> GenerateMesh for
-            // every POST-free card, which in the common case (no POSTs anywhere) is the
-            // whole scene, every frame. Skipping the hidden groups costs nothing in
-            // correctness: the card keeps its current mesh, its canonical state is
-            // untouched, and this same sweep rebuilds it the frame SOLO lets it go.
-            if (GroupSoloVisibilityAuthority.IsCardFrozen(card)) continue;
-
             // Critical lifecycle rule: PostAffectorManager must not retain a CardState for a
             // group with no POSTs. Otherwise its normal LateUpdate recreates an old-strand
             // cache immediately after final-POST teardown, while newly-created strands start
             // clean. Clearing here (after POST evaluation) keeps both populations identical.
+            //
+            // Deliberately ABOVE the SOLO freeze below. This is bookkeeping, not geometry: it
+            // costs a dictionary probe, not a mesh rebuild. Skipping it for hidden cards would
+            // mean a group whose last POST was deleted while it was soloed out came back with
+            // a stale baseState still cached, and got one frame evaluated from it - a visible
+            // flicker on release, and the one place where "frozen loses nothing" would not
+            // have been true.
             if (cachedStates != null && cachedStates.Contains(card))
                 cachedStates.Remove(card);
+
+            // Frozen by SOLO. The rest of this sweep ends in ApplyEvaluatedState ->
+            // GenerateMesh for every POST-free card, which in the common case (no POSTs
+            // anywhere) is the whole scene, every frame. Skipping the hidden groups costs
+            // nothing in correctness: the card keeps its current mesh, its canonical state is
+            // untouched, and this same sweep rebuilds it the frame SOLO lets it go.
+            if (GroupSoloVisibilityAuthority.IsCardFrozen(card)) continue;
 
             // Match the known-good zero-CLUMPER refresh: remove any residual per-card clump
             // state, then explicitly rebuild from the authored upstream state.

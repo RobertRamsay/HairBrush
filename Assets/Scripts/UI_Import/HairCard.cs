@@ -297,6 +297,43 @@ public class HairCard : MonoBehaviour
     private bool externalClumpOverrideActive;
     private int externalClumpSourceSignature;
 
+    // ---- Mesh input dirty-check ------------------------------------------------------
+    //
+    // GenerateMesh is a pure function of a known set of inputs, but it was being called 2-3
+    // times per card per frame by authorities that re-assert state unconditionally, and it
+    // had no idea whether anything had actually moved. Each call allocates six arrays,
+    // evaluates ~144 AnimationCurve samples and re-uploads the mesh. In the default state -
+    // no POSTs authored anywhere - that was the entire scene, rebuilt from scratch, every
+    // frame, producing byte-identical geometry.
+    //
+    // WHY THIS IS NOT THE "FROZEN MESH" BUG AGAIN:
+    //
+    // The check is NOT inside GenerateMesh(). GenerateMesh() still writes unconditionally
+    // every single time it is called. Only GenerateMeshIfInputsChanged() consults the hash,
+    // and only the per-frame re-assertion paths (ApplyEvaluatedState, SetParameters) call it.
+    // Every path that MUST write - ThreeColumnClumperMeshAuthority.RestoreRemovedGroups,
+    // GroupClumperManager.RemoveClumper, GroomShapeCurveRegistry.RefreshGroup,
+    // PostShapeCurveBridge, PostPredeterminedUVAuthority - calls GenerateMesh() directly and
+    // is completely unaffected.
+    //
+    // On top of that there are three independent escape hatches, any one of which forces a
+    // real rebuild even when the hash matches: the foreignMeshWrite flag, the shared curve
+    // epochs, and the meshFilter.sharedMesh identity check.
+    private int lastMeshInputHash;
+    private bool hasMeshInputHash;
+
+    // Set whenever some other authority has written OUR Mesh behind our back. Sticky on
+    // purpose: the card's own inputs do not change when the CLUMPER stamps its derived
+    // geometry over the top, so without this the next guarded call would compare equal, skip,
+    // and leave the foreign mesh on screen permanently with no error anywhere. Cleared only
+    // by a real GenerateMesh pass, once our own geometry is genuinely back in the Mesh.
+    private bool foreignMeshWrite;
+
+    public void MarkForeignMeshWrite()
+    {
+        foreignMeshWrite = true;
+    }
+
     public float GetEmbedDepth() { return currentEmbedDepth; }
     public float GetOffsetX() { return storedOffsetX; }
     public float GetOffsetY() { return storedOffsetY; }
@@ -323,6 +360,14 @@ public class HairCard : MonoBehaviour
         if (mesh == null) return null;
         if (meshFilter == null) meshFilter = GetComponent<MeshFilter>();
         if (meshFilter != null && meshFilter.sharedMesh != mesh) meshFilter.sharedMesh = mesh;
+
+        // Handing out a writable handle to our Mesh IS the foreign write, as far as the
+        // dirty-check is concerned. Marking here rather than at each call site means a future
+        // authority that writes this mesh cannot forget to declare it - which is the single
+        // mistake that would produce a silently frozen card. HairCard's own code never comes
+        // through here (it uses the `mesh` field directly), and the only cost of a read-only
+        // caller tripping this is one extra rebuild, so it fails toward correctness.
+        foreignMeshWrite = true;
         return mesh;
     }
 
@@ -330,6 +375,10 @@ public class HairCard : MonoBehaviour
     {
         externalClumpOverrideActive = true;
         externalClumpSourceSignature = generatedMeshSignature;
+        // The CLUMPER has just written its derived geometry into our Mesh. None of our own
+        // inputs moved, so the dirty-check has to be told explicitly that what is on screen is
+        // no longer what we last generated.
+        foreignMeshWrite = true;
     }
 
     public void ClearExternalClumpOverride()
@@ -438,7 +487,13 @@ public class HairCard : MonoBehaviour
         curlFrequency = state.curlFrequency;
         curlDiameter = state.curlDiameter;
         if (surfaceNormal != Vector3.zero) UpdateTransformOrientation(currentEmbedDepth);
-        GenerateMesh();
+
+        // Guarded. PostAffectorManager, PostFreeCanonicalAuthority and
+        // PostVarianceAffectorBridge all re-assert state through here every single frame,
+        // overwhelmingly with values identical to the ones already on the card. The field
+        // writes and the transform update above still run unconditionally - only the mesh
+        // rebuild is skipped, and only when nothing that feeds it has moved.
+        GenerateMeshIfInputsChanged();
     }
 
     GroomState ReadRenderedState()
@@ -491,8 +546,16 @@ public class HairCard : MonoBehaviour
 
     public void ClearClumpModifier()
     {
+        // PostFreeCanonicalAuthority calls this on every POST-free card every frame - which,
+        // with no POSTs authored anywhere, is the whole scene - and it used to force a full
+        // rebuild whether or not there was anything to clear. There virtually never is:
+        // SetClumpModifier, the only thing that can set clumpActive, has no callers left in
+        // the project. So this was a scene-wide mesh rebuild, every frame, to switch off
+        // something that was already off.
+        bool alreadyClear = !clumpActive && clumpStrength == 0f;
         clumpActive = false;
         clumpStrength = 0f;
+        if (alreadyClear) return;
         GenerateMesh();
     }
 
@@ -576,7 +639,18 @@ public class HairCard : MonoBehaviour
         vOffset = newVOffset;
         if (surfaceNormal != Vector3.zero) UpdateTransformOrientation(currentEmbedDepth);
         CaptureCanonicalFromRendered();
-        GenerateMesh();
+
+        // Guarded. CaptureCanonicalFromRendered above still runs unconditionally, so the
+        // canonical bookkeeping is untouched - only the rebuild is skipped, and only when the
+        // incoming values are the ones the card already has.
+        //
+        // This is also what fixes SelectionLocalizedEditAuthority, which deliberately rewrites
+        // every selected card's snapshot state EVERY LateUpdate as a restore mechanism against
+        // lower-order authorities clobbering the group. That restore has to keep happening -
+        // gating it on its own "changed" flags reintroduces the group-leak bug it exists to
+        // prevent - but in the steady state it was rewriting values identical to what was
+        // already there and paying a full mesh rebuild per card per frame for the privilege.
+        GenerateMeshIfInputsChanged();
     }
 
     public void CaptureBaseState(float activeLength, float activeWidth, int activeSegments, float activeBend, float activeTwist, float activeDepth, float ox, float oy, float oz, float activeCurlFrequency = 0f, float activeCurlDiameter = 0f)
@@ -596,8 +670,22 @@ public class HairCard : MonoBehaviour
 
     public void SetSelectionWeight(float weight) { selectionWeight = Mathf.Clamp01(weight); UpdateVisualHighlight(); }
 
+    // Bumped whenever a hair card enters or leaves the scene.
+    //
+    // Lets anything that needs to notice a membership change do it with one integer compare
+    // instead of a full FindObjectsByType sweep plus LINQ filter every frame. Monotonic on
+    // purpose: a count comparison would miss the case where one card is destroyed and another
+    // created in the same frame, which happens routinely on re-brush and group reassign.
+    private static int registryVersion;
+
+    public static int RegistryVersion
+    {
+        get { return registryVersion; }
+    }
+
     void Awake()
     {
+        unchecked { registryVersion++; }
         meshFilter = GetComponent<MeshFilter>();
         mesh = new Mesh { name = "ProceduralHairCard" };
         meshFilter.mesh = mesh;
@@ -608,7 +696,11 @@ public class HairCard : MonoBehaviour
     }
 
     void OnValidate() { if (mesh != null) GenerateMesh(); }
-    void OnDestroy() { if (cardMaterial != null) Destroy(cardMaterial); }
+    void OnDestroy()
+    {
+        unchecked { registryVersion++; }
+        if (cardMaterial != null) Destroy(cardMaterial);
+    }
     public void ApplyDeformations() { GenerateMesh(); }
 
     // HairCard deliberately has NO Update().
@@ -798,6 +890,109 @@ public class HairCard : MonoBehaviour
         GenerateMesh();
     }
 
+    // Every input GenerateMesh reads, folded into one int.
+    //
+    // Completeness is the whole safety argument. Anything read during a rebuild but missing
+    // from here can change without moving the hash, and the card would then render stale
+    // geometry silently. If you add a field GenerateMesh consults - or make it consult a new
+    // external source - it MUST be added here in the same commit.
+    //
+    // Deliberately excluded because nothing in the GenerateMesh call tree reads them:
+    // selectionWeight, currentEmbedDepth, spawnHitPoint, surfaceNormal, canonicalState,
+    // isDoubleSided, cardMaterial and all base* fields.
+    int ComputeMeshInputHash()
+    {
+        unchecked
+        {
+            int hash = 17;
+
+            hash = hash * 31 + segments;
+            hash = hash * 31 + length.GetHashCode();
+            hash = hash * 31 + width.GetHashCode();
+            hash = hash * 31 + flattenFactor.GetHashCode();
+            hash = hash * 31 + bendAngle.GetHashCode();
+            hash = hash * 31 + twistAngle.GetHashCode();
+            hash = hash * 31 + storedOffsetX.GetHashCode();
+            hash = hash * 31 + storedOffsetY.GetHashCode();
+            hash = hash * 31 + storedOffsetZ.GetHashCode();
+            hash = hash * 31 + curlFrequency.GetHashCode();
+            hash = hash * 31 + curlDiameter.GetHashCode();
+            hash = hash * 31 + uScale.GetHashCode();
+            hash = hash * 31 + vScale.GetHashCode();
+            hash = hash * 31 + uOffset.GetHashCode();
+            hash = hash * 31 + vOffset.GetHashCode();
+
+            // groupId routes every curve lookup in the tree, so a re-grouped card must rebuild
+            // even when all of its own numbers are identical.
+            hash = hash * 31 + groupId;
+
+            // POST profile provenance. The COUNT alone is not enough - a POST whose weight
+            // changes rewrites bend/x/y/z with the count unchanged.
+            hash = hash * 31 + postShapeProfileContributions.Count;
+            foreach (PostShapeProfileContribution contribution in postShapeProfileContributions)
+            {
+                hash = hash * 31 + contribution.postId;
+                hash = hash * 31 + contribution.bend.GetHashCode();
+                hash = hash * 31 + contribution.x.GetHashCode();
+                hash = hash * 31 + contribution.y.GetHashCode();
+                hash = hash * 31 + contribution.z.GetHashCode();
+            }
+
+            // Clump displacement fields. Dead code today - SetClumpModifier has no callers -
+            // but they are read in the vertex loop, so hashing them is cheap insurance against
+            // the day something starts calling it again.
+            hash = hash * 31 + clumpActive.GetHashCode();
+            hash = hash * 31 + clumpStrength.GetHashCode();
+            hash = hash * 31 + clumpSurfacePoint.GetHashCode();
+            hash = hash * 31 + clumpSurfaceNormal.GetHashCode();
+
+            // Read by the CLUMPER early-return at the bottom of GenerateMesh, and it decides
+            // whether the mesh write happens at all - so it is a genuine input even though it
+            // contributes no vertices. Note the hash is recorded BEFORE that flag is cleared,
+            // which means the first guarded call after a clump release sees a changed hash and
+            // rebuilds once. That is the direction we want to err in.
+            //
+            // GroupClumperManager.HasActiveClumper(groupId) is the other half of that guard
+            // and is deliberately NOT hashed: it costs a dictionary lookup plus a LINQ Any per
+            // call, which per card per frame would eat the saving. It does not need to be -
+            // ThreeColumnClumperMeshAuthority filters clumpers by amount > .0001f before
+            // building its group set, so a clumper zeroed in place drops out of that set and
+            // RestoreRemovedGroups clears the override with a DIRECT GenerateMesh call.
+            hash = hash * 31 + externalClumpOverrideActive.GetHashCode();
+
+            // Curve data that lives OUTSIDE this card. Both registries can be edited in place -
+            // dragging a curve key mutates the stored AnimationCurve object itself - so no
+            // per-card field moves when they change. Hashing the keyframes directly is not an
+            // option: AnimationCurve.keys allocates a fresh array on every access, which would
+            // cost more than the rebuild this is here to avoid. A monotonic stamp is the cheap,
+            // complete answer. Per-GROUP for the registry, so that editing one group's profile
+            // does not dirty every card in the scene.
+            hash = hash * 31 + GroomShapeCurveRegistry.EpochFor(groupId);
+            hash = hash * 31 + PostShapeCurveBridge.Epoch;
+
+            return hash;
+        }
+    }
+
+    // The guarded entry point. ONLY the per-frame re-assertion paths call this. Anything that
+    // must write no matter what keeps calling GenerateMesh() directly.
+    public void GenerateMeshIfInputsChanged()
+    {
+        if (mesh == null || segments < 1) return;
+
+        if (hasMeshInputHash && !foreignMeshWrite && ComputeMeshInputHash() == lastMeshInputHash)
+        {
+            // One last check before trusting the skip: the filter must still be pointing at
+            // the Mesh we maintain. A stray MeshFilter.mesh read anywhere else silently swaps
+            // the filter onto a duplicate, and a card in that state has to rebuild so
+            // GetLiveMesh can re-heal it - otherwise it freezes on screen for the session.
+            if (meshFilter == null) meshFilter = GetComponent<MeshFilter>();
+            if (meshFilter != null && meshFilter.sharedMesh == mesh) return;
+        }
+
+        GenerateMesh();
+    }
+
     public void GenerateMesh()
     {
         if (mesh == null || segments < 1) return;
@@ -910,6 +1105,18 @@ public class HairCard : MonoBehaviour
 
         int sourceSignature = ComputeGeneratedMeshSignature(baseVertices, uvs, segments);
         generatedMeshSignature = sourceSignature;
+
+        // Record what this rebuild was produced from, for GenerateMeshIfInputsChanged.
+        //
+        // Recorded here rather than after the mesh write so it also covers the CLUMPER
+        // early-return below: if the inputs have not moved and the clumper is still active,
+        // re-deriving this identical source and discarding it again is pure waste. The paths
+        // that END clumping (ThreeColumnClumperMeshAuthority.RestoreRemovedGroups,
+        // GroupClumperManager.RemoveClumper) both call ClearExternalClumpOverride followed by
+        // GenerateMesh DIRECTLY, so clean geometry always gets written when clumping releases.
+        lastMeshInputHash = ComputeMeshInputHash();
+        hasMeshInputHash = true;
+        foreignMeshWrite = false;
 
         // POST/other authorities can still call GenerateMesh every frame. If they produced the
         // exact same source that the CLUMPER stage already consumed, keep the derived mesh in

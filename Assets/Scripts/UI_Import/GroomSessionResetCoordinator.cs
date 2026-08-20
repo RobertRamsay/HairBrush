@@ -467,7 +467,18 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         // HairCard still knows how to clear the old deformation flag so a hot-reloaded
         // editor session cannot retain a stale clump result from an earlier build.
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
-            if (card != null) card.ClearClumpModifier();
+        {
+            if (card == null) continue;
+            card.ClearClumpModifier();
+
+            // ClearClumpModifier now early-returns when there is nothing to clear, which -
+            // since SetClumpModifier has no callers left - is always. That is the point of the
+            // change, but it means the unconditional rebuild this reset was relying on no
+            // longer happens, and the comment above would have quietly become a lie. A session
+            // reset is a once-per-model event, so force the write explicitly and keep the
+            // guarantee it promises.
+            card.GenerateMesh();
+        }
     }
 
     void ClearSelectionState()

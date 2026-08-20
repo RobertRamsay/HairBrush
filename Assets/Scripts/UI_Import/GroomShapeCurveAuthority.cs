@@ -44,6 +44,44 @@ public static class GroomShapeCurveRegistry
 
     private static readonly Dictionary<int, CurveSet> byGroup = new Dictionary<int, CurveSet>();
 
+    // Monotonic change stamps for HairCard's mesh-input dirty-check.
+    //
+    // Curve data is the one mesh input that does NOT live on the card. Worse, the editor
+    // mutates the stored AnimationCurve objects IN PLACE - GroomShapeCurveEditor.DragKey calls
+    // GetCurve(...) and then MoveKey on the returned object - so neither the dictionary
+    // reference nor anything on the card ever changes. Without a stamp, a card whose numbers
+    // are unchanged would compare equal and refuse to rebuild while the user drags a curve
+    // point, and the shape would simply stop responding.
+    //
+    // Hashing the keyframes is not an option: AnimationCurve.keys allocates a fresh Keyframe[]
+    // on every access, which would cost more per frame than the rebuild being avoided.
+    //
+    // Kept PER GROUP so that editing one group's profile does not dirty every card in the
+    // scene - a curve drag would otherwise rebuild the whole groom every frame for the
+    // duration of the drag, which is exactly the cost the dirty-check exists to remove.
+    // globalEpoch covers the wholesale operations that have no single group.
+    private static readonly Dictionary<int, int> epochByGroup = new Dictionary<int, int>();
+    private static int globalEpoch;
+
+    public static int EpochFor(int groupId)
+    {
+        int groupEpoch = 0;
+        epochByGroup.TryGetValue(groupId, out groupEpoch);
+        unchecked { return globalEpoch * 397 + groupEpoch; }
+    }
+
+    // Bumped from BOTH the setters below AND RefreshGroup. RefreshGroup alone is not enough:
+    // ClearAll is called from GroomShapeCurveAuthority.CheckModelLifecycle with no refresh
+    // afterwards. The setters alone are not enough either: the editor's in-place AddKey /
+    // MoveKey / RemoveKey never touch a setter, and RefreshGroup is the only thing all three
+    // of them call. Bumping in both places covers every mutation path with no gaps.
+    public static void BumpEpoch(int groupId)
+    {
+        int current = 0;
+        epochByGroup.TryGetValue(groupId, out current);
+        unchecked { epochByGroup[groupId] = current + 1; }
+    }
+
     public static AnimationCurve GetCurve(int groupId, GroomShapeCurveChannel channel)
     {
         CurveSet set = GetSet(groupId);
@@ -79,6 +117,7 @@ public static class GroomShapeCurveRegistry
             case GroomShapeCurveChannel.CurlDiameter: set.curlDiameter = clean; break;
             case GroomShapeCurveChannel.SegmentDensity: set.segmentDensity = clean; break;
         }
+        BumpEpoch(groupId);
     }
 
     public static void Reset(int groupId, GroomShapeCurveChannel channel)
@@ -89,6 +128,11 @@ public static class GroomShapeCurveRegistry
     public static void ClearAll()
     {
         byGroup.Clear();
+        epochByGroup.Clear();
+        // CheckModelLifecycle calls this with no RefreshGroup afterwards, so every group's
+        // curves silently revert to defaults. Harmless today because a model reload rebuilds
+        // the cards anyway - but the dirty-check would otherwise treat those cards as clean.
+        unchecked { globalEpoch++; }
     }
 
     public static List<GroomCurveKeySaveData> Export(int groupId, GroomShapeCurveChannel channel)
@@ -151,6 +195,11 @@ public static class GroomShapeCurveRegistry
 
     public static void RefreshGroup(int groupId)
     {
+        // The catch-all for in-place curve edits. GroomShapeCurveEditor's AddKey / DragKey /
+        // RemoveKey mutate the stored AnimationCurve directly and then call this, so this is
+        // the only point at which those edits become observable to anything else.
+        BumpEpoch(groupId);
+
         foreach (HairCard card in UnityEngine.Object.FindObjectsByType<HairCard>(FindObjectsSortMode.None))
             if (card != null && card.groupId == groupId)
                 card.GenerateMesh();

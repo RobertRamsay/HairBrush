@@ -273,11 +273,32 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
             hash = Mix(hash, cards != null ? cards.Length : 0);
             if (cards != null)
             {
-                foreach (HairCard card in cards.OrderBy(c => c != null ? c.GetInstanceID() : 0))
+                // Order-independent accumulation instead of sorting the array first.
+                //
+                // This ran TWICE per dirty group per frame (once to test, once to re-cache),
+                // and each OrderBy is an O(N log N) quicksort that allocates a buffer, a key
+                // array and an index map - just to make the result stable. Summing an
+                // independent per-card sub-hash is stable for free.
+                //
+                // Safe because this signature is only ever compared against the previously
+                // cached value for the SAME group in the SAME process. It is never persisted,
+                // never compared across groups and never used as an index, so it has to be
+                // deterministic, not canonical.
+                //
+                // Sum rather than XOR: XOR cancels identical pairs, and while GetInstanceID
+                // makes exact sub-hash collisions very unlikely, sum degrades more gracefully.
+                //
+                // DO NOT apply this to the OrderBy in EvaluateGroup - that one is load-bearing.
+                // BuildLeaders indexes straight into the sorted array, so an unstable order
+                // there picks different leaders on different frames and whole bands of cards
+                // visibly pop between clumps.
+                int cardAccumulator = 0;
+                foreach (HairCard card in cards)
                 {
                     if (card == null) continue;
-                    hash = Mix(hash, card.GetInstanceID());
-                    hash = Mix(hash, card.GetGeneratedMeshSignature());
+                    int cardHash = 17;
+                    cardHash = Mix(cardHash, card.GetInstanceID());
+                    cardHash = Mix(cardHash, card.GetGeneratedMeshSignature());
 
                     // Whether the card is still rendering OUR mesh is part of what makes this
                     // group clean, and it is not derivable from the source state.
@@ -293,23 +314,27 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
                     // frame, 404 the next, with an unchanged group signature across both.
                     int overrideHeld = 0;
                     if (card.HasExternalClumpOverride()) overrideHeld = 1;
-                    hash = Mix(hash, overrideHeld);
+                    cardHash = Mix(cardHash, overrideHeld);
 
                     Vector3 root = RootWorld(card);
-                    hash = Mix(hash, root.x.GetHashCode());
-                    hash = Mix(hash, root.y.GetHashCode());
-                    hash = Mix(hash, root.z.GetHashCode());
+                    cardHash = Mix(cardHash, root.x.GetHashCode());
+                    cardHash = Mix(cardHash, root.y.GetHashCode());
+                    cardHash = Mix(cardHash, root.z.GetHashCode());
 
                     Vector3 p = card.transform.position;
                     Quaternion q = card.transform.rotation;
-                    hash = Mix(hash, p.x.GetHashCode());
-                    hash = Mix(hash, p.y.GetHashCode());
-                    hash = Mix(hash, p.z.GetHashCode());
-                    hash = Mix(hash, q.x.GetHashCode());
-                    hash = Mix(hash, q.y.GetHashCode());
-                    hash = Mix(hash, q.z.GetHashCode());
-                    hash = Mix(hash, q.w.GetHashCode());
+                    cardHash = Mix(cardHash, p.x.GetHashCode());
+                    cardHash = Mix(cardHash, p.y.GetHashCode());
+                    cardHash = Mix(cardHash, p.z.GetHashCode());
+                    cardHash = Mix(cardHash, q.x.GetHashCode());
+                    cardHash = Mix(cardHash, q.y.GetHashCode());
+                    cardHash = Mix(cardHash, q.z.GetHashCode());
+                    cardHash = Mix(cardHash, q.w.GetHashCode());
+
+                    unchecked { cardAccumulator += cardHash; }
                 }
+
+                hash = Mix(hash, cardAccumulator);
             }
             return hash;
         }

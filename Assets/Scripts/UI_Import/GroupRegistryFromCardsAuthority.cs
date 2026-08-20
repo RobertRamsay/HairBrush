@@ -40,7 +40,24 @@ public class GroupRegistryFromCardsAuthority : MonoBehaviour
         HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
         if (cards.Length == 0) return;
 
-        HashSet<int> cardIds = new HashSet<int>(cards.Where(c => c != null).Select(c => c.groupId));
+        // One pass builds both the id set AND the first-card-per-group map. The map used to
+        // be rebuilt as cards.FirstOrDefault(c => c.groupId == id) INSIDE the per-group loop
+        // below, which is O(groups x cards) with a fresh LINQ closure and iterator allocated
+        // per group - and the result was thrown away unused on almost every pass, because in
+        // the steady state all four dictionaries already have the key.
+        //
+        // Note this preserves the existing semantics exactly: "representative" was already
+        // whichever card FindObjectsByType happened to return first, an order Unity does not
+        // guarantee. Do not "improve" that by sorting - it would change which card's UVs seed
+        // a recovered group.
+        HashSet<int> cardIds = new HashSet<int>();
+        Dictionary<int, HairCard> firstCardByGroup = new Dictionary<int, HairCard>();
+        foreach (HairCard card in cards)
+        {
+            if (card == null) continue;
+            cardIds.Add(card.groupId);
+            if (!firstCardByGroup.ContainsKey(card.groupId)) firstCardByGroup[card.groupId] = card;
+        }
         if (cardIds.Count == 0) return;
 
         HashSet<int> ids = idsField.GetValue(viewer) as HashSet<int>;
@@ -57,7 +74,8 @@ public class GroupRegistryFromCardsAuthority : MonoBehaviour
         {
             if (ids.Add(id)) changed = true;
 
-            HairCard representative = cards.FirstOrDefault(c => c != null && c.groupId == id);
+            HairCard representative = null;
+            firstCardByGroup.TryGetValue(id, out representative);
             // groupNames stores only the optional friendly suffix. The left-panel renderer owns
             // the numeric identity (GROUP n / Gn_Name), so recovery must not recreate legacy
             // strings such as "Group 0 (Default)" inside the authored name field.
@@ -78,14 +96,25 @@ public class GroupRegistryFromCardsAuthority : MonoBehaviour
             changed = true;
         }
 
-        GameObject panel = GameObject.Find("GroupManagerPanel");
-        bool hasAnyGroupRow = FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None)
-            .Any(r => r != null && r.name.StartsWith("GroupItem_"));
-
         // Project load may have built an empty panel before the card-derived registry was ready.
         // Rebuild only when registry data changed or the loaded-card session has no group rows at all.
-        if (changed || (panel != null && !hasAnyGroupRow))
+        //
+        // Both of these are expensive - GameObject.Find is a full scene-graph name search, and
+        // the RectTransform scan is inactive-inclusive with a native string marshal per element
+        // - and they were BOTH computed unconditionally, even on the passes where `changed` was
+        // already true and the || below would have short-circuited past them anyway. Evaluating
+        // them lazily costs nothing and skips them entirely whenever the registry did change.
+        if (changed || (GameObject.Find("GroupManagerPanel") != null && !HasAnyGroupRow()))
             buildGroupsMethod?.Invoke(viewer, null);
+    }
+
+    static bool HasAnyGroupRow()
+    {
+        foreach (RectTransform row in FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            if (row != null && row.name.StartsWith("GroupItem_")) return true;
+        }
+        return false;
     }
 
     void Resolve()

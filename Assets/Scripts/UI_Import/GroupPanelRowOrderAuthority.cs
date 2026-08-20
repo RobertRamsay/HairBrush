@@ -18,8 +18,40 @@ public class GroupPanelRowOrderAuthority : MonoBehaviour
         go.AddComponent<GroupPanelRowOrderAuthority>();
     }
 
+    // Throttle plus invalidation, rather than a plain interval.
+    //
+    // This used to run a full inactive-inclusive RectTransform scan EVERY frame and then a
+    // name.StartsWith on every result. Transform.name is a native marshal that allocates a
+    // fresh string per element per call, so the string garbage alone was the dominant cost -
+    // and in a panel-heavy tool the inactive population is the larger one.
+    //
+    // A plain interval on its own would be wrong: row ordering is only ever WRONG in the
+    // instant after a POST row is created, which is a user action, so a newly added row would
+    // visibly jump into place up to a tenth of a second later, right where the user is
+    // looking. Watching the panel's childCount is a single integer compare and catches
+    // creation and deletion immediately, so the throttle only applies to the steady state,
+    // where nothing has moved and there is nothing to reorder.
+    //
+    // Known gaps, all bounded by the interval below: a create and a delete in the SAME frame
+    // net out to an unchanged count, and a rename that changes a row's prefix is invisible.
+    // Both simply wait out the throttle.
+    private const float ScanInterval = .1f;
+    private float nextScan;
+    private Transform watchedPanel;
+    private int lastPanelChildCount = -1;
+
     void LateUpdate()
     {
+        bool structureChanged = false;
+        if (watchedPanel != null && watchedPanel.childCount != lastPanelChildCount)
+        {
+            lastPanelChildCount = watchedPanel.childCount;
+            structureChanged = true;
+        }
+
+        if (!structureChanged && Time.unscaledTime < nextScan) return;
+        nextScan = Time.unscaledTime + ScanInterval;
+
         RectTransform[] all = FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None);
         foreach (RectTransform groupItem in all)
         {
@@ -28,6 +60,11 @@ public class GroupPanelRowOrderAuthority : MonoBehaviour
 
             Transform parent = groupItem.parent;
             if (parent == null) continue;
+
+            // Latch the container the rows live in, so the childCount check above can notice a
+            // POST row appear or disappear without needing another full scan to find out.
+            watchedPanel = parent;
+            lastPanelChildCount = parent.childCount;
 
             int insert = groupItem.GetSiblingIndex() + 1;
             string postPrefix = "PostAffector_" + groupId + "_";
