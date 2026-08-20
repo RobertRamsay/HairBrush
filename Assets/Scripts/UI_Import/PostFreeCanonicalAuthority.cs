@@ -52,6 +52,13 @@ public class PostFreeCanonicalAuthority : MonoBehaviour
         {
             if (card == null || groupsWithPosts.Contains(card.groupId)) continue;
 
+            // Frozen by SOLO. This sweep ends in ApplyEvaluatedState -> GenerateMesh for
+            // every POST-free card, which in the common case (no POSTs anywhere) is the
+            // whole scene, every frame. Skipping the hidden groups costs nothing in
+            // correctness: the card keeps its current mesh, its canonical state is
+            // untouched, and this same sweep rebuilds it the frame SOLO lets it go.
+            if (GroupSoloVisibilityAuthority.IsCardFrozen(card)) continue;
+
             // Critical lifecycle rule: PostAffectorManager must not retain a CardState for a
             // group with no POSTs. Otherwise its normal LateUpdate recreates an old-strand
             // cache immediately after final-POST teardown, while newly-created strands start

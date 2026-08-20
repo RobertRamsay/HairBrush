@@ -491,6 +491,11 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         Dictionary<int,bool> solo = GetField<Dictionary<int,bool>>(viewer, "groupSoloState");
         solo?.Clear();
 
+        // groupSoloState is only a mirror now - GroupSoloVisibilityAuthority holds the real
+        // solo set and owns renderer enablement, so clearing the mirror alone would leave
+        // the session reset with a live SOLO and no lit button to switch it off.
+        GroupSoloVisibilityAuthority.ClearAll();
+
         ResetFloatDictionary("groupUScales", 1f);
         ResetFloatDictionary("groupVScales", 1f);
         ResetFloatDictionary("groupUOffsets", 0f);

@@ -87,6 +87,12 @@ public class PostShapeCurveBridge : MonoBehaviour
         foreach (HairCard card in cards)
         {
             if (card == null) continue;
+
+            // Frozen by SOLO - leave the card's existing profile provenance and mesh alone.
+            // The unconditional sweeps rebuild it on the frame SOLO releases the group.
+            if (GroupSoloVisibilityAuthority.IsCardFrozen(card)) continue;
+
+            int contributionsBefore = card.PostShapeProfileContributionCount;
             card.ClearPostShapeProfileContributions();
 
             if (groups != null && groups.TryGetValue(card.groupId, out List<PostAffectorManager.PostAffector> list) && list != null)
@@ -112,6 +118,15 @@ public class PostShapeCurveBridge : MonoBehaviour
             // PostAffectorManager already wrote the scalar evaluated state earlier in
             // LateUpdate. Regenerate only the mesh so the newly attached profile provenance
             // is applied without feeding anything back into canonical state.
+            //
+            // This rebuild used to be unconditional, which meant a project with NO POSTs at
+            // all still paid a second full GenerateMesh() for every card in the scene, every
+            // frame, to attach provenance that did not exist. A card that had no
+            // contributions last frame and has none this frame cannot have changed here, so
+            // there is nothing to rebuild. Any other combination - gained one, lost one,
+            // still has some - still rebuilds exactly as before.
+            if (contributionsBefore == 0 && card.PostShapeProfileContributionCount == 0) continue;
+
             card.GenerateMesh();
         }
     }

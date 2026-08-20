@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
-using UnityEngine.InputSystem;
 
 [RequireComponent(typeof(MeshFilter), typeof(MeshRenderer))]
 public class HairCard : MonoBehaviour
@@ -612,15 +611,26 @@ public class HairCard : MonoBehaviour
     void OnDestroy() { if (cardMaterial != null) Destroy(cardMaterial); }
     public void ApplyDeformations() { GenerateMesh(); }
 
-    void Update()
+    // HairCard deliberately has NO Update().
+    //
+    // It used to have one, purely to poll the global 1/2 single-sided/double-sided hotkeys.
+    // That is one managed Update callback plus four Input System lookups PER CARD PER FRAME,
+    // for a keypress whose answer is identical for every card in the scene - pure overhead
+    // that grew linearly with the groom and was paid even while the cards were hidden.
+    // The hotkey now lives in exactly one scene-level listener,
+    // HairCardSidednessHotkeyAuthority, which does the same broadcast on the one frame the
+    // key is actually pressed.
+    //
+    // Behaviourally this changes nothing: GroupSidednessAuthority.ApplyAll() already
+    // rewrote every card's sidedness from its GROUP's setting every 0.1s, so a per-card
+    // hotkey write was being overwritten within a tenth of a second regardless.
+
+    // Lets PostShapeCurveBridge tell "this card had no POST profile contributions last frame
+    // and has none this frame" apart from "this card genuinely changed", so it can skip a
+    // full mesh rebuild instead of rebuilding every card in the scene unconditionally.
+    public int PostShapeProfileContributionCount
     {
-        if (Keyboard.current == null) return;
-        // The 1/2 single-sided/double-sided hotkeys must not fire while the user is
-        // typing into a UI text field - for example the inline group-name editor,
-        // where "1" and "2" are just characters in a name.
-        if (GroupNameInlineEditAuthority.IsEnteringText) return;
-        if (Keyboard.current.digit1Key.wasPressedThisFrame || Keyboard.current.numpad1Key.wasPressedThisFrame) SetDoubleSided(false);
-        if (Keyboard.current.digit2Key.wasPressedThisFrame || Keyboard.current.numpad2Key.wasPressedThisFrame) SetDoubleSided(true);
+        get { return postShapeProfileContributions.Count; }
     }
 
     // MaterialEditorManager.ApplyAssignments() is the single authoritative source for which

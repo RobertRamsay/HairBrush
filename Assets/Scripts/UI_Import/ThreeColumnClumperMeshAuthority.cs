@@ -26,6 +26,11 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
     private readonly Dictionary<int, int> lastResolvedIsland = new Dictionary<int, int>();
     private readonly HashSet<int> overriddenGroups = new HashSet<int>();
 
+    // Initialised to -1 rather than 0 so the very first LateUpdate always disagrees with the
+    // authority's starting epoch and clears the (empty) cache once, instead of the two
+    // silently agreeing before anything has been evaluated at all.
+    private int lastSoloEpoch = -1;
+
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
     {
@@ -39,6 +44,16 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
     {
         if (manager == null) manager = FindFirstObjectByType<GroupClumperManager>();
         if (manager == null) return;
+
+        // A group that was frozen by SOLO skipped its evaluations entirely, so the signature
+        // cached against it describes a state that may no longer be true. Dropping the whole
+        // cache the moment the solo set changes guarantees every group gets one honest
+        // re-evaluation on the way back in, rather than resting on a stale "clean" verdict.
+        if (lastSoloEpoch != GroupSoloVisibilityAuthority.Epoch)
+        {
+            lastSoloEpoch = GroupSoloVisibilityAuthority.Epoch;
+            lastGroupSignature.Clear();
+        }
 
         List<GroupClumperManager.GroupClumper> clumpers = manager.GetAllClumpers();
         HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
@@ -65,6 +80,15 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
 
         foreach (int groupId in groups)
         {
+            // Frozen by SOLO. Skipping BEFORE the per-group LINQ filter and the
+            // ComputeGroupSignature sort matters: the dirty-check itself is O(N log N) per
+            // group per frame, so a hidden group was costing real time even on the frames
+            // where it turned out to be clean and nothing was evaluated.
+            //
+            // Deliberately placed after RestoreRemovedGroups above, which must keep running
+            // for every group so a clumper removed while soloing still releases its mesh.
+            if (GroupSoloVisibilityAuthority.IsGroupFrozen(groupId)) continue;
+
             List<GroupClumperManager.GroupClumper> groupClumpers = ordered
                 .Where(c => c.groupId == groupId)
                 .ToList();

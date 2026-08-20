@@ -569,6 +569,11 @@ public class ModelViewer : MonoBehaviour
             groupVScales[newId] = 1.0f;
             groupUOffsets[newId] = 0.0f;
             groupVOffsets[newId] = 0.0f;
+            // Starting a new group while a SOLO is live would otherwise drop you into a
+            // group SOLO is hiding, so every hair you then place would be invisible with no
+            // explanation. Creating a group is a deliberate "start something new", which is
+            // the natural point to end the SOLO rather than to fight it.
+            ResetSoloState();
             SelectGroup(newId);
         });
         GameObject scrollGO = new GameObject("GroupScrollView", typeof(RectTransform), typeof(ScrollRect), typeof(Image));
@@ -723,10 +728,22 @@ public class ModelViewer : MonoBehaviour
 
     IEnumerator FlashActiveGroupRoutine(int activeId)
     {
+        // The "which group is this?" flash briefly hides every other group, then restores.
+        //
+        // Two things were wrong with the old version. It restored by blanket-enabling EVERY
+        // renderer in the scene, which silently cancelled SOLO the moment you clicked a
+        // second group - the whole groom reappeared. And it ran at all while soloing, where
+        // it is meaningless: the soloed group is already the only thing on screen, so the
+        // flash could only ever reveal something SOLO was deliberately hiding.
+        //
+        // So: while SOLO is engaged the flash is skipped entirely, and the restore always
+        // goes back through the authority rather than turning everything on.
+        if (GroupSoloVisibilityAuthority.AnySolo) yield break;
+
         HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
-        foreach (var card in allCards) if (card.groupId != activeId) { var mr = card.GetComponent<MeshRenderer>(); if (mr != null) mr.enabled = false; }
+        foreach (var card in allCards) if (card != null && card.groupId != activeId) { var mr = card.GetComponent<MeshRenderer>(); if (mr != null) mr.enabled = false; }
         yield return new WaitForSeconds(0.5f);
-        foreach (var card in allCards) if (card != null) { var mr = card.GetComponent<MeshRenderer>(); if (mr != null) mr.enabled = true; }
+        GroupSoloVisibilityAuthority.ApplyVisibility();
     }
 
     void RefreshGroupListUI()
@@ -783,8 +800,10 @@ public class ModelViewer : MonoBehaviour
                 Image soloImage = solo != null ? solo.GetComponent<Image>() : null;
                 if (soloImage != null)
                 {
-                    bool isSoloed = groupSoloState.ContainsKey(id) && groupSoloState[id];
-                    soloImage.color = isSoloed ? new Color(0.9f, 0.5f, 0.1f) : new Color(0.35f, 0.35f, 0.35f);
+                    bool isSoloed = GroupSoloVisibilityAuthority.IsSoloed(id);
+                    Color soloColor = new Color(0.35f, 0.35f, 0.35f);
+                    if (isSoloed) soloColor = new Color(0.9f, 0.5f, 0.1f);
+                    soloImage.color = soloColor;
                 }
             }
             return;
@@ -838,8 +857,10 @@ public class ModelViewer : MonoBehaviour
             GameObject soloBtnGO = new GameObject("SoloButton", typeof(RectTransform), typeof(Image), typeof(Button));
             soloBtnGO.transform.SetParent(itemGO.transform, false);
             soloBtnGO.GetComponent<RectTransform>().sizeDelta = new Vector2(65, 36);
-            bool isSoloed = groupSoloState.ContainsKey(gid) && groupSoloState[gid];
-            soloBtnGO.GetComponent<Image>().color = isSoloed ? new Color(0.9f, 0.5f, 0.1f) : new Color(0.35f, 0.35f, 0.35f);
+            bool isSoloed = GroupSoloVisibilityAuthority.IsSoloed(gid);
+            Color soloIdleColor = new Color(0.35f, 0.35f, 0.35f);
+            if (isSoloed) soloIdleColor = new Color(0.9f, 0.5f, 0.1f);
+            soloBtnGO.GetComponent<Image>().color = soloIdleColor;
             Button soloBtn = soloBtnGO.GetComponent<Button>();
             GameObject soloTxtGO = new GameObject("Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
             soloTxtGO.transform.SetParent(soloBtnGO.transform, false);
@@ -858,15 +879,20 @@ public class ModelViewer : MonoBehaviour
 
     void ToggleGroupSolo(int gid)
     {
-        bool currentState = groupSoloState.ContainsKey(gid) && groupSoloState[gid];
-        groupSoloState[gid] = !currentState;
-        bool anySoloActive = groupSoloState.Values.Any(s => s);
-        HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
-        foreach (var card in allCards) {
-            var mr = card.GetComponent<MeshRenderer>();
-            if (mr != null) mr.enabled = !anySoloActive || (groupSoloState.ContainsKey(card.groupId) && groupSoloState[card.groupId]);
-        }
+        // GroupSoloVisibilityAuthority owns both the solo set AND renderer enablement now,
+        // so this no longer walks the cards itself. groupSoloState is kept as a mirror only
+        // because two other scripts still reflect into it by name.
+        bool nowSoloed = GroupSoloVisibilityAuthority.Toggle(gid);
+        groupSoloState[gid] = nowSoloed;
         RefreshGroupListUI();
+    }
+
+    // SOLO is session-only by design - it is never saved and never restored. Loading a
+    // project, or resetting the session, must therefore come up with everything visible.
+    public void ResetSoloState()
+    {
+        groupSoloState.Clear();
+        GroupSoloVisibilityAuthority.ClearAll();
     }
 
     void HandleGroupItemClick(int gid)
@@ -898,6 +924,9 @@ public class ModelViewer : MonoBehaviour
         allGroupIds.Remove(gid);
         groupNames.Remove(gid);
         groupSoloState.Remove(gid);
+        // A deleted group must not keep a SOLO no card can satisfy - that would leave the
+        // whole scene hidden with no button left to switch it back off.
+        GroupSoloVisibilityAuthority.Forget(gid);
         groupUScales.Remove(gid);
         groupVScales.Remove(gid);
         groupUOffsets.Remove(gid);
@@ -1017,6 +1046,11 @@ public class ModelViewer : MonoBehaviour
                 groupUOffsets[newId] = currentUOffset;
                 groupVOffsets[newId] = currentVOffset;
                 foreach (var card in sessionPlacedCards) if (card != null) { card.groupId = newId; card.SetParameters(card.length, card.width, card.segments, card.bendAngle, card.twistAngle, card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ(), card.GetEmbedDepth(), 1f, currentUScale, currentVScale, currentUOffset, currentVOffset, card.curlFrequency, card.curlDiameter); }
+                // Those cards just changed group. Same reasoning as the New Group button:
+                // a shift-drag that promotes itself into a fresh group is the start of new
+                // work, so end the SOLO rather than have the cards you just drew vanish
+                // into a group SOLO is hiding.
+                ResetSoloState();
                 SelectGroup(newId);
             }
 #endif
@@ -1114,6 +1148,9 @@ public class ModelViewer : MonoBehaviour
         lastPlacedCard = card;
         MeshRenderer mr = cardGO.GetComponent<MeshRenderer>();
         if (hairCardMaterial != null) mr.sharedMaterial = hairCardMaterial;
+        // A card born into a group SOLO is hiding must not appear. New renderers default to
+        // enabled, so without this the groom leaks back one strand at a time.
+        mr.enabled = GroupSoloVisibilityAuthority.IsGroupVisible(card.groupId);
         RefreshGroupListUI();
         return card;
     }
@@ -1289,6 +1326,12 @@ public class ModelViewer : MonoBehaviour
             MeshRenderer mr = cardGO.GetComponent<MeshRenderer>();
             if (hairCardMaterial != null) mr.sharedMaterial = hairCardMaterial;
         }
+
+        // Same rule as the enhanced loader: SOLO is session-only, so a load always comes up
+        // with everything visible and every group live again. Cleared after the cards exist
+        // so ApplyVisibility can reach them.
+        ResetSoloState();
+
         if (uiContainer != null) uiContainer.SetActive(false);
         OnModelLoaded();
         if (activeSliderPanel == null) BuildRuntimeGroomingUI();

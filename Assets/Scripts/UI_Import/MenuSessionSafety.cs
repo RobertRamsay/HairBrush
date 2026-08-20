@@ -115,6 +115,12 @@ public class MenuSessionSafety : MonoBehaviour
             if (renderer != null) renderer.enabled = true;
         }
 
+        // The loop above blanket-enables every renderer to undo whatever the menu hid, which
+        // on its own quietly cancelled SOLO every time the user opened and resumed. Handing
+        // visibility straight back to the authority re-hides the non-soloed groups if a SOLO
+        // is still live, and is a no-op when none is.
+        GroupSoloVisibilityAuthority.ApplyVisibility();
+
         viewer.OnModelLoaded();
 
         GameObject groom = viewer.groomingSliderPanelGO != null ? viewer.groomingSliderPanelGO : FindNamed("GroomingPanel");

@@ -185,6 +185,12 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
             if(viewer.hairCardMaterial!=null)go.GetComponent<MeshRenderer>().sharedMaterial=viewer.hairCardMaterial;
         }
 
+        // SOLO is session-only and is never written to the project file. A load must
+        // therefore come up with every group visible and every SOLO button unlit, whatever
+        // was soloed in the session being replaced. Cleared AFTER the cards are created so
+        // ApplyVisibility can see them and switch their renderers back on.
+        viewer.ResetSoloState();
+
         if(viewer.uiContainer!=null)viewer.uiContainer.SetActive(false);
         viewer.OnModelLoaded();
         viewer.BuildRuntimeGroomingUI();

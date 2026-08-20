@@ -409,6 +409,11 @@ public class PostAffectorManager : MonoBehaviour
 
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
         {
+            // Frozen by SOLO: leave the cached base exactly where it is. Canonical state on
+            // the card is untouched, so the frame SOLO releases the group this resumes and
+            // re-reads it. See GroupSoloVisibilityAuthority.
+            if (GroupSoloVisibilityAuthority.IsCardFrozen(card)) continue;
+
             if (!cardStates.TryGetValue(card, out CardState state))
             {
                 ControlState canonical = ReadCanonical(card);
@@ -434,6 +439,12 @@ public class PostAffectorManager : MonoBehaviour
     {
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
         {
+            // This is the single biggest cost in the whole per-frame budget: every card
+            // reached here gets a full procedural GenerateMesh() rebuild via
+            // WriteEvaluatedCard -> ApplyEvaluatedState. Skipping the cards SOLO has hidden
+            // is what makes soloing actually cheap rather than merely invisible.
+            if (GroupSoloVisibilityAuthority.IsCardFrozen(card)) continue;
+
             if (!cardStates.TryGetValue(card, out CardState state))
             {
                 ControlState canonical = ReadCanonical(card);
