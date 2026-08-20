@@ -44,9 +44,15 @@ public class GroupPanelScrollEnhancer : MonoBehaviour
 
     void ConfigureScrollOnce(ScrollRect scroll)
     {
-        scroll.scrollSensitivity = 32f;
-        scroll.inertia = true;
-        scroll.decelerationRate = .18f;
+        scroll.scrollSensitivity = 24f;
+
+        // A short list is the normal case here, and with the ScrollRect's default Elastic
+        // movement plus inertia a wheel notch on a list that already fits still dragged the
+        // content and sprang it back - which reads as the list jumping for no reason.
+        // Clamped refuses to move past the ends at all, and without inertia a notch moves
+        // exactly one notch and stops.
+        scroll.movementType = ScrollRect.MovementType.Clamped;
+        scroll.inertia = false;
         scroll.vertical = true;
         scroll.horizontal = false;
 
@@ -59,12 +65,20 @@ public class GroupPanelScrollEnhancer : MonoBehaviour
         }
 
         if (scroll.verticalScrollbar == null)
-            CreatePermanentScrollbar(scroll);
+        {
+            CreateScrollbar(scroll);
+        }
         else
-            scroll.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.Permanent;
+        {
+            // AutoHide, not Permanent: with room to spare for more groups there is nothing
+            // to scroll, so the bar should not be sitting there implying otherwise.
+            // AutoHideAndExpandViewport is deliberately not used - it resizes the viewport,
+            // which would fight the fixed gutters set just above.
+            scroll.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHide;
+        }
     }
 
-    void CreatePermanentScrollbar(ScrollRect scroll)
+    void CreateScrollbar(ScrollRect scroll)
     {
         GameObject barGO = new GameObject("GroupVerticalScrollbar", typeof(RectTransform), typeof(Image), typeof(Scrollbar));
         barGO.transform.SetParent(scroll.transform, false);
@@ -99,7 +113,7 @@ public class GroupPanelScrollEnhancer : MonoBehaviour
         bar.targetGraphic = handleGO.GetComponent<Image>();
 
         scroll.verticalScrollbar = bar;
-        scroll.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.Permanent;
+        scroll.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHide;
         scroll.verticalScrollbarSpacing = 3f;
     }
 

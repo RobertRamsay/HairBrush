@@ -32,7 +32,9 @@ public class GroupPanelPostHintStats : MonoBehaviour
     private const float UtilityBottomInset = 6f;
     private const float UVButtonWidth = 74f;
     private const float SoloButtonWidth = 52f;
-    private const float ControlsHintHeight = 100f;
+    // Nine lines at fontSize 11. Bump this whenever a line is added to ApplyHintStyle,
+    // or the last one gets clipped.
+    private const float ControlsHintHeight = 112f;
 
     private GameObject boundPanel;
     private TextMeshProUGUI hint;
@@ -116,7 +118,8 @@ public class GroupPanelPostHintStats : MonoBehaviour
                     "Double Click Group name to rename it.\n" +
                     "Click in space to come out of mode\n" +
                     "Right Click to remove a group\n" +
-                    "SPACE + Click to reposition Modifier";
+                    "SPACE + Click to reposition Modifier\n" +
+                    "LEFT / RIGHT arrows rotate the light";
         hint.fontSize = 11f;
         hint.fontStyle = FontStyles.Bold;
         hint.alignment = TextAlignmentOptions.MidlineLeft;
