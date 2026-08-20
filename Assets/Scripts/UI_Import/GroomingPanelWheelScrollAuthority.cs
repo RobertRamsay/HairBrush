@@ -65,6 +65,12 @@ public class GroomingPanelWheelScroll : MonoBehaviour, IScrollHandler
 
     public float sensitivity = 42f;
 
+    // The panel's real top padding, before ApplyOffset folds the scroll amount into it.
+    // GroomingPanelFrozenHeaderAuthority needs this to park the frozen rows at the top
+    // of the panel; reading layout.padding.top directly would drift with the scroll.
+    public int BaseTopPadding { get { return baseTop; } }
+    public bool HasBasePadding { get { return baseCaptured; } }
+
     public void Bind(RectTransform rect, VerticalLayoutGroup verticalLayout)
     {
         panel = rect;
