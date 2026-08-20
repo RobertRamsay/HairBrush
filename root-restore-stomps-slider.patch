@@ -1,0 +1,86 @@
+diff --git a/Assets/Scripts/UI_Import/GroomRootStateAuthority.cs b/Assets/Scripts/UI_Import/GroomRootStateAuthority.cs
+index 382a59d..2ec0ef2 100644
+--- a/Assets/Scripts/UI_Import/GroomRootStateAuthority.cs
++++ b/Assets/Scripts/UI_Import/GroomRootStateAuthority.cs
+@@ -81,7 +81,38 @@ public class GroomRootStateAuthority : MonoBehaviour
+             // When modifier authoring is over, force those fields back to the preserved root
+             // before ModelViewer handles placement or variance for this frame. This means
+             // adding more hairs to an existing modified group starts from its original base.
+-            RestoreRootToViewer(groupId);
++            //
++            // BUT: this used to restore UNCONDITIONALLY, and current* is also where the user's
++            // own group sliders live. So while any modifier existed on the group - a clumper
++            // alone was enough, GroupHasClumper feeds hasModifier - every Bend/Twist/Length
++            // drag was overwritten by this line on the very next frame. The diagnostic caught
++            // it exactly: "BEND 67.05 -> 84.40" from the drag, then "BEND 84.40 -> 67.05" from
++            // here, over and over, with 67.05 being the preserved root. The cards dutifully
++            // followed the restored value, so the groom never appeared to move at all.
++            //
++            // Variance was unaffected and kept working, which is what made this so confusing:
++            // VAR amounts live in GroomVarianceController's own settings, not in current*, so
++            // nothing here could stomp them.
++            //
++            // Same discrimination AbsorbPanelEdit makes for POST deltas: compare what is on the
++            // panel now against what WE last pushed onto it. Unchanged means nobody touched the
++            // sliders and a restore is right. Changed means the user moved one, and a real edit
++            // to the group root outranks the preserved copy - so adopt it as the new root.
++            RootState onPanel = ReadViewer();
++            RootState lastPushedRoot;
++            bool havePushed = lastPushed.TryGetValue(groupId, out lastPushedRoot);
++
++            if (havePushed && !SameRoot(onPanel, lastPushedRoot))
++            {
++                roots[groupId] = onPanel;
++                lastPushed[groupId] = onPanel;
++            }
++            else
++            {
++                RestoreRootToViewer(groupId);
++                RootState preserved;
++                if (roots.TryGetValue(groupId, out preserved)) lastPushed[groupId] = preserved;
++            }
+         }
+         else
+         {
+@@ -189,6 +220,41 @@ public class GroomRootStateAuthority : MonoBehaviour
+         return roots.TryGetValue(groupId, out state);
+     }
+ 
++    // What this component last wrote into ModelViewer.current* per group. Anything different
++    // showing up there afterwards can only have come from the user moving a slider.
++    private readonly Dictionary<int, RootState> lastPushed = new Dictionary<int, RootState>();
++
++    static bool Near(float a, float b)
++    {
++        return Mathf.Abs(a - b) <= .00001f;
++    }
++
++    // Shape channels only, matching the eleven SyncShapeSlidersToGroupRoot rewrites plus the
++    // newer ones. UV is compared too here because, unlike that method, WriteViewer does set it.
++    static bool SameRoot(RootState a, RootState b)
++    {
++        if (a.segments != b.segments) return false;
++        if (!Near(a.length, b.length)) return false;
++        if (!Near(a.width, b.width)) return false;
++        if (!Near(a.bend, b.bend)) return false;
++        if (!Near(a.twist, b.twist)) return false;
++        if (!Near(a.depth, b.depth)) return false;
++        if (!Near(a.x, b.x)) return false;
++        if (!Near(a.y, b.y)) return false;
++        if (!Near(a.z, b.z)) return false;
++        if (!Near(a.uScale, b.uScale)) return false;
++        if (!Near(a.vScale, b.vScale)) return false;
++        if (!Near(a.uOffset, b.uOffset)) return false;
++        if (!Near(a.vOffset, b.vOffset)) return false;
++        if (!Near(a.curlFrequency, b.curlFrequency)) return false;
++        if (!Near(a.curlDiameter, b.curlDiameter)) return false;
++        if (!Near(a.waveAmplitude, b.waveAmplitude)) return false;
++        if (!Near(a.waveFrequency, b.waveFrequency)) return false;
++        if (!Near(a.waveDirection, b.waveDirection)) return false;
++        if (!Near(a.arch, b.arch)) return false;
++        return true;
++    }
++
+     public void RestoreRootToViewer(int groupId)
+     {
+         Resolve();
