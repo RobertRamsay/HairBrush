@@ -18,8 +18,16 @@ public class GroomSessionResetCoordinator : MonoBehaviour
 {
     private static readonly string[] VarianceChannels =
         { "Length", "Width", "Bend", "Twist", "AngleX", "AngleY", "AngleZ", "CurlFrequency", "CurlDiameter", "WaveAmplitude", "WaveFrequency", "WaveDirection", "Arch" };
+    // Parallel to VarianceChannels above, and it has to STAY parallel. This listed only the
+    // first seven rows while PostVarianceAffectorBridge owned only seven channels. Now that the
+    // bridge owns all thirteen, a short list here makes RESET a no-op for the missing six: the
+    // bridge re-reads every visible row into its POST record on the next Update, so any slider
+    // this loop fails to zero is written straight back over the zeroed record.
     private static readonly string[] VarianceRows =
-        { "Length_VarianceRow", "Width_VarianceRow", "Bend_VarianceRow", "Twist_VarianceRow", "Angle X_VarianceRow", "Angle Y_VarianceRow", "Angle Z_VarianceRow" };
+        { "Length_VarianceRow", "Width_VarianceRow", "Bend_VarianceRow", "Twist_VarianceRow", "Angle X_VarianceRow", "Angle Y_VarianceRow", "Angle Z_VarianceRow", "Curl Frequency_VarianceRow", "Curl Diameter_VarianceRow", "Wave Amplitude_VarianceRow", "Wave Frequency_VarianceRow", "Wave Direction_VarianceRow", "Arch_VarianceRow" };
+
+    // The channels whose VAR amount is an angle. Matches GroomVarianceController.FormatVariance.
+    private static readonly string[] AngleVarianceChannels = { "Bend", "Twist", "AngleX", "AngleY", "AngleZ" };
 
     private ModelViewer viewer;
     private Button boundLoadButton;
@@ -266,8 +274,17 @@ public class GroomSessionResetCoordinator : MonoBehaviour
                 .FirstOrDefault(t => t != null && t.text.StartsWith("VAR", StringComparison.Ordinal));
             if (label != null)
             {
-                bool linear = i == 0 || i == 1;
-                label.text = linear ? "VAR ± 0.000" : "VAR ± 0.0°";
+                // Was "index 0 and 1 are linear, the rest are angles", which was only true
+                // while this list stopped at Angle Z. Curl, Wave and Arch are not angles.
+                bool isAngle = Array.IndexOf(AngleVarianceChannels, VarianceChannels[i]) >= 0;
+                if (isAngle)
+                {
+                    label.text = "VAR ± 0.0°";
+                }
+                else
+                {
+                    label.text = "VAR ± 0.000";
+                }
             }
         }
     }
