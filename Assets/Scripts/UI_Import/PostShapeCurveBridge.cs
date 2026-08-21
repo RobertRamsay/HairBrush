@@ -160,22 +160,43 @@ public class PostShapeCurveBridge : MonoBehaviour
     public static float EvaluateRoot(int groupId, GroomShapeCurveChannel channel, float t)
     {
         t = Mathf.Clamp01(t);
-        // Curl and Segment Density have no per-POST override (see the enum's own comments), so
-        // they must never go through the POST-editing snapshot path below - that snapshot's
-        // CurveSet genuinely has no fields for either, and the channel switch in
-        // GetCurve(CurveSet,...) would otherwise fall through to its default case and silently
-        // evaluate the wrong (Z) curve for them.
-        if (channel == GroomShapeCurveChannel.CurlFrequency || channel == GroomShapeCurveChannel.CurlDiameter
-            || channel == GroomShapeCurveChannel.SegmentDensity)
+        // Curl, Segment Density and Width have no per-POST override (see the enum's own
+        // comments), so they must never go through the POST-editing snapshot path below - that
+        // snapshot's CurveSet genuinely has no fields for any of them, and the channel switch
+        // in GetCurve(CurveSet,...) would otherwise fall through to its default case and
+        // silently evaluate the wrong (Z) curve for them.
+        if (IsRootOnlyChannel(channel))
             return GroomShapeCurveRegistry.Evaluate(groupId, channel, t);
         if (live != null && live.rootWhilePost.TryGetValue(groupId, out CurveSet root) && root != null)
             return Mathf.Clamp01(GetCurve(root, channel).Evaluate(t));
         return GroomShapeCurveRegistry.Evaluate(groupId, channel, t);
     }
 
+    // The channels with NO per-POST override. The snapshot CurveSet in this file has fields
+    // for Bend/X/Y/Z only, and its GetCurve ends in `default: return set.z`, so routing any
+    // other channel through the POST path silently evaluates the Z ANGLE curve. For Width that
+    // would mean cards tapering to their Z profile, but only while a POST happened to be
+    // selected in that group - the kind of bug that costs an afternoon to find.
+    static bool IsRootOnlyChannel(GroomShapeCurveChannel channel)
+    {
+        return channel == GroomShapeCurveChannel.CurlFrequency
+            || channel == GroomShapeCurveChannel.CurlDiameter
+            || channel == GroomShapeCurveChannel.SegmentDensity
+            || channel == GroomShapeCurveChannel.Width
+            || channel == GroomShapeCurveChannel.WaveAmplitude
+            || channel == GroomShapeCurveChannel.WaveFrequency
+            || channel == GroomShapeCurveChannel.WaveDirection;
+    }
+
     public static float EvaluatePost(int postId, GroomShapeCurveChannel channel, float t)
     {
         t = Mathf.Clamp01(t);
+
+        // Nothing should call this with a root-only channel, but being wrong here yields a
+        // WRONG CURVE rather than an exception, so refuse explicitly rather than trusting every
+        // present and future caller to remember.
+        if (IsRootOnlyChannel(channel)) return DefaultValue(channel, t);
+
         if (live == null) return DefaultValue(channel, t);
 
         // The active POST is presented directly in GroomShapeCurveRegistry so editor changes

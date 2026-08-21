@@ -114,12 +114,12 @@ public class SelectionLocalizedEditAuthority : MonoBehaviour
             // so temporarily bypass that second interpolation.
             float selectionWeight = card.selectionWeight;
             card.SetSelectionWeight(0f);
-            // Curl isn't part of this file's Controls/Snapshot weighted-blend system (unlike
+            // Curl and wave aren't part of this file's Controls/Snapshot weighted-blend system (unlike
             // Length/Width/Bend/etc above) - passed through unchanged so it isn't silently
             // reset to 0 by SetParameters' defaults. Brush-localized curl blending can be added
             // here later if wanted, following the same pattern as the other channels above.
             card.SetParameters(length, width, segments, bend, twist, x, y, z, depth, 1f,
-                uScale, vScale, uOffset, vOffset, card.curlFrequency, card.curlDiameter);
+                uScale, vScale, uOffset, vOffset, card.curlFrequency, card.curlDiameter, card.waveAmplitude, card.waveFrequency, card.waveDirection, card.arch);
             card.SetSelectionWeight(selectionWeight);
         }
 

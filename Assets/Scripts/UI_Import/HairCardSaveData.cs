@@ -25,6 +25,31 @@ public class HairCardSaveData
     // Curl (spiral/coil) modifier - applied after width, before bend, in the shape pipeline.
     public float curlFrequency;
     public float curlDiameter;
+    // Zero for legacy projects, which is exactly the correct no-wave default: EvaluateWave
+    // early-outs on amplitude <= 0, so an older file renders bit-identically. JsonUtility runs
+    // field initialisers first and only overwrites keys present in the JSON, so a missing
+    // waveAmplitude/waveFrequency lands on 0f with no migration and no version bump.
+    public float waveAmplitude;
+    public float waveFrequency;
+    // Initialised to 1, unlike the two above. JsonUtility runs field initialisers first and
+    // only overwrites keys present in the JSON, so a project saved before Wave Direction
+    // existed deserializes to 1 (up/down) rather than 0 (side to side). That is the deliberate
+    // choice: the side-to-side original was the thing being replaced. Anyone who wants the old
+    // look sets the slider to 0.
+    public float waveDirection = 1f;
+    // Initialised to the neutral 0.5, NOT 0. JsonUtility runs field initialisers first and
+    // only overwrites keys present in the JSON, so a project saved before Arch existed lands
+    // here and renders exactly as it always did. A default of 0 would flatten every card in
+    // every legacy project to a plain ribbon.
+    public float arch = 0.5f;
+
+    // SYMMETRY. A mirrored card evaluates its geometry through a local-X mirror, so this has
+    // to survive a round trip or every mirrored card in a reloaded project would come back
+    // shaped like its partner instead of like its reflection.
+    //
+    // Backward compatible: JsonUtility leaves a missing bool as false, so projects saved
+    // before symmetry existed load as all-unmirrored, which is exactly what they were.
+    public bool mirrored;
 }
 
 [Serializable] public class VarianceChannelSaveData { public string channel; public float amount; public int seed; }
@@ -102,6 +127,9 @@ public class GroupClumperSaveData
     public float uScale,vScale,uOffset,vOffset;
     // Zero for legacy projects, which is exactly the correct no-curl-delta default.
     public float curlFrequency,curlDiameter;
+    public float waveAmplitude,waveFrequency,waveDirection;
+    // A POST DELTA, so 0 is correct here - it means 'this POST does not change the arch'.
+    public float arch;
 }
 
 [Serializable] public class PostAffectorSaveData
@@ -166,11 +194,24 @@ public class PostPredeterminedUVSaveData
     // Segment density: where segments cluster along the length. Not a magnitude multiplier
     // like the curves above - a 0..1 -> 0..1 remap (see HairCard.GenerateMesh).
     public List<GroomCurveKeySaveData> segmentDensityCurve=new();
+    // Group-root 0..1 width taper. Root-only, like Curl and Segment Density. An empty list -
+    // which is what every project saved before this channel existed deserializes to - imports
+    // as a flat x1 multiplier, so old files render bit-identically. No migration needed.
+    public List<GroomCurveKeySaveData> widthCurve=new();
+    // Root-only wave profiles. Empty list -> flat x1, the same convention as every curve above.
+    public List<GroomCurveKeySaveData> waveAmplitudeCurve=new();
+    public List<GroomCurveKeySaveData> waveFrequencyCurve=new();
+    public List<GroomCurveKeySaveData> waveDirectionCurve=new();
 
     // Rendering only: true culls back faces for this group's cards. Stored as
     // "singleSided" rather than "doubleSided" so a project saved before this existed
     // decodes the missing field to false, which is the historical double-sided look.
     public bool singleSided;
+
+    // Geometry AND shading: true reverses this group's triangle winding and inverts the
+    // cross-section ridge. Named for the flipped state so a project saved before this existed
+    // decodes the missing field to false, which is the original N+ form.
+    public bool normalFlipped;
 
     // Group UV source. Adjustable keeps the legacy group U/V controls. Predetermined
     // chooses one authored Texture Editor rectangle per card using the inclusive ID range
@@ -222,6 +263,10 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
     public float sliderVOffset;
     public float sliderCurlFrequency;
     public float sliderCurlDiameter;
+    public float sliderWaveAmplitude;
+    public float sliderWaveFrequency;
+    public float sliderWaveDirection = 1f;
+    public float sliderArch = 0.5f;
 
     public void OnBeforeSerialize()
     {
@@ -252,6 +297,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
         PostShapeCurveBridge.BeginProjectCapture(this);
         GroomShapeCurveAuthority.Capture(this);
         GroupSidednessAuthority.Capture(this);
+        GroupNormalFlipAuthority.Capture(this);
         PostShapeCurveBridge.EndProjectCapture();
         MaterialProjectPersistenceBridge.Capture(this);
         MaterialUVRectAuthority.Capture(this);
@@ -279,6 +325,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
         PostPredeterminedUVAuthority.QueueRestore(this);
         GroomShapeCurveAuthority.QueueRestore(this);
         GroupSidednessAuthority.QueueRestore(this);
+        GroupNormalFlipAuthority.QueueRestore(this);
         PostShapeCurveBridge.QueueRestore(this);
         MaterialProjectPersistenceBridge.PendingRestore=this;
         MaterialUVRectAuthority.QueueRestore(this);

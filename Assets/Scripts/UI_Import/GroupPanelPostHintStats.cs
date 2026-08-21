@@ -33,9 +33,10 @@ public class GroupPanelPostHintStats : MonoBehaviour
     private const float UVButtonWidth = 74f;
     private const float SoloButtonWidth = 52f;
     private const float SidednessButtonWidth = 40f;
+    private const float NormalFlipButtonWidth = 36f;
     // Eight lines at fontSize 11. Bump this whenever a line is added to ApplyHintStyle,
     // or the last one gets clipped.
-    private const float ControlsHintHeight = 100f;
+    private const float ControlsHintHeight = 113f;
 
     private const string InstructionsHeaderName = "InstructionsHeader";
     private const float InstructionsHeaderHeight = 26f;
@@ -154,7 +155,8 @@ public class GroupPanelPostHintStats : MonoBehaviour
                     "Double Click Group name to rename it.\n" +
                     "Click in space to come out of mode\n" +
                     "Right Click to remove a group\n" +
-                    "SPACE + Click to reposition Modifier";
+                    "SPACE + Click to reposition Modifier\n" +
+                    "SYMMETRY mirrors painting and erasing";
         hint.fontSize = 11f;
         hint.fontStyle = FontStyles.Bold;
         hint.alignment = TextAlignmentOptions.MidlineLeft;
@@ -188,6 +190,10 @@ public class GroupPanelPostHintStats : MonoBehaviour
         AddIfPresent(panel, SceneLightAngleAuthority.RowName);
         AddIfPresent(panel, InstructionsHeaderName);
         AddIfPresent(panel, "PostCreateHint");
+        // The SYMMETRY toggle sits directly under the instructions. Anything NOT listed here
+        // gets shoved around every scan as the listed children are reindexed past it, so a new
+        // panel child has to be named here or its position will not hold.
+        AddIfPresent(panel, GroomSymmetryAuthority.ButtonName);
         AddIfPresent(panel, "TitleText");
         AddIfPresent(panel, "NewGroupButton");
         AddIfPresent(panel, "GroupScrollView");
@@ -414,6 +420,21 @@ public class GroupPanelPostHintStats : MonoBehaviour
                 -(UtilityRightInset + SoloButtonWidth + UtilityButtonGap + UVButtonWidth + UtilityButtonGap),
                 UtilityBottomInset);
             sidednessRect.sizeDelta = new Vector2(SidednessButtonWidth, UtilityButtonHeight);
+        }
+
+        // Normal / form flip, immediately left of SS/DS.
+        // Row reads Name | N+/N- | SS/DS | UV | SOLO.
+        Transform normalFlip = item.Find(GroupNormalFlipAuthority.ButtonName);
+        if (normalFlip is RectTransform normalFlipRect)
+        {
+            normalFlipRect.anchorMin = new Vector2(1f, 0f);
+            normalFlipRect.anchorMax = new Vector2(1f, 0f);
+            normalFlipRect.pivot = new Vector2(1f, 0f);
+            normalFlipRect.anchoredPosition = new Vector2(
+                -(UtilityRightInset + SoloButtonWidth + UtilityButtonGap + UVButtonWidth + UtilityButtonGap
+                  + SidednessButtonWidth + UtilityButtonGap),
+                UtilityBottomInset);
+            normalFlipRect.sizeDelta = new Vector2(NormalFlipButtonWidth, UtilityButtonHeight);
         }
     }
 }

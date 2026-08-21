@@ -231,6 +231,11 @@ public class SelectionBrushScaleTuning : MonoBehaviour
 
         // Keep the panel-wide tab/save/mode rows first, then make POST-local spatial
         // controls the first modifier controls: Radius -> Falloff -> Length/etc.
+        //
+        // PlacementModeRow is included in the scan because these two rows are now part of the
+        // frozen header, and GroomingPanelFrozenHeaderAuthority stacks that header in ITS
+        // array order. Leaving the sibling order disagreeing with the frozen order would look
+        // fine while the header is active and jump the moment it is not.
         int insertIndex = 0;
         Transform tabRow = parent.Find("PanelTabRow");
         if (tabRow != null)
@@ -238,6 +243,9 @@ public class SelectionBrushScaleTuning : MonoBehaviour
         Transform topControlsRow = parent.Find("TopControlsRow");
         if (topControlsRow != null)
             insertIndex = Mathf.Max(insertIndex, topControlsRow.GetSiblingIndex() + 1);
+        Transform placementModeRow = parent.Find("PlacementModeRow");
+        if (placementModeRow != null)
+            insertIndex = Mathf.Max(insertIndex, placementModeRow.GetSiblingIndex() + 1);
 
         radiusRow.transform.SetSiblingIndex(Mathf.Min(insertIndex, parent.childCount - 1));
         falloffRow.transform.SetSiblingIndex(Mathf.Min(insertIndex + 1, parent.childCount - 1));
@@ -266,7 +274,7 @@ public class SelectionBrushScaleTuning : MonoBehaviour
             if (previousWeight <= 0f && weight > 0f)
             {
                 card.CaptureBaseState(card.length, card.width, card.segments, card.bendAngle, card.twistAngle,
-                    card.GetEmbedDepth(), card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ(), card.curlFrequency, card.curlDiameter);
+                    card.GetEmbedDepth(), card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ(), card.curlFrequency, card.curlDiameter, card.waveAmplitude, card.waveFrequency, card.waveDirection, card.arch);
             }
             card.SetSelectionWeight(weight);
         }

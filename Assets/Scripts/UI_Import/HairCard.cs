@@ -13,6 +13,8 @@ public class HairCard : MonoBehaviour
         public float x, y, z;
         public float uScale, vScale, uOffset, vOffset;
         public float curlFrequency, curlDiameter;
+        public float waveAmplitude, waveFrequency, waveDirection;
+        public float arch;
     }
 
     // A POST keeps its authored scalar delta, but its Bend/X/Y/Z contribution can have a
@@ -28,6 +30,10 @@ public class HairCard : MonoBehaviour
     // Native card cross-section: left edge / raised centre / right edge. The ridge height
     // follows card width so narrow and wide cards keep the same shallow convex profile.
     public const float CrossSectionRidgeRatio = 0.18f;
+
+    // The arch value that leaves the cross-section exactly as it was before Arch existed.
+    // Also where a brand-new card, a reset group and a legacy project all land.
+    public const float ArchNeutral = 0.5f;
     public const int CrossSectionColumns = 3;
 
     // Curl banking. Without this the coil only displaces the centreline while every
@@ -70,25 +76,235 @@ public class HairCard : MonoBehaviour
     // is the roll the flat cross-section should carry at t, about the card's own
     // length axis, and must be applied to the section BEFORE the offset: the roll
     // shapes the section, the offset moves it.
+    // Below this, a row's three columns collapse onto one point: zero-area triangles, and
+    // RecalculateNormals then produces garbage for that row, which reads on screen as a black
+    // band at the tip. Curl guards its own degenerate case the same way (curlDiameter <= 0).
+    public const float MinimumWidthMultiplier = .001f;
+
+    // Minimum vertex rows per full cycle of a periodic modifier (Wave, Curl).
+    //
+    // A card only has `segments + 1` rows, and every periodic modifier is SAMPLED at those
+    // rows - so the card's tessellation is a hard ceiling on the frequency it can express.
+    // Push past it and the result is not "a tighter wave", it is an aliased one: the apparent
+    // frequency folds back DOWN as the slider goes up, and at exactly segments/2 the samples
+    // land on the zero crossings and the wave disappears altogether. At the default 12
+    // segments that made frequency 6 render perfectly flat, and 7 through 10 render as 5, 4,
+    // 3 and 2 - so the top half of the slider ran backwards and had a dead spot in the middle.
+    //
+    // Two samples per cycle is the Nyquist floor and still looks like a zigzag rather than a
+    // wave, so the usable limit is a little above it.
+    public const float MinimumRowsPerCycle = 2.5f;
+
+    // Highest frequency this card's tessellation can actually render.
+    // Raise Segments to unlock more: 12 segments allows 4.8, 24 allows 9.6, 32 allows 12.8.
+    // Triangle winding for the three-column strip, in ONE place.
+    //
+    // GenerateMesh and BuildCleanMesh each used to lay these indices out themselves. That was
+    // survivable while there was only one winding; with N- there are two, and two hand-written
+    // copies of a winding rule is precisely how a clumped card ends up lit inside-out while an
+    // unclumped one is not.
+    //
+    // flipWinding reverses each triangle, which is what actually inverts the surface normals -
+    // RecalculateNormals derives them from winding, so there is nothing else to flip.
+    public static void BuildStripTriangles(int segments, bool flipWinding, int[] triangles)
+    {
+        if (triangles == null) return;
+        const int columns = CrossSectionColumns;
+
+        int triIndex = 0;
+        for (int i = 0; i < segments; i++)
+        {
+            int row = i * columns;
+            int next = row + columns;
+
+            // Left half of the convex strip, then the right half.
+            AddTriangle(triangles, ref triIndex, row, next, row + 1, flipWinding);
+            AddTriangle(triangles, ref triIndex, row + 1, next, next + 1, flipWinding);
+            AddTriangle(triangles, ref triIndex, row + 1, next + 1, row + 2, flipWinding);
+            AddTriangle(triangles, ref triIndex, row + 2, next + 1, next + 2, flipWinding);
+        }
+    }
+
+    static void AddTriangle(int[] triangles, ref int index, int a, int b, int c, bool flipWinding)
+    {
+        if (flipWinding)
+        {
+            triangles[index++] = a;
+            triangles[index++] = c;
+            triangles[index++] = b;
+            return;
+        }
+        triangles[index++] = a;
+        triangles[index++] = b;
+        triangles[index++] = c;
+    }
+
+    public static float MaxRepresentableTurns(int segments)
+    {
+        return Mathf.Max(1f, segments / MinimumRowsPerCycle);
+    }
+
+    // Single source of truth for the card's cross-section at t.
+    //
+    // GenerateMesh and BOTH mesh reconstructions - ThreeColumnClumperMeshAuthority.
+    // BuildCleanMesh and ModifierNeutralizeBeforeDeleteAuthority.WriteCleanThreeColumnMesh -
+    // call this, so the three cannot drift apart. That is the same guarantee EvaluateCurl and
+    // BuildSegmentFrames already give for the coil and the spine, and it exists for the same
+    // reason: this project has twice shipped a feature into GenerateMesh only, and twice had
+    // clumped cards silently render the pre-feature shape.
+    //
+    // Width was the third thing computed independently in three places, and the three did not
+    // even agree: GenerateMesh used a raw `width * .5f` while both reconstructions used
+    // `Mathf.Max(.0005f, width) * .5f`, so cards under 0.001 wide were already fractionally
+    // wider once clumped. Folding it in here settles that too.
+    public static void EvaluateCrossSection(HairCard card, float t, out float halfSpan, out float ridge)
+    {
+        halfSpan = 0f;
+        ridge = 0f;
+        if (card == null) return;
+
+        // Root-only profile curve, same as Curl and Segment Density - see the channel enum.
+        // GroomShapeCurveRegistry.Evaluate clamps every channel to 0..1, so this can only ever
+        // narrow the card, never widen it past the Width slider.
+        // Untouched profile means the multiplier is exactly 1, so the evaluation is pure
+        // overhead - and this runs once per row per card per rebuild.
+        float widthMultiplier = 1f;
+        if (!GroomShapeCurveRegistry.IsFlatOne(card.groupId, GroomShapeCurveChannel.Width))
+        {
+            widthMultiplier = PostShapeCurveBridge.EvaluateRoot(card.groupId, GroomShapeCurveChannel.Width, t);
+            widthMultiplier = Mathf.Max(MinimumWidthMultiplier, widthMultiplier);
+        }
+
+        halfSpan = Mathf.Max(.0005f, card.width) * .5f * card.flattenFactor * widthMultiplier;
+
+        // Scaled by the SAME multiplier so the cross-section stays self-similar along the
+        // length. The ridge is defined as a fixed ratio of width; leaving it un-tapered would
+        // turn a narrowed tip into a tall thin spike rather than a smaller copy of the root.
+        // Arch scales the ridge about its neutral point: 0.5 -> x1 (exactly the shape the tool
+        // had before Arch existed), 0 -> flat ribbon, 1 -> double. Clamped at 0 only; a POST is
+        // free to drive it past what the slider itself allows.
+        float archScale = Mathf.Max(0f, card.arch) / ArchNeutral;
+        ridge = card.GetCrossSectionRidgeHeight() * widthMultiplier * archScale;
+
+        // N-: invert the arch. The cross-section is left edge / raised centre / right edge, so
+        // negating the centre's height turns the shallow convex profile concave - the A / V
+        // flip - and pairs with the reversed winding to give a properly mirrored surface
+        // rather than a correct-looking shape lit from the wrong side.
+        if (GroupNormalFlipAuthority.IsFlipped(card.groupId)) ridge = -ridge;
+    }
+
+    // Single source of truth for the WAVE, exactly as EvaluateCurl is for the coil.
+    // GenerateMesh and both mesh reconstructions call this, so the three cannot drift.
+    //
+    // The wave is a PLANAR sinusoid: it displaces the cross-section along the card's own local
+    // X - side to side within the flat plane of the card - with the phase advancing along the
+    // length. That is what reads as waviness in silhouette, and it is deliberately different
+    // from Curl, which displaces in both X and Y and sweeps around the length axis to make a
+    // coil. The two stack cleanly because they act on different axes.
+    //
+    // To wave ACROSS the face of the card instead of side to side, move the amplitude from
+    // the x component to the y component of waveOffset below. That is the whole change.
+    //
+    // sin(0) = 0, so the wave is exactly zero at the root and the card stays anchored to the
+    // scalp however hard it is driven - the same property EvaluateCurl gets from cos(0)-1.
+    public static void EvaluateWave(
+        HairCard card,
+        float t,
+        out Vector3 waveOffset,
+        bool mirrored = false)
+    {
+        waveOffset = Vector3.zero;
+        if (card == null) return;
+
+        // Both of these are exact "this contributes nothing" tests, so they cost two float
+        // compares and save two AnimationCurve evaluations plus a sin() per row per card.
+        if (card.waveAmplitude <= 0f) return;
+        if (card.waveFrequency == 0f) return;
+
+        int groupId = card.groupId;
+
+        // Skip the curve read entirely when nobody has drawn on that profile. Evaluate would
+        // return exactly 1 for a flat default curve, so multiplying by it is provably a no-op.
+        float amplitude = card.waveAmplitude;
+        if (!GroomShapeCurveRegistry.IsFlatOne(groupId, GroomShapeCurveChannel.WaveAmplitude))
+            amplitude *= PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.WaveAmplitude, t);
+
+        float turns = card.waveFrequency;
+        if (!GroomShapeCurveRegistry.IsFlatOne(groupId, GroomShapeCurveChannel.WaveFrequency))
+            turns *= PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.WaveFrequency, t);
+
+        // Clamped to what the card's rows can carry. Without this the slider is not merely
+        // capped at the top - it actively runs backwards past the halfway point and dies at
+        // segments/2, which reads as "moving this does nothing".
+        float maxTurns = MaxRepresentableTurns(card.segments);
+        turns = Mathf.Clamp(turns, -maxTurns, maxTurns);
+
+        float direction = Mathf.Clamp01(card.waveDirection);
+        if (!GroomShapeCurveRegistry.IsFlatOne(groupId, GroomShapeCurveChannel.WaveDirection))
+            direction *= PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.WaveDirection, t);
+
+        // 0 -> local X (side to side, in the card's flat plane), 1 -> local Y (up and down,
+        // across its face). Unit length at every angle, so amplitude is honest throughout.
+        float angle = direction * Mathf.PI * .5f;
+        float axisX = Mathf.Cos(angle);
+        float axisY = Mathf.Sin(angle);
+
+        // A mirrored card is a reflection through local X, so ONLY the X component flips.
+        // Negating the amplitude instead - which was right while the wave was X-only - would
+        // now wrongly flip the up/down component too and break symmetry on any diagonal.
+        if (mirrored) axisX = -axisX;
+
+        float displacement = amplitude * Mathf.Sin(turns * t * Mathf.PI * 2f);
+        waveOffset = new Vector3(axisX * displacement, axisY * displacement, 0f);
+    }
+
     public static void EvaluateCurl(
-        int groupId,
-        float curlFrequency,
-        float curlDiameter,
+        HairCard card,
         float t,
         out Vector3 curlOffset,
-        out Quaternion bankRotation)
+        out Quaternion bankRotation,
+        bool mirrored = false)
     {
         curlOffset = Vector3.zero;
         bankRotation = Quaternion.identity;
+        if (card == null) return;
+
+        float curlFrequency = card.curlFrequency;
+        float curlDiameter = card.curlDiameter;
+        int groupId = card.groupId;
 
         if (curlFrequency == 0f) return;
         if (curlDiameter <= 0f) return;
 
         // Root-only profile curves (see GroomShapeCurveAuthority) - no per-POST override.
-        float freqMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.CurlFrequency, t);
-        float diameterMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.CurlDiameter, t);
-        float turns = curlFrequency * freqMultiplier;
-        float radius = curlDiameter * diameterMultiplier * .5f;
+        float turns = curlFrequency;
+        if (!GroomShapeCurveRegistry.IsFlatOne(groupId, GroomShapeCurveChannel.CurlFrequency))
+            turns *= PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.CurlFrequency, t);
+
+        // Same tessellation ceiling as the wave - the coil is sampled at the same rows, so it
+        // aliases the same way. This is almost certainly what "curl frequency does nothing"
+        // was: past segments/2.5 the coil stops tightening and starts unwinding again.
+        float maxTurns = MaxRepresentableTurns(card.segments);
+        turns = Mathf.Clamp(turns, -maxTurns, maxTurns);
+
+        float radius = curlDiameter * .5f;
+        if (!GroomShapeCurveRegistry.IsFlatOne(groupId, GroomShapeCurveChannel.CurlDiameter))
+            radius *= PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.CurlDiameter, t);
+
+        // A coil is handed, so a mirrored card's coil must wind the other way. Negating BOTH
+        // the radius and the sweep is what makes the reflection exact: the offset becomes
+        // (-r(cos a - 1), +r sin a, 0), which is precisely diag(-1,1,1) applied to the original,
+        // and the bank rotation about local Z flips with it.
+        //
+        // Negating the angle alone would give the right handedness but leave the coil bulging
+        // 180 degrees out of phase; negating curlDiameter on the card instead is not an option,
+        // because the guard above rejects a non-positive diameter outright.
+        if (mirrored)
+        {
+            radius = -radius;
+            turns = -turns;
+        }
+
         float angle = turns * t * Mathf.PI * 2f;
 
         // cos(0)-1 = 0 and sin(0) = 0, so this is exactly zero at the root (t=0),
@@ -96,7 +312,28 @@ public class HairCard : MonoBehaviour
         curlOffset = new Vector3(radius * (Mathf.Cos(angle) - 1f), radius * Mathf.Sin(angle), 0f);
 
         if (CurlBankAmount == 0f) return;
-        bankRotation = Quaternion.AngleAxis(angle * Mathf.Rad2Deg * CurlBankAmount, Vector3.forward);
+
+        // THE SNAP FIX. The bank roll used to be computed from the sweep angle alone, with no
+        // reference to the radius at all - so it went from nothing at diameter 0 to its FULL
+        // value the instant the diameter guard above was cleared. At diameter 0.001 the coil
+        // itself is half a thousandth of a unit wide and invisible, while every cross-section
+        // was already rolling through the complete curl angle: at frequency 5 that is five full
+        // turns of ribbon twist appearing out of nowhere. That is the pop.
+        //
+        // Banking exists to keep the coil's cross-section round as it sweeps. When the coil is
+        // far narrower than the card itself there is no coil to keep round, so the roll should
+        // not be there. Fading it in against the card's own half-width gives a scale-correct
+        // ramp: by the time the coil radius matches the half-width the bank is at full strength
+        // and behaves exactly as before, and everything below that eases in smoothly.
+        float halfSpan;
+        float ridge;
+        EvaluateCrossSection(card, t, out halfSpan, out ridge);
+
+        float bankFade = 1f;
+        if (halfSpan > .000001f) bankFade = Mathf.Clamp01(Mathf.Abs(radius) / halfSpan);
+        if (bankFade <= .0001f) return;
+
+        bankRotation = Quaternion.AngleAxis(angle * Mathf.Rad2Deg * CurlBankAmount * bankFade, Vector3.forward);
     }
 
     // How finely the density curve is integrated. A handful of keyframes is smooth
@@ -129,6 +366,17 @@ public class HairCard : MonoBehaviour
     // can fold the mesh back on itself.
     static void ResolveSegmentPositions(int groupId, int segments, float[] segmentT)
     {
+        // A flat x1 density curve means evenly spaced rows by definition, so the whole
+        // 64-sample cumulative integration below - and the search that walks it once per row -
+        // reduces to a divide. This is the largest single saving of the lot: it is ~65 curve
+        // evaluations per card per rebuild, paid on every groom whether or not anyone has ever
+        // opened the Segment Density profile.
+        if (GroomShapeCurveRegistry.IsFlatOne(groupId, GroomShapeCurveChannel.SegmentDensity))
+        {
+            for (int i = 0; i <= segments; i++) segmentT[i] = (float)i / segments;
+            return;
+        }
+
         float step = 1f / SegmentDensitySamples;
         float previousDensity = Mathf.Max(0f, PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.SegmentDensity, 0f));
         segmentDensityCumulative[0] = 0f;
@@ -254,6 +502,37 @@ public class HairCard : MonoBehaviour
     public float curlFrequency = 0f;
     public float curlDiameter = 0f;
 
+    // WAVE: a planar sinusoid that snakes the card side to side within its own flat plane -
+    // amplitude in local X, phase advancing with t along the length. Deliberately NOT a coil:
+    // Curl already displaces in both X and Y and sweeps around the length axis, so the two
+    // compose rather than duplicate. Zero amplitude is off, which is what every project saved
+    // before this feature deserializes to.
+    public float waveAmplitude = 0f;
+    public float waveFrequency = 0f;
+
+    // 0 = side to side across the card's flat plane (the old <> behaviour), 1 = up and down
+    // across its face, anything between is a diagonal. Held as an ANGLE internally rather than
+    // a lerp between two axis vectors: lerping (1,0,0) toward (0,1,0) passes through a vector
+    // of length 0.707 at the midpoint, so a diagonal wave would visibly lose almost a third of
+    // its amplitude. An angle keeps the axis unit length at every setting, so the Amplitude
+    // slider means the same thing wherever this is parked.
+    //
+    // Defaults to 1 (up/down), NOT 0. A project saved by the first wave build has no
+    // waveDirection key at all, so it deserializes to this initializer and comes back up/down
+    // rather than side to side. Set the slider to 0 for the previous look.
+    public float waveDirection = 1f;
+
+    // ARCH: how pronounced the cross-section's convex profile is.
+    //
+    // 0.5 is neutral and reproduces exactly the shape the tool had before this existed - the
+    // ridge sitting at CrossSectionRidgeRatio of the width. 0 flattens the card to a plain
+    // ribbon, 1 doubles the arch. Centred rather than starting at zero on purpose, so the
+    // slider has headroom in BOTH directions from the look you already had.
+    //
+    // Unlike Curl and Wave this is a ControlState channel rather than a root-only one, which
+    // is what lets a POST affector drive it locally with spatial falloff.
+    public float arch = ArchNeutral;
+
     [Header("UV Settings")]
     public float uScale = 1.0f;
     public float vScale = 1.0f;
@@ -262,6 +541,26 @@ public class HairCard : MonoBehaviour
 
     [Header("Grouping")]
     public int groupId = 0;
+
+    // SYMMETRY.
+    //
+    // A mirrored card is a NORMAL card whose geometry is evaluated through a local-X mirror.
+    // Nothing about the mirror is baked into its stored numbers: length, width, bend, twist,
+    // the three angle offsets and the curl values are all stored exactly as its partner's.
+    // The negation happens at evaluation time, here in HairCard.
+    //
+    // That is the whole point. ModelViewer's sliders push ABSOLUTE values to every card in the
+    // group (ApplyGroupUpdate), so a card that merely had its twist negated at placement time
+    // would be flattened back to its partner's value the first time any slider moved, and the
+    // two sides would silently drift into being identical rather than mirrored. Because the
+    // mirror is a property of the CARD and not of its numbers, group sliders, POSTs, clumpers
+    // and variance all carry on working untouched and the pair stays symmetric forever.
+    //
+    // The maths: mirroring the card's local X axis is the conjugation v -> S v S with
+    // S = diag(-1, 1, 1). Under it, rotations about local X keep their sign while rotations
+    // about local Y and Z flip. So: offsetX and bendAngle are UNCHANGED, offsetY, offsetZ and
+    // twistAngle are NEGATED, and the curl coil reverses its handedness.
+    public bool mirrored = false;
 
     [Header("Selection State")]
     [Range(0f, 1f)] public float selectionWeight = 0f;
@@ -275,6 +574,8 @@ public class HairCard : MonoBehaviour
     private float storedOffsetX, storedOffsetY, storedOffsetZ;
     private float baseLength, baseWidth, baseBend, baseTwist, baseEmbedDepth;
     private float baseCurlFrequency, baseCurlDiameter;
+    private float baseWaveAmplitude, baseWaveFrequency, baseWaveDirection;
+    private float baseArch;
     private int baseSegments;
     private float baseOffsetX, baseOffsetY, baseOffsetZ;
     private Material cardMaterial;
@@ -422,6 +723,19 @@ public class HairCard : MonoBehaviour
     public Quaternion GetLengthProfileRotation(float t)
     {
         t = Mathf.Clamp01(t);
+        // A card with no bend, no twist, no angle offsets and no POST profile contributions
+        // has an identity profile rotation at every t, and the four curve evaluations below
+        // cannot change that - a multiplier only ever scales zero. Four evaluations per row
+        // per card saved on every straight card in the scene.
+        //
+        // Deliberately an exact zero test on the SCALARS rather than a flat-curve test: these
+        // four channels have per-POST overrides and route through the POST snapshot, so the
+        // registry's flat-curve answer would not be the whole story. Zero times anything is.
+        if (bendAngle == 0f && twistAngle == 0f
+            && storedOffsetX == 0f && storedOffsetY == 0f && storedOffsetZ == 0f
+            && postShapeProfileContributions.Count == 0)
+            return Quaternion.identity;
+
         float bendMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.Bend, t);
         float xMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.X, t);
         float yMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.Y, t);
@@ -442,11 +756,25 @@ public class HairCard : MonoBehaviour
                 (PostShapeCurveBridge.EvaluatePost(contribution.postId, GroomShapeCurveChannel.Y, t) - yMultiplier);
             profiledZ += contribution.z *
                 (PostShapeCurveBridge.EvaluatePost(contribution.postId, GroomShapeCurveChannel.Z, t) - zMultiplier);
+            // No sign flip needed here: profiledY and profiledZ are handed to MirroredEuler
+            // below, which negates the accumulated total. Flipping the contributions as well
+            // would cancel it back out.
         }
 
-        Quaternion fullOffset = Quaternion.Euler(storedOffsetX, storedOffsetY, storedOffsetZ);
-        Quaternion curvedOffset = Quaternion.Euler(profiledX, profiledY, profiledZ);
-        Quaternion bendAndTwist = Quaternion.Euler(profiledBend, 0f, twistAngle * t);
+        // Mirroring the whole profile chain, term by term. Every rotation here is built from
+        // Euler triples whose X component is a rotation about local X (sign preserved under the
+        // mirror) and whose Y and Z components rotate about local Y and Z (sign flipped). Twist
+        // is a roll about local Z, so it flips too; bend is about local X, so it does not.
+        //
+        // Doing it per-term rather than conjugating the finished quaternion matters, because the
+        // profile curves scale each component independently along the length - a mirror applied
+        // after profiling would not be the profile of the mirror.
+        Quaternion fullOffset = MirroredEuler(storedOffsetX, storedOffsetY, storedOffsetZ);
+        Quaternion curvedOffset = MirroredEuler(profiledX, profiledY, profiledZ);
+
+        float mirroredTwist = twistAngle;
+        if (mirrored) mirroredTwist = -twistAngle;
+        Quaternion bendAndTwist = Quaternion.Euler(profiledBend, 0f, mirroredTwist * t);
 
         return Quaternion.Inverse(fullOffset) * curvedOffset * bendAndTwist;
     }
@@ -486,6 +814,10 @@ public class HairCard : MonoBehaviour
         vOffset = state.vOffset;
         curlFrequency = state.curlFrequency;
         curlDiameter = state.curlDiameter;
+        waveAmplitude = state.waveAmplitude;
+        waveFrequency = state.waveFrequency;
+        waveDirection = state.waveDirection;
+        arch = state.arch;
         if (surfaceNormal != Vector3.zero) UpdateTransformOrientation(currentEmbedDepth);
 
         // Guarded. PostAffectorManager, PostFreeCanonicalAuthority and
@@ -514,7 +846,11 @@ public class HairCard : MonoBehaviour
             uOffset = uOffset,
             vOffset = vOffset,
             curlFrequency = curlFrequency,
-            curlDiameter = curlDiameter
+            curlDiameter = curlDiameter,
+            waveAmplitude = waveAmplitude,
+            waveFrequency = waveFrequency,
+            waveDirection = waveDirection,
+            arch = arch
         };
     }
 
@@ -525,6 +861,14 @@ public class HairCard : MonoBehaviour
         state.segments = Mathf.Clamp(state.segments, 1, 60);
         state.depth = Mathf.Max(0f, state.depth);
         state.curlDiameter = Mathf.Max(0f, state.curlDiameter);
+        // Amplitude is a magnitude, so it clamps like curl diameter. Frequency stays signed -
+        // a negative frequency simply runs the wave the other way, which is a usable result.
+        state.waveAmplitude = Mathf.Max(0f, state.waveAmplitude);
+        state.waveDirection = Mathf.Clamp01(state.waveDirection);
+        // No upper bound - a POST may push arch past the slider's range, the same way it can
+        // push Bend past 360. Negative is refused because an inverted arch is what the N- form
+        // flip is for, and two controls fighting over one inversion makes neither predictable.
+        state.arch = Mathf.Max(0f, state.arch);
         return state;
     }
 
@@ -582,7 +926,24 @@ public class HairCard : MonoBehaviour
     private void UpdateTransformOrientation(float embedDepth)
     {
         transform.position = spawnHitPoint - (surfaceNormal * embedDepth);
-        transform.rotation = Quaternion.LookRotation(surfaceNormal) * Quaternion.Euler(storedOffsetX, storedOffsetY, storedOffsetZ);
+
+        // surfaceNormal is ALREADY the mirrored normal for a mirrored card - the mirror of the
+        // placement is done once, at spawn. What is left to do here is the mirror of the card's
+        // own body, which is the S-conjugation of the authored angle triple.
+        //
+        // This is exact, not an approximation. LookRotation(M n) == M * LookRotation(n) * S for
+        // the world-X mirror M (both have forward M n, and world up is unchanged by M so both
+        // derive the same up), and Euler(ox, -oy, -oz) == S * Euler(ox, oy, oz) * S. Composing
+        // the two gives M * R * S, which is exactly the proper rotation whose local X axis is
+        // the reflection of the original's, i.e. a true mirror rather than a rotation.
+        transform.rotation = Quaternion.LookRotation(surfaceNormal) * MirroredEuler(storedOffsetX, storedOffsetY, storedOffsetZ);
+    }
+
+    // Euler(x, y, z) for a normal card; Euler(x, -y, -z) for a mirrored one.
+    private Quaternion MirroredEuler(float x, float y, float z)
+    {
+        if (!mirrored) return Quaternion.Euler(x, y, z);
+        return Quaternion.Euler(x, -y, -z);
     }
 
     public void UpdateVisualHighlight()
@@ -602,7 +963,7 @@ public class HairCard : MonoBehaviour
         if (cardMaterial.HasProperty("_Color")) cardMaterial.SetColor("_Color", finalColor);
     }
 
-    public void SetParameters(float newLength, float newWidth, int newSegments, float newBend, float newTwist, float offsetX, float offsetY, float offsetZ, float newEmbedDepth, float strengthMultiplier = 1f, float newUScale = 1f, float newVScale = 1f, float newUOffset = 0f, float newVOffset = 0f, float newCurlFrequency = 0f, float newCurlDiameter = 0f)
+    public void SetParameters(float newLength, float newWidth, int newSegments, float newBend, float newTwist, float offsetX, float offsetY, float offsetZ, float newEmbedDepth, float strengthMultiplier = 1f, float newUScale = 1f, float newVScale = 1f, float newUOffset = 0f, float newVOffset = 0f, float newCurlFrequency = 0f, float newCurlDiameter = 0f, float newWaveAmplitude = 0f, float newWaveFrequency = 0f, float newWaveDirection = 1f, float newArch = ArchNeutral)
     {
         if (selectionWeight > 0f)
         {
@@ -618,6 +979,10 @@ public class HairCard : MonoBehaviour
             currentEmbedDepth = Mathf.Lerp(baseEmbedDepth, newEmbedDepth, w);
             curlFrequency = Mathf.Lerp(baseCurlFrequency, newCurlFrequency, w);
             curlDiameter = Mathf.Lerp(baseCurlDiameter, newCurlDiameter, w);
+            waveAmplitude = Mathf.Lerp(baseWaveAmplitude, newWaveAmplitude, w);
+            waveFrequency = Mathf.Lerp(baseWaveFrequency, newWaveFrequency, w);
+            waveDirection = Mathf.Lerp(baseWaveDirection, newWaveDirection, w);
+            arch = Mathf.Lerp(baseArch, newArch, w);
         }
         else
         {
@@ -632,6 +997,10 @@ public class HairCard : MonoBehaviour
             currentEmbedDepth = newEmbedDepth;
             curlFrequency = newCurlFrequency;
             curlDiameter = newCurlDiameter;
+            waveAmplitude = newWaveAmplitude;
+            waveFrequency = newWaveFrequency;
+            waveDirection = newWaveDirection;
+            arch = newArch;
         }
         uScale = newUScale;
         vScale = newVScale;
@@ -653,7 +1022,7 @@ public class HairCard : MonoBehaviour
         GenerateMeshIfInputsChanged();
     }
 
-    public void CaptureBaseState(float activeLength, float activeWidth, int activeSegments, float activeBend, float activeTwist, float activeDepth, float ox, float oy, float oz, float activeCurlFrequency = 0f, float activeCurlDiameter = 0f)
+    public void CaptureBaseState(float activeLength, float activeWidth, int activeSegments, float activeBend, float activeTwist, float activeDepth, float ox, float oy, float oz, float activeCurlFrequency = 0f, float activeCurlDiameter = 0f, float activeWaveAmplitude = 0f, float activeWaveFrequency = 0f, float activeWaveDirection = 1f, float activeArch = ArchNeutral)
     {
         baseLength = activeLength;
         baseWidth = activeWidth;
@@ -666,6 +1035,10 @@ public class HairCard : MonoBehaviour
         baseOffsetZ = oz;
         baseCurlFrequency = activeCurlFrequency;
         baseCurlDiameter = activeCurlDiameter;
+        baseWaveAmplitude = activeWaveAmplitude;
+        baseWaveFrequency = activeWaveFrequency;
+        baseWaveDirection = activeWaveDirection;
+        baseArch = activeArch;
     }
 
     public void SetSelectionWeight(float weight) { selectionWeight = Mathf.Clamp01(weight); UpdateVisualHighlight(); }
@@ -917,6 +1290,10 @@ public class HairCard : MonoBehaviour
             hash = hash * 31 + storedOffsetZ.GetHashCode();
             hash = hash * 31 + curlFrequency.GetHashCode();
             hash = hash * 31 + curlDiameter.GetHashCode();
+            hash = hash * 31 + waveAmplitude.GetHashCode();
+            hash = hash * 31 + waveFrequency.GetHashCode();
+            hash = hash * 31 + waveDirection.GetHashCode();
+            hash = hash * 31 + arch.GetHashCode();
             hash = hash * 31 + uScale.GetHashCode();
             hash = hash * 31 + vScale.GetHashCode();
             hash = hash * 31 + uOffset.GetHashCode();
@@ -925,6 +1302,9 @@ public class HairCard : MonoBehaviour
             // groupId routes every curve lookup in the tree, so a re-grouped card must rebuild
             // even when all of its own numbers are identical.
             hash = hash * 31 + groupId;
+
+            // Flipping a card between mirrored and normal changes every vertex it produces.
+            hash = hash * 31 + mirrored.GetHashCode();
 
             // POST profile provenance. The COUNT alone is not enough - a POST whose weight
             // changes rewrites bend/x/y/z with the count unchanged.
@@ -967,6 +1347,11 @@ public class HairCard : MonoBehaviour
             // cost more than the rebuild this is here to avoid. A monotonic stamp is the cheap,
             // complete answer. Per-GROUP for the registry, so that editing one group's profile
             // does not dirty every card in the scene.
+            // Per-GROUP form flip. Lives outside the card like the curve registries do, so it
+            // has to be hashed or toggling the button would change nothing until some unrelated
+            // edit happened to dirty the group.
+            hash = hash * 31 + GroupNormalFlipAuthority.IsFlipped(groupId).GetHashCode();
+
             hash = hash * 31 + GroomShapeCurveRegistry.EpochFor(groupId);
             hash = hash * 31 + PostShapeCurveBridge.Epoch;
 
@@ -1002,8 +1387,6 @@ public class HairCard : MonoBehaviour
         baseVertices = new Vector3[numVertices];
         Vector2[] uvs = new Vector2[numVertices];
         int[] triangles = new int[segments * 12];
-        float halfWidth = width * 0.5f;
-        float ridgeHeight = GetCrossSectionRidgeHeight();
 
         // Segment density remap, spine and section frames all resolved up front - the
         // frame at a row needs its neighbours' spine points, so it cannot be done
@@ -1028,7 +1411,10 @@ public class HairCard : MonoBehaviour
             if (vScale < 0f) baseV = absVScale - baseV;
             float finalV = baseV + vOffset;
             int index = i * columns;
-            float currentWidth = halfWidth * flattenFactor;
+            // Per row now - the Width profile curve makes both of these functions of t.
+            float currentWidth;
+            float ridgeHeight;
+            EvaluateCrossSection(this, t, out currentWidth, out ridgeHeight);
 
             // Curl is resolved before the cross-section is built, because the section
             // has to be banked into the turn as it is laid down rather than rotated
@@ -1036,7 +1422,10 @@ public class HairCard : MonoBehaviour
             // with it.
             Vector3 curlOffset;
             Quaternion bankRotation;
-            EvaluateCurl(groupId, curlFrequency, curlDiameter, t, out curlOffset, out bankRotation);
+            EvaluateCurl(this, t, out curlOffset, out bankRotation, mirrored);
+
+            Vector3 waveOffset;
+            EvaluateWave(this, t, out waveOffset, mirrored);
 
             Vector3 sectionOrigin = new Vector3(0f, 0f, z);
             Vector3 left = sectionOrigin + bankRotation * new Vector3(-currentWidth, 0f, 0f);
@@ -1065,6 +1454,14 @@ public class HairCard : MonoBehaviour
             center += curlOffset;
             right += curlOffset;
 
+            // Wave rides on top of curl. Both are displacements of the whole cross-section in
+            // the card's own local space, applied after the section has been built and banked
+            // and before the path-following frame places it, so a card can be curled AND wavy
+            // without either shape fighting the other.
+            left += waveOffset;
+            center += waveOffset;
+            right += waveOffset;
+
             // The spine keeps exactly the position the authored bend/twist rotation
             // always put it at. Only the section's own lateral extent - width, ridge,
             // clump displacement, curl offset - is placed with the path-following
@@ -1080,28 +1477,7 @@ public class HairCard : MonoBehaviour
             uvs[index + 2] = new Vector2(finalURight, finalV);
         }
 
-        int triIndex = 0;
-        for (int i = 0; i < segments; i++)
-        {
-            int row = i * columns;
-            int next = row + columns;
-
-            // Left half of the convex strip.
-            triangles[triIndex++] = row;
-            triangles[triIndex++] = next;
-            triangles[triIndex++] = row + 1;
-            triangles[triIndex++] = row + 1;
-            triangles[triIndex++] = next;
-            triangles[triIndex++] = next + 1;
-
-            // Right half.
-            triangles[triIndex++] = row + 1;
-            triangles[triIndex++] = next + 1;
-            triangles[triIndex++] = row + 2;
-            triangles[triIndex++] = row + 2;
-            triangles[triIndex++] = next + 1;
-            triangles[triIndex++] = next + 2;
-        }
+        BuildStripTriangles(segments, GroupNormalFlipAuthority.IsFlipped(groupId), triangles);
 
         int sourceSignature = ComputeGeneratedMeshSignature(baseVertices, uvs, segments);
         generatedMeshSignature = sourceSignature;

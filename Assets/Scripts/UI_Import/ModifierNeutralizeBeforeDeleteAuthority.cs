@@ -205,8 +205,6 @@ public class ModifierDeleteNeutralizeHook : MonoBehaviour, IPointerDownHandler
         const int columns = HairCard.CrossSectionColumns;
         int segments = Mathf.Clamp(card.segments, 1, 60);
         Vector3[] vertices = new Vector3[(segments + 1) * columns];
-        float halfWidth = Mathf.Max(.0005f, card.width) * .5f;
-        float ridge = card.GetCrossSectionRidgeHeight();
 
         // Segment density remap, spine and path-following section frames come straight
         // from HairCard, so this reconstruction cannot drift from GenerateMesh. It once
@@ -223,7 +221,11 @@ public class ModifierDeleteNeutralizeHook : MonoBehaviour, IPointerDownHandler
         {
             float t = segmentT[i];
             float z = t * cardLength;
-            float span = halfWidth * card.flattenFactor;
+            // Shared with GenerateMesh, same reason as the clumper rebuild: a neutralised
+            // card must not quietly revert to the untapered shape.
+            float span;
+            float ridge;
+            HairCard.EvaluateCrossSection(card, t, out span, out ridge);
             int index = i * columns;
 
             // HairCard.EvaluateCurl is the shared coil definition, so the neutralised
@@ -231,12 +233,17 @@ public class ModifierDeleteNeutralizeHook : MonoBehaviour, IPointerDownHandler
             // The bank shapes the section, then the offset moves it.
             Vector3 curlOffset;
             Quaternion bankRotation;
-            HairCard.EvaluateCurl(card.groupId, card.curlFrequency, card.curlDiameter, t, out curlOffset, out bankRotation);
+            HairCard.EvaluateCurl(card, t, out curlOffset, out bankRotation, card.mirrored);
+
+            // Shared with GenerateMesh so a wavy card stays wavy once clumped or neutralised.
+            // Skipping this is how curl and segment density each silently reverted here before.
+            Vector3 waveOffset;
+            HairCard.EvaluateWave(card, t, out waveOffset, card.mirrored);
 
             Vector3 sectionOrigin = new Vector3(0f, 0f, z);
-            Vector3 left = sectionOrigin + bankRotation * new Vector3(-span, 0f, 0f) + curlOffset;
-            Vector3 center = sectionOrigin + bankRotation * new Vector3(0f, ridge, 0f) + curlOffset;
-            Vector3 right = sectionOrigin + bankRotation * new Vector3(span, 0f, 0f) + curlOffset;
+            Vector3 left = sectionOrigin + bankRotation * new Vector3(-span, 0f, 0f) + curlOffset + waveOffset;
+            Vector3 center = sectionOrigin + bankRotation * new Vector3(0f, ridge, 0f) + curlOffset + waveOffset;
+            Vector3 right = sectionOrigin + bankRotation * new Vector3(span, 0f, 0f) + curlOffset + waveOffset;
 
             Vector3 spinePoint = segmentSpine[i];
             Quaternion sectionFrame = segmentFrame[i];

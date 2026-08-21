@@ -57,6 +57,10 @@ public class ModelViewer : MonoBehaviour
     public float currentVOffset = 0.0f;
     public float currentCurlFrequency = 0f;
     public float currentCurlDiameter = 0f;
+    public float currentWaveAmplitude = 0f;
+    public float currentWaveFrequency = 0f;
+    public float currentWaveDirection = 1f;
+    public float currentArch = HairCard.ArchNeutral;
 
     // Group Management
     public int currentGroupId = 0;
@@ -95,6 +99,10 @@ public class ModelViewer : MonoBehaviour
     private Slider widthSlider;
     private Slider curlFrequencySlider;
     private Slider curlDiameterSlider;
+    private Slider waveAmplitudeSlider;
+    private Slider waveFrequencySlider;
+    private Slider waveDirectionSlider;
+    private Slider archSlider;
     private Slider segmentsSlider;
     private Slider bendSlider;
     private Slider twistSlider;
@@ -182,32 +190,64 @@ public class ModelViewer : MonoBehaviour
     {
         float delta = val - currentLength;
         currentLength = val;
-        if (hasSelectionHotspot) UpdateActiveCard();
-        else ApplyGroupUpdate(c => c.SetParameters(Mathf.Max(0.0001f, isRelativeMode ? c.length + delta : val), c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
+        if (HasLiveSelection()) UpdateActiveCard();
+        else ApplyGroupUpdate(c => c.SetParameters(Mathf.Max(0.0001f, isRelativeMode ? c.length + delta : val), c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency, c.waveDirection, c.arch));
     }
 
     public void OnSliderWidthChanged(float val)
     {
         float delta = val - currentWidth;
         currentWidth = val;
-        if (hasSelectionHotspot) UpdateActiveCard();
-        else ApplyGroupUpdate(c => c.SetParameters(c.length, Mathf.Max(0.0005f, isRelativeMode ? c.width + delta : val), c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
+        if (HasLiveSelection()) UpdateActiveCard();
+        else ApplyGroupUpdate(c => c.SetParameters(c.length, Mathf.Max(0.0005f, isRelativeMode ? c.width + delta : val), c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency, c.waveDirection, c.arch));
     }
 
     public void OnSliderCurlFrequencyChanged(float val)
     {
         float delta = val - currentCurlFrequency;
         currentCurlFrequency = val;
-        if (hasSelectionHotspot) UpdateActiveCard();
-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, isRelativeMode ? c.curlFrequency + delta : val, c.curlDiameter));
+        if (HasLiveSelection()) UpdateActiveCard();
+        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, isRelativeMode ? c.curlFrequency + delta : val, c.curlDiameter, c.waveAmplitude, c.waveFrequency, c.waveDirection, c.arch));
+    }
+
+    public void OnSliderWaveAmplitudeChanged(float val)
+    {
+        float delta = val - currentWaveAmplitude;
+        currentWaveAmplitude = val;
+        if (HasLiveSelection()) UpdateActiveCard();
+        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, Mathf.Max(0f, isRelativeMode ? c.waveAmplitude + delta : val), c.waveFrequency, c.waveDirection, c.arch));
+    }
+
+    public void OnSliderArchChanged(float val)
+    {
+        float delta = val - currentArch;
+        currentArch = val;
+        if (HasLiveSelection()) UpdateActiveCard();
+        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency, c.waveDirection, Mathf.Max(0f, isRelativeMode ? c.arch + delta : val)));
+    }
+
+    public void OnSliderWaveDirectionChanged(float val)
+    {
+        float delta = val - currentWaveDirection;
+        currentWaveDirection = val;
+        if (HasLiveSelection()) UpdateActiveCard();
+        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency, Mathf.Clamp01(isRelativeMode ? c.waveDirection + delta : val), c.arch));
+    }
+
+    public void OnSliderWaveFrequencyChanged(float val)
+    {
+        float delta = val - currentWaveFrequency;
+        currentWaveFrequency = val;
+        if (HasLiveSelection()) UpdateActiveCard();
+        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, isRelativeMode ? c.waveFrequency + delta : val, c.waveDirection, c.arch));
     }
 
     public void OnSliderCurlDiameterChanged(float val)
     {
         float delta = val - currentCurlDiameter;
         currentCurlDiameter = val;
-        if (hasSelectionHotspot) UpdateActiveCard();
-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, Mathf.Max(0f, isRelativeMode ? c.curlDiameter + delta : val)));
+        if (HasLiveSelection()) UpdateActiveCard();
+        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, Mathf.Max(0f, isRelativeMode ? c.curlDiameter + delta : val), c.waveAmplitude, c.waveFrequency, c.waveDirection, c.arch));
     }
 
     public void OnSliderSegmentsChanged(float val)
@@ -215,84 +255,84 @@ public class ModelViewer : MonoBehaviour
         int targetSegs = Mathf.RoundToInt(val);
         int deltaSegs = targetSegs - currentSegments;
         currentSegments = targetSegs;
-        if (hasSelectionHotspot) UpdateActiveCard();
-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, Mathf.Clamp(isRelativeMode ? c.segments + deltaSegs : targetSegs, 4, 60), c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
+        if (HasLiveSelection()) UpdateActiveCard();
+        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, Mathf.Clamp(isRelativeMode ? c.segments + deltaSegs : targetSegs, 4, 60), c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency, c.waveDirection, c.arch));
     }
 
     public void OnSliderBendChanged(float val)
     {
         float delta = val - currentBend;
         currentBend = val;
-        if (hasSelectionHotspot) UpdateActiveCard();
-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, isRelativeMode ? c.bendAngle + delta : val, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
+        if (HasLiveSelection()) UpdateActiveCard();
+        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, isRelativeMode ? c.bendAngle + delta : val, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency, c.waveDirection, c.arch));
     }
 
     public void OnSliderTwistChanged(float val)
     {
         float delta = val - currentTwist;
         currentTwist = val;
-        if (hasSelectionHotspot) UpdateActiveCard();
-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, isRelativeMode ? c.twistAngle + delta : val, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
+        if (HasLiveSelection()) UpdateActiveCard();
+        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, isRelativeMode ? c.twistAngle + delta : val, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency, c.waveDirection, c.arch));
     }
 
     public void OnSliderEmbedDepthChanged(float val)
     {
         float delta = val - currentEmbedDepth;
         currentEmbedDepth = val;
-        if (hasSelectionHotspot) UpdateActiveCard();
-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), Mathf.Max(0f, isRelativeMode ? c.GetEmbedDepth() + delta : val), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
+        if (HasLiveSelection()) UpdateActiveCard();
+        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), Mathf.Max(0f, isRelativeMode ? c.GetEmbedDepth() + delta : val), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency, c.waveDirection, c.arch));
     }
 
     public void OnSliderOffsetXChanged(float val)
     {
         float delta = val - currentOffsetX;
         currentOffsetX = val;
-        if (hasSelectionHotspot) UpdateActiveCard();
-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, isRelativeMode ? c.GetOffsetX() + delta : val, c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
+        if (HasLiveSelection()) UpdateActiveCard();
+        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, isRelativeMode ? c.GetOffsetX() + delta : val, c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency, c.waveDirection, c.arch));
     }
 
     public void OnSliderOffsetYChanged(float val)
     {
         float delta = val - currentOffsetY;
         currentOffsetY = val;
-        if (hasSelectionHotspot) UpdateActiveCard();
-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), isRelativeMode ? c.GetOffsetY() + delta : val, c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
+        if (HasLiveSelection()) UpdateActiveCard();
+        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), isRelativeMode ? c.GetOffsetY() + delta : val, c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency, c.waveDirection, c.arch));
     }
 
     public void OnSliderOffsetZChanged(float val)
     {
         float delta = val - currentOffsetZ;
         currentOffsetZ = val;
-        if (hasSelectionHotspot) UpdateActiveCard();
-        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), isRelativeMode ? c.GetOffsetZ() + delta : val, c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
+        if (HasLiveSelection()) UpdateActiveCard();
+        else ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), isRelativeMode ? c.GetOffsetZ() + delta : val, c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency, c.waveDirection, c.arch));
     }
 
     public void OnSliderUScaleChanged(float val)
     {
         currentUScale = val;
         groupUScales[currentGroupId] = val;
-        ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, val, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
+        ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, val, c.vScale, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency, c.waveDirection, c.arch));
     }
 
     public void OnSliderVScaleChanged(float val)
     {
         currentVScale = val;
         groupVScales[currentGroupId] = val;
-        ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, val, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter));
+        ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, val, c.uOffset, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency, c.waveDirection, c.arch));
     }
 
     public void OnSliderUOffsetChanged(float val)
     {
         currentUOffset = val;
         groupUOffsets[currentGroupId] = val;
-        ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, val, c.vOffset, c.curlFrequency, c.curlDiameter));
+        ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, val, c.vOffset, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency, c.waveDirection, c.arch));
     }
 
     public void OnSliderVOffsetChanged(float val)
     {
         currentVOffset = val;
         groupVOffsets[currentGroupId] = val;
-        ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, val, c.curlFrequency, c.curlDiameter));
+        ApplyGroupUpdate(c => c.SetParameters(c.length, c.width, c.segments, c.bendAngle, c.twistAngle, c.GetOffsetX(), c.GetOffsetY(), c.GetOffsetZ(), c.GetEmbedDepth(), 1f, c.uScale, c.vScale, c.uOffset, val, c.curlFrequency, c.curlDiameter, c.waveAmplitude, c.waveFrequency, c.waveDirection, c.arch));
     }
 
     void ResetAllSliders()
@@ -301,6 +341,10 @@ public class ModelViewer : MonoBehaviour
         currentWidth = 0.01f;
         currentCurlFrequency = 0f;
         currentCurlDiameter = 0f;
+        currentWaveAmplitude = 0f;
+        currentWaveFrequency = 0f;
+        currentWaveDirection = 1f;
+        currentArch = HairCard.ArchNeutral;
         currentSegments = 12;
         currentBend = 0f;
         currentTwist = 0f;
@@ -320,6 +364,10 @@ public class ModelViewer : MonoBehaviour
         if (widthSlider != null) widthSlider.value = currentWidth;
         if (curlFrequencySlider != null) curlFrequencySlider.value = currentCurlFrequency;
         if (curlDiameterSlider != null) curlDiameterSlider.value = currentCurlDiameter;
+        if (waveAmplitudeSlider != null) waveAmplitudeSlider.value = currentWaveAmplitude;
+        if (waveFrequencySlider != null) waveFrequencySlider.value = currentWaveFrequency;
+        if (waveDirectionSlider != null) waveDirectionSlider.value = currentWaveDirection;
+        if (archSlider != null) archSlider.value = currentArch;
         if (segmentsSlider != null) segmentsSlider.value = currentSegments;
         if (bendSlider != null) bendSlider.value = currentBend;
         if (twistSlider != null) twistSlider.value = currentTwist;
@@ -503,6 +551,20 @@ public class ModelViewer : MonoBehaviour
         CreateSliderUI(panelGO.transform, "Width", 0.0005f, 0.05f, currentWidth, OnSliderWidthChanged, out widthSlider, 38, 16);
         CreateSliderUI(panelGO.transform, "Curl Frequency", -10f, 10f, currentCurlFrequency, OnSliderCurlFrequencyChanged, out curlFrequencySlider, 38, 16);
         CreateSliderUI(panelGO.transform, "Curl Diameter", 0f, 0.15f, currentCurlDiameter, OnSliderCurlDiameterChanged, out curlDiameterSlider, 38, 16);
+        // Label strings here are load-bearing: CreateSliderUI names the GameObject
+        // labelText + "_Slider", and PostRootContextRestore, PostAffectorManager and
+        // GroomSessionResetCoordinator all switch on those exact names. Amplitude mirrors
+        // Curl Diameter's range (a magnitude, min 0); frequency mirrors Curl Frequency (signed).
+        // Amplitude tops out at 0.03, not the 0.15 it shipped with. This is an absolute local-space
+        // displacement and the default card is 0.2 long by 0.01 wide, so 0.15 was fifteen card
+        // widths of throw and the shape saturated within the first fifth of the slider. 0.03 puts
+        // the usable range across the whole travel. Raise this number if you want more headroom.
+        CreateSliderUI(panelGO.transform, "Wave Amplitude", 0f, 0.03f, currentWaveAmplitude, OnSliderWaveAmplitudeChanged, out waveAmplitudeSlider, 38, 16);
+        CreateSliderUI(panelGO.transform, "Wave Frequency", -10f, 10f, currentWaveFrequency, OnSliderWaveFrequencyChanged, out waveFrequencySlider, 38, 16);
+        // 0 = <> side to side, 1 = up/dn, anything between is a diagonal.
+        CreateSliderUI(panelGO.transform, "Wave Direction", 0f, 1f, currentWaveDirection, OnSliderWaveDirectionChanged, out waveDirectionSlider, 38, 16);
+        // 0 = flat ribbon, 0.5 = the profile the tool has always had, 1 = twice the arch.
+        CreateSliderUI(panelGO.transform, "Arch", 0f, 1f, currentArch, OnSliderArchChanged, out archSlider, 38, 16);
         CreateSliderUI(panelGO.transform, "Segments", 4, 60, currentSegments, OnSliderSegmentsChanged, out segmentsSlider, 38, 16);
         CreateSliderUI(panelGO.transform, "Bend Angle", -360f, 360f, currentBend, OnSliderBendChanged, out bendSlider, 38, 16);
         CreateSliderUI(panelGO.transform, "Twist Angle", -360f, 360f, currentTwist, OnSliderTwistChanged, out twistSlider, 38, 16);
@@ -620,11 +682,9 @@ public class ModelViewer : MonoBehaviour
         groupVScales[id] = currentVScale;
         groupUOffsets[id] = currentUOffset;
         groupVOffsets[id] = currentVOffset;
+        // Sets every current* field from the group's root state and then pushes the whole
+        // slider set - UV included, because the four UV fields were assigned just above.
         SyncShapeSlidersToGroupRoot(id);
-        if (uScaleSlider != null) uScaleSlider.SetValueWithoutNotify(currentUScale);
-        if (vScaleSlider != null) vScaleSlider.SetValueWithoutNotify(currentVScale);
-        if (uOffsetSlider != null) uOffsetSlider.SetValueWithoutNotify(currentUOffset);
-        if (vOffsetSlider != null) vOffsetSlider.SetValueWithoutNotify(currentVOffset);
         RefreshGroupListUI();
         if (flashGroupCoroutine != null) StopCoroutine(flashGroupCoroutine);
         flashGroupCoroutine = StartCoroutine(FlashActiveGroupRoutine(currentGroupId));
@@ -685,7 +745,11 @@ public class ModelViewer : MonoBehaviour
                     y = MedianOf(sampled, s => s.y),
                     z = MedianOf(sampled, s => s.z),
                     curlFrequency = MedianOf(sampled, s => s.curlFrequency),
-                    curlDiameter = MedianOf(sampled, s => s.curlDiameter)
+                    curlDiameter = MedianOf(sampled, s => s.curlDiameter),
+                    waveAmplitude = MedianOf(sampled, s => s.waveAmplitude),
+                    waveFrequency = MedianOf(sampled, s => s.waveFrequency),
+                    waveDirection = MedianOf(sampled, s => s.waveDirection),
+                    arch = MedianOf(sampled, s => s.arch)
                 };
                 found = true;
             }
@@ -697,7 +761,7 @@ public class ModelViewer : MonoBehaviour
             state = new GroomRootStateAuthority.RootState
             {
                 length = .2f, width = .01f, segments = 12, bend = 0f, twist = 0f, depth = .002f,
-                x = 0f, y = 0f, z = 0f, curlFrequency = 0f, curlDiameter = 0f
+                x = 0f, y = 0f, z = 0f, curlFrequency = 0f, curlDiameter = 0f, waveAmplitude = 0f, waveFrequency = 0f, waveDirection = 1f, arch = HairCard.ArchNeutral
             };
         }
 
@@ -712,7 +776,28 @@ public class ModelViewer : MonoBehaviour
         currentOffsetZ = state.z;
         currentCurlFrequency = state.curlFrequency;
         currentCurlDiameter = state.curlDiameter;
+        currentWaveAmplitude = state.waveAmplitude;
+        currentWaveFrequency = state.waveFrequency;
+        currentWaveDirection = state.waveDirection;
+        currentArch = state.arch;
 
+        PushAllGroomSliders();
+    }
+
+    // THE one place every grooming slider is pushed from its backing field.
+    //
+    // This list used to be split in two - the shape sliders here, the four UV sliders inline in
+    // SelectGroup - and that split is exactly how it drifted: every parameter added since has
+    // needed a hand edit in both, and a miss shows up as "I clicked the group and that one
+    // slider kept its old value", which is easy to see and hard to attribute.
+    //
+    // Anything with a slider goes in here and nowhere else. A new parameter is then picked up
+    // by group selection, by POST/CLUMPER exit and by the modifier-exit restore for free.
+    //
+    // SetValueWithoutNotify throughout, never .value: these are all UI-follows-state pushes,
+    // and firing the change callbacks would write the values straight back out over the group.
+    void PushAllGroomSliders()
+    {
         if (lengthSlider != null) lengthSlider.SetValueWithoutNotify(currentLength);
         if (widthSlider != null) widthSlider.SetValueWithoutNotify(currentWidth);
         if (segmentsSlider != null) segmentsSlider.SetValueWithoutNotify(currentSegments);
@@ -724,6 +809,14 @@ public class ModelViewer : MonoBehaviour
         if (offsetZSlider != null) offsetZSlider.SetValueWithoutNotify(currentOffsetZ);
         if (curlFrequencySlider != null) curlFrequencySlider.SetValueWithoutNotify(currentCurlFrequency);
         if (curlDiameterSlider != null) curlDiameterSlider.SetValueWithoutNotify(currentCurlDiameter);
+        if (waveAmplitudeSlider != null) waveAmplitudeSlider.SetValueWithoutNotify(currentWaveAmplitude);
+        if (waveFrequencySlider != null) waveFrequencySlider.SetValueWithoutNotify(currentWaveFrequency);
+        if (waveDirectionSlider != null) waveDirectionSlider.SetValueWithoutNotify(currentWaveDirection);
+        if (archSlider != null) archSlider.SetValueWithoutNotify(currentArch);
+        if (uScaleSlider != null) uScaleSlider.SetValueWithoutNotify(currentUScale);
+        if (vScaleSlider != null) vScaleSlider.SetValueWithoutNotify(currentVScale);
+        if (uOffsetSlider != null) uOffsetSlider.SetValueWithoutNotify(currentUOffset);
+        if (vOffsetSlider != null) vOffsetSlider.SetValueWithoutNotify(currentVOffset);
     }
 
     IEnumerator FlashActiveGroupRoutine(int activeId)
@@ -997,14 +1090,47 @@ public class ModelViewer : MonoBehaviour
         return rowGO;
     }
 
+    // Is there a LIVE localized selection - a hotspot that some card in this group actually
+    // carries weight for?
+    //
+    // hasSelectionHotspot on its own is not enough, and trusting it is why group-level slider
+    // edits could silently do nothing at all. PostFreeCanonicalAuthority calls
+    // SetSelectionWeight(0f) on every card of every group that has NO POSTs, every frame. So
+    // the moment the last POST is removed from a group, every card's weight is pinned to zero -
+    // while hasSelectionHotspot can still be true, because nothing on that path clears it
+    // (ClearSelectionHotspot is only reached by ctrl+clicking empty space, or by
+    // ClumperPostOwnershipAuthority, and that one only fires while a clumper is SELECTED).
+    //
+    // In that state every slider callback below routed to UpdateActiveCard(), which filters on
+    // selectionWeight > 0f and therefore matched ZERO cards. The slider moved, current* updated,
+    // and not one card was touched. No error, no visual change, nothing to attribute it to.
+    //
+    // Asking whether any card is actually weighted turns a stale flag into a harmless one.
+    bool HasLiveSelection()
+    {
+        if (!hasSelectionHotspot) return false;
+
+        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
+        {
+            if (card == null || card.groupId != currentGroupId) continue;
+            if (card.selectionWeight > 0f) return true;
+        }
+
+        // Claimed, but nothing carries weight - so there is no selection to edit. Drop the flag
+        // rather than re-scanning on every future slider event, and go through the real teardown
+        // so the brush rows and highlight state are cleaned up too.
+        ClearSelectionHotspot();
+        return false;
+    }
+
     void UpdateActiveCard()
     {
         if (hasSelectionHotspot)
         {
             HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
-            foreach (HairCard card in allCards) if (card.groupId == currentGroupId && card.selectionWeight > 0f) card.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, selectionStrength, currentUScale, currentVScale, currentUOffset, currentVOffset, currentCurlFrequency, currentCurlDiameter);
+            foreach (HairCard card in allCards) if (card.groupId == currentGroupId && card.selectionWeight > 0f) card.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, selectionStrength, currentUScale, currentVScale, currentUOffset, currentVOffset, currentCurlFrequency, currentCurlDiameter, currentWaveAmplitude, currentWaveFrequency, currentWaveDirection, currentArch);
         }
-        else if (lastPlacedCard != null) lastPlacedCard.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, 1f, currentUScale, currentVScale, currentUOffset, currentVOffset, currentCurlFrequency, currentCurlDiameter);
+        else if (lastPlacedCard != null) lastPlacedCard.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, 1f, currentUScale, currentVScale, currentUOffset, currentVOffset, currentCurlFrequency, currentCurlDiameter, currentWaveAmplitude, currentWaveFrequency, currentWaveDirection, currentArch);
     }
 
     void Update() { HandleCameraControls(); HandleGrooming(); }
@@ -1045,7 +1171,7 @@ public class ModelViewer : MonoBehaviour
                 groupVScales[newId] = currentVScale;
                 groupUOffsets[newId] = currentUOffset;
                 groupVOffsets[newId] = currentVOffset;
-                foreach (var card in sessionPlacedCards) if (card != null) { card.groupId = newId; card.SetParameters(card.length, card.width, card.segments, card.bendAngle, card.twistAngle, card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ(), card.GetEmbedDepth(), 1f, currentUScale, currentVScale, currentUOffset, currentVOffset, card.curlFrequency, card.curlDiameter); }
+                foreach (var card in sessionPlacedCards) if (card != null) { card.groupId = newId; card.SetParameters(card.length, card.width, card.segments, card.bendAngle, card.twistAngle, card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ(), card.GetEmbedDepth(), 1f, currentUScale, currentVScale, currentUOffset, currentVOffset, card.curlFrequency, card.curlDiameter, card.waveAmplitude, card.waveFrequency, card.waveDirection, card.arch); }
                 // Those cards just changed group. Same reasoning as the New Group button:
                 // a shift-drag that promotes itself into a fresh group is the start of new
                 // work, so end the SOLO rather than have the cards you just drew vanish
@@ -1087,9 +1213,9 @@ public class ModelViewer : MonoBehaviour
         if (groupCards.Length > 0)
         {
             var nearestCards = groupCards.OrderBy(card => Vector3.Distance(brushCenter, card.transform.position)).Take(6).ToList();
-            float totalWeight = 0f, avgLength = 0f, avgWidth = 0f, avgBend = 0f, avgTwist = 0f, avgCurlFrequency = 0f, avgCurlDiameter = 0f;
+            float totalWeight = 0f, avgLength = 0f, avgWidth = 0f, avgBend = 0f, avgTwist = 0f, avgCurlFrequency = 0f, avgCurlDiameter = 0f, avgWaveAmplitude = 0f, avgWaveFrequency = 0f, avgWaveDirection = 0f, avgArch = 0f;
             int accumulatedSegments = 0;
-            foreach (var card in nearestCards) { float dist = Vector3.Distance(brushCenter, card.transform.position); float weight = 1f / (dist + 0.0001f); totalWeight += weight; avgLength += card.length * weight; avgWidth += card.width * weight; avgBend += card.bendAngle * weight; avgTwist += card.twistAngle * weight; avgCurlFrequency += card.curlFrequency * weight; avgCurlDiameter += card.curlDiameter * weight; accumulatedSegments += card.segments; }
+            foreach (var card in nearestCards) { float dist = Vector3.Distance(brushCenter, card.transform.position); float weight = 1f / (dist + 0.0001f); totalWeight += weight; avgLength += card.length * weight; avgWidth += card.width * weight; avgBend += card.bendAngle * weight; avgTwist += card.twistAngle * weight; avgCurlFrequency += card.curlFrequency * weight; avgCurlDiameter += card.curlDiameter * weight; avgWaveAmplitude += card.waveAmplitude * weight; avgWaveFrequency += card.waveFrequency * weight; avgWaveDirection += card.waveDirection * weight; avgArch += card.arch * weight; accumulatedSegments += card.segments; }
             if (totalWeight > 0f)
             {
                 currentLength = avgLength / totalWeight;
@@ -1098,6 +1224,10 @@ public class ModelViewer : MonoBehaviour
                 currentTwist = avgTwist / totalWeight;
                 currentCurlFrequency = avgCurlFrequency / totalWeight;
                 currentCurlDiameter = avgCurlDiameter / totalWeight;
+                currentWaveAmplitude = avgWaveAmplitude / totalWeight;
+                currentWaveFrequency = avgWaveFrequency / totalWeight;
+                currentWaveDirection = avgWaveDirection / totalWeight;
+                currentArch = avgArch / totalWeight;
                 currentSegments = Mathf.RoundToInt((float)accumulatedSegments / nearestCards.Count);
                 if (lengthSlider != null) lengthSlider.SetValueWithoutNotify(currentLength);
                 if (widthSlider != null) widthSlider.SetValueWithoutNotify(currentWidth);
@@ -1105,6 +1235,10 @@ public class ModelViewer : MonoBehaviour
                 if (twistSlider != null) twistSlider.SetValueWithoutNotify(currentTwist);
                 if (curlFrequencySlider != null) curlFrequencySlider.SetValueWithoutNotify(currentCurlFrequency);
                 if (curlDiameterSlider != null) curlDiameterSlider.SetValueWithoutNotify(currentCurlDiameter);
+        if (waveAmplitudeSlider != null) waveAmplitudeSlider.SetValueWithoutNotify(currentWaveAmplitude);
+        if (waveFrequencySlider != null) waveFrequencySlider.SetValueWithoutNotify(currentWaveFrequency);
+        if (waveDirectionSlider != null) waveDirectionSlider.SetValueWithoutNotify(currentWaveDirection);
+        if (archSlider != null) archSlider.SetValueWithoutNotify(currentArch);
                 if (segmentsSlider != null) segmentsSlider.SetValueWithoutNotify(currentSegments);
             }
         }
@@ -1134,24 +1268,57 @@ public class ModelViewer : MonoBehaviour
         {
             if (card.groupId != currentGroupId) { card.SetSelectionWeight(0f); continue; }
             float distance = Vector3.Distance(brushCenter, card.transform.position);
-            if (distance <= brushFalloffDistance) { float weight = Mathf.Clamp01(1f - (distance / brushFalloffDistance)); card.SetSelectionWeight(weight); card.CaptureBaseState(card.length, card.width, card.segments, card.bendAngle, card.twistAngle, card.GetEmbedDepth(), card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ(), card.curlFrequency, card.curlDiameter); }
+            if (distance <= brushFalloffDistance) { float weight = Mathf.Clamp01(1f - (distance / brushFalloffDistance)); card.SetSelectionWeight(weight); card.CaptureBaseState(card.length, card.width, card.segments, card.bendAngle, card.twistAngle, card.GetEmbedDepth(), card.GetOffsetX(), card.GetOffsetY(), card.GetOffsetZ(), card.curlFrequency, card.curlDiameter, card.waveAmplitude, card.waveFrequency, card.waveDirection, card.arch); }
             else card.SetSelectionWeight(0f);
         }
     }
 
     HairCard PinHairCard(Vector3 position, Vector3 normal)
     {
+        HairCard placed = SpawnHairCard(position, normal, false);
+
+        // SYMMETRY. Every placement mode in the project funnels through PinHairCard - the
+        // legacy click and shift-drag here in HandleGrooming, and PLACE / PAINT / SPRAY in
+        // PlacementBrushModeAuthority, which reaches this method by reflection. Hooking it
+        // once therefore covers all five without any of them needing to know symmetry exists.
+        //
+        // Note the mirrored card is spawned through SpawnHairCard, NOT through PinHairCard, so
+        // it cannot itself trigger another mirror. TryMirror also declines points near the
+        // midline, where a mirror would just stack a duplicate on top of the original.
+        Vector3 mirroredPosition;
+        Vector3 mirroredNormal;
+        if (GroomSymmetryAuthority.TryMirror(position, normal, out mirroredPosition, out mirroredNormal))
+            SpawnHairCard(mirroredPosition, mirroredNormal, true);
+
+        RefreshGroupListUI();
+        return placed;
+    }
+
+    // The actual spawn. `isMirrored` marks the card as living on the reflected side; see
+    // HairCard.mirrored for what that does and, more importantly, why the mirror is a flag on
+    // the card rather than a set of pre-negated numbers.
+    HairCard SpawnHairCard(Vector3 position, Vector3 normal, bool isMirrored)
+    {
         GameObject cardGO = new GameObject("HairCard_Strip", typeof(MeshFilter), typeof(MeshRenderer), typeof(HairCard));
         HairCard card = cardGO.GetComponent<HairCard>();
+
+        // Set BEFORE SetPlacementData, which orients the transform and captures canonical
+        // state - both of which read the flag.
+        card.mirrored = isMirrored;
+
         card.SetPlacementData(position, normal, currentEmbedDepth, currentOffsetX, currentOffsetY, currentOffsetZ, currentGroupId);
-        card.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, 1f, currentUScale, currentVScale, currentUOffset, currentVOffset, currentCurlFrequency, currentCurlDiameter);
-        lastPlacedCard = card;
+        card.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, 1f, currentUScale, currentVScale, currentUOffset, currentVOffset, currentCurlFrequency, currentCurlDiameter, currentWaveAmplitude, currentWaveFrequency, currentWaveDirection, currentArch);
+
+        // Deliberately only the primary card becomes lastPlacedCard. That reference is what
+        // the sliders steer when nothing is selected, and it would be surprising for a slider
+        // to start driving the mirrored copy instead of the one you just painted.
+        if (!isMirrored) lastPlacedCard = card;
+
         MeshRenderer mr = cardGO.GetComponent<MeshRenderer>();
         if (hairCardMaterial != null) mr.sharedMaterial = hairCardMaterial;
         // A card born into a group SOLO is hiding must not appear. New renderers default to
         // enabled, so without this the groom leaks back one strand at a time.
         mr.enabled = GroupSoloVisibilityAuthority.IsGroupVisible(card.groupId);
-        RefreshGroupListUI();
         return card;
     }
 
@@ -1209,6 +1376,10 @@ public class ModelViewer : MonoBehaviour
         saveData.sliderVOffset = currentVOffset;
         saveData.sliderCurlFrequency = currentCurlFrequency;
         saveData.sliderCurlDiameter = currentCurlDiameter;
+        saveData.sliderWaveAmplitude = currentWaveAmplitude;
+        saveData.sliderWaveFrequency = currentWaveFrequency;
+        saveData.sliderWaveDirection = currentWaveDirection;
+        saveData.sliderArch = currentArch;
         foreach (int id in allGroupIds)
         {
             GroupSaveData gData = new GroupSaveData();
@@ -1248,6 +1419,11 @@ public class ModelViewer : MonoBehaviour
             cardData.groupId = card.groupId;
             cardData.curlFrequency = card.curlFrequency;
             cardData.curlDiameter = card.curlDiameter;
+            cardData.waveAmplitude = card.waveAmplitude;
+            cardData.waveFrequency = card.waveFrequency;
+            cardData.waveDirection = card.waveDirection;
+            cardData.arch = card.arch;
+            cardData.mirrored = card.mirrored;
             saveData.hairCards.Add(cardData);
         }
         string json = JsonUtility.ToJson(saveData, true);
@@ -1298,6 +1474,10 @@ public class ModelViewer : MonoBehaviour
         currentVOffset = saveData.sliderVOffset;
         currentCurlFrequency = saveData.sliderCurlFrequency;
         currentCurlDiameter = saveData.sliderCurlDiameter;
+        currentWaveAmplitude = saveData.sliderWaveAmplitude;
+        currentWaveFrequency = saveData.sliderWaveFrequency;
+        currentWaveDirection = saveData.sliderWaveDirection;
+        currentArch = saveData.sliderArch;
         allGroupIds.Clear();
         groupNames.Clear();
         groupUScales.Clear();
@@ -1320,9 +1500,11 @@ public class ModelViewer : MonoBehaviour
             card.transform.position = new Vector3(cData.posX, cData.posY, cData.posZ);
             card.transform.rotation = new Quaternion(cData.rotX, cData.rotY, cData.rotZ, cData.rotW);
             card.groupId = cData.groupId;
+            // Before SetParameters below, which rebuilds the mesh from it.
+            card.mirrored = cData.mirrored;
             float u = cData.uScale != 0 ? cData.uScale : 1.0f;
             float v = cData.vScale != 0 ? cData.vScale : 1.0f;
-            card.SetParameters(cData.length, cData.width, cData.segments, cData.bendAngle, cData.twistAngle, cData.offsetX, cData.offsetY, cData.offsetZ, cData.embedDepth, 1f, u, v, cData.uOffset, cData.vOffset, cData.curlFrequency, cData.curlDiameter);
+            card.SetParameters(cData.length, cData.width, cData.segments, cData.bendAngle, cData.twistAngle, cData.offsetX, cData.offsetY, cData.offsetZ, cData.embedDepth, 1f, u, v, cData.uOffset, cData.vOffset, cData.curlFrequency, cData.curlDiameter, cData.waveAmplitude, cData.waveFrequency, cData.waveDirection, cData.arch);
             MeshRenderer mr = cardGO.GetComponent<MeshRenderer>();
             if (hairCardMaterial != null) mr.sharedMaterial = hairCardMaterial;
         }

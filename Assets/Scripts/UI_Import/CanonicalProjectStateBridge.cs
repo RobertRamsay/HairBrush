@@ -122,7 +122,7 @@ public class CanonicalProjectStateBridge : MonoBehaviour
                 canonical.bend, canonical.twist, canonical.x, canonical.y, canonical.z,
                 Mathf.Max(0f, canonical.depth), 1f,
                 canonical.uScale, canonical.vScale, canonical.uOffset, canonical.vOffset,
-                canonical.curlFrequency, canonical.curlDiameter);
+                canonical.curlFrequency, canonical.curlDiameter, canonical.waveAmplitude, canonical.waveFrequency, canonical.waveDirection, canonical.arch);
             card.SetSelectionWeight(oldSelection);
 
             object state = states[card];
@@ -166,7 +166,8 @@ public class CanonicalProjectStateBridge : MonoBehaviour
     {
         length=s.length, width=s.width, segments=s.segments, bend=s.bendAngle, twist=s.twistAngle, depth=s.embedDepth,
         x=s.offsetX, y=s.offsetY, z=s.offsetZ, uScale=s.uScale, vScale=s.vScale, uOffset=s.uOffset, vOffset=s.vOffset,
-        curlFrequency=s.curlFrequency, curlDiameter=s.curlDiameter
+        curlFrequency=s.curlFrequency, curlDiameter=s.curlDiameter,
+        waveAmplitude=s.waveAmplitude, waveFrequency=s.waveFrequency, waveDirection=s.waveDirection, arch=s.arch
     };
 
     static void WriteControl(HairCardSaveData s, PostAffectorManager.ControlState b)
@@ -174,5 +175,6 @@ public class CanonicalProjectStateBridge : MonoBehaviour
         s.length=b.length; s.width=b.width; s.segments=Mathf.RoundToInt(b.segments); s.bendAngle=b.bend; s.twistAngle=b.twist; s.embedDepth=b.depth;
         s.offsetX=b.x; s.offsetY=b.y; s.offsetZ=b.z; s.uScale=b.uScale; s.vScale=b.vScale; s.uOffset=b.uOffset; s.vOffset=b.vOffset;
         s.curlFrequency=b.curlFrequency; s.curlDiameter=b.curlDiameter;
+        s.waveAmplitude=b.waveAmplitude; s.waveFrequency=b.waveFrequency; s.waveDirection=b.waveDirection; s.arch=b.arch;
     }
 }

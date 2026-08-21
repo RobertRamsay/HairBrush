@@ -17,7 +17,7 @@ using UnityEngine.UI;
 public class GroomSessionResetCoordinator : MonoBehaviour
 {
     private static readonly string[] VarianceChannels =
-        { "Length", "Width", "Bend", "Twist", "AngleX", "AngleY", "AngleZ", "CurlFrequency", "CurlDiameter" };
+        { "Length", "Width", "Bend", "Twist", "AngleX", "AngleY", "AngleZ", "CurlFrequency", "CurlDiameter", "WaveAmplitude", "WaveFrequency", "WaveDirection", "Arch" };
     private static readonly string[] VarianceRows =
         { "Length_VarianceRow", "Width_VarianceRow", "Bend_VarianceRow", "Twist_VarianceRow", "Angle X_VarianceRow", "Angle Y_VarianceRow", "Angle Z_VarianceRow" };
 
@@ -182,14 +182,19 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.Z);
         GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.CurlFrequency);
         GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.CurlDiameter);
+        GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.WaveAmplitude);
+        GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.WaveFrequency);
+        GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.WaveDirection);
         GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.SegmentDensity);
+        GroomShapeCurveRegistry.Reset(groupId, GroomShapeCurveChannel.Width);
         GroupSidednessAuthority.Forget(groupId);
+        GroupNormalFlipAuthority.Forget(groupId);
 
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
         {
             if (card == null || card.groupId != groupId) continue;
             card.SetSelectionWeight(0f);
-            card.SetParameters(.2f, .01f, 12, 0f, 0f, 0f, 0f, 0f, .002f, 1f, 1f, 1f, 0f, 0f, 0f, 0f);
+            card.SetParameters(.2f, .01f, 12, 0f, 0f, 0f, 0f, 0f, .002f, 1f, 1f, 1f, 0f, 0f, 0f, 0f, 0f, 0f, 1f, HairCard.ArchNeutral);
         }
 
         SyncCoreSliderUI(ToControlState(defaults));
@@ -301,7 +306,11 @@ public class GroomSessionResetCoordinator : MonoBehaviour
             uOffset = 0f,
             vOffset = 0f,
             curlFrequency = 0f,
-            curlDiameter = 0f
+            curlDiameter = 0f,
+            waveAmplitude = 0f,
+            waveFrequency = 0f,
+            waveDirection = 1f,
+            arch = HairCard.ArchNeutral
         };
     }
 
@@ -322,6 +331,10 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         viewer.currentVOffset = s.vOffset;
         viewer.currentCurlFrequency = s.curlFrequency;
         viewer.currentCurlDiameter = s.curlDiameter;
+        viewer.currentWaveAmplitude = s.waveAmplitude;
+        viewer.currentWaveFrequency = s.waveFrequency;
+        viewer.currentWaveDirection = s.waveDirection;
+        viewer.currentArch = s.arch;
     }
 
     void WriteViewerControls(PostAffectorManager.ControlState s)
@@ -341,6 +354,10 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         viewer.currentVOffset = s.vOffset;
         viewer.currentCurlFrequency = s.curlFrequency;
         viewer.currentCurlDiameter = s.curlDiameter;
+        viewer.currentWaveAmplitude = s.waveAmplitude;
+        viewer.currentWaveFrequency = s.waveFrequency;
+        viewer.currentWaveDirection = s.waveDirection;
+        viewer.currentArch = s.arch;
     }
 
     static PostAffectorManager.ControlState ToControlState(GroomRootStateAuthority.RootState s)
@@ -361,7 +378,11 @@ public class GroomSessionResetCoordinator : MonoBehaviour
             uOffset = s.uOffset,
             vOffset = s.vOffset,
             curlFrequency = s.curlFrequency,
-            curlDiameter = s.curlDiameter
+            curlDiameter = s.curlDiameter,
+            waveAmplitude = s.waveAmplitude,
+            waveFrequency = s.waveFrequency,
+            waveDirection = s.waveDirection,
+            arch = s.arch
         };
     }
 
@@ -403,12 +424,19 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         SetCoreSlider(new[] { "V Scale_Slider" }, "V Scale", s.vScale);
         SetCoreSlider(new[] { "U Offset_Slider" }, "U Offset", s.uOffset);
         SetCoreSlider(new[] { "V Offset_Slider" }, "V Offset", s.vOffset);
-        // ControlState (POST-level) has no curl fields - curl lives only at the root, so these
-        // read straight from the viewer instead, which WriteViewerRoot has already reset by the
-        // time this runs. Without this the curl sliders would keep showing their pre-reset value
-        // even though the underlying state was correctly zeroed.
+        // These four read straight from the viewer rather than from `s`, because
+        // WriteViewerRoot/WriteViewerControls have already written the reset values there by
+        // the time this runs. Without them the sliders would keep showing their pre-reset
+        // value even though the underlying state was correctly zeroed.
+        //
+        // (The comment that used to sit here said ControlState has no curl fields. That was
+        // true once; it carries curl AND wave now, so don't lean on it when adding a channel.)
         SetCoreSlider(new[] { "Curl Frequency_Slider" }, "Curl Frequency", viewer.currentCurlFrequency);
         SetCoreSlider(new[] { "Curl Diameter_Slider" }, "Curl Diameter", viewer.currentCurlDiameter);
+        SetCoreSlider(new[] { "Wave Amplitude_Slider" }, "Wave Amplitude", viewer.currentWaveAmplitude);
+        SetCoreSlider(new[] { "Wave Frequency_Slider" }, "Wave Frequency", viewer.currentWaveFrequency);
+        SetCoreSlider(new[] { "Wave Direction_Slider" }, "Wave Direction", viewer.currentWaveDirection);
+        SetCoreSlider(new[] { "Arch_Slider" }, "Arch", viewer.currentArch);
     }
 
     void SetCoreSlider(string[] names, string labelPrefix, float value)
@@ -539,6 +567,10 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         viewer.currentVOffset = 0f;
         viewer.currentCurlFrequency = 0f;
         viewer.currentCurlDiameter = 0f;
+        viewer.currentWaveAmplitude = 0f;
+        viewer.currentWaveFrequency = 0f;
+        viewer.currentWaveDirection = 1f;
+        viewer.currentArch = HairCard.ArchNeutral;
 
         if (viewer.groomingSliderPanelGO == null) return;
 
@@ -556,7 +588,9 @@ public class GroomSessionResetCoordinator : MonoBehaviour
                      n == "Angle X_Slider" || n == "Angle Y_Slider" || n == "Angle Z_Slider") slider.SetValueWithoutNotify(0f);
             else if (n == "U Scale_Slider" || n == "V Scale_Slider") slider.SetValueWithoutNotify(1f);
             else if (n == "U Offset_Slider" || n == "V Offset_Slider") slider.SetValueWithoutNotify(0f);
-            else if (n == "Curl Frequency_Slider" || n == "Curl Diameter_Slider") slider.SetValueWithoutNotify(0f);
+            else if (n == "Curl Frequency_Slider" || n == "Curl Diameter_Slider" || n == "Wave Amplitude_Slider" || n == "Wave Frequency_Slider") slider.SetValueWithoutNotify(0f);
+            else if (n == "Wave Direction_Slider") slider.SetValueWithoutNotify(1f);
+            else if (n == "Arch_Slider") slider.SetValueWithoutNotify(HairCard.ArchNeutral);
             else if (n == "VarianceSlider") slider.SetValueWithoutNotify(0f);
             slider.interactable = true;
         }

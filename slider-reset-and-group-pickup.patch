@@ -1,0 +1,100 @@
+diff --git a/Assets/Scripts/UI_Import/ModelViewer.cs b/Assets/Scripts/UI_Import/ModelViewer.cs
+index 5faa553..b0ee40f 100644
+--- a/Assets/Scripts/UI_Import/ModelViewer.cs
++++ b/Assets/Scripts/UI_Import/ModelViewer.cs
+@@ -668,11 +668,9 @@ public class ModelViewer : MonoBehaviour
+         groupVScales[id] = currentVScale;
+         groupUOffsets[id] = currentUOffset;
+         groupVOffsets[id] = currentVOffset;
++        // Sets every current* field from the group's root state and then pushes the whole
++        // slider set - UV included, because the four UV fields were assigned just above.
+         SyncShapeSlidersToGroupRoot(id);
+-        if (uScaleSlider != null) uScaleSlider.SetValueWithoutNotify(currentUScale);
+-        if (vScaleSlider != null) vScaleSlider.SetValueWithoutNotify(currentVScale);
+-        if (uOffsetSlider != null) uOffsetSlider.SetValueWithoutNotify(currentUOffset);
+-        if (vOffsetSlider != null) vOffsetSlider.SetValueWithoutNotify(currentVOffset);
+         RefreshGroupListUI();
+         if (flashGroupCoroutine != null) StopCoroutine(flashGroupCoroutine);
+         flashGroupCoroutine = StartCoroutine(FlashActiveGroupRoutine(currentGroupId));
+@@ -767,6 +765,23 @@ public class ModelViewer : MonoBehaviour
+         currentWaveFrequency = state.waveFrequency;
+         currentWaveDirection = state.waveDirection;
+ 
++        PushAllGroomSliders();
++    }
++
++    // THE one place every grooming slider is pushed from its backing field.
++    //
++    // This list used to be split in two - the shape sliders here, the four UV sliders inline in
++    // SelectGroup - and that split is exactly how it drifted: every parameter added since has
++    // needed a hand edit in both, and a miss shows up as "I clicked the group and that one
++    // slider kept its old value", which is easy to see and hard to attribute.
++    //
++    // Anything with a slider goes in here and nowhere else. A new parameter is then picked up
++    // by group selection, by POST/CLUMPER exit and by the modifier-exit restore for free.
++    //
++    // SetValueWithoutNotify throughout, never .value: these are all UI-follows-state pushes,
++    // and firing the change callbacks would write the values straight back out over the group.
++    void PushAllGroomSliders()
++    {
+         if (lengthSlider != null) lengthSlider.SetValueWithoutNotify(currentLength);
+         if (widthSlider != null) widthSlider.SetValueWithoutNotify(currentWidth);
+         if (segmentsSlider != null) segmentsSlider.SetValueWithoutNotify(currentSegments);
+@@ -781,6 +796,10 @@ public class ModelViewer : MonoBehaviour
+         if (waveAmplitudeSlider != null) waveAmplitudeSlider.SetValueWithoutNotify(currentWaveAmplitude);
+         if (waveFrequencySlider != null) waveFrequencySlider.SetValueWithoutNotify(currentWaveFrequency);
+         if (waveDirectionSlider != null) waveDirectionSlider.SetValueWithoutNotify(currentWaveDirection);
++        if (uScaleSlider != null) uScaleSlider.SetValueWithoutNotify(currentUScale);
++        if (vScaleSlider != null) vScaleSlider.SetValueWithoutNotify(currentVScale);
++        if (uOffsetSlider != null) uOffsetSlider.SetValueWithoutNotify(currentUOffset);
++        if (vOffsetSlider != null) vOffsetSlider.SetValueWithoutNotify(currentVOffset);
+     }
+ 
+     IEnumerator FlashActiveGroupRoutine(int activeId)
+diff --git a/Assets/Scripts/UI_Import/SliderRightClickReset.cs b/Assets/Scripts/UI_Import/SliderRightClickReset.cs
+index 5926819..6345a9f 100644
+--- a/Assets/Scripts/UI_Import/SliderRightClickReset.cs
++++ b/Assets/Scripts/UI_Import/SliderRightClickReset.cs
+@@ -51,7 +51,21 @@ public class SliderRightClickResetInstaller : MonoBehaviour
+         foreach (Slider slider in FindObjectsByType<Slider>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+         {
+             if (slider == null || slider.GetComponent<SliderRightClickReset>() != null) continue;
+-            if (!TryGetResetValue(slider, out float value)) continue;
++
++            // Known slider: reset to its authored default. Anything else: reset to the value it
++            // is carrying the first time this installer sees it.
++            //
++            // The fallback is the point. Before it, a slider missing from the table below got no
++            // right-click reset AT ALL - silently, with nothing to notice until someone tried it
++            // - and every parameter added to the tool arrived that way. Now the guarantee is
++            // "every slider resets", and the table only decides whether the rest point is the
++            // real authored default or simply wherever the slider started.
++            //
++            // First sight is a good approximation because panels build their sliders at their
++            // default value and this scan runs every 0.15s, so the capture normally happens
++            // before anyone can touch it. Add a case below when you want it to be exact.
++            float value;
++            if (!TryGetResetValue(slider, out value)) value = slider.value;
+ 
+             SliderRightClickReset reset = slider.gameObject.AddComponent<SliderRightClickReset>();
+             reset.Configure(value);
+@@ -96,8 +110,19 @@ public class SliderRightClickResetInstaller : MonoBehaviour
+ 
+             case "Curl Frequency_Slider":
+             case "Curl Diameter_Slider":
++            case "Wave Amplitude_Slider":
++            case "Wave Frequency_Slider":
+                 value = 0f; return true;
+ 
++            // Not 0 - Wave Direction rests at up/down, matching HairCard.waveDirection's own
++            // initialiser and the empty-group default in SyncShapeSlidersToGroupRoot. Resetting
++            // it to 0 would quietly flip every wave in the group back to side-to-side.
++            case "Wave Direction_Slider": value = 1f; return true;
++
++            case "LightAngle_Slider": value = 0f; return true;
++            case "MetallicSlider": value = 0f; return true;
++            case "SmoothnessSlider": value = .56f; return true;
++
+             case "Radius_Slider": value = .03f; return true;
+             case "Falloff_Slider":
+             case "Falloff Dist_Slider": value = .05f; return true;

@@ -22,7 +22,21 @@ public enum GroomShapeCurveChannel
     // 0..1 -> 0..1 REMAP of where segments actually sit along the card's length (see
     // HairCard.GenerateMesh). Root-only, same reasoning as Curl: mesh topology isn't a
     // per-POST concept.
-    SegmentDensity
+    SegmentDensity,
+    // Width taper: a 0..1 multiplier on the card's authored width, sampled per row. Because
+    // GroomShapeCurveRegistry.Evaluate clamps every channel to 0..1, this can only ever NARROW
+    // a card, never widen it past the Width slider - which is what a taper wants, and it keeps
+    // the slider meaning "maximum width" rather than "width somewhere along the card".
+    //
+    // Root-only, exactly like Curl and Segment Density: see PostShapeCurveBridge.EvaluateRoot,
+    // whose per-POST snapshot CurveSet has fields for Bend/X/Y/Z ONLY.
+    Width,
+    // Wave amplitude / frequency profiles. Root-only, same as Curl and Segment Density.
+    WaveAmplitude,
+    WaveFrequency,
+    // Wave direction blend: 0 = side to side across the card's flat plane, 1 = up and down
+    // across its face, anything between is a diagonal. Root-only like the rest of the tail.
+    WaveDirection
 }
 
 // Canonical group-root length profiles for shape angles. The slider remains the authored
@@ -40,6 +54,10 @@ public static class GroomShapeCurveRegistry
         public AnimationCurve curlFrequency = CreateDefault(GroomShapeCurveChannel.CurlFrequency);
         public AnimationCurve curlDiameter = CreateDefault(GroomShapeCurveChannel.CurlDiameter);
         public AnimationCurve segmentDensity = CreateDefault(GroomShapeCurveChannel.SegmentDensity);
+        public AnimationCurve widthProfile = CreateDefault(GroomShapeCurveChannel.Width);
+        public AnimationCurve waveAmplitude = CreateDefault(GroomShapeCurveChannel.WaveAmplitude);
+        public AnimationCurve waveFrequency = CreateDefault(GroomShapeCurveChannel.WaveFrequency);
+        public AnimationCurve waveDirection = CreateDefault(GroomShapeCurveChannel.WaveDirection);
     }
 
     private static readonly Dictionary<int, CurveSet> byGroup = new Dictionary<int, CurveSet>();
@@ -62,6 +80,63 @@ public static class GroomShapeCurveRegistry
     // globalEpoch covers the wholesale operations that have no single group.
     private static readonly Dictionary<int, int> epochByGroup = new Dictionary<int, int>();
     private static int globalEpoch;
+
+    // "Is this curve still the flat x1 default?" - cached, because the answer is needed per
+    // row per card per frame and the test itself walks keyframes.
+    //
+    // This is what lets the mesh builders skip work that provably cannot change anything: a
+    // flat x1 Segment Density curve means even row spacing, so the 64-sample integration it
+    // normally runs can be replaced by a divide; a flat Width curve means no taper; a flat
+    // Wave curve means the multiplier is 1 and the AnimationCurve.Evaluate calls are pure
+    // overhead. In a groom where nobody has drawn a profile - the overwhelmingly common case -
+    // that removes every curve evaluation from the rebuild.
+    //
+    // Keyed on the per-group epoch, so drawing on a curve invalidates it for that group only.
+    private static readonly Dictionary<int, int> flatCacheEpoch = new Dictionary<int, int>();
+    private static readonly Dictionary<int, bool[]> flatCacheValue = new Dictionary<int, bool[]>();
+
+    public static bool IsFlatOne(int groupId, GroomShapeCurveChannel channel)
+    {
+        int epoch = EpochFor(groupId);
+
+        int cachedEpoch;
+        bool[] flags;
+        bool haveEpoch = flatCacheEpoch.TryGetValue(groupId, out cachedEpoch);
+        bool haveFlags = flatCacheValue.TryGetValue(groupId, out flags);
+
+        if (!haveEpoch || !haveFlags || cachedEpoch != epoch || flags == null)
+        {
+            flags = new bool[Enum.GetValues(typeof(GroomShapeCurveChannel)).Length];
+            for (int i = 0; i < flags.Length; i++) flags[i] = ComputeIsFlatOne(groupId, (GroomShapeCurveChannel)i);
+            flatCacheEpoch[groupId] = epoch;
+            flatCacheValue[groupId] = flags;
+        }
+
+        int index = (int)channel;
+        if (index < 0 || index >= flags.Length) return false;
+        return flags[index];
+    }
+
+    static bool ComputeIsFlatOne(int groupId, GroomShapeCurveChannel channel)
+    {
+        AnimationCurve curve = GetCurve(groupId, channel);
+        if (curve == null) return false;
+
+        // keys allocates, which is exactly why this result is cached rather than recomputed.
+        Keyframe[] keys = curve.keys;
+        if (keys == null || keys.Length == 0) return false;
+
+        for (int i = 0; i < keys.Length; i++)
+        {
+            if (!Mathf.Approximately(keys[i].value, 1f)) return false;
+
+            // A key whose value is 1 can still bulge between neighbours if it carries a
+            // tangent, so a non-flat tangent disqualifies the curve even at the right height.
+            if (!Mathf.Approximately(keys[i].inTangent, 0f)) return false;
+            if (!Mathf.Approximately(keys[i].outTangent, 0f)) return false;
+        }
+        return true;
+    }
 
     public static int EpochFor(int groupId)
     {
@@ -93,6 +168,15 @@ public static class GroomShapeCurveRegistry
             case GroomShapeCurveChannel.Z: return set.z;
             case GroomShapeCurveChannel.CurlFrequency: return set.curlFrequency;
             case GroomShapeCurveChannel.CurlDiameter: return set.curlDiameter;
+            case GroomShapeCurveChannel.Width: return set.widthProfile;
+            case GroomShapeCurveChannel.WaveAmplitude: return set.waveAmplitude;
+            case GroomShapeCurveChannel.WaveFrequency: return set.waveFrequency;
+            case GroomShapeCurveChannel.WaveDirection: return set.waveDirection;
+            // Was `default: return set.segmentDensity;`. A channel with no case of its own
+            // silently read and wrote the SEGMENT DENSITY curve - so editing Width would have
+            // re-spaced the rows and editing Segment Density would have tapered the card, with
+            // no error anywhere. Named explicitly so the next channel added fails loudly.
+            case GroomShapeCurveChannel.SegmentDensity: return set.segmentDensity;
             default: return set.segmentDensity;
         }
     }
@@ -116,6 +200,11 @@ public static class GroomShapeCurveRegistry
             case GroomShapeCurveChannel.CurlFrequency: set.curlFrequency = clean; break;
             case GroomShapeCurveChannel.CurlDiameter: set.curlDiameter = clean; break;
             case GroomShapeCurveChannel.SegmentDensity: set.segmentDensity = clean; break;
+            // This switch has no default, so a missing case is a silently DROPPED write.
+            case GroomShapeCurveChannel.Width: set.widthProfile = clean; break;
+            case GroomShapeCurveChannel.WaveAmplitude: set.waveAmplitude = clean; break;
+            case GroomShapeCurveChannel.WaveFrequency: set.waveFrequency = clean; break;
+            case GroomShapeCurveChannel.WaveDirection: set.waveDirection = clean; break;
         }
         BumpEpoch(groupId);
     }
@@ -328,6 +417,10 @@ public class GroomShapeCurveAuthority : MonoBehaviour
             group.curlFrequencyCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.CurlFrequency);
             group.curlDiameterCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.CurlDiameter);
             group.segmentDensityCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.SegmentDensity);
+        group.widthCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.Width);
+        group.waveAmplitudeCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.WaveAmplitude);
+        group.waveFrequencyCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.WaveFrequency);
+        group.waveDirectionCurve = GroomShapeCurveRegistry.Export(group.groupId, GroomShapeCurveChannel.WaveDirection);
         }
     }
 
@@ -365,6 +458,12 @@ public class GroomShapeCurveAuthority : MonoBehaviour
         EnsureCurveRow("Curl Frequency_Row", "CURL FREQUENCY PROFILE", GroomShapeCurveChannel.CurlFrequency);
         EnsureCurveRow("Curl Diameter_Row", "CURL DIAMETER PROFILE", GroomShapeCurveChannel.CurlDiameter);
         EnsureCurveRow("Segments_Row", "SEGMENT DENSITY PROFILE", GroomShapeCurveChannel.SegmentDensity);
+        // Anchored to the Width slider's own row: ModelViewer builds slider rows as
+        // labelText + "_Row", and the width slider's label is "Width".
+        EnsureCurveRow("Width_Row", "WIDTH PROFILE", GroomShapeCurveChannel.Width);
+        EnsureCurveRow("Wave Amplitude_Row", "WAVE AMPLITUDE PROFILE", GroomShapeCurveChannel.WaveAmplitude);
+        EnsureCurveRow("Wave Frequency_Row", "WAVE FREQUENCY PROFILE", GroomShapeCurveChannel.WaveFrequency);
+        EnsureCurveRow("Wave Direction_Row", "WAVE DIRECTION PROFILE", GroomShapeCurveChannel.WaveDirection);
     }
 
     private void ResolveViewer()
@@ -414,6 +513,10 @@ public class GroomShapeCurveAuthority : MonoBehaviour
                 GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.CurlFrequency, group.curlFrequencyCurve);
                 GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.CurlDiameter, group.curlDiameterCurve);
                 GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.SegmentDensity, group.segmentDensityCurve);
+            GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.Width, group.widthCurve);
+            GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.WaveAmplitude, group.waveAmplitudeCurve);
+            GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.WaveFrequency, group.waveFrequencyCurve);
+            GroomShapeCurveRegistry.Import(group.groupId, GroomShapeCurveChannel.WaveDirection, group.waveDirectionCurve);
                 GroomShapeCurveRegistry.RefreshGroup(group.groupId);
             }
         }
@@ -548,6 +651,10 @@ public class GroomShapeCurveAuthority : MonoBehaviour
             case GroomShapeCurveChannel.Z: return "Z ANGLE";
             case GroomShapeCurveChannel.CurlFrequency: return "CURL FREQUENCY";
             case GroomShapeCurveChannel.CurlDiameter: return "CURL DIAMETER";
+            case GroomShapeCurveChannel.Width: return "WIDTH";
+            case GroomShapeCurveChannel.WaveAmplitude: return "WAVE AMPLITUDE";
+            case GroomShapeCurveChannel.WaveFrequency: return "WAVE FREQUENCY";
+            case GroomShapeCurveChannel.WaveDirection: return "WAVE DIRECTION";
             default: return "SEGMENT DENSITY";
         }
     }

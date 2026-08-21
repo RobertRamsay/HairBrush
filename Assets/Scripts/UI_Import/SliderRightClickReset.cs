@@ -51,7 +51,21 @@ public class SliderRightClickResetInstaller : MonoBehaviour
         foreach (Slider slider in FindObjectsByType<Slider>(FindObjectsInactive.Include, FindObjectsSortMode.None))
         {
             if (slider == null || slider.GetComponent<SliderRightClickReset>() != null) continue;
-            if (!TryGetResetValue(slider, out float value)) continue;
+
+            // Known slider: reset to its authored default. Anything else: reset to the value it
+            // is carrying the first time this installer sees it.
+            //
+            // The fallback is the point. Before it, a slider missing from the table below got no
+            // right-click reset AT ALL - silently, with nothing to notice until someone tried it
+            // - and every parameter added to the tool arrived that way. Now the guarantee is
+            // "every slider resets", and the table only decides whether the rest point is the
+            // real authored default or simply wherever the slider started.
+            //
+            // First sight is a good approximation because panels build their sliders at their
+            // default value and this scan runs every 0.15s, so the capture normally happens
+            // before anyone can touch it. Add a case below when you want it to be exact.
+            float value;
+            if (!TryGetResetValue(slider, out value)) value = slider.value;
 
             SliderRightClickReset reset = slider.gameObject.AddComponent<SliderRightClickReset>();
             reset.Configure(value);
@@ -96,7 +110,22 @@ public class SliderRightClickResetInstaller : MonoBehaviour
 
             case "Curl Frequency_Slider":
             case "Curl Diameter_Slider":
+            case "Wave Amplitude_Slider":
+            case "Wave Frequency_Slider":
                 value = 0f; return true;
+
+            // Not 0 - Wave Direction rests at up/down, matching HairCard.waveDirection's own
+            // initialiser and the empty-group default in SyncShapeSlidersToGroupRoot. Resetting
+            // it to 0 would quietly flip every wave in the group back to side-to-side.
+            case "Wave Direction_Slider": value = 1f; return true;
+
+            // Neutral, not 0 - resetting Arch to zero would flatten the group rather than
+            // restore its default profile.
+            case "Arch_Slider": value = .5f; return true;
+
+            case "LightAngle_Slider": value = 0f; return true;
+            case "MetallicSlider": value = 0f; return true;
+            case "SmoothnessSlider": value = .56f; return true;
 
             case "Radius_Slider": value = .03f; return true;
             case "Falloff_Slider":

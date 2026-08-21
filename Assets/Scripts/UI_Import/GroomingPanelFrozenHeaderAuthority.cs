@@ -29,7 +29,37 @@ public class GroomingPanelFrozenHeaderAuthority : MonoBehaviour
     // The rows pinned to the top, in the order they appear. Anything not present yet -
     // PlacementModeRow is built a fraction of a second after the panel - is simply
     // skipped until it exists.
-    private static readonly string[] FrozenRowNames = { "PanelTabRow", "TopControlsRow", "PlacementModeRow" };
+    //
+    // Radius and Falloff are the POST affector's spatial controls, and they belong up here for
+    // the same reason the mode strip does: they are what you reach for constantly while
+    // shaping a POST, and having to scroll back up to them every time breaks the loop. They
+    // are also the only two frozen rows that come and go - SelectionBrushScaleTuning builds
+    // them when a POST is selected and DESTROYS them when it is deselected, so they simply
+    // drop out of the list and the header shrinks back by itself. No special casing needed:
+    // CollectFrozenRows already skips names it cannot find, and Apply sizes the spacer from
+    // whatever it actually collected.
+    //
+    // This is POST only by construction. The CLUMPER's own Radius/Falloff live inside
+    // ClumperScrollHost, which LateUpdate stands clear of entirely.
+    private static readonly string[] FrozenRowNames =
+    {
+        "PanelTabRow", "TopControlsRow", "PlacementModeRow",
+        "Radius_Row",
+
+        // BOTH falloff spellings, because two different paths build that row and they do not
+        // agree on its label:
+        //
+        //   ModelViewer.cs                creates it as "Falloff Dist"  -> "Falloff Dist_Row"
+        //   SelectionBrushScaleTuning.cs  creates it as "Falloff"       -> "Falloff_Row"
+        //
+        // SelectionBrushScaleTuning only builds its own when ModelViewer's legacy row is
+        // absent, so exactly one of the two is live at a time - but which one depends on how
+        // the POST was entered. Listing only "Falloff_Row" is why Radius froze and Falloff
+        // scrolled away with the rest of the panel. Naming both costs nothing: a name that is
+        // not present is skipped, so the header still stacks Radius then whichever falloff
+        // row actually exists.
+        "Falloff Dist_Row", "Falloff_Row"
+    };
 
     private const string SpacerName = "FrozenHeaderSpacer";
     private const string BackdropName = "FrozenHeaderBackdrop";

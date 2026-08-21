@@ -1,0 +1,765 @@
+diff --git a/Assets/Scripts/UI_Import/GroomSymmetryAuthority.cs b/Assets/Scripts/UI_Import/GroomSymmetryAuthority.cs
+new file mode 100644
+index 0000000..746131b
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/GroomSymmetryAuthority.cs
+@@ -0,0 +1,396 @@
++using System.Reflection;
++using TMPro;
++using UnityEngine;
++using UnityEngine.UI;
++
++// SYMMETRY: paint on one side, get the mirrored card on the other.
++//
++// Three responsibilities, deliberately kept in one place:
++//
++//   1. The on/off state, which is session-only. Like SOLO, symmetry is a way of working
++//      rather than a property of the groom, so it is never written to a project file. What
++//      IS written is each card's own `mirrored` flag - a mirrored card stays a mirror across
++//      save and load whether or not the toggle happens to be on when you reopen the project.
++//
++//   2. The symmetry plane, resolved from the loaded model and validated against its actual
++//      vertices, so a model that is NOT symmetric says so instead of quietly producing
++//      rubbish.
++//
++//   3. The toggle button in the left panel, under the instructions.
++//
++// The mirror itself is deliberately NOT here - HairCard.mirrored owns the geometry side. See
++// the comment on that field for why the mirror is a property of the card rather than of its
++// stored numbers.
++[DefaultExecutionOrder(8950)]
++public class GroomSymmetryAuthority : MonoBehaviour
++{
++    // GroupPanelPostHintStats orders the left panel and needs to know this button by name.
++    public const string ButtonName = "SymmetryToggleButton";
++
++    private const float ScanInterval = .25f;
++    private const float ButtonHeight = 32f;
++
++    // How many mesh vertices to sample when validating the plane. The test is O(samples x
++    // vertices) in the worst case, but it runs ONCE per model load, not per frame.
++    private const int ValidationSamples = 220;
++
++    // A sampled vertex counts as matched if its mirror lands within this fraction of the
++    // model's own width. Generous enough to tolerate an asymmetric ear or a stray triangle,
++    // tight enough that a genuinely one-sided model fails.
++    private const float MatchToleranceFraction = .02f;
++
++    // Below this score the plane is reported as unreliable. Real heads score well above it;
++    // a lopsided prop scores far below.
++    private const float ReliableScore = .85f;
++
++    // Cards whose mirror would land closer to the plane than this - again as a fraction of
++    // model width - are not mirrored at all. Without it, painting down the parting line
++    // stacks two near-identical cards on the same spot, which reads as "symmetry doubled my
++    // density" and is impossible to clean up afterwards.
++    private const float MidlineSkipFraction = .012f;
++
++    // ---- state ------------------------------------------------------------------------
++    // Initialised here so nothing downstream has to test for existence.
++    // True only while the user has the toggle on. Named symmetryOn rather than the obvious
++    // `enabled` because this is a MonoBehaviour: a static field called `enabled` would hide
++    // Behaviour.enabled, and every plain `enabled = false` in this file would then be
++    // ambiguous to read and one refactor away from switching the component off instead.
++    private static bool symmetryOn;
++    private static bool planeResolved;
++    private static float planeConfidence;
++    private static float modelWidth = 1f;
++
++    // Statics survive "Enter Play Mode -> Disable Domain Reload", so a symmetry left switched
++    // on when play stopped would still be on - and silently doubling every stroke - when play
++    // starts again.
++    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
++    private static void ResetStatics()
++    {
++        symmetryOn = false;
++        planeResolved = false;
++        planeConfidence = 0f;
++        modelWidth = 1f;
++    }
++
++    public static bool Enabled
++    {
++        get { return symmetryOn; }
++    }
++
++    public static float PlaneConfidence
++    {
++        get { return planeConfidence; }
++    }
++
++    public static bool PlaneIsReliable
++    {
++        get { return planeResolved && planeConfidence >= ReliableScore; }
++    }
++
++    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
++    private static void Spawn()
++    {
++        if (FindFirstObjectByType<GroomSymmetryAuthority>() != null) return;
++        GameObject go = new GameObject(nameof(GroomSymmetryAuthority));
++        DontDestroyOnLoad(go);
++        go.AddComponent<GroomSymmetryAuthority>();
++    }
++
++    // ---- the mirror ---------------------------------------------------------------------
++    //
++    // Everything a caller needs: hand it a surface hit, get back the mirrored hit. Returns
++    // false when symmetry is off, when there is no model to mirror about, or when the point
++    // is close enough to the midline that mirroring it would just stack a duplicate.
++    //
++    // The mirror is taken in the MODEL's local space, not world space. That is what makes it
++    // survive the model being moved or re-rotated: the OBJ importer recentres every mesh on
++    // its own bounding box, so model-local X = 0 is the midline by construction.
++    public static bool TryMirror(Vector3 worldPoint, Vector3 worldNormal, out Vector3 mirroredPoint, out Vector3 mirroredNormal)
++    {
++        return TryMirror(worldPoint, worldNormal, true, out mirroredPoint, out mirroredNormal);
++    }
++
++    // snapToSurface should only be true when worldNormal is a REAL surface normal. The snap
++    // raycast is aimed along it, so feeding it a placeholder direction would send the ray off
++    // at an angle and move the mirrored point somewhere the reflection never asked for.
++    public static bool TryMirror(Vector3 worldPoint, Vector3 worldNormal, bool snapToSurface, out Vector3 mirroredPoint, out Vector3 mirroredNormal)
++    {
++        mirroredPoint = worldPoint;
++        mirroredNormal = worldNormal;
++
++        if (!symmetryOn) return false;
++
++        Transform model = ResolveModelTransform();
++        if (model == null) return false;
++
++        Vector3 localPoint = model.InverseTransformPoint(worldPoint);
++        if (Mathf.Abs(localPoint.x) < modelWidth * MidlineSkipFraction) return false;
++
++        Vector3 localNormal = model.InverseTransformDirection(worldNormal);
++
++        localPoint.x = -localPoint.x;
++        localNormal.x = -localNormal.x;
++
++        mirroredPoint = model.TransformPoint(localPoint);
++        mirroredNormal = model.TransformDirection(localNormal).normalized;
++
++        if (!snapToSurface) return true;
++
++        // Snap the mirrored point back onto the real surface. On a perfectly symmetric mesh
++        // this changes nothing; on a slightly asymmetric one it stops the mirrored card
++        // floating above or sinking into the skin. The ray starts outside and aims inward, so
++        // it hits the front face rather than escaping through the back.
++        Ray ray = new Ray(mirroredPoint + mirroredNormal * (modelWidth * .25f), -mirroredNormal);
++        RaycastHit hit;
++        if (Physics.Raycast(ray, out hit, modelWidth * .5f))
++        {
++            // Only accept the snap if it landed near where the reflection said it should. A
++            // far-away hit means the ray found some unrelated piece of geometry, and the pure
++            // reflection is the better answer.
++            if (Vector3.Distance(hit.point, mirroredPoint) < modelWidth * .05f)
++            {
++                mirroredPoint = hit.point;
++                mirroredNormal = hit.normal;
++            }
++        }
++
++        return true;
++    }
++
++    // For callers that have a point but no surface normal - the eraser, whose brush centre is
++    // a position in space rather than a placement. Pure reflection, no surface snap: there is
++    // no normal to aim a snap ray along, and an eraser only needs to be in roughly the right
++    // place because the brush radius does the rest.
++    public static bool TryMirrorPoint(Vector3 worldPoint, out Vector3 mirroredPoint)
++    {
++        Vector3 ignoredNormal;
++        return TryMirror(worldPoint, Vector3.up, false, out mirroredPoint, out ignoredNormal);
++    }
++
++    // ---- plane resolution and validation --------------------------------------------------
++    private static Transform ResolveModelTransform()
++    {
++        ModelViewer viewer = FindFirstObjectByType<ModelViewer>();
++        if (viewer == null) return null;
++
++        FieldInfo field = typeof(ModelViewer).GetField("loadedModel", BindingFlags.Instance | BindingFlags.NonPublic);
++        if (field == null) return null;
++
++        GameObject model = field.GetValue(viewer) as GameObject;
++        if (model == null) return null;
++        return model.transform;
++    }
++
++    // Score how well the mesh actually mirrors about local X = 0.
++    //
++    // Sample vertices spread across the whole mesh, reflect each one, and ask whether any
++    // vertex sits near where the reflection landed. The fraction that find a partner is the
++    // score. A head scores near 1; a model built entirely on one side of the origin scores
++    // near 0, and the toast says so rather than letting the user paint into thin air.
++    private static void ResolvePlane(Transform model)
++    {
++        planeResolved = false;
++        planeConfidence = 0f;
++        modelWidth = 1f;
++
++        if (model == null) return;
++
++        MeshFilter[] filters = model.GetComponentsInChildren<MeshFilter>();
++        Mesh mesh = null;
++        for (int i = 0; i < filters.Length; i++)
++        {
++            if (filters[i] == null) continue;
++            if (filters[i].sharedMesh == null) continue;
++            mesh = filters[i].sharedMesh;
++            break;
++        }
++        if (mesh == null) return;
++
++        Vector3[] vertices = mesh.vertices;
++        if (vertices == null || vertices.Length < 8) return;
++
++        modelWidth = Mathf.Max(.0001f, mesh.bounds.size.x);
++        float tolerance = modelWidth * MatchToleranceFraction;
++        float toleranceSqr = tolerance * tolerance;
++
++        int step = Mathf.Max(1, vertices.Length / ValidationSamples);
++        int tested = 0;
++        int matched = 0;
++
++        for (int i = 0; i < vertices.Length; i += step)
++        {
++            Vector3 source = vertices[i];
++
++            // Vertices sitting on the plane are their own mirror and would pass trivially,
++            // which flatters the score on a model that is only symmetric near the middle.
++            if (Mathf.Abs(source.x) < tolerance) continue;
++
++            Vector3 target = new Vector3(-source.x, source.y, source.z);
++            tested++;
++
++            for (int j = 0; j < vertices.Length; j += step)
++            {
++                if ((vertices[j] - target).sqrMagnitude <= toleranceSqr)
++                {
++                    matched++;
++                    break;
++                }
++            }
++        }
++
++        if (tested == 0) return;
++
++        planeResolved = true;
++        planeConfidence = (float)matched / tested;
++    }
++
++    // ---- UI --------------------------------------------------------------------------
++    private GameObject boundPanel;
++    private Button button;
++    private TextMeshProUGUI label;
++    private Image image;
++    private float nextScan;
++    private Transform lastModel;
++
++    private void Update()
++    {
++        if (Time.unscaledTime < nextScan) return;
++        nextScan = Time.unscaledTime + ScanInterval;
++
++        Transform model = ResolveModelTransform();
++        if (model != lastModel)
++        {
++            lastModel = model;
++            ResolvePlane(model);
++
++            // A new model is a new groom. Leaving symmetry on across a model swap would apply
++            // the old session's intent to a body it was never chosen for.
++            symmetryOn = false;
++        }
++
++        // The left panel is destroyed and rebuilt on every model and project load, so the
++        // binding has to be re-checked rather than established once.
++        GameObject panel = GameObject.Find("GroupManagerPanel");
++        if (panel == null)
++        {
++            boundPanel = null;
++            button = null;
++            label = null;
++            image = null;
++            return;
++        }
++
++        if (boundPanel != panel || button == null) Bind(panel);
++        Repaint();
++    }
++
++    private void Bind(GameObject panel)
++    {
++        boundPanel = panel;
++
++        Transform existing = panel.transform.Find(ButtonName);
++        if (existing != null)
++        {
++            button = existing.GetComponent<Button>();
++            label = existing.GetComponentInChildren<TextMeshProUGUI>(true);
++            image = existing.GetComponent<Image>();
++            if (button != null) return;
++
++            // A half-built husk from an interrupted rebuild - start again rather than adopt it.
++            Destroy(existing.gameObject);
++        }
++
++        BuildButton(panel.transform);
++    }
++
++    private void BuildButton(Transform parent)
++    {
++        GameObject go = new GameObject(ButtonName, typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
++        go.transform.SetParent(parent, false);
++        go.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, ButtonHeight);
++        go.GetComponent<LayoutElement>().preferredHeight = ButtonHeight;
++
++        image = go.GetComponent<Image>();
++        button = go.GetComponent<Button>();
++        button.onClick.AddListener(Toggle);
++
++        GameObject textGO = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
++        textGO.transform.SetParent(go.transform, false);
++        RectTransform textRect = textGO.GetComponent<RectTransform>();
++        textRect.anchorMin = Vector2.zero;
++        textRect.anchorMax = Vector2.one;
++        textRect.offsetMin = Vector2.zero;
++        textRect.offsetMax = Vector2.zero;
++
++        label = textGO.GetComponent<TextMeshProUGUI>();
++        label.fontSize = 13f;
++        label.fontStyle = FontStyles.Bold;
++        label.alignment = TextAlignmentOptions.Center;
++        label.color = Color.white;
++        label.raycastTarget = false;
++
++        // First guess only. GroupPanelPostHintStats.MaintainPanelOrder is the running order
++        // authority for this panel and puts the button under the instructions hint every scan.
++        Transform hint = parent.Find("PostCreateHint");
++        if (hint != null) go.transform.SetSiblingIndex(Mathf.Clamp(hint.GetSiblingIndex() + 1, 0, parent.childCount - 1));
++
++        Repaint();
++    }
++
++    private void Repaint()
++    {
++        // Only write when the value actually changed - a TMP text assignment forces a mesh
++        // rebuild of the label whether or not the string differs.
++        if (label != null)
++        {
++            string text = "SYMMETRY: OFF";
++            if (symmetryOn) text = "SYMMETRY: ON";
++            if (label.text != text) label.text = text;
++        }
++
++        if (image != null)
++        {
++            Color colour = new Color(.28f, .28f, .28f, 1f);
++            if (symmetryOn)
++            {
++                colour = new Color(.20f, .58f, .45f, 1f);
++                // Amber rather than green when the plane could not be trusted, so an
++                // unreliable mirror is visible at a glance and not just in a toast that has
++                // already faded.
++                if (!PlaneIsReliable) colour = new Color(.72f, .48f, .12f, 1f);
++            }
++            if (image.color != colour) image.color = colour;
++        }
++    }
++
++    private void Toggle()
++    {
++        symmetryOn = !symmetryOn;
++
++        if (symmetryOn)
++        {
++            if (lastModel == null) ResolvePlane(ResolveModelTransform());
++
++            if (!planeResolved)
++            {
++                StatusToast.Show("SYMMETRY ON - no model loaded yet, nothing to mirror about.", true);
++            }
++            else if (PlaneIsReliable)
++            {
++                StatusToast.Show("SYMMETRY ON - mirroring about the model midline (" + Mathf.RoundToInt(planeConfidence * 100f) + "% match).");
++            }
++            else
++            {
++                StatusToast.Show("SYMMETRY ON - but this model is only " + Mathf.RoundToInt(planeConfidence * 100f) + "% symmetric, so mirrored cards may not sit on the surface.", true);
++            }
++        }
++        else
++        {
++            StatusToast.Show("SYMMETRY OFF");
++        }
++
++        // Repaint on the very next frame rather than waiting out the scan interval.
++        nextScan = 0f;
++        Repaint();
++    }
++}
+diff --git a/Assets/Scripts/UI_Import/GroomSymmetryAuthority.cs.meta b/Assets/Scripts/UI_Import/GroomSymmetryAuthority.cs.meta
+new file mode 100644
+index 0000000..1a06e0c
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/GroomSymmetryAuthority.cs.meta
+@@ -0,0 +1,2 @@
++fileFormatVersion: 2
++guid: 922dd567aa589c4e37262d076ecee63a
+diff --git a/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs b/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs
+index e5b1258..86210af 100644
+--- a/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs
++++ b/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs
+@@ -35,7 +35,7 @@ public class GroupPanelPostHintStats : MonoBehaviour
+     private const float SidednessButtonWidth = 40f;
+     // Eight lines at fontSize 11. Bump this whenever a line is added to ApplyHintStyle,
+     // or the last one gets clipped.
+-    private const float ControlsHintHeight = 100f;
++    private const float ControlsHintHeight = 113f;
+ 
+     private const string InstructionsHeaderName = "InstructionsHeader";
+     private const float InstructionsHeaderHeight = 26f;
+@@ -154,7 +154,8 @@ public class GroupPanelPostHintStats : MonoBehaviour
+                     "Double Click Group name to rename it.\n" +
+                     "Click in space to come out of mode\n" +
+                     "Right Click to remove a group\n" +
+-                    "SPACE + Click to reposition Modifier";
++                    "SPACE + Click to reposition Modifier\n" +
++                    "SYMMETRY mirrors painting and erasing";
+         hint.fontSize = 11f;
+         hint.fontStyle = FontStyles.Bold;
+         hint.alignment = TextAlignmentOptions.MidlineLeft;
+@@ -188,6 +189,10 @@ public class GroupPanelPostHintStats : MonoBehaviour
+         AddIfPresent(panel, SceneLightAngleAuthority.RowName);
+         AddIfPresent(panel, InstructionsHeaderName);
+         AddIfPresent(panel, "PostCreateHint");
++        // The SYMMETRY toggle sits directly under the instructions. Anything NOT listed here
++        // gets shoved around every scan as the listed children are reindexed past it, so a new
++        // panel child has to be named here or its position will not hold.
++        AddIfPresent(panel, GroomSymmetryAuthority.ButtonName);
+         AddIfPresent(panel, "TitleText");
+         AddIfPresent(panel, "NewGroupButton");
+         AddIfPresent(panel, "GroupScrollView");
+diff --git a/Assets/Scripts/UI_Import/HairCard.cs b/Assets/Scripts/UI_Import/HairCard.cs
+index ab89d60..31dce0a 100644
+--- a/Assets/Scripts/UI_Import/HairCard.cs
++++ b/Assets/Scripts/UI_Import/HairCard.cs
+@@ -76,7 +76,8 @@ public class HairCard : MonoBehaviour
+         float curlDiameter,
+         float t,
+         out Vector3 curlOffset,
+-        out Quaternion bankRotation)
++        out Quaternion bankRotation,
++        bool mirrored = false)
+     {
+         curlOffset = Vector3.zero;
+         bankRotation = Quaternion.identity;
+@@ -89,6 +90,21 @@ public class HairCard : MonoBehaviour
+         float diameterMultiplier = PostShapeCurveBridge.EvaluateRoot(groupId, GroomShapeCurveChannel.CurlDiameter, t);
+         float turns = curlFrequency * freqMultiplier;
+         float radius = curlDiameter * diameterMultiplier * .5f;
++
++        // A coil is handed, so a mirrored card's coil must wind the other way. Negating BOTH
++        // the radius and the sweep is what makes the reflection exact: the offset becomes
++        // (-r(cos a - 1), +r sin a, 0), which is precisely diag(-1,1,1) applied to the original,
++        // and the bank rotation about local Z flips with it.
++        //
++        // Negating the angle alone would give the right handedness but leave the coil bulging
++        // 180 degrees out of phase; negating curlDiameter on the card instead is not an option,
++        // because the guard above rejects a non-positive diameter outright.
++        if (mirrored)
++        {
++            radius = -radius;
++            turns = -turns;
++        }
++
+         float angle = turns * t * Mathf.PI * 2f;
+ 
+         // cos(0)-1 = 0 and sin(0) = 0, so this is exactly zero at the root (t=0),
+@@ -263,6 +279,26 @@ public class HairCard : MonoBehaviour
+     [Header("Grouping")]
+     public int groupId = 0;
+ 
++    // SYMMETRY.
++    //
++    // A mirrored card is a NORMAL card whose geometry is evaluated through a local-X mirror.
++    // Nothing about the mirror is baked into its stored numbers: length, width, bend, twist,
++    // the three angle offsets and the curl values are all stored exactly as its partner's.
++    // The negation happens at evaluation time, here in HairCard.
++    //
++    // That is the whole point. ModelViewer's sliders push ABSOLUTE values to every card in the
++    // group (ApplyGroupUpdate), so a card that merely had its twist negated at placement time
++    // would be flattened back to its partner's value the first time any slider moved, and the
++    // two sides would silently drift into being identical rather than mirrored. Because the
++    // mirror is a property of the CARD and not of its numbers, group sliders, POSTs, clumpers
++    // and variance all carry on working untouched and the pair stays symmetric forever.
++    //
++    // The maths: mirroring the card's local X axis is the conjugation v -> S v S with
++    // S = diag(-1, 1, 1). Under it, rotations about local X keep their sign while rotations
++    // about local Y and Z flip. So: offsetX and bendAngle are UNCHANGED, offsetY, offsetZ and
++    // twistAngle are NEGATED, and the curl coil reverses its handedness.
++    public bool mirrored = false;
++
+     [Header("Selection State")]
+     [Range(0f, 1f)] public float selectionWeight = 0f;
+ 
+@@ -442,11 +478,25 @@ public class HairCard : MonoBehaviour
+                 (PostShapeCurveBridge.EvaluatePost(contribution.postId, GroomShapeCurveChannel.Y, t) - yMultiplier);
+             profiledZ += contribution.z *
+                 (PostShapeCurveBridge.EvaluatePost(contribution.postId, GroomShapeCurveChannel.Z, t) - zMultiplier);
++            // No sign flip needed here: profiledY and profiledZ are handed to MirroredEuler
++            // below, which negates the accumulated total. Flipping the contributions as well
++            // would cancel it back out.
+         }
+ 
+-        Quaternion fullOffset = Quaternion.Euler(storedOffsetX, storedOffsetY, storedOffsetZ);
+-        Quaternion curvedOffset = Quaternion.Euler(profiledX, profiledY, profiledZ);
+-        Quaternion bendAndTwist = Quaternion.Euler(profiledBend, 0f, twistAngle * t);
++        // Mirroring the whole profile chain, term by term. Every rotation here is built from
++        // Euler triples whose X component is a rotation about local X (sign preserved under the
++        // mirror) and whose Y and Z components rotate about local Y and Z (sign flipped). Twist
++        // is a roll about local Z, so it flips too; bend is about local X, so it does not.
++        //
++        // Doing it per-term rather than conjugating the finished quaternion matters, because the
++        // profile curves scale each component independently along the length - a mirror applied
++        // after profiling would not be the profile of the mirror.
++        Quaternion fullOffset = MirroredEuler(storedOffsetX, storedOffsetY, storedOffsetZ);
++        Quaternion curvedOffset = MirroredEuler(profiledX, profiledY, profiledZ);
++
++        float mirroredTwist = twistAngle;
++        if (mirrored) mirroredTwist = -twistAngle;
++        Quaternion bendAndTwist = Quaternion.Euler(profiledBend, 0f, mirroredTwist * t);
+ 
+         return Quaternion.Inverse(fullOffset) * curvedOffset * bendAndTwist;
+     }
+@@ -582,7 +632,24 @@ public class HairCard : MonoBehaviour
+     private void UpdateTransformOrientation(float embedDepth)
+     {
+         transform.position = spawnHitPoint - (surfaceNormal * embedDepth);
+-        transform.rotation = Quaternion.LookRotation(surfaceNormal) * Quaternion.Euler(storedOffsetX, storedOffsetY, storedOffsetZ);
++
++        // surfaceNormal is ALREADY the mirrored normal for a mirrored card - the mirror of the
++        // placement is done once, at spawn. What is left to do here is the mirror of the card's
++        // own body, which is the S-conjugation of the authored angle triple.
++        //
++        // This is exact, not an approximation. LookRotation(M n) == M * LookRotation(n) * S for
++        // the world-X mirror M (both have forward M n, and world up is unchanged by M so both
++        // derive the same up), and Euler(ox, -oy, -oz) == S * Euler(ox, oy, oz) * S. Composing
++        // the two gives M * R * S, which is exactly the proper rotation whose local X axis is
++        // the reflection of the original's, i.e. a true mirror rather than a rotation.
++        transform.rotation = Quaternion.LookRotation(surfaceNormal) * MirroredEuler(storedOffsetX, storedOffsetY, storedOffsetZ);
++    }
++
++    // Euler(x, y, z) for a normal card; Euler(x, -y, -z) for a mirrored one.
++    private Quaternion MirroredEuler(float x, float y, float z)
++    {
++        if (!mirrored) return Quaternion.Euler(x, y, z);
++        return Quaternion.Euler(x, -y, -z);
+     }
+ 
+     public void UpdateVisualHighlight()
+@@ -926,6 +993,9 @@ public class HairCard : MonoBehaviour
+             // even when all of its own numbers are identical.
+             hash = hash * 31 + groupId;
+ 
++            // Flipping a card between mirrored and normal changes every vertex it produces.
++            hash = hash * 31 + mirrored.GetHashCode();
++
+             // POST profile provenance. The COUNT alone is not enough - a POST whose weight
+             // changes rewrites bend/x/y/z with the count unchanged.
+             hash = hash * 31 + postShapeProfileContributions.Count;
+@@ -1036,7 +1106,7 @@ public class HairCard : MonoBehaviour
+             // with it.
+             Vector3 curlOffset;
+             Quaternion bankRotation;
+-            EvaluateCurl(groupId, curlFrequency, curlDiameter, t, out curlOffset, out bankRotation);
++            EvaluateCurl(groupId, curlFrequency, curlDiameter, t, out curlOffset, out bankRotation, mirrored);
+ 
+             Vector3 sectionOrigin = new Vector3(0f, 0f, z);
+             Vector3 left = sectionOrigin + bankRotation * new Vector3(-currentWidth, 0f, 0f);
+diff --git a/Assets/Scripts/UI_Import/HairCardSaveData.cs b/Assets/Scripts/UI_Import/HairCardSaveData.cs
+index 34131bc..1244b22 100644
+--- a/Assets/Scripts/UI_Import/HairCardSaveData.cs
++++ b/Assets/Scripts/UI_Import/HairCardSaveData.cs
+@@ -25,6 +25,14 @@ public class HairCardSaveData
+     // Curl (spiral/coil) modifier - applied after width, before bend, in the shape pipeline.
+     public float curlFrequency;
+     public float curlDiameter;
++
++    // SYMMETRY. A mirrored card evaluates its geometry through a local-X mirror, so this has
++    // to survive a round trip or every mirrored card in a reloaded project would come back
++    // shaped like its partner instead of like its reflection.
++    //
++    // Backward compatible: JsonUtility leaves a missing bool as false, so projects saved
++    // before symmetry existed load as all-unmirrored, which is exactly what they were.
++    public bool mirrored;
+ }
+ 
+ [Serializable] public class VarianceChannelSaveData { public string channel; public float amount; public int seed; }
+diff --git a/Assets/Scripts/UI_Import/ModelViewer.cs b/Assets/Scripts/UI_Import/ModelViewer.cs
+index a91877b..3acaf87 100644
+--- a/Assets/Scripts/UI_Import/ModelViewer.cs
++++ b/Assets/Scripts/UI_Import/ModelViewer.cs
+@@ -1140,18 +1140,51 @@ public class ModelViewer : MonoBehaviour
+     }
+ 
+     HairCard PinHairCard(Vector3 position, Vector3 normal)
++    {
++        HairCard placed = SpawnHairCard(position, normal, false);
++
++        // SYMMETRY. Every placement mode in the project funnels through PinHairCard - the
++        // legacy click and shift-drag here in HandleGrooming, and PLACE / PAINT / SPRAY in
++        // PlacementBrushModeAuthority, which reaches this method by reflection. Hooking it
++        // once therefore covers all five without any of them needing to know symmetry exists.
++        //
++        // Note the mirrored card is spawned through SpawnHairCard, NOT through PinHairCard, so
++        // it cannot itself trigger another mirror. TryMirror also declines points near the
++        // midline, where a mirror would just stack a duplicate on top of the original.
++        Vector3 mirroredPosition;
++        Vector3 mirroredNormal;
++        if (GroomSymmetryAuthority.TryMirror(position, normal, out mirroredPosition, out mirroredNormal))
++            SpawnHairCard(mirroredPosition, mirroredNormal, true);
++
++        RefreshGroupListUI();
++        return placed;
++    }
++
++    // The actual spawn. `isMirrored` marks the card as living on the reflected side; see
++    // HairCard.mirrored for what that does and, more importantly, why the mirror is a flag on
++    // the card rather than a set of pre-negated numbers.
++    HairCard SpawnHairCard(Vector3 position, Vector3 normal, bool isMirrored)
+     {
+         GameObject cardGO = new GameObject("HairCard_Strip", typeof(MeshFilter), typeof(MeshRenderer), typeof(HairCard));
+         HairCard card = cardGO.GetComponent<HairCard>();
++
++        // Set BEFORE SetPlacementData, which orients the transform and captures canonical
++        // state - both of which read the flag.
++        card.mirrored = isMirrored;
++
+         card.SetPlacementData(position, normal, currentEmbedDepth, currentOffsetX, currentOffsetY, currentOffsetZ, currentGroupId);
+         card.SetParameters(currentLength, currentWidth, currentSegments, currentBend, currentTwist, currentOffsetX, currentOffsetY, currentOffsetZ, currentEmbedDepth, 1f, currentUScale, currentVScale, currentUOffset, currentVOffset, currentCurlFrequency, currentCurlDiameter);
+-        lastPlacedCard = card;
++
++        // Deliberately only the primary card becomes lastPlacedCard. That reference is what
++        // the sliders steer when nothing is selected, and it would be surprising for a slider
++        // to start driving the mirrored copy instead of the one you just painted.
++        if (!isMirrored) lastPlacedCard = card;
++
+         MeshRenderer mr = cardGO.GetComponent<MeshRenderer>();
+         if (hairCardMaterial != null) mr.sharedMaterial = hairCardMaterial;
+         // A card born into a group SOLO is hiding must not appear. New renderers default to
+         // enabled, so without this the groom leaks back one strand at a time.
+         mr.enabled = GroupSoloVisibilityAuthority.IsGroupVisible(card.groupId);
+-        RefreshGroupListUI();
+         return card;
+     }
+ 
+@@ -1248,6 +1281,7 @@ public class ModelViewer : MonoBehaviour
+             cardData.groupId = card.groupId;
+             cardData.curlFrequency = card.curlFrequency;
+             cardData.curlDiameter = card.curlDiameter;
++            cardData.mirrored = card.mirrored;
+             saveData.hairCards.Add(cardData);
+         }
+         string json = JsonUtility.ToJson(saveData, true);
+@@ -1320,6 +1354,8 @@ public class ModelViewer : MonoBehaviour
+             card.transform.position = new Vector3(cData.posX, cData.posY, cData.posZ);
+             card.transform.rotation = new Quaternion(cData.rotX, cData.rotY, cData.rotZ, cData.rotW);
+             card.groupId = cData.groupId;
++            // Before SetParameters below, which rebuilds the mesh from it.
++            card.mirrored = cData.mirrored;
+             float u = cData.uScale != 0 ? cData.uScale : 1.0f;
+             float v = cData.vScale != 0 ? cData.vScale : 1.0f;
+             card.SetParameters(cData.length, cData.width, cData.segments, cData.bendAngle, cData.twistAngle, cData.offsetX, cData.offsetY, cData.offsetZ, cData.embedDepth, 1f, u, v, cData.uOffset, cData.vOffset, cData.curlFrequency, cData.curlDiameter);
+diff --git a/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs b/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs
+index 2e04adb..433183e 100644
+--- a/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs
++++ b/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs
+@@ -231,7 +231,7 @@ public class ModifierDeleteNeutralizeHook : MonoBehaviour, IPointerDownHandler
+             // The bank shapes the section, then the offset moves it.
+             Vector3 curlOffset;
+             Quaternion bankRotation;
+-            HairCard.EvaluateCurl(card.groupId, card.curlFrequency, card.curlDiameter, t, out curlOffset, out bankRotation);
++            HairCard.EvaluateCurl(card.groupId, card.curlFrequency, card.curlDiameter, t, out curlOffset, out bankRotation, card.mirrored);
+ 
+             Vector3 sectionOrigin = new Vector3(0f, 0f, z);
+             Vector3 left = sectionOrigin + bankRotation * new Vector3(-span, 0f, 0f) + curlOffset;
+diff --git a/Assets/Scripts/UI_Import/PlacementBrushModeAuthority.cs b/Assets/Scripts/UI_Import/PlacementBrushModeAuthority.cs
+index a53474f..c68395e 100644
+--- a/Assets/Scripts/UI_Import/PlacementBrushModeAuthority.cs
++++ b/Assets/Scripts/UI_Import/PlacementBrushModeAuthority.cs
+@@ -293,6 +293,27 @@ public class PlacementBrushModeAuthority : MonoBehaviour
+     }
+ 
+     void EraseAt(Vector3 center)
++    {
++        bool removed = EraseAtPoint(center);
++
++        // SYMMETRY. Erasing has to mirror too, or the two sides drift apart the moment you
++        // tidy anything up - you would be able to paint symmetrically but never correct
++        // symmetrically, which is worse than having no symmetry at all.
++        //
++        // Mirroring the BRUSH CENTRE rather than hunting for each card's partner is what makes
++        // this robust: it does not care whether the cards on the far side were placed by
++        // symmetry, painted by hand, or moved since, and it needs no pairing bookkeeping to
++        // go stale.
++        Vector3 mirroredCentre;
++        if (GroomSymmetryAuthority.TryMirrorPoint(center, out mirroredCentre))
++        {
++            if (EraseAtPoint(mirroredCentre)) removed = true;
++        }
++
++        if (removed) refreshGroupListMethod?.Invoke(viewer, null);
++    }
++
++    bool EraseAtPoint(Vector3 center)
+     {
+         HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
+         bool removed = false;
+@@ -308,7 +329,7 @@ public class PlacementBrushModeAuthority : MonoBehaviour
+             Destroy(card.gameObject);
+             removed = true;
+         }
+-        if (removed) refreshGroupListMethod?.Invoke(viewer, null);
++        return removed;
+     }
+ 
+     void SelectNearestGroup(Vector3 point)
+diff --git a/Assets/Scripts/UI_Import/RuntimeNavigationProjectIO.cs b/Assets/Scripts/UI_Import/RuntimeNavigationProjectIO.cs
+index f0a063f..e9524cd 100644
+--- a/Assets/Scripts/UI_Import/RuntimeNavigationProjectIO.cs
++++ b/Assets/Scripts/UI_Import/RuntimeNavigationProjectIO.cs
+@@ -140,7 +140,7 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
+                 length=card.length,width=card.width,segments=card.segments,bendAngle=card.bendAngle,twistAngle=card.twistAngle,flattenFactor=card.flattenFactor,
+                 embedDepth=card.GetEmbedDepth(),offsetX=card.GetOffsetX(),offsetY=card.GetOffsetY(),offsetZ=card.GetOffsetZ(),
+                 uScale=card.uScale,vScale=card.vScale,uOffset=card.uOffset,vOffset=card.vOffset,groupId=card.groupId,
+-                curlFrequency=card.curlFrequency,curlDiameter=card.curlDiameter
++                curlFrequency=card.curlFrequency,curlDiameter=card.curlDiameter,mirrored=card.mirrored
+             });
+         }
+         File.WriteAllText(path, JsonUtility.ToJson(data,true));
+@@ -178,6 +178,9 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
+         {
+             GameObject go=new GameObject("HairCard_Strip",typeof(MeshFilter),typeof(MeshRenderer),typeof(HairCard));
+             HairCard card=go.GetComponent<HairCard>();
++            // Restored BEFORE SetPlacementData/SetParameters, both of which orient and build
++            // from it. Set afterwards, the card would come up shaped like its partner.
++            card.mirrored=c.mirrored;
+             Vector3 hit=new Vector3(c.hitX,c.hitY,c.hitZ);
+             Vector3 normal=new Vector3(c.normalX,c.normalY,c.normalZ).normalized;
+             card.SetPlacementData(hit,normal,c.embedDepth,c.offsetX,c.offsetY,c.offsetZ,c.groupId);
+diff --git a/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs b/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
+index cb01462..53c3784 100644
+--- a/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
++++ b/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
+@@ -443,7 +443,7 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
+             // shapes the section, then the offset moves it.
+             Vector3 curlOffset;
+             Quaternion bankRotation;
+-            HairCard.EvaluateCurl(card.groupId, card.curlFrequency, card.curlDiameter, t, out curlOffset, out bankRotation);
++            HairCard.EvaluateCurl(card.groupId, card.curlFrequency, card.curlDiameter, t, out curlOffset, out bankRotation, card.mirrored);
+ 
+             Vector3 sectionOrigin = new Vector3(0f, 0f, z);
+             Vector3 left = sectionOrigin + bankRotation * new Vector3(-span, 0f, 0f) + curlOffset;
