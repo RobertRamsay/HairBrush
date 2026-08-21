@@ -1,0 +1,900 @@
+diff --git a/Assets/Scripts/UI_Import/GroupAddButtonPlacementAuthority.cs b/Assets/Scripts/UI_Import/GroupAddButtonPlacementAuthority.cs
+new file mode 100644
+index 0000000..60e214b
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/GroupAddButtonPlacementAuthority.cs
+@@ -0,0 +1,886 @@
++using System;
++using System.Collections.Generic;
++using System.Reflection;
++using TMPro;
++using UnityEngine;
++using UnityEngine.EventSystems;
++using UnityEngine.InputSystem;
++using UnityEngine.UI;
++
++// V017 - "+POST / +CLUMPER / +GUIDE" add buttons beneath every Hair Group row.
++//
++// The keyboard gestures are untouched and still work exactly as before:
++//     CTRL + click  = place a POST
++//     TAB   + click = place a CLUMPER
++//     SPACE + click = reposition
++//
++// This adds a discoverable second route. Click an add button under a group and the tool
++// enters a one-shot placement mode: the group becomes current, a line across the bottom
++// of the viewport says what to do, and the next left-click on the model places the thing.
++// Right-click or ESC cancels.
++//
++// While the mode is armed, grooming input is switched off the same way
++// ModifierGestureReservation switches it off for TAB/SPACE. That is what stops the
++// placement click from ALSO spawning a hair card, and it stops the brush preview ring
++// from following the cursor during a modal placement. The previous grooming state is
++// captured on arm and restored on disarm, so an armed-then-cancelled placement leaves
++// the tool exactly where it started.
++//
++// Execution order -6000 puts this component's LateUpdate ahead of GroupAddRowUIAuthority
++// (10500), so the button lights up in the same frame it is armed. The suppression itself
++// does not depend on the order, because it is held for the whole armed period rather than
++// being applied per click.
++//
++// GUIDE is a placeholder. The button, the placement prompt and the click are all real -
++// the point is recorded in GuidePlaceholderRegistry and reported - but nothing is built
++// from it yet and nothing about it is written to a project file.
++[DefaultExecutionOrder(-6000)]
++public class GroupAddButtonPlacementAuthority : MonoBehaviour
++{
++    public enum AddKind
++    {
++        None = 0,
++        Post = 1,
++        Clumper = 2,
++        Guide = 3
++    }
++
++    private const string BannerName = "GroupAddPlacementPrompt";
++    private const float BottomInset = 42f;
++    private const float BannerHeight = 26f;
++    private const float BannerFontSize = 16f;
++    private const float ShadowOffset = 1.5f;
++
++    // Read by GroupAddRowUIAuthority so the armed button can light up.
++    private static AddKind armedKind;
++    private static int armedGroupId;
++
++    public static AddKind ArmedKind
++    {
++        get { return armedKind; }
++    }
++
++    public static int ArmedGroupId
++    {
++        get { return armedGroupId; }
++    }
++
++    private ModelViewer viewer;
++    private PostAffectorManager posts;
++    private GroupClumperManager clumpers;
++
++    private FieldInfo groomingModeField;
++    private FieldInfo postLastCreatedFrameField;
++    private MethodInfo enterSelectionModeMethod;
++    private MethodInfo selectGroupMethod;
++    private MethodInfo createAffectorMethod;
++
++    private bool groomingWasEnabled;
++    private bool groomingSuppressed;
++    private bool restorePending;
++    private int restoreRequestedFrame;
++    private int armedFrame;
++
++    private GameObject bannerObject;
++    private TextMeshProUGUI bannerLabel;
++    private TextMeshProUGUI bannerShadow;
++    private Canvas boundCanvas;
++    private string lastBannerText;
++
++    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
++    static void Spawn()
++    {
++        if (FindFirstObjectByType<GroupAddButtonPlacementAuthority>() != null) return;
++        GameObject go = new GameObject("GroupAddButtonPlacementAuthority");
++        DontDestroyOnLoad(go);
++        go.AddComponent<GroupAddButtonPlacementAuthority>();
++    }
++
++    void Awake()
++    {
++        armedKind = AddKind.None;
++        armedGroupId = -1;
++
++        viewer = null;
++        posts = null;
++        clumpers = null;
++
++        groomingModeField = null;
++        postLastCreatedFrameField = null;
++        enterSelectionModeMethod = null;
++        selectGroupMethod = null;
++        createAffectorMethod = null;
++
++        groomingWasEnabled = false;
++        groomingSuppressed = false;
++        restorePending = false;
++        restoreRequestedFrame = -1;
++        armedFrame = -1;
++
++        bannerObject = null;
++        bannerLabel = null;
++        bannerShadow = null;
++        boundCanvas = null;
++        lastBannerText = string.Empty;
++    }
++
++    // Called by the row buttons.
++    public static void Arm(AddKind kind, int groupId)
++    {
++        GroupAddButtonPlacementAuthority instance = FindFirstObjectByType<GroupAddButtonPlacementAuthority>();
++        if (instance == null) return;
++        instance.BeginPlacement(kind, groupId);
++    }
++
++    public static void CancelArmed()
++    {
++        GroupAddButtonPlacementAuthority instance = FindFirstObjectByType<GroupAddButtonPlacementAuthority>();
++        if (instance == null) return;
++        instance.Disarm();
++    }
++
++    void BeginPlacement(AddKind kind, int groupId)
++    {
++        Resolve();
++        if (viewer == null) return;
++        if (kind == AddKind.None) return;
++
++        // Re-arming before the deferred restore has run: the captured state from the first
++        // arm is still the true one, so take the suppression back over rather than
++        // re-reading a value that is currently switched off.
++        if (restorePending)
++        {
++            restorePending = false;
++            groomingSuppressed = true;
++        }
++
++        // Re-arming while already armed just swaps which thing is being placed, so the
++        // grooming state must only be captured on the FIRST arm. Capturing it again here
++        // would capture the suppressed value and restore grooming to "off" on disarm.
++        if (!groomingSuppressed)
++        {
++            groomingWasEnabled = ReadGroomingEnabled();
++            groomingSuppressed = true;
++        }
++
++        viewer.ToggleGroomingMode(false);
++
++        // The add button belongs to a specific group, so that group becomes the working
++        // group before anything is placed into it.
++        if (viewer.currentGroupId != groupId && selectGroupMethod != null)
++        {
++            selectGroupMethod.Invoke(viewer, new object[] { groupId });
++        }
++        viewer.currentGroupId = groupId;
++
++        armedKind = kind;
++        armedGroupId = groupId;
++        armedFrame = Time.frameCount;
++    }
++
++    void Disarm()
++    {
++        armedKind = AddKind.None;
++        armedGroupId = -1;
++        armedFrame = -1;
++
++        // Grooming is NOT switched back on here. Paint mode places a card for every frame
++        // the left button is held, so restoring the instant the placement click is consumed
++        // would paint a trail of cards out of the tail of that same click. The restore
++        // waits for the button to come back up, and for at least one frame to pass.
++        if (groomingSuppressed)
++        {
++            groomingSuppressed = false;
++            restorePending = true;
++            restoreRequestedFrame = Time.frameCount;
++        }
++
++        SetBannerVisible(false);
++    }
++
++    void ServiceDeferredRestore()
++    {
++        if (!restorePending) return;
++        if (Time.frameCount <= restoreRequestedFrame) return;
++
++        bool stillHeld = Mouse.current != null && Mouse.current.leftButton.isPressed;
++        if (stillHeld) return;
++
++        restorePending = false;
++        if (viewer == null) return;
++        viewer.ToggleGroomingMode(groomingWasEnabled);
++    }
++
++    // Everything happens in LateUpdate, not Update.
++    //
++    // The obvious place for this is Update at -6000, ahead of the placement authorities.
++    // It is the wrong place: EventSystem does its pointer raycast inside its own Update,
++    // so EventSystem.IsPointerOverGameObject() read at -6000 answers for LAST frame. Click
++    // a panel button on the same frame the cursor arrives over it and a -6000 reader is
++    // told the pointer was over the 3D view, which would fire a placement into the model
++    // behind the panel. Every LateUpdate runs after EventSystem, so the answer is current.
++    //
++    // Running late costs nothing here, because the reservation is not per-click: grooming
++    // is held off for the whole armed period, from the button press to the placement.
++    void LateUpdate()
++    {
++        Resolve();
++        ServiceDeferredRestore();
++
++        if (armedKind == AddKind.None)
++        {
++            SetBannerVisible(false);
++            return;
++        }
++
++        if (viewer == null)
++        {
++            Disarm();
++            return;
++        }
++
++        // The group the placement belongs to was deleted while the mode was armed.
++        if (GameObject.Find("GroupItem_" + armedGroupId) == null)
++        {
++            Disarm();
++            return;
++        }
++
++        // Re-asserted every frame rather than once on arm: a project load re-enables
++        // grooming from outside this component, and an armed placement must not quietly
++        // turn back into a card-painting click halfway through.
++        if (groomingSuppressed)
++        {
++            viewer.ToggleGroomingMode(false);
++        }
++
++        UpdateBanner();
++
++        if (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame)
++        {
++            Disarm();
++            return;
++        }
++
++        if (Mouse.current == null) return;
++
++        if (Mouse.current.rightButton.wasPressedThisFrame)
++        {
++            Disarm();
++            return;
++        }
++
++        if (!Mouse.current.leftButton.wasPressedThisFrame) return;
++
++        // The click that pressed the add button itself must not also be read as the
++        // placement click.
++        if (armedFrame == Time.frameCount) return;
++
++        // A click on the panel is a panel click, not a placement. The mode stays armed so
++        // an accidental click on the UI does not silently drop out of placement.
++        if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
++
++        // The keyboard gestures do not go through this component and do not care that a
++        // button placement is in progress: PostAffectorManager.DetectCtrlClick fires on
++        // CTRL+click on its own, and the two clumper interaction scripts fire on TAB+click
++        // on their own. A modifier resting under a hand during a button placement would
++        // therefore create a second object on top of the one being placed. Wait for the
++        // modifier to come up rather than placing a duplicate; the mode stays armed.
++        if (IsShortcutModifierHeld())
++        {
++            StatusToast.Show("Release CTRL / TAB / SPACE, then click the effect point.", false, 2f);
++            return;
++        }
++
++        RaycastHit hit;
++        if (!TryRaycastModel(out hit))
++        {
++            StatusToast.Show("Nothing under the cursor - click on the model.", false, 2f);
++            return;
++        }
++
++        AddKind kind = armedKind;
++        int groupId = armedGroupId;
++        Disarm();
++        Place(kind, groupId, hit.point, hit.normal);
++    }
++
++    void Place(AddKind kind, int groupId, Vector3 point, Vector3 normal)
++    {
++        if (kind == AddKind.Post)
++        {
++            PlacePost(groupId, point, normal);
++            return;
++        }
++
++        if (kind == AddKind.Clumper)
++        {
++            PlaceClumper(groupId, point, normal);
++            return;
++        }
++
++        if (kind == AddKind.Guide)
++        {
++            PlaceGuide(groupId, point, normal);
++            return;
++        }
++    }
++
++    // Reproduces the CTRL+click path exactly, in the same order it happens there:
++    // ModelViewer.EnterSelectionMode sets the selection hotspot (execution order 0 on a
++    // real CTRL+click), then PostAffectorManager.CreateAffector turns that hotspot into
++    // an affector. Creating the affector without the hotspot is the stranded-pair state
++    // documented in PostAffectorManager - handles that drag but geometry that never moves.
++    void PlacePost(int groupId, Vector3 point, Vector3 normal)
++    {
++        if (viewer == null || posts == null)
++        {
++            StatusToast.Show("POST could not be placed - affector manager not found.", true);
++            return;
++        }
++
++        if (enterSelectionModeMethod == null || createAffectorMethod == null)
++        {
++            StatusToast.Show("POST could not be placed - placement entry points not found.", true);
++            return;
++        }
++
++        enterSelectionModeMethod.Invoke(viewer, new object[] { point, normal });
++        createAffectorMethod.Invoke(posts, new object[] { groupId, point, normal });
++
++        // PostAffectorManager guards itself against creating two affectors in one frame.
++        // Stamping the same guard here means a CTRL that happened to be held on the
++        // placement click cannot produce a second POST on top of this one.
++        if (postLastCreatedFrameField != null)
++        {
++            postLastCreatedFrameField.SetValue(posts, Time.frameCount);
++        }
++
++        StatusToast.Show("POST placed on group " + groupId + ".", false, 2f);
++    }
++
++    void PlaceClumper(int groupId, Vector3 point, Vector3 normal)
++    {
++        if (clumpers == null)
++        {
++            StatusToast.Show("CLUMPER could not be placed - clumper manager not found.", true);
++            return;
++        }
++
++        // Same public entry point TAB+click uses. It selects the new clumper, which is
++        // what opens its controls in the right-hand panel.
++        clumpers.CreateClumper(groupId, point, normal);
++        StatusToast.Show("CLUMPER placed on group " + groupId + ".", false, 2f);
++    }
++
++    void PlaceGuide(int groupId, Vector3 point, Vector3 normal)
++    {
++        GuidePlaceholderRegistry.Add(groupId, point, normal);
++        int count = GuidePlaceholderRegistry.CountForGroup(groupId);
++        StatusToast.Show("GUIDE point " + count + " recorded on group " + groupId +
++                         " (placeholder - guide curves are not built yet).", false, 3f);
++    }
++
++    static bool IsShortcutModifierHeld()
++    {
++        if (Keyboard.current == null) return false;
++        if (Keyboard.current.ctrlKey.isPressed) return true;
++        if (Keyboard.current.tabKey.isPressed) return true;
++        if (Keyboard.current.spaceKey.isPressed) return true;
++        return false;
++    }
++
++    bool TryRaycastModel(out RaycastHit hit)
++    {
++        hit = default;
++        if (viewer == null) return false;
++        if (viewer.mainCamera == null) return false;
++        if (Mouse.current == null) return false;
++        Ray ray = viewer.mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
++        return Physics.Raycast(ray, out hit);
++    }
++
++    void Resolve()
++    {
++        if (viewer == null)
++        {
++            viewer = FindFirstObjectByType<ModelViewer>();
++            groomingModeField = null;
++            enterSelectionModeMethod = null;
++            selectGroupMethod = null;
++        }
++
++        if (viewer != null && groomingModeField == null)
++        {
++            BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
++            Type t = typeof(ModelViewer);
++            groomingModeField = t.GetField("isGroomingMode", flags);
++            enterSelectionModeMethod = t.GetMethod("EnterSelectionMode", flags);
++            selectGroupMethod = t.GetMethod("SelectGroup", flags);
++        }
++
++        if (posts == null)
++        {
++            posts = FindFirstObjectByType<PostAffectorManager>();
++            createAffectorMethod = null;
++            postLastCreatedFrameField = null;
++        }
++
++        if (posts != null && createAffectorMethod == null)
++        {
++            BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
++            Type t = typeof(PostAffectorManager);
++            createAffectorMethod = t.GetMethod("CreateAffector", flags);
++            postLastCreatedFrameField = t.GetField("lastCreatedFrame", flags);
++        }
++
++        if (clumpers == null)
++        {
++            clumpers = FindFirstObjectByType<GroupClumperManager>();
++        }
++    }
++
++    bool ReadGroomingEnabled()
++    {
++        if (viewer == null) return false;
++        if (groomingModeField == null) return false;
++        object value = groomingModeField.GetValue(viewer);
++        if (value is bool flag) return flag;
++        return false;
++    }
++
++    // ---------------------------------------------------------------------------------
++    // Bottom-of-viewport prompt.
++    //
++    // PlacementModeBannerAuthority hides itself while grooming is off, and grooming is
++    // always off while a placement is armed, so this can occupy the same line without the
++    // two ever drawing over each other.
++    // ---------------------------------------------------------------------------------
++
++    void UpdateBanner()
++    {
++        Canvas canvas = ResolveCanvas();
++        if (canvas == null)
++        {
++            SetBannerVisible(false);
++            return;
++        }
++
++        if (boundCanvas != canvas || bannerLabel == null)
++        {
++            BuildBanner(canvas);
++        }
++        if (bannerLabel == null) return;
++
++        SetBannerVisible(true);
++
++        string what = "POST";
++        if (armedKind == AddKind.Clumper) what = "CLUMPER";
++        if (armedKind == AddKind.Guide) what = "GUIDE (placeholder)";
++
++        string text = "PLACE " + what + " ON GROUP " + armedGroupId +
++                      "   -   click the effect point on the model    (right-click or ESC to cancel)";
++
++        if (text == lastBannerText) return;
++        lastBannerText = text;
++        bannerLabel.text = text;
++        if (bannerShadow != null) bannerShadow.text = text;
++    }
++
++    Canvas ResolveCanvas()
++    {
++        if (viewer == null) return null;
++        if (viewer.groomingSliderPanelGO == null) return null;
++        Canvas canvas = viewer.groomingSliderPanelGO.GetComponentInParent<Canvas>();
++        if (canvas == null) return null;
++        return canvas.rootCanvas;
++    }
++
++    void BuildBanner(Canvas canvas)
++    {
++        boundCanvas = canvas;
++        lastBannerText = string.Empty;
++
++        Transform existing = canvas.transform.Find(BannerName);
++        if (existing != null)
++        {
++            bannerObject = existing.gameObject;
++            bannerShadow = FindChildText(existing, "Shadow");
++            bannerLabel = FindChildText(existing, "Label");
++            if (bannerLabel != null) return;
++            Destroy(bannerObject);
++            bannerObject = null;
++        }
++
++        bannerObject = new GameObject(BannerName, typeof(RectTransform));
++        bannerObject.transform.SetParent(canvas.transform, false);
++
++        RectTransform rect = bannerObject.GetComponent<RectTransform>();
++        rect.anchorMin = new Vector2(0f, 0f);
++        rect.anchorMax = new Vector2(1f, 0f);
++        rect.pivot = new Vector2(.5f, 0f);
++        rect.anchoredPosition = new Vector2(0f, BottomInset);
++        rect.sizeDelta = new Vector2(-24f, BannerHeight);
++
++        bannerShadow = BuildBannerText(bannerObject.transform, "Shadow", new Color(0f, 0f, 0f, .75f),
++            new Vector2(ShadowOffset, -ShadowOffset));
++        bannerLabel = BuildBannerText(bannerObject.transform, "Label", new Color(1f, .82f, .28f, 1f),
++            Vector2.zero);
++
++        // Sits over the viewport, so it must never eat the placement click.
++        bannerObject.transform.SetAsLastSibling();
++    }
++
++    static TextMeshProUGUI FindChildText(Transform parent, string childName)
++    {
++        Transform child = parent.Find(childName);
++        if (child == null) return null;
++        return child.GetComponent<TextMeshProUGUI>();
++    }
++
++    static TextMeshProUGUI BuildBannerText(Transform parent, string childName, Color color, Vector2 offset)
++    {
++        GameObject go = new GameObject(childName, typeof(RectTransform), typeof(TextMeshProUGUI));
++        go.transform.SetParent(parent, false);
++
++        RectTransform rect = go.GetComponent<RectTransform>();
++        rect.anchorMin = Vector2.zero;
++        rect.anchorMax = Vector2.one;
++        rect.pivot = new Vector2(.5f, .5f);
++        rect.offsetMin = new Vector2(offset.x, offset.y);
++        rect.offsetMax = new Vector2(offset.x, offset.y);
++
++        TextMeshProUGUI text = go.GetComponent<TextMeshProUGUI>();
++        text.fontSize = BannerFontSize;
++        text.fontStyle = FontStyles.Bold;
++        text.color = color;
++        text.alignment = TextAlignmentOptions.Center;
++        text.textWrappingMode = TextWrappingModes.NoWrap;
++        text.overflowMode = TextOverflowModes.Overflow;
++        text.raycastTarget = false;
++        return text;
++    }
++
++    void SetBannerVisible(bool visible)
++    {
++        if (bannerObject == null) return;
++        if (bannerObject.activeSelf == visible) return;
++        bannerObject.SetActive(visible);
++    }
++
++    void OnDisable()
++    {
++        // Never leave grooming switched off because this component went away mid-placement.
++        bool owed = groomingSuppressed || restorePending;
++        groomingSuppressed = false;
++        restorePending = false;
++        if (!owed) return;
++        if (viewer == null) return;
++        viewer.ToggleGroomingMode(groomingWasEnabled);
++    }
++}
++
++// ------------------------------------------------------------------------------------
++// The row of add buttons itself.
++//
++// Kept as a separate component because it has to run LAST (after
++// GroupPanelRowOrderAuthority at 10000 and after GroupClumperManager's row scan), while
++// the input reservation above has to run FIRST. One component cannot be both.
++//
++// The row is placed at the bottom of its group's block: below the group header, below
++// that group's POST rows and below its CLUMPER rows. Recomputing the index rather than
++// pinning it to header+1 is what keeps it out of a sibling-index fight with the two
++// authorities that own those rows.
++// ------------------------------------------------------------------------------------
++[DefaultExecutionOrder(10500)]
++public class GroupAddRowUIAuthority : MonoBehaviour
++{
++    private const string RowPrefix = "GroupAddRow_";
++    private const float ScanInterval = .15f;
++    private const float RowHeight = 26f;
++    private const float ButtonHeight = 20f;
++
++    private float nextScan;
++
++    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
++    static void Spawn()
++    {
++        if (FindFirstObjectByType<GroupAddRowUIAuthority>() != null) return;
++        GameObject go = new GameObject("GroupAddRowUIAuthority");
++        DontDestroyOnLoad(go);
++        go.AddComponent<GroupAddRowUIAuthority>();
++    }
++
++    void Awake()
++    {
++        nextScan = 0f;
++    }
++
++    void LateUpdate()
++    {
++        if (Time.unscaledTime < nextScan) return;
++        nextScan = Time.unscaledTime + ScanInterval;
++
++        HashSet<int> liveGroups = new HashSet<int>();
++        List<Transform> addRows = new List<Transform>();
++
++        RectTransform[] all = FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None);
++
++        foreach (RectTransform rect in all)
++        {
++            if (rect == null) continue;
++            if (rect.name.StartsWith(RowPrefix, StringComparison.Ordinal))
++            {
++                addRows.Add(rect);
++            }
++        }
++
++        foreach (RectTransform groupItem in all)
++        {
++            if (groupItem == null) continue;
++            if (!groupItem.name.StartsWith("GroupItem_", StringComparison.Ordinal)) continue;
++
++            int gid;
++            if (!int.TryParse(groupItem.name.Substring("GroupItem_".Length), out gid)) continue;
++
++            Transform parent = groupItem.parent;
++            if (parent == null) continue;
++
++            liveGroups.Add(gid);
++
++            string rowName = RowPrefix + gid;
++            Transform row = parent.Find(rowName);
++            if (row == null)
++            {
++                row = BuildRow(parent, gid).transform;
++            }
++
++            row.SetSiblingIndex(ResolveInsertIndex(parent, groupItem, gid));
++            PaintRow(row, gid);
++        }
++
++        // A group can be deleted between rebuilds; its buttons must not outlive it.
++        foreach (Transform row in addRows)
++        {
++            if (row == null) continue;
++            int gid;
++            if (!int.TryParse(row.name.Substring(RowPrefix.Length), out gid)) continue;
++            if (liveGroups.Contains(gid)) continue;
++            Destroy(row.gameObject);
++        }
++
++        // ModelViewer.GetNextAvailableGroupId hands deleted ids back out, so guide points
++        // left behind by a deleted group would silently reattach themselves to whatever new
++        // group inherits its number. The empty check matters: the panel legitimately has no
++        // group rows before a model is loaded, and that must not be read as "all groups
++        // deleted" and wipe the registry.
++        if (liveGroups.Count > 0)
++        {
++            GuidePlaceholderRegistry.PruneToGroups(liveGroups);
++        }
++    }
++
++    // Header, then this group's POST rows, then its CLUMPER rows, then this row.
++    static int ResolveInsertIndex(Transform parent, RectTransform groupItem, int gid)
++    {
++        int index = groupItem.GetSiblingIndex() + 1;
++        string postPrefix = "PostAffector_" + gid + "_";
++        string clumperPrefix = "GroupClumper_" + gid + "_";
++
++        while (index < parent.childCount)
++        {
++            Transform child = parent.GetChild(index);
++            if (child == null) break;
++            bool ownedByThisGroup = child.name.StartsWith(postPrefix, StringComparison.Ordinal) ||
++                                    child.name.StartsWith(clumperPrefix, StringComparison.Ordinal);
++            if (!ownedByThisGroup) break;
++            index++;
++        }
++
++        int maxIndex = parent.childCount - 1;
++        if (index > maxIndex) index = maxIndex;
++        if (index < 0) index = 0;
++        return index;
++    }
++
++    GameObject BuildRow(Transform parent, int gid)
++    {
++        GameObject row = new GameObject(RowPrefix + gid, typeof(RectTransform), typeof(Image), typeof(HorizontalLayoutGroup));
++        row.transform.SetParent(parent, false);
++        row.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, RowHeight);
++        row.GetComponent<Image>().color = new Color(.10f, .10f, .12f, .95f);
++
++        HorizontalLayoutGroup layout = row.GetComponent<HorizontalLayoutGroup>();
++        layout.padding = new RectOffset(8, 8, 3, 3);
++        layout.spacing = 6f;
++        layout.childControlWidth = false;
++        layout.childControlHeight = true;
++        layout.childAlignment = TextAnchor.MiddleLeft;
++
++        int captured = gid;
++
++        GameObject postButton = BuildButton(row.transform, "AddPostButton", "+POST", 66f);
++        postButton.GetComponent<Button>().onClick.AddListener(delegate
++        {
++            GroupAddButtonPlacementAuthority.Arm(GroupAddButtonPlacementAuthority.AddKind.Post, captured);
++        });
++
++        GameObject clumperButton = BuildButton(row.transform, "AddClumperButton", "+CLUMPER", 86f);
++        clumperButton.GetComponent<Button>().onClick.AddListener(delegate
++        {
++            GroupAddButtonPlacementAuthority.Arm(GroupAddButtonPlacementAuthority.AddKind.Clumper, captured);
++        });
++
++        GameObject guideButton = BuildButton(row.transform, "AddGuideButton", "+GUIDE", 70f);
++        guideButton.GetComponent<Button>().onClick.AddListener(delegate
++        {
++            GroupAddButtonPlacementAuthority.Arm(GroupAddButtonPlacementAuthority.AddKind.Guide, captured);
++        });
++
++        return row;
++    }
++
++    static GameObject BuildButton(Transform parent, string objectName, string label, float width)
++    {
++        GameObject go = new GameObject(objectName, typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
++        go.transform.SetParent(parent, false);
++
++        LayoutElement element = go.GetComponent<LayoutElement>();
++        element.preferredWidth = width;
++        element.minWidth = width;
++        element.preferredHeight = ButtonHeight;
++
++        go.GetComponent<RectTransform>().sizeDelta = new Vector2(width, ButtonHeight);
++
++        GameObject textGO = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
++        textGO.transform.SetParent(go.transform, false);
++
++        RectTransform textRect = textGO.GetComponent<RectTransform>();
++        textRect.anchorMin = Vector2.zero;
++        textRect.anchorMax = Vector2.one;
++        textRect.offsetMin = Vector2.zero;
++        textRect.offsetMax = Vector2.zero;
++
++        TextMeshProUGUI text = textGO.GetComponent<TextMeshProUGUI>();
++        text.text = label;
++        text.fontSize = 10f;
++        text.fontStyle = FontStyles.Bold;
++        text.alignment = TextAlignmentOptions.Center;
++        text.color = Color.white;
++        text.textWrappingMode = TextWrappingModes.NoWrap;
++        text.raycastTarget = false;
++
++        return go;
++    }
++
++    // Idle colours match the row colours already used elsewhere in the panel: POST rows are
++    // blue, CLUMPER rows are green. The armed button goes amber, matching the prompt text.
++    static void PaintRow(Transform row, int gid)
++    {
++        bool armedHere = GroupAddButtonPlacementAuthority.ArmedGroupId == gid;
++
++        PaintButton(row, "AddPostButton",
++            armedHere && GroupAddButtonPlacementAuthority.ArmedKind == GroupAddButtonPlacementAuthority.AddKind.Post,
++            new Color(.18f, .26f, .38f, 1f));
++
++        PaintButton(row, "AddClumperButton",
++            armedHere && GroupAddButtonPlacementAuthority.ArmedKind == GroupAddButtonPlacementAuthority.AddKind.Clumper,
++            new Color(.15f, .30f, .21f, 1f));
++
++        PaintButton(row, "AddGuideButton",
++            armedHere && GroupAddButtonPlacementAuthority.ArmedKind == GroupAddButtonPlacementAuthority.AddKind.Guide,
++            new Color(.26f, .20f, .34f, 1f));
++    }
++
++    static void PaintButton(Transform row, string objectName, bool armed, Color idle)
++    {
++        Transform child = row.Find(objectName);
++        if (child == null) return;
++        Image image = child.GetComponent<Image>();
++        if (image == null) return;
++
++        if (armed)
++        {
++            image.color = new Color(.85f, .60f, .12f, 1f);
++            return;
++        }
++        image.color = idle;
++    }
++}
++
++// ------------------------------------------------------------------------------------
++// GUIDE placeholder storage.
++//
++// Deliberately session-only and deliberately inert: nothing reads these points to build
++// geometry, and nothing writes them to a project file. This exists so the +GUIDE button
++// is a real, working placement gesture from day one and V017's actual guide-curve work
++// has a defined place to hook into, rather than needing the UI rebuilt around it later.
++// ------------------------------------------------------------------------------------
++public class GuidePlaceholderPoint
++{
++    public int groupId;
++    public Vector3 center;
++    public Vector3 normal;
++}
++
++public static class GuidePlaceholderRegistry
++{
++    private static readonly List<GuidePlaceholderPoint> points = new List<GuidePlaceholderPoint>();
++
++    public static void Add(int groupId, Vector3 center, Vector3 normal)
++    {
++        Vector3 safeNormal = Vector3.up;
++        if (normal.sqrMagnitude > .000001f)
++        {
++            safeNormal = normal.normalized;
++        }
++
++        GuidePlaceholderPoint point = new GuidePlaceholderPoint
++        {
++            groupId = groupId,
++            center = center,
++            normal = safeNormal
++        };
++        points.Add(point);
++    }
++
++    public static List<GuidePlaceholderPoint> GetGroup(int groupId)
++    {
++        List<GuidePlaceholderPoint> result = new List<GuidePlaceholderPoint>();
++        foreach (GuidePlaceholderPoint point in points)
++        {
++            if (point == null) continue;
++            if (point.groupId != groupId) continue;
++            result.Add(point);
++        }
++        return result;
++    }
++
++    public static int CountForGroup(int groupId)
++    {
++        int count = 0;
++        foreach (GuidePlaceholderPoint point in points)
++        {
++            if (point == null) continue;
++            if (point.groupId != groupId) continue;
++            count++;
++        }
++        return count;
++    }
++
++    public static void ClearGroup(int groupId)
++    {
++        points.RemoveAll(p => p != null && p.groupId == groupId);
++    }
++
++    public static void PruneToGroups(HashSet<int> liveGroupIds)
++    {
++        if (liveGroupIds == null) return;
++        points.RemoveAll(p => p == null || !liveGroupIds.Contains(p.groupId));
++    }
++
++    public static void ClearAll()
++    {
++        points.Clear();
++    }
++}
+diff --git a/Assets/Scripts/UI_Import/GroupAddButtonPlacementAuthority.cs.meta b/Assets/Scripts/UI_Import/GroupAddButtonPlacementAuthority.cs.meta
+new file mode 100644
+index 0000000..2d83d9a
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/GroupAddButtonPlacementAuthority.cs.meta
+@@ -0,0 +1,2 @@
++fileFormatVersion: 2
++guid: 6176374329ed9abd15877236dcb153e9
