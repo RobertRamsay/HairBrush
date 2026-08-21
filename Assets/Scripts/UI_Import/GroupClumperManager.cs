@@ -14,6 +14,18 @@ public class GroupClumperManager : MonoBehaviour
 {
     public enum ClumpMode { Singular = 0, DispersedEvenly = 1, FromPoint = 2 }
 
+    // THE clumper creation defaults. CreateClumper never sets radius or falloff, so the
+    // GroupClumper field initialisers below are the only thing that decides how big a new
+    // clumper is - which makes these two the size the pre-click aim ring has to draw.
+    //
+    // Public and referenced rather than copied, for the same reason
+    // PostGroupLifetimeAuthority.DefaultPostRadius is: the POST pair had drifted into four
+    // different values across six literals, and the ring being drawn from one of them while
+    // the created object was stamped from another is precisely how "the ring is not what I
+    // get" bugs happen.
+    public const float DefaultClumperRadius = .04f;
+    public const float DefaultClumperFalloff = .04f;
+
     [Serializable]
     public class GroupClumper
     {
@@ -25,13 +37,8 @@ public class GroupClumperManager : MonoBehaviour
         [Range(0f, 1f)] public float amount = 0f;
         [Range(1, 24)] public int count = 6;
         public int seed = 1;
-        // CreateClumper does not set either of these, so these initialisers ARE the clumper
-        // creation defaults - for the record and for both preview rings
-        // (SelectedClumperRadialPreviewAuthority and InfluenceRingPreviewAuthority both read
-        // clumper.radius/clumper.falloff directly, so there is no separate pre-click value to
-        // keep in step the way POST needs).
-        public float radius = .04f;
-        public float falloff = .04f;
+        public float radius = DefaultClumperRadius;
+        public float falloff = DefaultClumperFalloff;
         [NonSerialized] public List<HairCard> leaders = new();
         [NonSerialized] public int lastTopologyHash;
     }

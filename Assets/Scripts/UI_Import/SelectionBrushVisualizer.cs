@@ -45,7 +45,22 @@ public class SelectionBrushVisualizer : MonoBehaviour
         bool armedForPost = GroupAddButtonPlacementAuthority.ArmedKind ==
                             GroupAddButtonPlacementAuthority.AddKind.Post;
 
-        if ((!GetBool(groomingField) && !armedForPost) || GetBool(textureModeField) ||
+        // isGroomingMode is not enough on its own to mean "we are on the groom screen".
+        // ReturnToMenu leaves the model rendered with its collider live, and two paths switch
+        // grooming back ON with the menu displayed and never switch it off again:
+        // ModifierGestureReservation's restore is an unconditional ToggleGroomingMode(true) that
+        // any stray TAB or SPACE click triggers, and GroupAddButtonPlacementAuthority's deferred
+        // restore does the same if you arm a placement and then click MENU. hasSelectionHotspot
+        // also survives ReturnToMenu, so the POST rings could sit on the menu screen for the
+        // rest of the session.
+        //
+        // uiContainer is the menu canvas itself and cannot be forged: ModelViewer deactivates it
+        // on entering the groom screen and ReturnToMenu reactivates it. The groom UI lives on a
+        // separate runtime GroomingCanvas, so there is no state where the groom screen is live
+        // and this is active.
+        bool onMenuScreen = viewer.uiContainer != null && viewer.uiContainer.activeInHierarchy;
+
+        if (onMenuScreen || (!GetBool(groomingField) && !armedForPost) || GetBool(textureModeField) ||
             viewer.mainCamera == null || Mouse.current == null)
         {
             Hide();
@@ -55,6 +70,18 @@ public class SelectionBrushVisualizer : MonoBehaviour
         bool ctrl = Keyboard.current != null && Keyboard.current.ctrlKey.isPressed;
         bool pointerOverUI = EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
         float strength = Mathf.Clamp01(viewer.selectionStrength);
+
+        // While the +POST button is armed, GroupAddButtonPlacementAuthority refuses its own
+        // placement if CTRL, TAB or SPACE is held - and TAB+click is picked up instead by
+        // GroupClumperInteractionAuthority, which creates a CLUMPER. So resting a hand on TAB
+        // during an armed +POST used to put two aim rings on the same cursor point, a POST one
+        // at .025 and a clumper one at .04, and the click produced the clumper. The armed ring
+        // now stands down for exactly the modifiers the armed placement stands down for.
+        bool blockedModifier = Keyboard.current != null &&
+                               (Keyboard.current.ctrlKey.isPressed ||
+                                Keyboard.current.tabKey.isPressed ||
+                                Keyboard.current.spaceKey.isPressed);
+        bool armedAiming = armedForPost && !blockedModifier;
 
         // Two different rings, and they must not be drawn from the same numbers.
         //
@@ -66,7 +93,7 @@ public class SelectionBrushVisualizer : MonoBehaviour
         // radius. Tune a POST to 0.15, then Ctrl+hover to place another: the ring showed 0.15,
         // you aimed with it, and the POST that appeared was 0.025 - the ring visibly snapping
         // smaller the instant you clicked.
-        if ((ctrl || armedForPost) && !pointerOverUI)
+        if ((ctrl || armedAiming) && !pointerOverUI)
         {
             Ray ray = viewer.mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
             if (Physics.Raycast(ray, out RaycastHit hit))

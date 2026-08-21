@@ -117,11 +117,11 @@ public class GroupClumperSaveData
     public int count=6;
     public int seed=1;
     // Legacy files that predate these two keys deserialize to the initialiser, so it has to
-    // stay in step with GroupClumperManager.GroupClumper's creation default - they agreed
-    // before, and an old project loading at a different clumper size than a new one is exactly
-    // the drift this pairing exists to avoid.
-    public float radius=.04f;
-    public float falloff=.04f;
+    // stay in step with GroupClumperManager's creation default - they agreed before, and an
+    // old project loading at a different clumper size than a new one is exactly the drift this
+    // pairing exists to avoid. Referenced now rather than copied, so it cannot drift again.
+    public float radius=GroupClumperManager.DefaultClumperRadius;
+    public float falloff=GroupClumperManager.DefaultClumperFalloff;
 }
 
 [Serializable] public class PostAffectorControlSaveData

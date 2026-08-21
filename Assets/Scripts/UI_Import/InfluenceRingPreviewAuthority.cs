@@ -19,12 +19,20 @@ public class InfluenceRingPreviewAuthority : MonoBehaviour
     private FieldInfo placementRadiusField;
     private FieldInfo placementFalloffField;
     private FieldInfo textureModeField;
+    private FieldInfo groomingModeField;
+
+    // Last frame on which a placement gesture was genuinely live, and this frame's cached
+    // answer to "are we on the groom screen with grooming on". See TrackPlacementLive.
+    private int lastPlacementLiveFrame = -100;
+    private bool groomScreenLiveThisFrame;
     private FieldInfo clumperByGroupField;
     private FieldInfo clumperSelectedGroupField;
 
     private LineRenderer sprayOuter;
     private LineRenderer clumpInner;
     private LineRenderer clumpOuter;
+    private LineRenderer clumpAimInner;
+    private LineRenderer clumpAimOuter;
     private Material lineMaterial;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -39,8 +47,10 @@ public class InfluenceRingPreviewAuthority : MonoBehaviour
     void Update()
     {
         Resolve();
+        TrackPlacementLive();
         UpdateSprayRings();
         UpdateClumperRings();
+        UpdateClumperAimRings();
     }
 
     void Resolve()
@@ -49,7 +59,11 @@ public class InfluenceRingPreviewAuthority : MonoBehaviour
         {
             viewer = FindFirstObjectByType<ModelViewer>();
             if (viewer != null)
-                textureModeField = typeof(ModelViewer).GetField("isTextureEditorMode", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+            {
+                BindingFlags viewerFlags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
+                textureModeField = typeof(ModelViewer).GetField("isTextureEditorMode", viewerFlags);
+                groomingModeField = typeof(ModelViewer).GetField("isGroomingMode", viewerFlags);
+            }
         }
 
         if (placement == null)
@@ -87,8 +101,24 @@ public class InfluenceRingPreviewAuthority : MonoBehaviour
             return;
         }
 
+        // TAB and SPACE are modifier-placement gestures, not spray. PlacementBrushModeAuthority
+        // already hides its own brush preview for them; this ring never learned to, so holding
+        // TAB in Spray mode used to leave a stray cyan ring on the cursor. Harmless when it was
+        // the only thing on screen - actively misleading now that the clumper aim ring draws
+        // there too, since the two describe different sizes and only one is what the click makes.
+        bool modifierGesture = Keyboard.current != null &&
+                               (Keyboard.current.tabKey.isPressed || Keyboard.current.spaceKey.isPressed);
+
+        // The !groomingEnabled half of PlacementBrushModeAuthority's own hide condition, which
+        // this ring never mirrored. It matters now: a +CLUMPER placement holds grooming off for
+        // its whole duration, and without this the cyan spray ring drew on the cursor at
+        // brushRadius * 1.55 right on top of the green 0.04 aim ring - two rings, two sizes,
+        // one of them describing something the click will not do. Reuses the frame's cached
+        // answer, which also carries the menu test.
+        bool sprayEnabled = groomScreenLiveThisFrame;
+
         object modeObj = placementModeField.GetValue(placement);
-        if (modeObj == null || modeObj.ToString() != "Spray" ||
+        if (modeObj == null || modeObj.ToString() != "Spray" || modifierGesture || !sprayEnabled ||
             (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()))
         {
             SetEnabled(sprayOuter, false);
@@ -134,6 +164,13 @@ public class InfluenceRingPreviewAuthority : MonoBehaviour
             return;
         }
 
+        // DEAD PATH, left as-is on purpose. GroupClumperManager.byGroup is
+        // Dictionary<int, List<GroupClumper>>, so this cast yields null on every frame and the
+        // method has always fallen straight through to HideClumper().
+        //
+        // Do not "fix" the cast without deleting the draw below: the selected clumper's rings
+        // are already drawn by SelectedClumperRadialPreviewAuthority (5270), so a corrected
+        // cast here would put a second, identical pair of rings on top of them.
         var byGroup = clumperByGroupField.GetValue(clumperManager) as Dictionary<int, GroupClumperManager.GroupClumper>;
         if (byGroup == null || !byGroup.TryGetValue(selected, out GroupClumperManager.GroupClumper clumper) || clumper == null ||
             clumper.mode == GroupClumperManager.ClumpMode.DispersedEvenly)
@@ -157,6 +194,134 @@ public class InfluenceRingPreviewAuthority : MonoBehaviour
             SetEnabled(clumpOuter, false);
     }
 
+    // Pre-click aim ring for CLUMPER placement.
+    //
+    // POST has had one of these for a long time - SelectionBrushVisualizer draws a ring at the
+    // cursor while CTRL is held, so you can see where the affector will land and how wide it
+    // will be before committing. CLUMPER had nothing: the first sight of its radius was after
+    // the click, which makes placing one guesswork.
+    //
+    // Drawn at the CREATION size, not at any existing clumper's size. CreateClumper never sets
+    // radius or falloff, so GroupClumperManager's defaults are exactly what the click produces.
+    void UpdateClumperAimRings()
+    {
+        if (viewer == null || viewer.mainCamera == null || Mouse.current == null || IsTextureMode())
+        {
+            HideClumperAim();
+            return;
+        }
+
+        if (!IsPlacementLive())
+        {
+            HideClumperAim();
+            return;
+        }
+
+        bool armedForClumper = GroupAddButtonPlacementAuthority.ArmedKind ==
+                               GroupAddButtonPlacementAuthority.AddKind.Clumper;
+        bool tabHeld = Keyboard.current != null && Keyboard.current.tabKey.isPressed;
+        bool ctrlOrSpaceHeld = Keyboard.current != null &&
+                               (Keyboard.current.ctrlKey.isPressed || Keyboard.current.spaceKey.isPressed);
+
+        // TAB always aims: GroupClumperInteractionAuthority creates a clumper on TAB+click at
+        // exactly these defaults, and it does so even while a +POST or +GUIDE placement is
+        // armed, so the ring is telling the truth in all of those combinations.
+        //
+        // The armed +CLUMPER button only aims while no OTHER modifier is down, because
+        // GroupAddButtonPlacementAuthority refuses its own placement whenever CTRL, TAB or
+        // SPACE is held. With SPACE resting under a hand the click does not create anything -
+        // it repositions the SELECTED clumper, at that clumper's own radius - so a ring
+        // promising a new 0.04 clump would be a straight lie. TAB is excluded from that test
+        // because the TAB path picks the click up and does create one.
+        bool aiming = tabHeld || (armedForClumper && !ctrlOrSpaceHeld);
+        if (!aiming)
+        {
+            HideClumperAim();
+            return;
+        }
+
+        if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
+        {
+            HideClumperAim();
+            return;
+        }
+
+        Ray ray = viewer.mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
+        if (!Physics.Raycast(ray, out RaycastHit hit))
+        {
+            HideClumperAim();
+            return;
+        }
+
+        EnsureRenderers();
+
+        float radius = Mathf.Max(.001f, GroupClumperManager.DefaultClumperRadius);
+        float falloff = Mathf.Max(0f, GroupClumperManager.DefaultClumperFalloff);
+
+        // Same green as the selected-clumper rings on purpose: it is the same tool. The two are
+        // told apart by position - the aim ring tracks the cursor, the selected one sits on its
+        // stored centre - and seeing both at once is what makes placing a second clumper
+        // relative to the first possible.
+        DrawRing(clumpAimInner, hit.point, hit.normal, radius,
+            new Color(.35f, 1f, .50f, .92f), true);
+
+        if (falloff > .0001f)
+        {
+            DrawRing(clumpAimOuter, hit.point, hit.normal, radius + falloff,
+                new Color(.35f, 1f, .50f, .38f), false);
+        }
+        else
+        {
+            SetEnabled(clumpAimOuter, false);
+        }
+    }
+
+    // isGroomingMode is the "grooming input is live" flag, but three separate paths switch it
+    // off transiently while placement gestures are still very much active:
+    // GroupAddButtonPlacementAuthority holds it off for a whole armed placement and for the
+    // deferred restore after one, and ModifierGestureReservation drops it for the single frame
+    // of any TAB or SPACE click. Reading it raw would blink the aim ring out at the exact
+    // moment of commit and hide it entirely during a button placement. So: latch the last frame
+    // on which grooming or an armed placement was true, and allow a couple of frames of grace.
+    //
+    // The menu is what this must NOT cover. ReturnToMenu leaves the model rendered with its
+    // collider live and puts no full-screen backdrop over it, so a ring drawn there tracks the
+    // cursor across the menu screen. isGroomingMode ALONE cannot gate that, because two paths
+    // switch it back on with the menu still displayed and never switch it off again:
+    // GroupAddButtonPlacementAuthority's deferred restore (arm a placement, then click MENU),
+    // and ModifierGestureReservation, whose restore is an unconditional ToggleGroomingMode(true)
+    // that any stray TAB or SPACE click can trigger.
+    //
+    // uiContainer is the menu canvas itself and cannot be forged: ModelViewer deactivates it on
+    // entering the groom screen, ReturnToMenu reactivates it. Testing it directly is the only
+    // gate here that the flag-flipping above cannot walk straight through.
+    void TrackPlacementLive()
+    {
+        groomScreenLiveThisFrame = false;
+        if (OnMenuScreen()) return;
+
+        groomScreenLiveThisFrame = IsGroomingMode();
+        bool armed = GroupAddButtonPlacementAuthority.ArmedKind !=
+                     GroupAddButtonPlacementAuthority.AddKind.None;
+        if (!groomScreenLiveThisFrame && !armed) return;
+        lastPlacementLiveFrame = Time.frameCount;
+    }
+
+    bool OnMenuScreen()
+    {
+        return viewer != null && viewer.uiContainer != null && viewer.uiContainer.activeInHierarchy;
+    }
+
+    bool IsPlacementLive()
+    {
+        return Time.frameCount - lastPlacementLiveFrame <= 2;
+    }
+
+    bool IsGroomingMode()
+    {
+        return viewer != null && groomingModeField != null && groomingModeField.GetValue(viewer) is bool b && b;
+    }
+
     bool IsTextureMode()
     {
         return viewer != null && textureModeField != null && textureModeField.GetValue(viewer) is bool b && b;
@@ -173,6 +338,8 @@ public class InfluenceRingPreviewAuthority : MonoBehaviour
         if (sprayOuter == null) sprayOuter = CreateRing("SprayFalloffRing");
         if (clumpInner == null) clumpInner = CreateRing("ClumperRadiusRing");
         if (clumpOuter == null) clumpOuter = CreateRing("ClumperFalloffRing");
+        if (clumpAimInner == null) clumpAimInner = CreateRing("ClumperAimRadiusRing");
+        if (clumpAimOuter == null) clumpAimOuter = CreateRing("ClumperAimFalloffRing");
     }
 
     LineRenderer CreateRing(string name)
@@ -217,6 +384,12 @@ public class InfluenceRingPreviewAuthority : MonoBehaviour
     {
         SetEnabled(clumpInner, false);
         SetEnabled(clumpOuter, false);
+    }
+
+    void HideClumperAim()
+    {
+        SetEnabled(clumpAimInner, false);
+        SetEnabled(clumpAimOuter, false);
     }
 
     static void SetEnabled(LineRenderer line, bool enabled)
