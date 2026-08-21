@@ -18,8 +18,12 @@ using UnityEngine.UI;
 [DefaultExecutionOrder(1900)]
 public class SelectionBrushScaleTuning : MonoBehaviour
 {
-    private const float DefaultRadius = .03f;
-    private const float DefaultFalloff = .05f;
+    // Referenced, not copied. PostGroupLifetimeAuthority owns the POST creation defaults and
+    // stamps them onto every new POST; these are the first-use values for the same two controls,
+    // so a second literal here is a drift waiting to happen - and had already drifted (.03/.05
+    // against .05).
+    private const float DefaultRadius = PostGroupLifetimeAuthority.DefaultPostRadius;
+    private const float DefaultFalloff = PostGroupLifetimeAuthority.DefaultPostFalloff;
     private const float MaxRadius = .25f;
     private const float MaxFalloff = .25f;
 

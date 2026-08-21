@@ -5,12 +5,21 @@ using UnityEngine;
 
 // POST data belongs to the lifetime of its Hair Group. Numeric group IDs are reused,
 // so deleting a group must remove both its POST records and cached per-card POST state.
-// Also owns the creation-time POST radius default so POST does not inherit the much
-// larger general brush radius from ModelViewer.
+// Also owns the creation-time POST radius and falloff defaults so POST does not inherit the
+// much larger general brush radius from ModelViewer.
 [DefaultExecutionOrder(3310)]
 public class PostGroupLifetimeAuthority : MonoBehaviour
 {
-    private const float DefaultPostRadius = .05f;
+    // THE creation defaults for a POST. Every new POST starts here, whatever the Radius and
+    // Falloff sliders were left on.
+    //
+    // Public, and referenced rather than copied, because these numbers previously existed as
+    // four independent literals - here, in SelectionBrushScaleTuning, and twice in
+    // PostAffectorUXFix - which had already drifted to three different values (.05, .03/.05,
+    // .05). The pre-click ring is drawn from one of them and the created POST stamped from
+    // another, so a drift means the ring you aim with is not the POST you get.
+    public const float DefaultPostRadius = .025f;
+    public const float DefaultPostFalloff = .04f;
 
     private PostAffectorManager posts;
     private ModelViewer viewer;
@@ -29,7 +38,16 @@ public class PostGroupLifetimeAuthority : MonoBehaviour
 
     private readonly HashSet<int> previousLiveGroups = new HashSet<int>();
     private bool initialized;
-    private int lastNormalizedPostId = -1;
+    // Keyed on the FRAME, not on the POST id.
+    //
+    // An id-based guard is unsafe here: PostAffectorManager.ClearAll resets nextId to 1 on
+    // every project load and on session RESET, so POST ids are reused. After creating one POST
+    // and then loading a project, the next POST created is id 1 again - equal to the remembered
+    // id - and the whole method returned early, silently leaving that POST on whatever the
+    // sliders happened to hold. The frame stamp cannot collide: this method only ever acts on
+    // the creation frame, and PostAffectorManager.lastCreatedFrame already forbids two POSTs
+    // in one frame. It only has to make the Update and LateUpdate calls idempotent.
+    private int lastNormalizedFrame = -1;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
@@ -46,7 +64,22 @@ public class PostGroupLifetimeAuthority : MonoBehaviour
         if (posts == null || viewer == null) return;
 
         PurgeDeletedGroups();
-        ApplyNewPostRadiusDefault();
+        ApplyNewPostShapeDefaults();
+    }
+
+    // Also in LateUpdate, because not every POST is created during Update any more.
+    // GroupAddButtonPlacementAuthority (the +POST button) places in LateUpdate, so its
+    // PostAffectorManager.lastCreatedFrame stamp lands after this component's Update has
+    // already run - and the frame after, the createdFrame == Time.frameCount test fails and
+    // the POST is never normalised at all. A button POST would silently keep whatever the
+    // sliders happened to hold while a Ctrl+click POST got the default.
+    //
+    // Safe to run twice in one frame: lastNormalizedFrame makes the second call a no-op.
+    void LateUpdate()
+    {
+        Resolve();
+        if (posts == null || viewer == null) return;
+        ApplyNewPostShapeDefaults();
     }
 
     void Resolve()
@@ -164,7 +197,7 @@ public class PostGroupLifetimeAuthority : MonoBehaviour
         viewer.selectionStrength = 0f;
     }
 
-    void ApplyNewPostRadiusDefault()
+    void ApplyNewPostShapeDefaults()
     {
         if (lastCreatedFrameField == null || activeIdField == null || activeGroupField == null || groupsField == null)
             return;
@@ -174,7 +207,7 @@ public class PostGroupLifetimeAuthority : MonoBehaviour
 
         int activeId = activeIdField.GetValue(posts) is int id ? id : -1;
         int activeGroup = activeGroupField.GetValue(posts) is int gid ? gid : -1;
-        if (activeId < 0 || activeGroup < 0 || activeId == lastNormalizedPostId) return;
+        if (activeId < 0 || activeGroup < 0 || lastNormalizedFrame == Time.frameCount) return;
 
         IDictionary groups = groupsField.GetValue(posts) as IDictionary;
         if (groups == null || !groups.Contains(activeGroup)) return;
@@ -186,8 +219,16 @@ public class PostGroupLifetimeAuthority : MonoBehaviour
             if (post == null || post.id != activeId) continue;
 
             post.radius = DefaultPostRadius;
+            post.falloff = DefaultPostFalloff;
+
+            // The viewer fields are written too, not just the POST record: they are what the
+            // Radius/Falloff sliders read back and what SelectionBrushVisualizer draws the
+            // ring from, so leaving them on the old slider values would show a ring that does
+            // not match the POST that was just created underneath it.
             viewer.brushRadius = DefaultPostRadius;
-            lastNormalizedPostId = activeId;
+            viewer.brushFalloffDistance = DefaultPostFalloff;
+
+            lastNormalizedFrame = Time.frameCount;
             break;
         }
     }

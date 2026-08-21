@@ -532,8 +532,15 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         SetField(viewer, "isSelectionMode", false);
         SetField(viewer, "lastPlacedCard", null);
         viewer.selectionStrength = 0.25f;
-        viewer.brushRadius = 0.2f;
-        viewer.brushFalloffDistance = 0.05f;
+
+        // The POST defaults, not ModelViewer's declared 0.2/0.05. brushRadius and
+        // brushFalloffDistance are POST controls in practice - card placement has its own
+        // private radius inside PlacementBrushModeAuthority - and SelectionBrushScaleTuning
+        // seeds its defaults exactly once per session, so it will not correct these after a
+        // reset. Leaving 0.2 here meant the first pre-click ring after any RESET was drawn
+        // eight times too big before the click snapped it back to the real default.
+        viewer.brushRadius = PostGroupLifetimeAuthority.DefaultPostRadius;
+        viewer.brushFalloffDistance = PostGroupLifetimeAuthority.DefaultPostFalloff;
     }
 
     void ResetViewerGroupsToDefault()

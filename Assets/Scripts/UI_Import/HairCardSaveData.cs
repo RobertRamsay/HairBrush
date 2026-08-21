@@ -116,8 +116,12 @@ public class GroupClumperSaveData
     public float amount;
     public int count=6;
     public int seed=1;
-    public float radius=.05f;
-    public float falloff=.05f;
+    // Legacy files that predate these two keys deserialize to the initialiser, so it has to
+    // stay in step with GroupClumperManager.GroupClumper's creation default - they agreed
+    // before, and an old project loading at a different clumper size than a new one is exactly
+    // the drift this pairing exists to avoid.
+    public float radius=.04f;
+    public float falloff=.04f;
 }
 
 [Serializable] public class PostAffectorControlSaveData
@@ -137,8 +141,11 @@ public class GroupClumperSaveData
     public int id;
     public float centerX,centerY,centerZ;
     public float normalX,normalY,normalZ;
-    public float radius=.03f;
-    public float falloff=.05f;
+    // Same reasoning as GroupClumperSaveData above: these are what a legacy project file
+    // without the keys deserializes to, and they used to match the POST creation default
+    // exactly. Referenced rather than copied so they cannot fall out of step again.
+    public float radius=PostGroupLifetimeAuthority.DefaultPostRadius;
+    public float falloff=PostGroupLifetimeAuthority.DefaultPostFalloff;
     public float weight=1f;
 
     // Each POST owns a private snapshot of the four shape profiles. Empty lists identify a

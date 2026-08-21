@@ -39,7 +39,14 @@ public class SelectionBrushVisualizer : MonoBehaviour
             EnsureLines();
         }
 
-        if (!GetBool(groomingField) || GetBool(textureModeField) || viewer.mainCamera == null || Mouse.current == null)
+        // The +POST button arms a placement mode that switches grooming input OFF for its
+        // duration, so the ordinary grooming gate below would hide the ring for exactly the
+        // flow that most needs it - a modal "click the effect point" with no size feedback.
+        bool armedForPost = GroupAddButtonPlacementAuthority.ArmedKind ==
+                            GroupAddButtonPlacementAuthority.AddKind.Post;
+
+        if ((!GetBool(groomingField) && !armedForPost) || GetBool(textureModeField) ||
+            viewer.mainCamera == null || Mouse.current == null)
         {
             Hide();
             return;
@@ -47,23 +54,47 @@ public class SelectionBrushVisualizer : MonoBehaviour
 
         bool ctrl = Keyboard.current != null && Keyboard.current.ctrlKey.isPressed;
         bool pointerOverUI = EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
-        float radius = Mathf.Max(.001f, viewer.brushRadius);
-        float falloff = Mathf.Max(0f, viewer.brushFalloffDistance);
         float strength = Mathf.Clamp01(viewer.selectionStrength);
 
-        if (ctrl && !pointerOverUI)
+        // Two different rings, and they must not be drawn from the same numbers.
+        //
+        // CTRL+hover - and the armed +POST button - is an AIM ring: it previews the POST this
+        // click is about to CREATE. PostGroupLifetimeAuthority forces every new POST to the
+        // creation defaults, so the defaults are what the click will actually produce.
+        //
+        // This used to read viewer.brushRadius, which still holds the LAST SELECTED POST's
+        // radius. Tune a POST to 0.15, then Ctrl+hover to place another: the ring showed 0.15,
+        // you aimed with it, and the POST that appeared was 0.025 - the ring visibly snapping
+        // smaller the instant you clicked.
+        if ((ctrl || armedForPost) && !pointerOverUI)
         {
             Ray ray = viewer.mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
             if (Physics.Raycast(ray, out RaycastHit hit))
             {
-                Draw(hit.point, hit.normal, radius, falloff, strength);
+                // Full strength, NOT viewer.selectionStrength. Every new POST is created at
+                // weight 1 (PostAffectorManager.CreateAffector), but selectionStrength still
+                // holds whatever the last selection left - and several paths deliberately zero
+                // it, including creating a new hair group. StrengthColor(0) is pure black, so
+                // the aim ring for a +POST on a brand-new group was drawn invisible against
+                // the model. Same argument as the radius and falloff above: the ring must show
+                // what the click will actually produce.
+                Draw(hit.point, hit.normal,
+                     PostGroupLifetimeAuthority.DefaultPostRadius,
+                     PostGroupLifetimeAuthority.DefaultPostFalloff,
+                     1f);
                 return;
             }
         }
 
+        // CTRL up: this ring belongs to the POST that is currently SELECTED, and here the
+        // viewer fields are the correct source - SelectAffector loads them from that POST and
+        // the Radius/Falloff sliders write straight back to it, so the ring tracks the drag.
         if (GetBool(hasSelectionField))
         {
-            Draw(GetVector(hitPointField), GetVector(hitNormalField), radius, falloff, strength);
+            Draw(GetVector(hitPointField), GetVector(hitNormalField),
+                 Mathf.Max(.001f, viewer.brushRadius),
+                 Mathf.Max(0f, viewer.brushFalloffDistance),
+                 strength);
             return;
         }
 

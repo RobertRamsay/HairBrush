@@ -25,8 +25,13 @@ public class GroupClumperManager : MonoBehaviour
         [Range(0f, 1f)] public float amount = 0f;
         [Range(1, 24)] public int count = 6;
         public int seed = 1;
-        public float radius = .05f;
-        public float falloff = .05f;
+        // CreateClumper does not set either of these, so these initialisers ARE the clumper
+        // creation defaults - for the record and for both preview rings
+        // (SelectedClumperRadialPreviewAuthority and InfluenceRingPreviewAuthority both read
+        // clumper.radius/clumper.falloff directly, so there is no separate pre-click value to
+        // keep in step the way POST needs).
+        public float radius = .04f;
+        public float falloff = .04f;
         [NonSerialized] public List<HairCard> leaders = new();
         [NonSerialized] public int lastTopologyHash;
     }

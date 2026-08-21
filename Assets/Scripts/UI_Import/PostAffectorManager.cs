@@ -21,8 +21,10 @@ public class PostAffectorManager : MonoBehaviour
         public int groupId;
         public Vector3 center;
         public Vector3 normal;
-        public float radius = .02f;
-        public float falloff = .03f;
+        // Only reached by an affector built outside CreateAffector; the creation path
+        // overwrites both. Kept in step with the real defaults so the two can never disagree.
+        public float radius = PostGroupLifetimeAuthority.DefaultPostRadius;
+        public float falloff = PostGroupLifetimeAuthority.DefaultPostFalloff;
         [Range(0f, 1f)] public float weight = 1f;
         public ControlState baseline;
         public ControlState delta;

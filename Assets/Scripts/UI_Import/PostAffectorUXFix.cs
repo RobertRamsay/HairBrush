@@ -46,8 +46,11 @@ public class PostAffectorUXFix : MonoBehaviour
 
         // ModelViewer's legacy Ctrl selection still seeds Falloff at 0.25 on each click.
         // In the POST workflow that is far too broad, so translate only that legacy seed.
+        // Lands on the same default SelectionBrushScaleTuning and PostGroupLifetimeAuthority
+        // use. This is the third copy of the legacy-0.25 translation; they have to agree, or
+        // whichever runs first on a given frame decides the falloff.
         if (Mathf.Approximately(viewer.brushFalloffDistance, .25f))
-            viewer.brushFalloffDistance = .05f;
+            viewer.brushFalloffDistance = PostGroupLifetimeAuthority.DefaultPostFalloff;
 
         ClampLegacyPostFalloffs();
         HideRightSideWeight();
@@ -67,7 +70,9 @@ public class PostAffectorUXFix : MonoBehaviour
             {
                 PostAffectorManager.PostAffector post = item as PostAffectorManager.PostAffector;
                 if (post == null) continue;
-                if (Mathf.Approximately(post.falloff, .25f)) post.falloff = .05f;
+                // Same legacy-0.25 translation as above, applied to already-stored POSTs, so
+                // it lands on the same default rather than a second, different number.
+                if (Mathf.Approximately(post.falloff, .25f)) post.falloff = PostGroupLifetimeAuthority.DefaultPostFalloff;
             }
         }
     }
