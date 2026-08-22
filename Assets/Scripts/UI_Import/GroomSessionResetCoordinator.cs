@@ -506,6 +506,11 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         GuideCurveManager guideManager = FindFirstObjectByType<GuideCurveManager>();
         if (guideManager != null) guideManager.ClearAll();
 
+        // The grooming lockout is static state shared by the placement buttons and the guide
+        // handle editor. A reset that leaves a holder behind would keep card placement switched
+        // off for the rest of the session with nothing on screen to explain it.
+        GroomingInputLock.ForceClear();
+
         HairProjectSaveData.PendingModifierRestore = null;
         CanonicalProjectStateBridge.PendingCanonicalRestore = null;
 

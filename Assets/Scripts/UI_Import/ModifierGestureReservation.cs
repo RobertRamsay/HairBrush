@@ -1,5 +1,6 @@
 using System.Collections;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 
 // TAB+Click and SPACE+Click belong to modifier placement/repositioning, never card creation.
@@ -27,11 +28,26 @@ public class ModifierGestureReservation : MonoBehaviour
 
         if (restoreNextFrame)
         {
-            viewer.ToggleGroomingMode(true);
+            // Not unconditional any more. This restore lands at order -1200, which is INSIDE the
+            // window a guide's placement lockout is trying to hold: GuideCurveHandleAuthority
+            // re-asserts at -6100 and ModelViewer.HandleGrooming reads the flag at 0, so a blind
+            // ToggleGroomingMode(true) here switched card placement back on for the rest of that
+            // frame. SPACE+clicking to reposition a guide would then plant a hair card on the
+            // model, directly under the curve being edited - the exact thing the lockout exists
+            // to prevent, one frame wide, re-armed by every reposition.
             restoreNextFrame = false;
+            if (!GroomingInputLock.AnyHold) viewer.ToggleGroomingMode(true);
         }
 
         if (!Mouse.current.leftButton.wasPressedThisFrame) return;
+
+        // A click on the PANEL is not a placement gesture and has nothing to reserve against.
+        // Without this, holding SPACE - which the guide panel itself tells you to do - and
+        // clicking any button drove isGroomingMode false for a frame. If a lockout holder
+        // captured during that frame it recorded "grooming was already off", and card placement
+        // never came back for the rest of the session, with nothing on screen to explain it.
+        if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
+
         bool reserved = Keyboard.current.tabKey.isPressed || Keyboard.current.spaceKey.isPressed;
         if (!reserved) return;
 

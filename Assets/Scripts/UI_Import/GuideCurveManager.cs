@@ -747,8 +747,10 @@ public class GuideCurveManager : MonoBehaviour
         GameObject done = AddButton(controlsRoot.transform, "DONE", 120f);
         done.GetComponent<Button>().onClick.AddListener(ClearSelection);
 
+        AddHint(controlsRoot.transform, "Drag the AMBER and BLUE handles to shape the curve");
         AddHint(controlsRoot.transform, "SPACE + CLICK moves this guide, keeping its shape");
-        AddHint(controlsRoot.transform, "DONE, ESC or another group closes this panel");
+        AddHint(controlsRoot.transform, "Card placing is OFF while a guide is selected");
+        AddHint(controlsRoot.transform, "DONE, ESC, empty space or another group closes this");
     }
 
     void DestroyControls()

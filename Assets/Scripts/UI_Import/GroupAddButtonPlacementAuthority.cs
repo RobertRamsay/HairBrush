@@ -69,14 +69,12 @@ public class GroupAddButtonPlacementAuthority : MonoBehaviour
     private GroupClumperManager clumpers;
     private GuideCurveManager guides;
 
-    private FieldInfo groomingModeField;
     private FieldInfo postLastCreatedFrameField;
     private MethodInfo enterSelectionModeMethod;
     private MethodInfo selectGroupMethod;
     private MethodInfo createAffectorMethod;
 
-    private bool groomingWasEnabled;
-    private bool groomingSuppressed;
+    private const string LockOwner = "AddButtonPlacement";
     private bool restorePending;
     private int restoreRequestedFrame;
     private int armedFrame;
@@ -105,14 +103,11 @@ public class GroupAddButtonPlacementAuthority : MonoBehaviour
         posts = null;
         clumpers = null;
 
-        groomingModeField = null;
         postLastCreatedFrameField = null;
         enterSelectionModeMethod = null;
         selectGroupMethod = null;
         createAffectorMethod = null;
 
-        groomingWasEnabled = false;
-        groomingSuppressed = false;
         restorePending = false;
         restoreRequestedFrame = -1;
         armedFrame = -1;
@@ -148,22 +143,11 @@ public class GroupAddButtonPlacementAuthority : MonoBehaviour
         // Re-arming before the deferred restore has run: the captured state from the first
         // arm is still the true one, so take the suppression back over rather than
         // re-reading a value that is currently switched off.
-        if (restorePending)
-        {
-            restorePending = false;
-            groomingSuppressed = true;
-        }
-
-        // Re-arming while already armed just swaps which thing is being placed, so the
-        // grooming state must only be captured on the FIRST arm. Capturing it again here
-        // would capture the suppressed value and restore grooming to "off" on disarm.
-        if (!groomingSuppressed)
-        {
-            groomingWasEnabled = ReadGroomingEnabled();
-            groomingSuppressed = true;
-        }
-
-        viewer.ToggleGroomingMode(false);
+        // GroomingInputLock owns the captured state now, and only the FIRST holder captures it -
+        // so re-arming, or arming while a GUIDE is being shaped, cannot record the already
+        // suppressed value and hand card placement back as "off" later.
+        restorePending = false;
+        GroomingInputLock.Hold(LockOwner, viewer);
 
         // The add button belongs to a specific group, so that group becomes the working
         // group before anything is placed into it.
@@ -188,9 +172,9 @@ public class GroupAddButtonPlacementAuthority : MonoBehaviour
         // the left button is held, so restoring the instant the placement click is consumed
         // would paint a trail of cards out of the tail of that same click. The restore
         // waits for the button to come back up, and for at least one frame to pass.
-        if (groomingSuppressed)
+        if (GroomingInputLock.Holds(LockOwner))
         {
-            groomingSuppressed = false;
+            GroomingInputLock.Release(LockOwner);
             restorePending = true;
             restoreRequestedFrame = Time.frameCount;
         }
@@ -206,9 +190,9 @@ public class GroupAddButtonPlacementAuthority : MonoBehaviour
         bool stillHeld = Mouse.current != null && Mouse.current.leftButton.isPressed;
         if (stillHeld) return;
 
-        restorePending = false;
-        if (viewer == null) return;
-        viewer.ToggleGroomingMode(groomingWasEnabled);
+        // Only actually restores once every holder has let go; if a guide is still being shaped
+        // it keeps the lock and this simply stops asking.
+        if (GroomingInputLock.TryRestore(viewer)) restorePending = false;
     }
 
     // Everything happens in LateUpdate, not Update.
@@ -249,10 +233,7 @@ public class GroupAddButtonPlacementAuthority : MonoBehaviour
         // Re-asserted every frame rather than once on arm: a project load re-enables
         // grooming from outside this component, and an armed placement must not quietly
         // turn back into a card-painting click halfway through.
-        if (groomingSuppressed)
-        {
-            viewer.ToggleGroomingMode(false);
-        }
+        GroomingInputLock.Hold(LockOwner, viewer);
 
         UpdateBanner();
 
@@ -410,16 +391,14 @@ public class GroupAddButtonPlacementAuthority : MonoBehaviour
         if (viewer == null)
         {
             viewer = FindFirstObjectByType<ModelViewer>();
-            groomingModeField = null;
             enterSelectionModeMethod = null;
             selectGroupMethod = null;
         }
 
-        if (viewer != null && groomingModeField == null)
+        if (viewer != null && enterSelectionModeMethod == null)
         {
             BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
             Type t = typeof(ModelViewer);
-            groomingModeField = t.GetField("isGroomingMode", flags);
             enterSelectionModeMethod = t.GetMethod("EnterSelectionMode", flags);
             selectGroupMethod = t.GetMethod("SelectGroup", flags);
         }
@@ -449,16 +428,6 @@ public class GroupAddButtonPlacementAuthority : MonoBehaviour
             guides = FindFirstObjectByType<GuideCurveManager>();
         }
     }
-
-    bool ReadGroomingEnabled()
-    {
-        if (viewer == null) return false;
-        if (groomingModeField == null) return false;
-        object value = groomingModeField.GetValue(viewer);
-        if (value is bool flag) return flag;
-        return false;
-    }
-
     // ---------------------------------------------------------------------------------
     // Bottom-of-viewport prompt.
     //
@@ -581,12 +550,9 @@ public class GroupAddButtonPlacementAuthority : MonoBehaviour
     void OnDisable()
     {
         // Never leave grooming switched off because this component went away mid-placement.
-        bool owed = groomingSuppressed || restorePending;
-        groomingSuppressed = false;
         restorePending = false;
-        if (!owed) return;
-        if (viewer == null) return;
-        viewer.ToggleGroomingMode(groomingWasEnabled);
+        GroomingInputLock.Release(LockOwner);
+        GroomingInputLock.TryRestore(viewer);
     }
 }
 
