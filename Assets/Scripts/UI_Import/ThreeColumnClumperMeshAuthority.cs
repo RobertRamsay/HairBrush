@@ -358,6 +358,14 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
                     hash = Mix(hash, g.endLocal.x.GetHashCode());
                     hash = Mix(hash, g.endLocal.y.GetHashCode());
                     hash = Mix(hash, g.endLocal.z.GetHashCode());
+                    // The frame turns the two local offsets into world points, so it is as much
+                    // geometry as they are. It used to be safe to leave out, because the only
+                    // thing that wrote it also wrote contact and normal in the same call. Guides
+                    // load from a project file now, and a file can differ in the frame alone.
+                    hash = Mix(hash, g.frame.x.GetHashCode());
+                    hash = Mix(hash, g.frame.y.GetHashCode());
+                    hash = Mix(hash, g.frame.z.GetHashCode());
+                    hash = Mix(hash, g.frame.w.GetHashCode());
                 }
             }
 

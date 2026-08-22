@@ -43,7 +43,6 @@ public class SessionModifierFreshStartAuthority : MonoBehaviour
         if (current != null && current != lastModel)
         {
             lastModel = current;
-            ClearGuidesForNewSession();
             if (projectLoadRequested)
                 ResetTransientEditorState();
             else
@@ -114,18 +113,22 @@ public class SessionModifierFreshStartAuthority : MonoBehaviour
             EventSystem.current.SetSelectedGameObject(null);
     }
 
-    // Guides are session-only - nothing writes them to a project file yet - so ANY load has to
-    // drop them, and this is the only method that runs on both branches.
-    // GroomSessionResetCoordinator's ClearAll is deliberately skipped on the project path
-    // (projectLoadJustCompleted), and ClearClumpersForNewModel is the new-OBJ branch only, so
-    // putting it in either of those leaves the project path uncovered: the previous model's
-    // guides survive, adopt the loaded project's reused group ids, and comb its hair from a
-    // contact point in geometry that no longer exists.
-    void ClearGuidesForNewSession()
-    {
-        GuideCurveManager guides = FindFirstObjectByType<GuideCurveManager>();
-        if (guides != null) guides.ClearAll();
-    }
+    // There used to be a ClearGuidesForNewSession here, running on BOTH branches because guides
+    // were session-only and nothing else covered the project path. Guides are written to the
+    // project file now, and that reason has gone with it.
+    //
+    // Deleted rather than made conditional. This component polls, so it can act several frames
+    // either side of a restore installing, and a clear that lands on the wrong side of one wipes
+    // the guides the file was opened to bring back. Each path now has exactly one owner:
+    //
+    //   project load: GuideCurvePersistenceBridge drops the outgoing guides the instant the JSON
+    //   is parsed - earlier than anything here could - and installs the incoming set once the
+    //   cards have settled.
+    //
+    //   new OBJ: GroomSessionResetCoordinator.ClearModifierManagers clears the guides and cancels
+    //   any restore still in flight. Its own project-path suppression is a true one-shot, reset
+    //   every poll tick, so unlike projectLoadRequested here it cannot be left stale by a
+    //   cancelled file dialog.
 
     void ClearClumpersForNewModel()
     {

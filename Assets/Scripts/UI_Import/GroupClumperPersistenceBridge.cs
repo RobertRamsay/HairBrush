@@ -89,6 +89,15 @@ public class GroupClumperPersistenceBridge : MonoBehaviour
         ClearRuntimeImmediately();
     }
 
+    // A model swap that is NOT a project load ends the session this restore belonged to. Without
+    // this, loading an OBJ while a project is still settling leaves the payload parked behind the
+    // card-count gate, which the user reopens by hand-placing that many cards on the new model -
+    // at which point the old project's clumpers install onto it, at the old project's centres.
+    public static void CancelPendingRestore()
+    {
+        pendingRestore = null;
+    }
+
     static void ClearRuntimeImmediately()
     {
         GroupClumperManager manager = FindFirstObjectByType<GroupClumperManager>();

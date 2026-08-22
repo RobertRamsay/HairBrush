@@ -1,0 +1,622 @@
+diff --git a/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs b/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs
+index d3b7193..24e1853 100644
+--- a/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs
++++ b/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs
+@@ -506,6 +506,15 @@ public class GroomSessionResetCoordinator : MonoBehaviour
+         GuideCurveManager guideManager = FindFirstObjectByType<GuideCurveManager>();
+         if (guideManager != null) guideManager.ClearAll();
+ 
++        // Modifier restores are written to the project file and can still be in flight when a
++        // new OBJ arrives. Clearing the managers without cancelling them lets the payload land a
++        // few frames later and repopulate the session this method exists to tear down - or, worse,
++        // sit parked behind its card-count gate until the user has hand-placed enough cards on the
++        // new model to open it. This method is the only owner of the new-OBJ path for guides:
++        // SessionModifierFreshStartAuthority does not touch them at all.
++        GuideCurvePersistenceBridge.CancelPendingRestore();
++        GroupClumperPersistenceBridge.CancelPendingRestore();
++
+         // The grooming lockout is static state shared by the placement buttons and the guide
+         // handle editor. A reset that leaves a holder behind would keep card placement switched
+         // off for the rest of the session with nothing on screen to explain it.
+diff --git a/Assets/Scripts/UI_Import/GroupClumperPersistenceBridge.cs b/Assets/Scripts/UI_Import/GroupClumperPersistenceBridge.cs
+index ae69a0d..d756119 100644
+--- a/Assets/Scripts/UI_Import/GroupClumperPersistenceBridge.cs
++++ b/Assets/Scripts/UI_Import/GroupClumperPersistenceBridge.cs
+@@ -89,6 +89,15 @@ public class GroupClumperPersistenceBridge : MonoBehaviour
+         ClearRuntimeImmediately();
+     }
+ 
++    // A model swap that is NOT a project load ends the session this restore belonged to. Without
++    // this, loading an OBJ while a project is still settling leaves the payload parked behind the
++    // card-count gate, which the user reopens by hand-placing that many cards on the new model -
++    // at which point the old project's clumpers install onto it, at the old project's centres.
++    public static void CancelPendingRestore()
++    {
++        pendingRestore = null;
++    }
++
+     static void ClearRuntimeImmediately()
+     {
+         GroupClumperManager manager = FindFirstObjectByType<GroupClumperManager>();
+diff --git a/Assets/Scripts/UI_Import/GuideCurveManager.cs b/Assets/Scripts/UI_Import/GuideCurveManager.cs
+index 83b5584..81a8376 100644
+--- a/Assets/Scripts/UI_Import/GuideCurveManager.cs
++++ b/Assets/Scripts/UI_Import/GuideCurveManager.cs
+@@ -484,6 +484,60 @@ public class GuideCurveManager : MonoBehaviour
+         nextUIScan = 0f;
+     }
+ 
++    // Holds the id allocator above a set of ids that are not in byGroup yet but are about to be.
++    // GuideCurvePersistenceBridge empties the manager the moment a project file is parsed, which
++    // restarts numbering at 1, and then takes several frames to install the saved guides. A guide
++    // placed by hand in that gap would otherwise be handed an id the incoming set already owns.
++    public void ReserveGuideIdsAbove(int highestId)
++    {
++        if (highestId < nextGuideId) return;
++        nextGuideId = highestId + 1;
++    }
++
++    // Wholesale replacement, used by GuideCurvePersistenceBridge when a project is loaded.
++    //
++    // A public entry point rather than the bridge reflecting into byGroup: this manager is
++    // part of the same feature, so the two can simply agree on a method. The list is taken as
++    // a flat set because each guide already carries its own groupId.
++    //
++    // Nothing is selected afterwards, matching how a restored POST or CLUMPER arrives - the
++    // project opens on the group root with every modifier present and none being edited.
++    public void ReplaceAll(List<GuideCurve> restored)
++    {
++        byGroup.Clear();
++        selectedGuideId = -1;
++        selectedGroup = -1;
++        DestroyControls();
++
++        int highest = 0;
++        if (restored != null)
++        {
++            foreach (GuideCurve guide in restored)
++            {
++                if (guide == null) continue;
++
++                List<GuideCurve> list;
++                if (!byGroup.TryGetValue(guide.groupId, out list))
++                {
++                    list = new List<GuideCurve>();
++                    byGroup[guide.groupId] = list;
++                }
++                list.Add(guide);
++
++                if (guide.id > highest) highest = guide.id;
++            }
++        }
++
++        // Above every restored id, or a guide created afterwards would collide with one on
++        // disk and FindGuide would return whichever it reached first.
++        nextGuideId = highest + 1;
++        if (nextGuideId < 1) nextGuideId = 1;
++
++        // Rows are rebuilt from byGroup by EnsureRows; bring that scan forward to this frame
++        // so the restored guides appear in the panel immediately rather than up to 0.1s later.
++        nextUIScan = 0f;
++    }
++
+     // SPACE + click moves the selected guide, mirroring the clumper gesture.
+     //
+     // Guarded on a guide actually being the selected modifier, because SPACE+click is shared
+diff --git a/Assets/Scripts/UI_Import/GuideCurvePersistenceBridge.cs b/Assets/Scripts/UI_Import/GuideCurvePersistenceBridge.cs
+new file mode 100644
+index 0000000..fda0085
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/GuideCurvePersistenceBridge.cs
+@@ -0,0 +1,370 @@
++using System;
++using System.Collections.Generic;
++using UnityEngine;
++
++// Saves and restores GUIDE curves, the same way GroupClumperPersistenceBridge does for CLUMPER.
++//
++// Only the recipe is written. HairCard save data stays the authored, un-combed state, and the
++// guide re-applies itself downstream on load, so a project saved with a guide at Amount 1 and
++// one saved with the same guide at Amount 0 hold identical card data.
++//
++// Load order is the whole difficulty. The sequence is:
++//
++//   FromJson -> QueueRestore drops the OUTGOING project's guides immediately
++//   LoadProjectEnhanced      model swapped, groups rebuilt, cards spawned, panel rebuilt
++//   order 3900               canonical card + POST restore completes, generation counter ticks
++//   here                     the saved guides are installed
++//
++// Both parts are load-bearing:
++//
++//   Clearing at parse time, not later, because GuideCurveManager is DontDestroyOnLoad. Group
++//   ids get reused, so the outgoing project's guides would otherwise spend the settle window
++//   combing the incoming project's hair from a contact point in geometry that no longer exists.
++//
++//   Waiting for the canonical generation, because guides deform the mesh downstream of the
++//   card reconstruction. Installing them first means combing cards that are about to be
++//   overwritten, and a wasted evaluation pass per frame until they are.
++//
++// Nothing else clears guides on this path. SessionModifierFreshStartAuthority used to, on both
++// its branches, and that clear was deleted when guides became persistent: it polls, so it could
++// land either side of the install, and there is no ordering against a poll that is safe both
++// ways. The new-OBJ path is owned by GroomSessionResetCoordinator, which also cancels a restore
++// left in flight, so a project abandoned half way through cannot comb the next model's hair.
++[DefaultExecutionOrder(7010)]
++public class GuideCurvePersistenceBridge : MonoBehaviour
++{
++    // Wall clock, not frames: a frame budget is three seconds on an empty scene and three minutes
++    // on a heavy groom, which is the one thing a timeout must not be. Twenty seconds is far longer
++    // than the two restores this one waits on take even on a heavy groom.
++    //
++    // realtimeSinceStartup, not unscaledTime. unscaledTime is sampled once per frame, and the
++    // deadline is set inside the LOAD PROJECT click - the same frame that was stretched by however
++    // long the user spent in the modal file dialog. Read that way, a leisurely browse spends the
++    // whole budget before the load has even begun.
++    private const float RestoreTimeBudget = 20f;
++
++    private static HairProjectSaveData pendingRestore;
++    private static int queuedCanonicalGeneration;
++    private static float restoreDeadline;
++
++    private GuideCurveManager manager;
++
++    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
++    static void Spawn()
++    {
++        if (FindFirstObjectByType<GuideCurvePersistenceBridge>() != null) return;
++        GameObject go = new GameObject("GuideCurvePersistenceBridge");
++        DontDestroyOnLoad(go);
++        go.AddComponent<GuideCurvePersistenceBridge>();
++    }
++
++    // Play mode can begin with these statics still holding the previous session's values when
++    // Reload Domain is switched off, and a stale pendingRestore would install a previous
++    // session's guides over the first project opened in this one.
++    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
++    static void ResetOnEnterPlayMode()
++    {
++        pendingRestore = null;
++        queuedCanonicalGeneration = 0;
++        restoreDeadline = 0f;
++    }
++
++    // Called by GroomSessionResetCoordinator when a fresh OBJ replaces the session. The session a
++    // queued restore belonged to is over; installing it later would drop the previous project's
++    // guides onto whatever model has taken its place.
++    public static void CancelPendingRestore()
++    {
++        pendingRestore = null;
++        restoreDeadline = 0f;
++    }
++
++    static int HighestPendingId()
++    {
++        int highest = 0;
++        if (pendingRestore == null || pendingRestore.groups == null) return highest;
++
++        foreach (GroupSaveData group in pendingRestore.groups)
++        {
++            if (group == null || group.guides == null) continue;
++            foreach (GuideCurveSaveData saved in group.guides)
++            {
++                if (saved != null && saved.id > highest) highest = saved.id;
++            }
++        }
++        return highest;
++    }
++
++    // ------------------------------------------------------------------------------- save
++
++    public static void Capture(HairProjectSaveData data)
++    {
++        if (data == null || data.groups == null) return;
++
++        GuideCurveManager manager = FindFirstObjectByType<GuideCurveManager>();
++
++        // Guide ids are unique across every group, so a runtime guide has to be matched against
++        // the whole incoming payload, not just the ids landing in its own group.
++        HashSet<int> pendingIds = new HashSet<int>();
++        CollectPendingIds(pendingIds);
++
++        foreach (GroupSaveData group in data.groups)
++        {
++            if (group == null) continue;
++
++            // Always rewrite the list, even with no manager in the scene. Leaving whatever
++            // was there would let a stale payload ride along into the new file.
++            if (group.guides == null) group.guides = new List<GuideCurveSaveData>();
++            else group.guides.Clear();
++
++            // A load that has not finished settling has already emptied the manager but has not
++            // installed its guides yet. The runtime is not the whole truth at that moment, so
++            // the payload waiting to be installed goes in first and anything the user has added
++            // since is appended. Taking only one of the two would either write the settle gap to
++            // disk or silently drop a guide the app said it had accepted.
++            CopyFromPendingRestore(group);
++
++            if (manager == null) continue;
++
++            List<GuideCurveManager.GuideCurve> runtime = manager.GetGroupGuides(group.groupId);
++            runtime.Sort((a, b) => a.id.CompareTo(b.id));
++
++            foreach (GuideCurveManager.GuideCurve guide in runtime)
++            {
++                if (guide == null) continue;
++                if (pendingIds.Contains(guide.id)) continue;
++                group.guides.Add(ToSave(guide));
++            }
++        }
++    }
++
++    static void CollectPendingIds(HashSet<int> into)
++    {
++        if (pendingRestore == null || pendingRestore.groups == null) return;
++
++        foreach (GroupSaveData group in pendingRestore.groups)
++        {
++            if (group == null || group.guides == null) continue;
++            foreach (GuideCurveSaveData saved in group.guides)
++            {
++                if (saved != null) into.Add(saved.id);
++            }
++        }
++    }
++
++    static void CopyFromPendingRestore(GroupSaveData group)
++    {
++        if (pendingRestore == null || pendingRestore.groups == null) return;
++
++        foreach (GroupSaveData source in pendingRestore.groups)
++        {
++            if (source == null || source.groupId != group.groupId) continue;
++            if (source.guides == null) return;
++
++            foreach (GuideCurveSaveData saved in source.guides)
++            {
++                if (saved == null) continue;
++                group.guides.Add(Clone(saved));
++            }
++            return;
++        }
++    }
++
++    // The pending payload stays owned by the load in flight, so the outgoing file gets copies.
++    static GuideCurveSaveData Clone(GuideCurveSaveData s)
++    {
++        return new GuideCurveSaveData
++        {
++            id = s.id,
++            contactX = s.contactX, contactY = s.contactY, contactZ = s.contactZ,
++            normalX = s.normalX, normalY = s.normalY, normalZ = s.normalZ,
++            frameX = s.frameX, frameY = s.frameY, frameZ = s.frameZ, frameW = s.frameW,
++            midX = s.midX, midY = s.midY, midZ = s.midZ,
++            endX = s.endX, endY = s.endY, endZ = s.endZ,
++            amount = s.amount,
++            radius = s.radius,
++            falloff = s.falloff
++        };
++    }
++
++    static GuideCurveSaveData ToSave(GuideCurveManager.GuideCurve guide)
++    {
++        return new GuideCurveSaveData
++        {
++            id = guide.id,
++            contactX = guide.contact.x,
++            contactY = guide.contact.y,
++            contactZ = guide.contact.z,
++            normalX = guide.normal.x,
++            normalY = guide.normal.y,
++            normalZ = guide.normal.z,
++            frameX = guide.frame.x,
++            frameY = guide.frame.y,
++            frameZ = guide.frame.z,
++            frameW = guide.frame.w,
++            midX = guide.midLocal.x,
++            midY = guide.midLocal.y,
++            midZ = guide.midLocal.z,
++            endX = guide.endLocal.x,
++            endY = guide.endLocal.y,
++            endZ = guide.endLocal.z,
++            amount = guide.amount,
++            radius = guide.radius,
++            falloff = guide.falloff
++        };
++    }
++
++    // ------------------------------------------------------------------------------- load
++
++    public static void QueueRestore(HairProjectSaveData data)
++    {
++        pendingRestore = data;
++        queuedCanonicalGeneration = CanonicalProjectStateBridge.CompletedRestoreGeneration;
++        restoreDeadline = Time.realtimeSinceStartup + RestoreTimeBudget;
++
++        ClearRuntimeImmediately();
++    }
++
++    static void ClearRuntimeImmediately()
++    {
++        GuideCurveManager manager = FindFirstObjectByType<GuideCurveManager>();
++        if (manager != null)
++        {
++            manager.ClearAll();
++
++            // ClearAll restarts the id allocator at 1, which is right for an empty session and
++            // wrong here: the ids in the payload are about to come back. Without this, a guide
++            // placed during the settle window is handed an id the restore already owns, and the
++            // save-side merge then cannot tell the two apart.
++            manager.ReserveGuideIdsAbove(HighestPendingId());
++        }
++
++        // ClearAll destroys the slider panel and empties the collections, but the left-panel
++        // rows are child objects of the group items and are only reaped on the next scan.
++        // Take them now so the outgoing project's rows are never visible over the incoming one.
++        foreach (RectTransform row in FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
++        {
++            if (row == null) continue;
++            if (row.name.StartsWith("GuideCurve_", StringComparison.Ordinal)) Destroy(row.gameObject);
++        }
++    }
++
++    void Update()
++    {
++        if (pendingRestore == null) return;
++
++        if (manager == null) manager = FindFirstObjectByType<GuideCurveManager>();
++        if (manager == null) return;
++
++        // Expired loads install anyway, so the cheap checks below are skipped rather than the
++        // whole restore being thrown away. Dropping it would be the very outcome the timeout
++        // exists to avoid: the guides were emptied at parse time, so abandoning the payload
++        // leaves the session looking as though they were never in the file, and the next save
++        // writes that back over the file. A guide that arrives looking wrong can be deleted;
++        // one that was silently discarded cannot be recovered.
++        bool expired = Time.realtimeSinceStartup > restoreDeadline;
++        if (expired)
++        {
++            Debug.LogWarning("HairBrush: the project load did not settle within " +
++                             RestoreTimeBudget + "s, so GUIDE curves are being applied now " +
++                             "rather than waiting any longer. Check them before saving.");
++        }
++        else
++        {
++            // Statics first, then the scene scan: this runs every frame of the settle window,
++            // and FindObjectsByType allocates the whole card array each time it is reached.
++            if (HairProjectSaveData.PendingModifierRestore != null) return;
++
++            // Current-format projects signal when the card reconstruction is finished. Guides
++            // are downstream of it, so they wait rather than comb cards about to be rewritten.
++            if (pendingRestore.formatVersion >= CanonicalProjectStateBridge.CurrentFormatVersion &&
++                CanonicalProjectStateBridge.CompletedRestoreGeneration <= queuedCanonicalGeneration)
++                return;
++
++            int expected = pendingRestore.hairCards != null ? pendingRestore.hairCards.Count : 0;
++            if (FindObjectsByType<HairCard>(FindObjectsSortMode.None).Length < expected) return;
++        }
++
++        HairProjectSaveData data = pendingRestore;
++        pendingRestore = null;
++        restoreDeadline = 0f;
++        Restore(data);
++    }
++
++    void Restore(HairProjectSaveData data)
++    {
++        List<GuideCurveManager.GuideCurve> restored = new List<GuideCurveManager.GuideCurve>();
++        HashSet<int> usedIds = new HashSet<int>();
++        int nextId = 1;
++
++        if (data.groups != null)
++        {
++            foreach (GroupSaveData group in data.groups)
++            {
++                if (group == null || group.guides == null) continue;
++
++                foreach (GuideCurveSaveData saved in group.guides)
++                {
++                    if (saved == null) continue;
++                    restored.Add(FromSave(saved, group.groupId, usedIds, ref nextId));
++                }
++            }
++        }
++
++        manager.ReplaceAll(restored);
++    }
++
++    static GuideCurveManager.GuideCurve FromSave(GuideCurveSaveData saved, int groupId,
++        HashSet<int> usedIds, ref int nextId)
++    {
++        Vector3 normal = new Vector3(saved.normalX, saved.normalY, saved.normalZ);
++        if (normal.sqrMagnitude > .000001f) normal = normal.normalized;
++        else normal = Vector3.up;
++
++        // A quaternion that is not a rotation - all zeros from a hand-edited or truncated
++        // file - would silently collapse every offset to the origin. Rebuilding from the
++        // normal loses the roll, which is the lesser of the two failures by a wide margin.
++        Quaternion frame = new Quaternion(saved.frameX, saved.frameY, saved.frameZ, saved.frameW);
++        float magnitude = Mathf.Sqrt(frame.x * frame.x + frame.y * frame.y +
++                                     frame.z * frame.z + frame.w * frame.w);
++        if (magnitude > .0001f)
++        {
++            frame = new Quaternion(frame.x / magnitude, frame.y / magnitude,
++                                   frame.z / magnitude, frame.w / magnitude);
++        }
++        else
++        {
++            frame = GuideCurveManager.BuildInitialFrame(normal);
++        }
++
++        return new GuideCurveManager.GuideCurve
++        {
++            id = ClaimId(saved.id, usedIds, ref nextId),
++            groupId = groupId,
++            contact = new Vector3(saved.contactX, saved.contactY, saved.contactZ),
++            normal = normal,
++            frame = frame,
++            midLocal = new Vector3(saved.midX, saved.midY, saved.midZ),
++            endLocal = new Vector3(saved.endX, saved.endY, saved.endZ),
++            amount = Mathf.Clamp01(saved.amount),
++            radius = Mathf.Max(.001f, saved.radius),
++            falloff = Mathf.Max(0f, saved.falloff)
++        };
++    }
++
++    // Ids are unique across every group, because that is how the runtime allocates them and
++    // how the rows are named. A file with a collision, or with a zero from a hand edit, gets
++    // the next free number rather than a duplicate that FindGuide would resolve arbitrarily.
++    static int ClaimId(int requested, HashSet<int> usedIds, ref int nextId)
++    {
++        if (requested > 0 && usedIds.Add(requested))
++        {
++            if (requested >= nextId) nextId = requested + 1;
++            return requested;
++        }
++
++        while (usedIds.Contains(nextId)) nextId++;
++        int id = nextId++;
++        usedIds.Add(id);
++        return id;
++    }
++}
+diff --git a/Assets/Scripts/UI_Import/GuideCurvePersistenceBridge.cs.meta b/Assets/Scripts/UI_Import/GuideCurvePersistenceBridge.cs.meta
+new file mode 100644
+index 0000000..c6a915b
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/GuideCurvePersistenceBridge.cs.meta
+@@ -0,0 +1,2 @@
++fileFormatVersion: 2
++guid: b7166c5a87de479196a3e1a9990a29a5
+diff --git a/Assets/Scripts/UI_Import/HairCardSaveData.cs b/Assets/Scripts/UI_Import/HairCardSaveData.cs
+index 121b7a3..5af9f8d 100644
+--- a/Assets/Scripts/UI_Import/HairCardSaveData.cs
++++ b/Assets/Scripts/UI_Import/HairCardSaveData.cs
+@@ -124,6 +124,34 @@ public class GroupClumperSaveData
+     public float falloff=GroupClumperManager.DefaultClumperFalloff;
+ }
+ 
++// GUIDE curves. Like CLUMPER this is a recipe, not baked HairCard state: the cards are saved
++// in their authored form and the guide is re-applied downstream on load.
++[Serializable]
++public class GuideCurveSaveData
++{
++    // Persisted so left-panel row ordering is the same after a reload.
++    public int id;
++
++    public float contactX,contactY,contactZ;
++    public float normalX,normalY,normalZ;
++
++    // The contact frame is CARRIED at runtime, never re-derived from the normal - see the
++    // comment on GuideCurveManager.GuideCurve.frame. Rebuilding it from the normal on load
++    // would roll the saved shape about its own axis, so the quaternion travels verbatim.
++    // W defaults to 1 so a file missing these keys lands on identity rather than all-zero,
++    // which is not a rotation at all.
++    public float frameX,frameY,frameZ;
++    public float frameW=1f;
++
++    // Mid and end control points, in that frame.
++    public float midX,midY,midZ;
++    public float endX,endY,endZ;
++
++    public float amount;
++    public float radius=GuideCurveManager.DefaultGuideRadius;
++    public float falloff=GuideCurveManager.DefaultGuideFalloff;
++}
++
+ [Serializable] public class PostAffectorControlSaveData
+ {
+     public float length,width,segments,bend,twist,depth;
+@@ -237,6 +265,11 @@ public class PostPredeterminedUVSaveData
+     public List<GroupClumperSaveData> clumpers=new();
+     public GroupClumperSaveData clumper;
+ 
++    // GUIDE curves. A project written before guides existed has no key here at all, so the
++    // initialiser leaves an empty list, which reads correctly as "this group has no guides".
++    // No formatVersion bump is needed for that.
++    public List<GuideCurveSaveData> guides=new();
++
+     // Legacy-only; retained for old JSON compatibility.
+     public ClumpLayerSaveData clump;
+ }
+@@ -288,6 +321,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
+ 
+         PostPredeterminedUVAuthority.Capture(this);
+         GroupClumperPersistenceBridge.Capture(this);
++        GuideCurvePersistenceBridge.Capture(this);
+ 
+         TextureUVRectWorkspace uvWorkspace=UnityEngine.Object.FindFirstObjectByType<TextureUVRectWorkspace>();
+         if(uvWorkspace!=null)
+@@ -337,6 +371,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
+         MaterialProjectPersistenceBridge.PendingRestore=this;
+         MaterialUVRectAuthority.QueueRestore(this);
+         GroupClumperPersistenceBridge.QueueRestore(this);
++        GuideCurvePersistenceBridge.QueueRestore(this);
+         if(sourceVersion>=2)
+             CanonicalProjectStateBridge.PendingCanonicalRestore=this;
+     }
+diff --git a/Assets/Scripts/UI_Import/SessionModifierFreshStartAuthority.cs b/Assets/Scripts/UI_Import/SessionModifierFreshStartAuthority.cs
+index a93ab6a..1b5d23d 100644
+--- a/Assets/Scripts/UI_Import/SessionModifierFreshStartAuthority.cs
++++ b/Assets/Scripts/UI_Import/SessionModifierFreshStartAuthority.cs
+@@ -43,7 +43,6 @@ public class SessionModifierFreshStartAuthority : MonoBehaviour
+         if (current != null && current != lastModel)
+         {
+             lastModel = current;
+-            ClearGuidesForNewSession();
+             if (projectLoadRequested)
+                 ResetTransientEditorState();
+             else
+@@ -114,18 +113,22 @@ public class SessionModifierFreshStartAuthority : MonoBehaviour
+             EventSystem.current.SetSelectedGameObject(null);
+     }
+ 
+-    // Guides are session-only - nothing writes them to a project file yet - so ANY load has to
+-    // drop them, and this is the only method that runs on both branches.
+-    // GroomSessionResetCoordinator's ClearAll is deliberately skipped on the project path
+-    // (projectLoadJustCompleted), and ClearClumpersForNewModel is the new-OBJ branch only, so
+-    // putting it in either of those leaves the project path uncovered: the previous model's
+-    // guides survive, adopt the loaded project's reused group ids, and comb its hair from a
+-    // contact point in geometry that no longer exists.
+-    void ClearGuidesForNewSession()
+-    {
+-        GuideCurveManager guides = FindFirstObjectByType<GuideCurveManager>();
+-        if (guides != null) guides.ClearAll();
+-    }
++    // There used to be a ClearGuidesForNewSession here, running on BOTH branches because guides
++    // were session-only and nothing else covered the project path. Guides are written to the
++    // project file now, and that reason has gone with it.
++    //
++    // Deleted rather than made conditional. This component polls, so it can act several frames
++    // either side of a restore installing, and a clear that lands on the wrong side of one wipes
++    // the guides the file was opened to bring back. Each path now has exactly one owner:
++    //
++    //   project load: GuideCurvePersistenceBridge drops the outgoing guides the instant the JSON
++    //   is parsed - earlier than anything here could - and installs the incoming set once the
++    //   cards have settled.
++    //
++    //   new OBJ: GroomSessionResetCoordinator.ClearModifierManagers clears the guides and cancels
++    //   any restore still in flight. Its own project-path suppression is a true one-shot, reset
++    //   every poll tick, so unlike projectLoadRequested here it cannot be left stale by a
++    //   cancelled file dialog.
+ 
+     void ClearClumpersForNewModel()
+     {
+diff --git a/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs b/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
+index 5e33b86..42c3acc 100644
+--- a/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
++++ b/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
+@@ -358,6 +358,14 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
+                     hash = Mix(hash, g.endLocal.x.GetHashCode());
+                     hash = Mix(hash, g.endLocal.y.GetHashCode());
+                     hash = Mix(hash, g.endLocal.z.GetHashCode());
++                    // The frame turns the two local offsets into world points, so it is as much
++                    // geometry as they are. It used to be safe to leave out, because the only
++                    // thing that wrote it also wrote contact and normal in the same call. Guides
++                    // load from a project file now, and a file can differ in the frame alone.
++                    hash = Mix(hash, g.frame.x.GetHashCode());
++                    hash = Mix(hash, g.frame.y.GetHashCode());
++                    hash = Mix(hash, g.frame.z.GetHashCode());
++                    hash = Mix(hash, g.frame.w.GetHashCode());
+                 }
+             }
+ 

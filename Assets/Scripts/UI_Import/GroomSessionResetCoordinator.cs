@@ -506,6 +506,15 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         GuideCurveManager guideManager = FindFirstObjectByType<GuideCurveManager>();
         if (guideManager != null) guideManager.ClearAll();
 
+        // Modifier restores are written to the project file and can still be in flight when a
+        // new OBJ arrives. Clearing the managers without cancelling them lets the payload land a
+        // few frames later and repopulate the session this method exists to tear down - or, worse,
+        // sit parked behind its card-count gate until the user has hand-placed enough cards on the
+        // new model to open it. This method is the only owner of the new-OBJ path for guides:
+        // SessionModifierFreshStartAuthority does not touch them at all.
+        GuideCurvePersistenceBridge.CancelPendingRestore();
+        GroupClumperPersistenceBridge.CancelPendingRestore();
+
         // The grooming lockout is static state shared by the placement buttons and the guide
         // handle editor. A reset that leaves a holder behind would keep card placement switched
         // off for the rest of the session with nothing on screen to explain it.

@@ -484,6 +484,60 @@ public class GuideCurveManager : MonoBehaviour
         nextUIScan = 0f;
     }
 
+    // Holds the id allocator above a set of ids that are not in byGroup yet but are about to be.
+    // GuideCurvePersistenceBridge empties the manager the moment a project file is parsed, which
+    // restarts numbering at 1, and then takes several frames to install the saved guides. A guide
+    // placed by hand in that gap would otherwise be handed an id the incoming set already owns.
+    public void ReserveGuideIdsAbove(int highestId)
+    {
+        if (highestId < nextGuideId) return;
+        nextGuideId = highestId + 1;
+    }
+
+    // Wholesale replacement, used by GuideCurvePersistenceBridge when a project is loaded.
+    //
+    // A public entry point rather than the bridge reflecting into byGroup: this manager is
+    // part of the same feature, so the two can simply agree on a method. The list is taken as
+    // a flat set because each guide already carries its own groupId.
+    //
+    // Nothing is selected afterwards, matching how a restored POST or CLUMPER arrives - the
+    // project opens on the group root with every modifier present and none being edited.
+    public void ReplaceAll(List<GuideCurve> restored)
+    {
+        byGroup.Clear();
+        selectedGuideId = -1;
+        selectedGroup = -1;
+        DestroyControls();
+
+        int highest = 0;
+        if (restored != null)
+        {
+            foreach (GuideCurve guide in restored)
+            {
+                if (guide == null) continue;
+
+                List<GuideCurve> list;
+                if (!byGroup.TryGetValue(guide.groupId, out list))
+                {
+                    list = new List<GuideCurve>();
+                    byGroup[guide.groupId] = list;
+                }
+                list.Add(guide);
+
+                if (guide.id > highest) highest = guide.id;
+            }
+        }
+
+        // Above every restored id, or a guide created afterwards would collide with one on
+        // disk and FindGuide would return whichever it reached first.
+        nextGuideId = highest + 1;
+        if (nextGuideId < 1) nextGuideId = 1;
+
+        // Rows are rebuilt from byGroup by EnsureRows; bring that scan forward to this frame
+        // so the restored guides appear in the panel immediately rather than up to 0.1s later.
+        nextUIScan = 0f;
+    }
+
     // SPACE + click moves the selected guide, mirroring the clumper gesture.
     //
     // Guarded on a guide actually being the selected modifier, because SPACE+click is shared

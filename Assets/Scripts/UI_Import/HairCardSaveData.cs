@@ -124,6 +124,34 @@ public class GroupClumperSaveData
     public float falloff=GroupClumperManager.DefaultClumperFalloff;
 }
 
+// GUIDE curves. Like CLUMPER this is a recipe, not baked HairCard state: the cards are saved
+// in their authored form and the guide is re-applied downstream on load.
+[Serializable]
+public class GuideCurveSaveData
+{
+    // Persisted so left-panel row ordering is the same after a reload.
+    public int id;
+
+    public float contactX,contactY,contactZ;
+    public float normalX,normalY,normalZ;
+
+    // The contact frame is CARRIED at runtime, never re-derived from the normal - see the
+    // comment on GuideCurveManager.GuideCurve.frame. Rebuilding it from the normal on load
+    // would roll the saved shape about its own axis, so the quaternion travels verbatim.
+    // W defaults to 1 so a file missing these keys lands on identity rather than all-zero,
+    // which is not a rotation at all.
+    public float frameX,frameY,frameZ;
+    public float frameW=1f;
+
+    // Mid and end control points, in that frame.
+    public float midX,midY,midZ;
+    public float endX,endY,endZ;
+
+    public float amount;
+    public float radius=GuideCurveManager.DefaultGuideRadius;
+    public float falloff=GuideCurveManager.DefaultGuideFalloff;
+}
+
 [Serializable] public class PostAffectorControlSaveData
 {
     public float length,width,segments,bend,twist,depth;
@@ -237,6 +265,11 @@ public class PostPredeterminedUVSaveData
     public List<GroupClumperSaveData> clumpers=new();
     public GroupClumperSaveData clumper;
 
+    // GUIDE curves. A project written before guides existed has no key here at all, so the
+    // initialiser leaves an empty list, which reads correctly as "this group has no guides".
+    // No formatVersion bump is needed for that.
+    public List<GuideCurveSaveData> guides=new();
+
     // Legacy-only; retained for old JSON compatibility.
     public ClumpLayerSaveData clump;
 }
@@ -288,6 +321,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
 
         PostPredeterminedUVAuthority.Capture(this);
         GroupClumperPersistenceBridge.Capture(this);
+        GuideCurvePersistenceBridge.Capture(this);
 
         TextureUVRectWorkspace uvWorkspace=UnityEngine.Object.FindFirstObjectByType<TextureUVRectWorkspace>();
         if(uvWorkspace!=null)
@@ -337,6 +371,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
         MaterialProjectPersistenceBridge.PendingRestore=this;
         MaterialUVRectAuthority.QueueRestore(this);
         GroupClumperPersistenceBridge.QueueRestore(this);
+        GuideCurvePersistenceBridge.QueueRestore(this);
         if(sourceVersion>=2)
             CanonicalProjectStateBridge.PendingCanonicalRestore=this;
     }
