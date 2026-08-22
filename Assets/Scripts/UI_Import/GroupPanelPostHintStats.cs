@@ -193,6 +193,11 @@ public class GroupPanelPostHintStats : MonoBehaviour
         // The SYMMETRY toggle sits directly under the instructions. Anything NOT listed here
         // gets shoved around every scan as the listed children are reindexed past it, so a new
         // panel child has to be named here or its position will not hold.
+        //
+        // The exception is a child that is not in the flow at all. ManualLinkFooterAuthority's
+        // strip is anchored to the panel's bottom edge with ignoreLayout, and wants to be the
+        // LAST sibling so it draws over the group list. Listing it here would pull it into this
+        // front block and put it underneath. It is deliberately absent.
         AddIfPresent(panel, GroomSymmetryAuthority.ButtonName);
         AddIfPresent(panel, "TitleText");
         AddIfPresent(panel, "NewGroupButton");
