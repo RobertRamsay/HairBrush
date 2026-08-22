@@ -1503,8 +1503,17 @@ public class HairCard : MonoBehaviour
         // load-time restore, pre-delete neutralize) each managed to leave that flag stuck true -
         // permanently freezing every subsequent mesh write for the whole group, from POST
         // editing and root sliders alike, any time clumping had ever touched the group.
+        // GUIDE curves are the other thing that can legitimately own this mesh. The evaluator is
+        // shared (ThreeColumnClumperMeshAuthority folds guides into its reconstruction), so the
+        // override flag it sets means "a modifier owns this", not "a clumper owns this". Testing
+        // only for a clumper made a guide-only group fail this guard every frame: the override
+        // was dropped and clean geometry rewritten at order 5000, the evaluator saw its own
+        // signature flip and re-derived at 5255, and the two alternated forever - a full
+        // per-frame rebuild of every card in the group, which is exactly what this guard exists
+        // to prevent. Both halves stay self-limiting: each only holds while a modifier with
+        // amount > 0 genuinely exists on this group right now.
         if (externalClumpOverrideActive && sourceSignature == externalClumpSourceSignature &&
-            GroupClumperManager.HasActiveClumper(groupId))
+            (GroupClumperManager.HasActiveClumper(groupId) || GuideCurveManager.HasActiveGuide(groupId)))
             return;
 
         externalClumpOverrideActive = false;

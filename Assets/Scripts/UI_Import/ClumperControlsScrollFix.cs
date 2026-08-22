@@ -80,6 +80,18 @@ public class ClumperControlsScrollFix : MonoBehaviour
         }
 
         HideNonClumperPanelChildren(panel);
+
+        // Self-heal, and it is not theoretical. Selecting a GUIDE destroys the clumper's
+        // controls, but Unity's Destroy is deferred: for the rest of that frame
+        // content.Find("ClumperControls") can still return the doomed object, so it wins
+        // FindControls and the freshly created GuideControls is caught by the hide sweep above.
+        // Nothing else ever reactivates a controls object - previousActive is only replayed by
+        // RestorePanel - so the guide would read as selected with a completely blank panel,
+        // permanently. Asserting the chosen controls are active costs nothing and closes it
+        // whichever way the destroy ordering happens to fall.
+        if (!controls.gameObject.activeSelf) controls.gameObject.SetActive(true);
+        previousActive.Remove(controls.gameObject);
+
         KeepUtilityRowsVisible(panel);
         UpdateTopInset(panel);
         host.transform.SetAsLastSibling();
@@ -128,14 +140,36 @@ public class ClumperControlsScrollFix : MonoBehaviour
         return Mathf.Max(0f, h);
     }
 
+    // GUIDE controls are hosted by exactly the same mechanism as CLUMPER controls, and have to
+    // be, for two reasons that both bite immediately without it.
+    //
+    // Visibility: a modifier panel appended to the groom panel's own VerticalLayoutGroup lands
+    // below twenty-odd groom rows, off the bottom of the panel, with nothing on screen saying a
+    // modifier is even selected.
+    //
+    // Interactivity: ModifierCoreLock disables every Slider under the groom panel whenever the
+    // group has a POST and no POST is selected, exempting only ClumperControls/ClumperScrollHost.
+    // Outside the host, every GUIDE slider is dead the moment the group also has a POST - the
+    // symptom written up in claude/groom-panel-lock-why-sliders-are-dead.md.
+    //
+    // Only one of the two can exist at a time: GuideCurveManager and GroupClumperManager clear
+    // each other's selection, so there is never a clumper panel and a guide panel to choose
+    // between.
     Transform FindControls(Transform panel)
     {
-        Transform direct = panel.Find("ClumperControls");
+        Transform found = FindNamed(panel, "ClumperControls");
+        if (found != null) return found;
+        return FindNamed(panel, "GuideControls");
+    }
+
+    Transform FindNamed(Transform panel, string name)
+    {
+        Transform direct = panel.Find(name);
         if (direct != null) return direct;
 
         if (content != null)
         {
-            Transform nested = content.Find("ClumperControls");
+            Transform nested = content.Find(name);
             if (nested != null) return nested;
         }
         return null;

@@ -2,7 +2,20 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
-// Final native 3-column CLUMPER evaluator.
+// Final native 3-column CLUMPER evaluator - and, since V017, the evaluator for GUIDE curves
+// too. One component owns both deliberately.
+//
+// GUIDE and CLUMPER both need to write a card's mesh, and a mesh has one owner: two authorities
+// each calling GetLiveMesh() and MarkExternalClumpOverride() would overwrite each other on
+// alternate frames, and neither dirty-check would be able to see the other move. So guides are
+// folded into the clean reconstruction here, BEFORE clumping, which is also the right order
+// physically: the guide shapes each strand, then the clumper gathers strands that are already
+// guided. GuideDeformation.Apply moves the cached SPINE as well as the vertices, which is what
+// lets the clump maths below keep working on guided geometry without knowing about guides.
+//
+// The consequence for this file is that "a group worth evaluating" is no longer "a group with an
+// active clumper" but "a group with an active clumper OR an active guide", and the group
+// signature has to hash guide state too or a guide edit would never dirty anything.
 //
 // The expensive mesh rebuild is dirty-driven. Each CLUMPER group keeps a lightweight signature
 // of modifier settings + card source meshes/transforms. If that signature has not changed, the
@@ -24,6 +37,11 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
     }
 
     private GroupClumperManager manager;
+    private GuideCurveManager guides;
+
+    // Shared immutable empty, so the no-guides path allocates nothing at all.
+    private static readonly List<GuideCurveManager.GuideCurve> EmptyGuides =
+        new List<GuideCurveManager.GuideCurve>();
     private readonly Dictionary<int, int> lastGroupSignature = new Dictionary<int, int>();
 
     // Last island each clumper (by id) successfully resolved to, so a transient raycast miss
@@ -48,7 +66,12 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
     void LateUpdate()
     {
         if (manager == null) manager = FindFirstObjectByType<GroupClumperManager>();
-        if (manager == null) return;
+        if (guides == null) guides = FindFirstObjectByType<GuideCurveManager>();
+
+        // Not "return if there is no clumper manager". Guides are evaluated here too now, and
+        // gating the whole pass on the CLUMPER's manager would make GUIDE silently depend on a
+        // component it has nothing to do with.
+        if (manager == null && guides == null) return;
 
         // A group that was frozen by SOLO skipped its evaluations entirely, so the signature
         // cached against it describes a state that may no longer be true. Dropping the whole
@@ -60,7 +83,8 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
             lastGroupSignature.Clear();
         }
 
-        List<GroupClumperManager.GroupClumper> clumpers = manager.GetAllClumpers();
+        List<GroupClumperManager.GroupClumper> clumpers = new List<GroupClumperManager.GroupClumper>();
+        if (manager != null) clumpers = manager.GetAllClumpers();
         HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
 
         // Amount == 0 means this clumper no longer owns the generated mesh. Treat zeroed
@@ -72,9 +96,26 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
             .Where(c => c != null && c.amount > .0001f)
             .OrderBy(c => c.id)
             .ToList();
-        HashSet<int> groups = new HashSet<int>(ordered.Select(c => c.groupId));
+        // Guides earn a group its evaluation exactly the way clumpers do, and on the same
+        // amount > 0 test, so a guide dropped on the model and left at zero costs nothing and a
+        // guide wound back to zero releases the mesh immediately.
+        // HasAnyActiveGuide is allocation-free and answers "no" for every project that has no
+        // guides, which is the overwhelmingly common case. Only past that gate is it worth
+        // building the LINQ chain - this runs every LateUpdate, and the signature machinery in
+        // this file was already tuned once to stop it producing per-frame garbage.
+        List<GuideCurveManager.GuideCurve> activeGuides = EmptyGuides;
+        if (guides != null && guides.HasAnyActiveGuide())
+        {
+            activeGuides = guides.GetAllGuides()
+                .Where(g => g != null && g.amount > .0001f)
+                .OrderBy(g => g.id)
+                .ToList();
+        }
 
-        if (ordered.Count == 0)
+        HashSet<int> groups = new HashSet<int>(ordered.Select(c => c.groupId));
+        foreach (GuideCurveManager.GuideCurve guide in activeGuides) groups.Add(guide.groupId);
+
+        if (ordered.Count == 0 && activeGuides.Count == 0)
         {
             RestoreRemovedGroups(allCards, groups);
             lastGroupSignature.Clear();
@@ -97,11 +138,16 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
             List<GroupClumperManager.GroupClumper> groupClumpers = ordered
                 .Where(c => c.groupId == groupId)
                 .ToList();
+            List<GuideCurveManager.GuideCurve> groupGuides = EmptyGuides;
+            if (activeGuides.Count > 0)
+            {
+                groupGuides = activeGuides.Where(g => g.groupId == groupId).ToList();
+            }
             HairCard[] groupCards = allCards
                 .Where(c => c != null && c.groupId == groupId)
                 .ToArray();
 
-            int signature = ComputeGroupSignature(groupId, groupClumpers, groupCards);
+            int signature = ComputeGroupSignature(groupId, groupClumpers, groupGuides, groupCards);
             if (lastGroupSignature.TryGetValue(groupId, out int previous) && previous == signature)
                 continue;
 
@@ -117,8 +163,8 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
             // stored a signature the group no longer had, which meant the very next frame always
             // looked dirty - and, worse, a frame where POST had dropped the overrides could hash
             // back to the cached value and be skipped.
-            bool trustworthy = EvaluateGroup(groupId, groupClumpers, groupCards);
-            if (trustworthy) lastGroupSignature[groupId] = ComputeGroupSignature(groupId, groupClumpers, groupCards);
+            bool trustworthy = EvaluateGroup(groupId, groupClumpers, groupGuides, groupCards);
+            if (trustworthy) lastGroupSignature[groupId] = ComputeGroupSignature(groupId, groupClumpers, groupGuides, groupCards);
             else lastGroupSignature.Remove(groupId);
         }
 
@@ -144,7 +190,8 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
     // Returns false when this evaluation must not be cached - see the caller. That happens when
     // a clumper's island scope could not be resolved, which is a transient physics probe result,
     // not a real change in the group.
-    bool EvaluateGroup(int groupId, List<GroupClumperManager.GroupClumper> clumpers, HairCard[] groupCards)
+    bool EvaluateGroup(int groupId, List<GroupClumperManager.GroupClumper> clumpers,
+        List<GuideCurveManager.GuideCurve> groupGuides, HairCard[] groupCards)
     {
         if (groupCards == null || groupCards.Length == 0)
         {
@@ -157,16 +204,27 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         Dictionary<HairCard, CleanMeshData> clean = new Dictionary<HairCard, CleanMeshData>();
         Dictionary<HairCard, Vector3[]> working = new Dictionary<HairCard, Vector3[]>();
 
+        // Each guide's arc-length table is built ONCE here, not once per card.
+        List<GuideDeformation.ActiveGuide> resolvedGuides = GuideDeformation.Resolve(groupGuides);
+
         foreach (HairCard card in groupCards)
         {
             if (card == null) continue;
             CleanMeshData source = BuildCleanMesh(card);
             if (source == null || source.vertices == null) continue;
+
+            // GUIDE first, into the clean data itself, so everything downstream - the clump
+            // anchors, the leader sampling, the mesh write - operates on guided geometry. The
+            // spine is moved alongside the vertices for exactly that reason. BuildCleanMesh
+            // allocates a fresh instance per call and nothing caches it, so mutating it here is
+            // safe; if that ever changes, this has to write into a copy instead.
+            GuideDeformation.Apply(card, resolvedGuides, source.spine, source.vertices);
+
             clean[card] = source;
             working[card] = (Vector3[])source.vertices.Clone();
         }
 
-        bool anyActive = false;
+        bool anyActive = resolvedGuides.Count > 0;
         foreach (GroupClumperManager.GroupClumper clumper in clumpers)
         {
             if (clumper == null || clumper.amount <= .0001f) continue;
@@ -245,7 +303,8 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         return scopeResolved;
     }
 
-    static int ComputeGroupSignature(int groupId, List<GroupClumperManager.GroupClumper> clumpers, HairCard[] cards)
+    static int ComputeGroupSignature(int groupId, List<GroupClumperManager.GroupClumper> clumpers,
+        List<GuideCurveManager.GuideCurve> guides, HairCard[] cards)
     {
         unchecked
         {
@@ -272,6 +331,33 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
                     hash = Mix(hash, c.normal.x.GetHashCode());
                     hash = Mix(hash, c.normal.y.GetHashCode());
                     hash = Mix(hash, c.normal.z.GetHashCode());
+                }
+            }
+
+            // Every field a guide's geometry depends on. Miss one and editing it silently
+            // changes nothing, because the group hashes back to its cached value and is skipped.
+            hash = Mix(hash, guides != null ? guides.Count : 0);
+            if (guides != null)
+            {
+                foreach (GuideCurveManager.GuideCurve g in guides)
+                {
+                    if (g == null) continue;
+                    hash = Mix(hash, g.id);
+                    hash = Mix(hash, g.amount.GetHashCode());
+                    hash = Mix(hash, g.radius.GetHashCode());
+                    hash = Mix(hash, g.falloff.GetHashCode());
+                    hash = Mix(hash, g.contact.x.GetHashCode());
+                    hash = Mix(hash, g.contact.y.GetHashCode());
+                    hash = Mix(hash, g.contact.z.GetHashCode());
+                    hash = Mix(hash, g.normal.x.GetHashCode());
+                    hash = Mix(hash, g.normal.y.GetHashCode());
+                    hash = Mix(hash, g.normal.z.GetHashCode());
+                    hash = Mix(hash, g.midLocal.x.GetHashCode());
+                    hash = Mix(hash, g.midLocal.y.GetHashCode());
+                    hash = Mix(hash, g.midLocal.z.GetHashCode());
+                    hash = Mix(hash, g.endLocal.x.GetHashCode());
+                    hash = Mix(hash, g.endLocal.y.GetHashCode());
+                    hash = Mix(hash, g.endLocal.z.GetHashCode());
                 }
             }
 

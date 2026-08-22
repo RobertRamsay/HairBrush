@@ -43,6 +43,7 @@ public class SessionModifierFreshStartAuthority : MonoBehaviour
         if (current != null && current != lastModel)
         {
             lastModel = current;
+            ClearGuidesForNewSession();
             if (projectLoadRequested)
                 ResetTransientEditorState();
             else
@@ -111,6 +112,19 @@ public class SessionModifierFreshStartAuthority : MonoBehaviour
 
         if (EventSystem.current != null)
             EventSystem.current.SetSelectedGameObject(null);
+    }
+
+    // Guides are session-only - nothing writes them to a project file yet - so ANY load has to
+    // drop them, and this is the only method that runs on both branches.
+    // GroomSessionResetCoordinator's ClearAll is deliberately skipped on the project path
+    // (projectLoadJustCompleted), and ClearClumpersForNewModel is the new-OBJ branch only, so
+    // putting it in either of those leaves the project path uncovered: the previous model's
+    // guides survive, adopt the loaded project's reused group ids, and comb its hair from a
+    // contact point in geometry that no longer exists.
+    void ClearGuidesForNewSession()
+    {
+        GuideCurveManager guides = FindFirstObjectByType<GuideCurveManager>();
+        if (guides != null) guides.ClearAll();
     }
 
     void ClearClumpersForNewModel()

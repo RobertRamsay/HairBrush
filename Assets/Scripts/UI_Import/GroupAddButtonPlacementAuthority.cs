@@ -31,9 +31,8 @@ using UnityEngine.UI;
 // does not depend on the order, because it is held for the whole armed period rather than
 // being applied per click.
 //
-// GUIDE is a placeholder. The button, the placement prompt and the click are all real -
-// the point is recorded in GuidePlaceholderRegistry and reported - but nothing is built
-// from it yet and nothing about it is written to a project file.
+// All three buttons place a real modifier. GUIDE was a placeholder in the first cut of this
+// file; GuideCurveManager now owns guide curves properly, so +GUIDE creates one.
 [DefaultExecutionOrder(-6000)]
 public class GroupAddButtonPlacementAuthority : MonoBehaviour
 {
@@ -68,6 +67,7 @@ public class GroupAddButtonPlacementAuthority : MonoBehaviour
     private ModelViewer viewer;
     private PostAffectorManager posts;
     private GroupClumperManager clumpers;
+    private GuideCurveManager guides;
 
     private FieldInfo groomingModeField;
     private FieldInfo postLastCreatedFrameField;
@@ -375,10 +375,15 @@ public class GroupAddButtonPlacementAuthority : MonoBehaviour
 
     void PlaceGuide(int groupId, Vector3 point, Vector3 normal)
     {
-        GuidePlaceholderRegistry.Add(groupId, point, normal);
-        int count = GuidePlaceholderRegistry.CountForGroup(groupId);
-        StatusToast.Show("GUIDE point " + count + " recorded on group " + groupId +
-                         " (placeholder - guide curves are not built yet).", false, 3f);
+        if (guides == null) guides = FindFirstObjectByType<GuideCurveManager>();
+        if (guides == null)
+        {
+            StatusToast.Show("GUIDE could not be placed - guide manager not found.", true);
+            return;
+        }
+
+        guides.CreateGuide(groupId, point, normal);
+        StatusToast.Show("GUIDE placed on group " + groupId + ". Raise Guide Amount to comb.", false, 3f);
     }
 
     static bool IsShortcutModifierHeld()
@@ -438,6 +443,11 @@ public class GroupAddButtonPlacementAuthority : MonoBehaviour
         {
             clumpers = FindFirstObjectByType<GroupClumperManager>();
         }
+
+        if (guides == null)
+        {
+            guides = FindFirstObjectByType<GuideCurveManager>();
+        }
     }
 
     bool ReadGroomingEnabled()
@@ -476,7 +486,7 @@ public class GroupAddButtonPlacementAuthority : MonoBehaviour
 
         string what = "POST";
         if (armedKind == AddKind.Clumper) what = "CLUMPER";
-        if (armedKind == AddKind.Guide) what = "GUIDE (placeholder)";
+        if (armedKind == AddKind.Guide) what = "GUIDE";
 
         string text = "PLACE " + what + " ON GROUP " + armedGroupId +
                       "   -   click the effect point on the model    (right-click or ESC to cancel)";
@@ -669,15 +679,6 @@ public class GroupAddRowUIAuthority : MonoBehaviour
             Destroy(row.gameObject);
         }
 
-        // ModelViewer.GetNextAvailableGroupId hands deleted ids back out, so guide points
-        // left behind by a deleted group would silently reattach themselves to whatever new
-        // group inherits its number. The empty check matters: the panel legitimately has no
-        // group rows before a model is loaded, and that must not be read as "all groups
-        // deleted" and wipe the registry.
-        if (liveGroups.Count > 0)
-        {
-            GuidePlaceholderRegistry.PruneToGroups(liveGroups);
-        }
     }
 
     // Header, then this group's POST rows, then its CLUMPER rows, then this row.
@@ -686,13 +687,15 @@ public class GroupAddRowUIAuthority : MonoBehaviour
         int index = groupItem.GetSiblingIndex() + 1;
         string postPrefix = "PostAffector_" + gid + "_";
         string clumperPrefix = "GroupClumper_" + gid + "_";
+        string guidePrefix = "GuideCurve_" + gid + "_";
 
         while (index < parent.childCount)
         {
             Transform child = parent.GetChild(index);
             if (child == null) break;
             bool ownedByThisGroup = child.name.StartsWith(postPrefix, StringComparison.Ordinal) ||
-                                    child.name.StartsWith(clumperPrefix, StringComparison.Ordinal);
+                                    child.name.StartsWith(clumperPrefix, StringComparison.Ordinal) ||
+                                    child.name.StartsWith(guidePrefix, StringComparison.Ordinal);
             if (!ownedByThisGroup) break;
             index++;
         }
@@ -805,82 +808,5 @@ public class GroupAddRowUIAuthority : MonoBehaviour
             return;
         }
         image.color = idle;
-    }
-}
-
-// ------------------------------------------------------------------------------------
-// GUIDE placeholder storage.
-//
-// Deliberately session-only and deliberately inert: nothing reads these points to build
-// geometry, and nothing writes them to a project file. This exists so the +GUIDE button
-// is a real, working placement gesture from day one and V017's actual guide-curve work
-// has a defined place to hook into, rather than needing the UI rebuilt around it later.
-// ------------------------------------------------------------------------------------
-public class GuidePlaceholderPoint
-{
-    public int groupId;
-    public Vector3 center;
-    public Vector3 normal;
-}
-
-public static class GuidePlaceholderRegistry
-{
-    private static readonly List<GuidePlaceholderPoint> points = new List<GuidePlaceholderPoint>();
-
-    public static void Add(int groupId, Vector3 center, Vector3 normal)
-    {
-        Vector3 safeNormal = Vector3.up;
-        if (normal.sqrMagnitude > .000001f)
-        {
-            safeNormal = normal.normalized;
-        }
-
-        GuidePlaceholderPoint point = new GuidePlaceholderPoint
-        {
-            groupId = groupId,
-            center = center,
-            normal = safeNormal
-        };
-        points.Add(point);
-    }
-
-    public static List<GuidePlaceholderPoint> GetGroup(int groupId)
-    {
-        List<GuidePlaceholderPoint> result = new List<GuidePlaceholderPoint>();
-        foreach (GuidePlaceholderPoint point in points)
-        {
-            if (point == null) continue;
-            if (point.groupId != groupId) continue;
-            result.Add(point);
-        }
-        return result;
-    }
-
-    public static int CountForGroup(int groupId)
-    {
-        int count = 0;
-        foreach (GuidePlaceholderPoint point in points)
-        {
-            if (point == null) continue;
-            if (point.groupId != groupId) continue;
-            count++;
-        }
-        return count;
-    }
-
-    public static void ClearGroup(int groupId)
-    {
-        points.RemoveAll(p => p != null && p.groupId == groupId);
-    }
-
-    public static void PruneToGroups(HashSet<int> liveGroupIds)
-    {
-        if (liveGroupIds == null) return;
-        points.RemoveAll(p => p == null || !liveGroupIds.Contains(p.groupId));
-    }
-
-    public static void ClearAll()
-    {
-        points.Clear();
     }
 }

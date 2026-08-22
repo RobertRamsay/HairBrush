@@ -222,10 +222,26 @@ public class GroupClumperManager : MonoBehaviour
         return row;
     }
 
+    // Public so GuideCurveManager can drop this selection when a guide is picked. The two
+    // modifiers share SPACE+click and share the right-hand panel, so exactly one of them may be
+    // the selected thing at a time.
+    public void ClearSelection()
+    {
+        if (selectedClumperId < 0 && selectedGroup < 0) return;
+        selectedClumperId = -1;
+        selectedGroup = -1;
+        DestroyControls();
+        RebuildRowsSoon();
+    }
+
     void SelectClumper(int gid, int id)
     {
         GroupClumper clumper = FindClumper(id);
         if (clumper == null || clumper.groupId != gid) return;
+
+        GuideCurveManager guides = FindFirstObjectByType<GuideCurveManager>();
+        if (guides != null) guides.ClearSelection();
+
         selectedGroup = gid;
         selectedClumperId = id;
         if (viewer != null) viewer.currentGroupId = gid;

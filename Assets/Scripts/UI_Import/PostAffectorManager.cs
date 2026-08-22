@@ -148,6 +148,14 @@ public class PostAffectorManager : MonoBehaviour
 
     void CreateAffector(int groupId, Vector3 center, Vector3 normal)
     {
+        // Same hook SelectAffector has. Without it, ctrl+clicking while a GUIDE is selected
+        // leaves both live: the guide panel keeps the groom panel hidden and keeps advertising
+        // "SPACE + CLICK moves this guide" while the new POST owns that gesture. The clumper
+        // never latches this because ClumperPostOwnershipAuthority re-clears every frame; guide
+        // selection is one-shot, so it has to be closed at every entry point instead.
+        GuideCurveManager createGuides = FindFirstObjectByType<GuideCurveManager>();
+        if (createGuides != null) createGuides.ClearSelection();
+
         if (!groups.TryGetValue(groupId, out List<PostAffector> list))
         {
             list = new List<PostAffector>();
@@ -653,6 +661,12 @@ public class PostAffectorManager : MonoBehaviour
 
     void SelectAffector(PostAffector a)
     {
+        // A selected GUIDE hides the whole groom panel behind its own controls, so a POST
+        // selected underneath it would be edited and repositioned while the panel still named
+        // the guide. Same hook GroupClumperManager.SelectClumper has.
+        GuideCurveManager guides = FindFirstObjectByType<GuideCurveManager>();
+        if (guides != null) guides.ClearSelection();
+
         activeId = a.id;
         activeGroup = a.groupId;
         viewer.currentGroupId = a.groupId;

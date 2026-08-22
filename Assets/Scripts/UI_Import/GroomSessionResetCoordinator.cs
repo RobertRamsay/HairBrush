@@ -500,12 +500,20 @@ public class GroomSessionResetCoordinator : MonoBehaviour
             SetField(post, "nextUIScan", 0f);
         }
 
+        // Guides are session state like POSTs and clumpers: a new model must not inherit the
+        // last one's guide curves, and the ids have to restart or a reused group id would
+        // adopt a stale guide.
+        GuideCurveManager guideManager = FindFirstObjectByType<GuideCurveManager>();
+        if (guideManager != null) guideManager.ClearAll();
+
         HairProjectSaveData.PendingModifierRestore = null;
         CanonicalProjectStateBridge.PendingCanonicalRestore = null;
 
         foreach (RectTransform row in FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
         {
-            if (row != null && row.name.StartsWith("PostAffector_", StringComparison.Ordinal))
+            if (row == null) continue;
+            if (row.name.StartsWith("PostAffector_", StringComparison.Ordinal) ||
+                row.name.StartsWith("GuideCurve_", StringComparison.Ordinal))
                 Destroy(row.gameObject);
         }
 
