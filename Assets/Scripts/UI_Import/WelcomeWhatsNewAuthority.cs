@@ -25,16 +25,16 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
     // ---------------------------------------------------------------------------------
     // Release notes. Add a block at the top for each release; only the first is displayed.
     // ---------------------------------------------------------------------------------
-    private const string ReleaseHeading = "BETA 0.1.6";
+    private const string ReleaseHeading = "BETA 0.1.7";
 
     // Five at most, one line each - the panel does not scroll.
     private static readonly string[] ReleaseNotes =
     {
-        "WAVE modifier - amplitude, frequency and direction profiles.",
-        "ARCH slider flattens or doubles the card cross-section.",
-        "SYMMETRY mirrors painting and erasing; N+/N- flips a group.",
-        "WIDTH profile curve; right-click any slider to reset it.",
-        "SOLO freezes hidden groups - much faster on heavy grooms.",
+        "GUIDE curves - a three point curve combs the cards near it.",
+        "Drag handles reshape a guide right there in the view.",
+        "+POST, +CLUMPER and +GUIDE buttons on every group row.",
+        "VARIATION works on every channel again with a POST placed.",
+        "Matching radius and falloff defaults for POSTs and clumpers.",
     };
 
     // ---------------------------------------------------------------------------------
