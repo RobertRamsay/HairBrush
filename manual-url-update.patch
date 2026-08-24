@@ -1,0 +1,22 @@
+diff --git a/Assets/Scripts/UI_Import/ManualLinkFooterAuthority.cs b/Assets/Scripts/UI_Import/ManualLinkFooterAuthority.cs
+index 18755e5..9150580 100644
+--- a/Assets/Scripts/UI_Import/ManualLinkFooterAuthority.cs
++++ b/Assets/Scripts/UI_Import/ManualLinkFooterAuthority.cs
+@@ -20,12 +20,12 @@ public class ManualLinkFooterAuthority : MonoBehaviour
+     // The published manual. Same convention as the two GitHub URLs already in the project:
+     // a named constant at the top of the class, so a new link is a one-line change.
+     //
+-    // /preview rather than the /edit link the document is shared with. /edit opens the Docs
+-    // editor chrome and, if the document is ever shared as "anyone with the link can edit",
+-    // hands a write handle to every copy of the build. /preview is a clean read-only render
+-    // and cannot become that.
++    // A Drive file share rather than the Google Doc this used to point at. /view is Drive's
++    // read-only viewer, which is what a link handed to every copy of the build should be - the
++    // check worth repeating whenever this changes is that the URL cannot carry edit rights, so
++    // no /edit form and no share set to "anyone with the link can edit".
+     private const string ManualUrl =
+-        "https://docs.google.com/document/d/1TWEUxBKgKe0Vtg-JHQ8fPNflI3WLY5HUa-VeAgkTCuk/preview";
++        "https://drive.google.com/file/d/1jF8IKTM0yhYRrZu_eFEoMpgehs7itVPf/view?usp=sharing";
+ 
+     // Other authorities that reorder the panel need to know these by name.
+     public const string FooterName = "ManualFooter";
