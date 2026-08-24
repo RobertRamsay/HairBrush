@@ -300,8 +300,10 @@ public class GuideCurveManager : MonoBehaviour
         return false;
     }
 
-    // Any guide at all, active or not - the preview draws inactive guides too, so it needs a
-    // different question from HasActiveGuide.
+    // Any guide at all, active or not, as opposed to HasActiveGuide which asks whether one is
+    // combing anything. Written for the viewport preview, which drew every guide in the group;
+    // the preview now draws only the selected one and asks GetSelectedGuide instead, so this has
+    // no caller. Kept because it is the natural form of the question and costs four lines.
     public bool HasAnyGuideInGroup(int groupId)
     {
         List<GuideCurve> list;
