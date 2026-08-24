@@ -221,8 +221,12 @@ public class PostShapeCurveBridge : MonoBehaviour
         // group root, never whichever POST happens to be selected in the UI.
         if (live.presentedPostId >= 0 && live.rootWhilePost.TryGetValue(live.presentedGroupId, out CurveSet root))
         {
-            live.WriteSetToRegistry(live.presentedGroupId, root);
+            // The flag is what EndProjectCapture keys its decrement off, so it has to be true
+            // BEFORE anything that can throw. Set after the write, a throw inside the write
+            // would leave the registry silenced with nothing left that knows to unsilence it.
+            GroomShapeCurveRegistry.BeginSilentEdit();
             live.captureSwappedToRoot = true;
+            live.WriteSetToRegistry(live.presentedGroupId, root, false);
         }
     }
 
@@ -231,7 +235,11 @@ public class PostShapeCurveBridge : MonoBehaviour
         if (live == null || !live.captureSwappedToRoot) return;
         live.captureSwappedToRoot = false;
         if (live.presentedPostId >= 0)
-            live.WriteSetToRegistry(live.presentedGroupId, live.GetOrCreatePost(live.presentedPostId, live.presentedGroupId));
+            live.WriteSetToRegistry(live.presentedGroupId, live.GetOrCreatePost(live.presentedPostId, live.presentedGroupId), false);
+
+        // Closes the BeginSilentEdit opened by BeginProjectCapture. The registry ends this pair
+        // holding exactly what it held before, so nothing downstream should have seen an edit.
+        GroomShapeCurveRegistry.EndSilentEdit();
     }
 
     public static void QueueRestore(HairProjectSaveData data)
@@ -429,12 +437,23 @@ public class PostShapeCurveBridge : MonoBehaviour
 
     void WriteSetToRegistry(int groupId, CurveSet set)
     {
+        WriteSetToRegistry(groupId, set, true);
+    }
+
+    // refreshMeshes exists for the capture swap in BeginProjectCapture/EndProjectCapture. That
+    // swap puts the group root into the registry so the next capture step reads the right
+    // curves, then puts the POST straight back. The meshes are identical at both ends and
+    // nothing draws in between, so rebuilding every card in the group twice is pure cost.
+    // Invisible while the only caller was SAVE PROJ; UndoHistoryAuthority captures whenever the
+    // user pauses, which turns it into a hitch every few seconds.
+    void WriteSetToRegistry(int groupId, CurveSet set, bool refreshMeshes)
+    {
         if (set == null) return;
         GroomShapeCurveRegistry.SetCurve(groupId, GroomShapeCurveChannel.Bend, CloneCurve(set.bend));
         GroomShapeCurveRegistry.SetCurve(groupId, GroomShapeCurveChannel.X, CloneCurve(set.x));
         GroomShapeCurveRegistry.SetCurve(groupId, GroomShapeCurveChannel.Y, CloneCurve(set.y));
         GroomShapeCurveRegistry.SetCurve(groupId, GroomShapeCurveChannel.Z, CloneCurve(set.z));
-        GroomShapeCurveRegistry.RefreshGroup(groupId);
+        if (refreshMeshes) GroomShapeCurveRegistry.RefreshGroup(groupId);
     }
 
     void CapturePostCurves(HairProjectSaveData data)

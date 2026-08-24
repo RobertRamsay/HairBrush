@@ -281,6 +281,15 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
     public static HairProjectSaveData PendingUVRectRestore;
     public static HairProjectSaveData PendingGroupUVRestore;
     public int formatVersion;
+
+    // The cards each hairCards entry was built from, in the same order, set by whoever gathered
+    // the payload. Never serialized: it exists so CanonicalProjectStateBridge.CanonicalizeForSave
+    // can pair a saved card back to its source directly instead of hunting for the nearest spawn
+    // point, which sorts every card in the group once per card - fine at one call per SAVE PROJ,
+    // ruinous for UndoHistoryAuthority, which captures whenever the user pauses. Left null by a
+    // payload read from a file, where the pairing genuinely has to be inferred.
+    [NonSerialized] public List<HairCard> captureSourceCards;
+
     public string modelPath;
     public List<GroupSaveData> groups=new();
     public List<HairCardSaveData> hairCards=new();
@@ -335,11 +344,21 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
         // The existing curve editor presents a POST's private curves through the group
         // registry while that POST is selected. Swap the actual group root back in only for
         // group serialization, then restore the selected POST immediately afterward.
-        PostShapeCurveBridge.BeginProjectCapture(this);
-        GroomShapeCurveAuthority.Capture(this);
-        GroupSidednessAuthority.Capture(this);
-        GroupNormalFlipAuthority.Capture(this);
-        PostShapeCurveBridge.EndProjectCapture();
+        // try/finally because the capture swap now silences the curve registry's epoch for its
+        // duration. A throw in any of the three Capture calls would otherwise leave it silenced
+        // for the rest of the session, and a silenced epoch means curve edits stop reaching the
+        // mesh - a far worse failure than the one save that went wrong.
+        try
+        {
+            PostShapeCurveBridge.BeginProjectCapture(this);
+            GroomShapeCurveAuthority.Capture(this);
+            GroupSidednessAuthority.Capture(this);
+            GroupNormalFlipAuthority.Capture(this);
+        }
+        finally
+        {
+            PostShapeCurveBridge.EndProjectCapture();
+        }
         MaterialProjectPersistenceBridge.Capture(this);
         MaterialUVRectAuthority.Capture(this);
         CanonicalProjectStateBridge.CanonicalizeForSave(this);

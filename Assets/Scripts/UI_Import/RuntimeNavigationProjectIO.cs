@@ -88,6 +88,11 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
 
     void LoadFreshModel()
     {
+        // Deliberately NOT telling the undo history here. LoadModel opens a file picker and
+        // returns if it is cancelled, by which point the cards below are already gone - and a
+        // history dropped in advance is a cancel the user cannot walk back. The model object
+        // changing is enough for this path; the project path needs the explicit call because a
+        // project with no modelPath replaces everything while leaving the model alone.
         CleanupEditorUIAndCards();
         MethodInfo load = typeof(ModelViewer).GetMethod("LoadModel", BindingFlags.Instance | BindingFlags.NonPublic);
         load?.Invoke(viewer, null);
@@ -113,6 +118,17 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
         path = RuntimeFileDialog.SaveFile("Save Hair Project", "HairBrush Projects\0*.json\0All Files\0*.*\0\0", "HairProject", "json");
 #endif
         if (string.IsNullOrEmpty(path)) return;
+        HairProjectSaveData data = BuildSaveData();
+        File.WriteAllText(path, JsonUtility.ToJson(data,true));
+        Debug.Log("Project saved successfully to: "+path);
+    }
+
+    // The whole session as a save payload, with no file involved. Split out of
+    // SaveProjectEnhanced so UndoHistoryAuthority can take the same picture the file gets:
+    // one gatherer means an undo step can never quietly cover less than a save does, and a
+    // feature added to the save format is undoable the moment it is saveable.
+    public HairProjectSaveData BuildSaveData()
+    {
         HairProjectSaveData data = new HairProjectSaveData();
         data.modelPath = GetField<string>("currentModelPath");
         data.sliderLength=viewer.currentLength; data.sliderWidth=viewer.currentWidth; data.sliderSegments=viewer.currentSegments;
@@ -129,10 +145,14 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
             GroupSaveData g=new GroupSaveData{groupId=id,groupName=names!=null&&names.ContainsKey(id)?names[id]:"Group "+id,uScale=us!=null&&us.ContainsKey(id)?us[id]:1f,vScale=vs!=null&&vs.ContainsKey(id)?vs[id]:1f,uOffset=uo!=null&&uo.ContainsKey(id)?uo[id]:0f,vOffset=vo!=null&&vo.ContainsKey(id)?vo[id]:0f};
             modifiers?.PopulateGroupSave(g); data.groups.Add(g);
         }
+        // Recorded alongside the payload so CanonicalizeForSave can pair each entry back to the
+        // card it was built from rather than searching for it. Not serialized; see the field.
+        data.captureSourceCards = new List<HairCard>();
         foreach(HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
         {
             Vector3 hit = card.GetSpawnHitPoint();
             Vector3 normal = card.GetSurfaceNormal();
+            data.captureSourceCards.Add(card);
             data.hairCards.Add(new HairCardSaveData
             {
                 posX=card.transform.position.x,posY=card.transform.position.y,posZ=card.transform.position.z,
@@ -144,8 +164,7 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
                 curlFrequency=card.curlFrequency,curlDiameter=card.curlDiameter,waveAmplitude=card.waveAmplitude,waveFrequency=card.waveFrequency,waveDirection=card.waveDirection,arch=card.arch,mirrored=card.mirrored
             });
         }
-        File.WriteAllText(path, JsonUtility.ToJson(data,true));
-        Debug.Log("Project saved successfully to: "+path);
+        return data;
     }
 
     public void LoadProjectEnhanced()
@@ -158,6 +177,7 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
 #endif
         if(string.IsNullOrEmpty(path))return;
         HairProjectSaveData data=JsonUtility.FromJson<HairProjectSaveData>(File.ReadAllText(path)); if(data==null)return;
+        UndoHistoryAuthority.NotifySessionReplaced();
         CleanupEditorUIAndCards();
 
         if(!string.IsNullOrEmpty(data.modelPath))
@@ -168,27 +188,10 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
             else Debug.LogError("HairBrush: could not load model referenced by project - file not found at: " + data.modelPath);
         }
 
-        viewer.currentLength=data.sliderLength;viewer.currentWidth=data.sliderWidth;viewer.currentSegments=data.sliderSegments;viewer.currentBend=data.sliderBend;viewer.currentTwist=data.sliderTwist;viewer.currentEmbedDepth=data.sliderEmbedDepth;viewer.currentOffsetX=data.sliderOffsetX;viewer.currentOffsetY=data.sliderOffsetY;viewer.currentOffsetZ=data.sliderOffsetZ;viewer.currentUScale=data.sliderUScale;viewer.currentVScale=data.sliderVScale;viewer.currentUOffset=data.sliderUOffset;viewer.currentVOffset=data.sliderVOffset;
-        viewer.currentCurlFrequency=data.sliderCurlFrequency;viewer.currentCurlDiameter=data.sliderCurlDiameter;
-        viewer.currentWaveAmplitude=data.sliderWaveAmplitude;viewer.currentWaveFrequency=data.sliderWaveFrequency;viewer.currentWaveDirection=data.sliderWaveDirection;viewer.currentArch=data.sliderArch;
-
-        HashSet<int> ids=GetField<HashSet<int>>("allGroupIds");var names=GetField<Dictionary<int,string>>("groupNames");var us=GetField<Dictionary<int,float>>("groupUScales");var vs=GetField<Dictionary<int,float>>("groupVScales");var uo=GetField<Dictionary<int,float>>("groupUOffsets");var vo=GetField<Dictionary<int,float>>("groupVOffsets");ids?.Clear();names?.Clear();us?.Clear();vs?.Clear();uo?.Clear();vo?.Clear();
-        foreach(GroupSaveData g in data.groups){ids?.Add(g.groupId);if(names!=null)names[g.groupId]=g.groupName;if(us!=null)us[g.groupId]=g.uScale;if(vs!=null)vs[g.groupId]=g.vScale;if(uo!=null)uo[g.groupId]=g.uOffset;if(vo!=null)vo[g.groupId]=g.vOffset;}
+        ApplyGlobalSliders(data);
+        ApplyGroupRegistry(data);
         viewer.currentGroupId=data.groups.Count>0?data.groups[0].groupId:0;
-
-        foreach(HairCardSaveData c in data.hairCards)
-        {
-            GameObject go=new GameObject("HairCard_Strip",typeof(MeshFilter),typeof(MeshRenderer),typeof(HairCard));
-            HairCard card=go.GetComponent<HairCard>();
-            // Restored BEFORE SetPlacementData/SetParameters, both of which orient and build
-            // from it. Set afterwards, the card would come up shaped like its partner.
-            card.mirrored=c.mirrored;
-            Vector3 hit=new Vector3(c.hitX,c.hitY,c.hitZ);
-            Vector3 normal=new Vector3(c.normalX,c.normalY,c.normalZ).normalized;
-            card.SetPlacementData(hit,normal,c.embedDepth,c.offsetX,c.offsetY,c.offsetZ,c.groupId);
-            card.SetParameters(c.length,c.width,c.segments,c.bendAngle,c.twistAngle,c.offsetX,c.offsetY,c.offsetZ,c.embedDepth,1f,c.uScale,c.vScale,c.uOffset,c.vOffset,c.curlFrequency,c.curlDiameter,c.waveAmplitude,c.waveFrequency,c.waveDirection,c.arch);
-            if(viewer.hairCardMaterial!=null)go.GetComponent<MeshRenderer>().sharedMaterial=viewer.hairCardMaterial;
-        }
+        SpawnSavedCards(data);
 
         // SOLO is session-only and is never written to the project file. A load must
         // therefore come up with every group visible and every SOLO button unlit, whatever
@@ -213,6 +216,44 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
         StartCoroutine(SelectLoadedGroupWhenSettled(data));
         RepairAngleControls(true);
         Debug.Log("Project loaded successfully from: "+path);
+    }
+
+    // The three steps below are the part of a load that rebuilds the SESSION rather than the
+    // scene: no file, no model, no panel teardown. Split out so UndoHistoryAuthority can replay
+    // a snapshot without reloading the OBJ or flashing the panels, and so it is replaying the
+    // same code a project load runs rather than a second copy of it that can drift.
+
+    public void ApplyGlobalSliders(HairProjectSaveData data)
+    {
+        if(data==null||viewer==null)return;
+        viewer.currentLength=data.sliderLength;viewer.currentWidth=data.sliderWidth;viewer.currentSegments=data.sliderSegments;viewer.currentBend=data.sliderBend;viewer.currentTwist=data.sliderTwist;viewer.currentEmbedDepth=data.sliderEmbedDepth;viewer.currentOffsetX=data.sliderOffsetX;viewer.currentOffsetY=data.sliderOffsetY;viewer.currentOffsetZ=data.sliderOffsetZ;viewer.currentUScale=data.sliderUScale;viewer.currentVScale=data.sliderVScale;viewer.currentUOffset=data.sliderUOffset;viewer.currentVOffset=data.sliderVOffset;
+        viewer.currentCurlFrequency=data.sliderCurlFrequency;viewer.currentCurlDiameter=data.sliderCurlDiameter;
+        viewer.currentWaveAmplitude=data.sliderWaveAmplitude;viewer.currentWaveFrequency=data.sliderWaveFrequency;viewer.currentWaveDirection=data.sliderWaveDirection;viewer.currentArch=data.sliderArch;
+    }
+
+    public void ApplyGroupRegistry(HairProjectSaveData data)
+    {
+        if(data==null||data.groups==null||viewer==null)return;
+        HashSet<int> ids=GetField<HashSet<int>>("allGroupIds");var names=GetField<Dictionary<int,string>>("groupNames");var us=GetField<Dictionary<int,float>>("groupUScales");var vs=GetField<Dictionary<int,float>>("groupVScales");var uo=GetField<Dictionary<int,float>>("groupUOffsets");var vo=GetField<Dictionary<int,float>>("groupVOffsets");ids?.Clear();names?.Clear();us?.Clear();vs?.Clear();uo?.Clear();vo?.Clear();
+        foreach(GroupSaveData g in data.groups){ids?.Add(g.groupId);if(names!=null)names[g.groupId]=g.groupName;if(us!=null)us[g.groupId]=g.uScale;if(vs!=null)vs[g.groupId]=g.vScale;if(uo!=null)uo[g.groupId]=g.uOffset;if(vo!=null)vo[g.groupId]=g.vOffset;}
+    }
+
+    public void SpawnSavedCards(HairProjectSaveData data)
+    {
+        if(data==null||data.hairCards==null||viewer==null)return;
+        foreach(HairCardSaveData c in data.hairCards)
+        {
+            GameObject go=new GameObject("HairCard_Strip",typeof(MeshFilter),typeof(MeshRenderer),typeof(HairCard));
+            HairCard card=go.GetComponent<HairCard>();
+            // Restored BEFORE SetPlacementData/SetParameters, both of which orient and build
+            // from it. Set afterwards, the card would come up shaped like its partner.
+            card.mirrored=c.mirrored;
+            Vector3 hit=new Vector3(c.hitX,c.hitY,c.hitZ);
+            Vector3 normal=new Vector3(c.normalX,c.normalY,c.normalZ).normalized;
+            card.SetPlacementData(hit,normal,c.embedDepth,c.offsetX,c.offsetY,c.offsetZ,c.groupId);
+            card.SetParameters(c.length,c.width,c.segments,c.bendAngle,c.twistAngle,c.offsetX,c.offsetY,c.offsetZ,c.embedDepth,1f,c.uScale,c.vScale,c.uOffset,c.vOffset,c.curlFrequency,c.curlDiameter,c.waveAmplitude,c.waveFrequency,c.waveDirection,c.arch);
+            if(viewer.hairCardMaterial!=null)go.GetComponent<MeshRenderer>().sharedMaterial=viewer.hairCardMaterial;
+        }
     }
 
     // A loaded project must come up exactly as if the user had just clicked its first

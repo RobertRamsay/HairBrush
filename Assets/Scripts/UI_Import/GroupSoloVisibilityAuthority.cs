@@ -58,6 +58,13 @@ public static class GroupSoloVisibilityAuthority
         get { return soloedGroups.Count > 0; }
     }
 
+    // A copy, so a caller can Forget while walking it. UndoHistoryAuthority needs this to drop
+    // a solo on a group that a step it just replayed no longer contains.
+    public static List<int> SoloedGroups()
+    {
+        return new List<int>(soloedGroups);
+    }
+
     public static bool IsSoloed(int groupId)
     {
         return soloedGroups.Contains(groupId);

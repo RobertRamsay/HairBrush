@@ -82,6 +82,13 @@ public class NewGroupRootSelectionAuthority : MonoBehaviour
         ReplaceSnapshot(current);
         if (newGroup < 0) return;
 
+        // An undo that steps back over a group's deletion refills allGroupIds from the snapshot,
+        // so the id reappears and looks exactly like a fresh + GROUP from here. It is not: the
+        // step has just put that group's POSTs, variance and curves back, and EnterFreshGroupRoot
+        // would wipe every one of them a frame later. The snapshot above is still replaced, so
+        // the ids are absorbed quietly and the next real creation is still detected.
+        if (UndoHistoryAuthority.Restoring) return;
+
         EnterFreshGroupRoot(newGroup);
     }
 

@@ -138,6 +138,11 @@ public static class GroomShapeCurveRegistry
         return true;
     }
 
+    // Nesting depth rather than a bool, so nested capture calls behave. The callers are
+    // responsible for pairing this in a finally - a counter on its own guarantees nothing
+    // against an exception, and a registry left silent stops curve edits reaching the mesh.
+    private static int silentEdits;
+
     public static int EpochFor(int groupId)
     {
         int groupEpoch = 0;
@@ -150,8 +155,24 @@ public static class GroomShapeCurveRegistry
     // afterwards. The setters alone are not enough either: the editor's in-place AddKey /
     // MoveKey / RemoveKey never touch a setter, and RefreshGroup is the only thing all three
     // of them call. Bumping in both places covers every mutation path with no gaps.
+    // Writes made between these two calls do not move the epoch, so nothing downstream treats
+    // them as an edit. For the one caller that writes a set and then writes the identical set
+    // straight back: PostShapeCurveBridge's capture swap. Skipping the mesh refresh there was
+    // not enough on its own, because the epoch feeds HairCard.ComputeMeshInputHash and the POST
+    // authorities re-assert state every frame - so the group rebuilt anyway, one frame later.
+    public static void BeginSilentEdit()
+    {
+        silentEdits++;
+    }
+
+    public static void EndSilentEdit()
+    {
+        if (silentEdits > 0) silentEdits--;
+    }
+
     public static void BumpEpoch(int groupId)
     {
+        if (silentEdits > 0) return;
         int current = 0;
         epochByGroup.TryGetValue(groupId, out current);
         unchecked { epochByGroup[groupId] = current + 1; }
@@ -216,6 +237,10 @@ public static class GroomShapeCurveRegistry
 
     public static void ClearAll()
     {
+        // A session reset is also the safety net for a silence left behind by an interrupted
+        // capture. Cheap here, and it means the failure cannot outlive the session it began in.
+        silentEdits = 0;
+
         byGroup.Clear();
         epochByGroup.Clear();
         // CheckModelLifecycle calls this with no RefreshGroup afterwards, so every group's

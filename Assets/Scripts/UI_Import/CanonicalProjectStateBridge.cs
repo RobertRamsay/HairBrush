@@ -46,16 +46,47 @@ public class CanonicalProjectStateBridge : MonoBehaviour
         IDictionary states = statesField?.GetValue(posts) as IDictionary;
         if (states == null) return;
 
-        HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
-        HashSet<HairCard> used = new HashSet<HairCard>();
-        foreach (HairCardSaveData saved in data.hairCards)
+        // The gatherer built each entry FROM a card and can simply say which. Searching for the
+        // nearest spawn point instead sorts every card in the group once per saved card, which
+        // is quadratic-with-a-sort in the card count: unnoticed at one call per SAVE PROJ, and
+        // seconds of stall per call once UndoHistoryAuthority is capturing on every pause.
+        List<HairCard> paired = data.captureSourceCards;
+        bool pairedIsUsable = paired != null && paired.Count == data.hairCards.Count;
+
+        HairCard[] cards = pairedIsUsable ? null : FindObjectsByType<HairCard>(FindObjectsSortMode.None);
+        HashSet<HairCard> used = pairedIsUsable ? null : new HashSet<HairCard>();
+
+        for (int i = 0; i < data.hairCards.Count; i++)
         {
+            HairCardSaveData saved = data.hairCards[i];
             if (saved == null) continue;
-            Vector3 hit = new Vector3(saved.hitX, saved.hitY, saved.hitZ);
-            HairCard card = cards.Where(c => c != null && c.groupId == saved.groupId && !used.Contains(c))
-                .OrderBy(c => (c.GetSpawnHitPoint() - hit).sqrMagnitude).FirstOrDefault();
+
+            HairCard card;
+            if (pairedIsUsable)
+            {
+                card = paired[i];
+            }
+            else
+            {
+                // A payload read from a file carries no pairing, so it still has to be inferred.
+                // Manual scan rather than OrderBy: the nearest card is a single pass, and the
+                // sort was only ever asked for its first element.
+                Vector3 hit = new Vector3(saved.hitX, saved.hitY, saved.hitZ);
+                card = null;
+                float best = float.MaxValue;
+                foreach (HairCard candidate in cards)
+                {
+                    if (candidate == null || candidate.groupId != saved.groupId) continue;
+                    if (used.Contains(candidate)) continue;
+                    float distance = (candidate.GetSpawnHitPoint() - hit).sqrMagnitude;
+                    if (distance >= best) continue;
+                    best = distance;
+                    card = candidate;
+                }
+            }
+
             if (card == null) continue;
-            used.Add(card);
+            if (!pairedIsUsable) used.Add(card);
 
             object state = states[card];
             if (state == null) continue;
@@ -108,9 +139,22 @@ public class CanonicalProjectStateBridge : MonoBehaviour
         foreach (HairCardSaveData saved in data.hairCards)
         {
             if (saved == null) continue;
+
+            // Single pass, not a sort. This is the restore side of the same match the save side
+            // does, and it runs on every undo step, not just on LOAD PROJ - the sort was only
+            // ever asked for its first element.
             Vector3 hit = new Vector3(saved.hitX, saved.hitY, saved.hitZ);
-            HairCard card = cards.Where(c => c != null && c.groupId == saved.groupId && !used.Contains(c))
-                .OrderBy(c => (c.GetSpawnHitPoint() - hit).sqrMagnitude).FirstOrDefault();
+            HairCard card = null;
+            float best = float.MaxValue;
+            foreach (HairCard candidate in cards)
+            {
+                if (candidate == null || candidate.groupId != saved.groupId) continue;
+                if (used.Contains(candidate)) continue;
+                float distance = (candidate.GetSpawnHitPoint() - hit).sqrMagnitude;
+                if (distance >= best) continue;
+                best = distance;
+                card = candidate;
+            }
             if (card == null) continue;
             used.Add(card);
 
