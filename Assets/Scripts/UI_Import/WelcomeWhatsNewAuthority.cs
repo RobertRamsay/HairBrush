@@ -25,16 +25,16 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
     // ---------------------------------------------------------------------------------
     // Release notes. Add a block at the top for each release; only the first is displayed.
     // ---------------------------------------------------------------------------------
-    private const string ReleaseHeading = "BETA 0.1.7";
+    private const string ReleaseHeading = "BETA 0.1.8";
 
     // Five at most, one line each - the panel does not scroll.
     private static readonly string[] ReleaseNotes =
     {
-        "GUIDE curves - a three point curve combs the cards near it.",
-        "Drag handles reshape a guide right there in the view.",
-        "+POST, +CLUMPER and +GUIDE buttons on every group row.",
-        "VARIATION works on every channel again with a POST placed.",
-        "Matching radius and falloff defaults for POSTs and clumpers.",
+        "UNDO and REDO - CTRL+Z and CTRL+Y, up to 100 steps.",
+        "GUIDE curves are saved and loaded with the project.",
+        "A GUIDE draws only while it is the selected one.",
+        "OPEN MANUAL button pinned under the group list.",
+        "SAVE PROJ is much faster on a heavy groom.",
     };
 
     // ---------------------------------------------------------------------------------
