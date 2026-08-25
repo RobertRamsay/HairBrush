@@ -25,16 +25,31 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
     // ---------------------------------------------------------------------------------
     // Release notes. Add a block at the top for each release; only the first is displayed.
     // ---------------------------------------------------------------------------------
-    private const string ReleaseHeading = "BETA 0.1.8";
+    // Derived from Player Settings rather than typed out, so the number on the panel is the
+    // number the build actually carries. It used to be a hand-edited constant next to the notes,
+    // which meant a release where the notes got rewritten and the heading did not - or the other
+    // way round - shipped a panel announcing a version nobody was running. There is only one
+    // version in this project now: bundleVersion, which is what Application.version reads.
+    //
+    // The notes below still have to be written by hand. Nothing can derive those.
+    private static string ReleaseHeading
+    {
+        get
+        {
+            string version = Application.version;
+            if (string.IsNullOrWhiteSpace(version)) version = "0.0.0";
+            return "BETA " + version;
+        }
+    }
 
     // Five at most, one line each - the panel does not scroll.
     private static readonly string[] ReleaseNotes =
     {
-        "UNDO and REDO - CTRL+Z and CTRL+Y, up to 100 steps.",
-        "GUIDE curves are saved and loaded with the project.",
-        "A GUIDE draws only while it is the selected one.",
-        "OPEN MANUAL button pinned under the group list.",
-        "SAVE PROJ is much faster on a heavy groom.",
+        "COPY and PASTE PARAMS carries a group's settings across.",
+        "ALT + CLICK adds points to a GUIDE, up to twenty one.",
+        "GUIDE points draw over the hair, and are bigger to grab.",
+        "RIGHT CLICK a UV rect, or its row, to delete it.",
+        "POSTs are much faster to edit on a heavy groom.",
     };
 
     // ---------------------------------------------------------------------------------
@@ -350,7 +365,9 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         AddDivider(card.transform);
 
         TextMeshProUGUI version = AddBand(card.transform, "Version", VersionTop, LineHeight);
-        StyleLine(version, "What's new in " + ReleaseHeading + "   (v" + Application.version + ")",
+        // The version in brackets used to follow the heading here, back when the heading was a
+        // separate hand-typed string that could disagree with it. They are the same number now.
+        StyleLine(version, "What's new in " + ReleaseHeading,
             LineFont, FontStyles.Bold, UITheme.FillCyan);
 
         updateLabel = AddBand(card.transform, "UpdateStatus", UpdateTop, LineHeight);
