@@ -46,7 +46,7 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
     private static readonly string[] ReleaseNotes =
     {
         "COPY and PASTE PARAMS carries a group's settings across.",
-        "ALT + CLICK adds points to a GUIDE, up to twenty one.",
+        "ALT + CLICK adds points to a GUIDE, up to twenty one. Alt+ RIGHT CLICK to REMOVE",
         "GUIDE points draw over the hair, and are bigger to grab.",
         "RIGHT CLICK a UV rect, or its row, to delete it.",
         "POSTs are much faster to edit on a heavy groom.",
