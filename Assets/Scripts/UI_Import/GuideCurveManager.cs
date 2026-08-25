@@ -1204,17 +1204,20 @@ public static class GuideDeformation
         // The previous version moved each row toward the guide's shape and scaled that move by a
         // smoothstep along the length. Two things were wrong with it.
         //
-        // THE RAMP. It was inherited from the clumper, which genuinely needs one - a clumper's
-        // target is another card's ABSOLUTE spine, so two cards planted two centimetres apart
-        // differ by two centimetres at every row including the first, and without a ramp raising
-        // Amount would tear the root out of the scalp. A guide's target is not absolute. It is
-        // rootWorld + (guidePoint - guideOrigin), and SampleByLength(0) returns origin exactly,
-        // so at arc length zero the target IS the root. The root was pinned by the arithmetic all
-        // along and the ramp was solving a problem this modifier never had - at the cost of the
-        // whole lower half of every card, because the target already converges as O(t) and a
-        // smoothstep on top made the displacement fall away as t CUBED. A fifth of the way up a
-        // card, the guide had two percent of the say it had at the tip. That is the "guides do
-        // not seem to do anything near the root" this replaces.
+        // THE OLD RAMP - a smoothstep, on the position lerp. Inherited from the clumper, which
+        // genuinely needs one: a clumper's target is another card's ABSOLUTE spine, so two cards
+        // planted two centimetres apart differ by two centimetres at every row including the
+        // first, and without a ramp raising Amount would tear the root out of the scalp. A
+        // guide's target is not absolute. It is rootWorld + (guidePoint - guideOrigin), and
+        // SampleByLength(0) returns origin exactly, so at arc length zero the target IS the root.
+        // The root was pinned by the arithmetic all along, and a smoothstep on top of a target
+        // that already converges as O(t) made the displacement fall away as t CUBED - a fifth of
+        // the way up a card, two percent of the say the guide had at the tip. That is the "guides
+        // do not seem to do anything near the root" this replaces.
+        //
+        // There IS a ramp again below and it is not that one: linear, on an angle rather than on
+        // a displacement toward a vanishing target. Taking it out altogether turned out to be its
+        // own mistake - see the block above the Slerp for what all three arrangements did.
         //
         // THE LERP ITSELF. Sliding a row part-way toward another curve takes the chord between
         // them, and a chord is shorter than either side. At half Amount with the two directions
@@ -1225,8 +1228,8 @@ public static class GuideDeformation
         //
         // What this means for the answer to "should bend and the angles get the inverse weight":
         // they already do, and always did. Blending toward a direction that does not contain them
-        // IS scaling them by one minus the weight. It only ever looked otherwise near the root,
-        // where the ramp was holding the guide off.
+        // IS scaling them by one minus the weight, and the ramp below decides how much of that
+        // weight each height along the card gets.
         //
         // Row 0 never moves. Its cross-section is rotated with the first segment, but the root
         // vertex itself is written by nobody - hair that slides out of the scalp when a modifier
@@ -1241,6 +1244,10 @@ public static class GuideDeformation
         // to land on the same value - reachable in principle from a Segment Density curve, not in
         // practice from any of the ones this ships with.
         Vector3 previousDirection = Vector3.forward;
+
+        // The card's whole arc, for the ramp below. Zero only for a spine whose rows all sit on
+        // top of each other, which the ramp then declines to divide by.
+        float totalArc = arcScratch[rows - 1];
 
         for (int i = 1; i < rows; i++)
         {
@@ -1290,6 +1297,50 @@ public static class GuideDeformation
             Vector3 guideDirection = ownDirection;
             if (guideSegment.sqrMagnitude > .000000000001f) guideDirection = guideSegment.normalized;
 
+            // A LINEAR ramp along the length, and the reason it is back after being taken out is
+            // worth setting down, because there have now been three answers here.
+            //
+            // THE ORIGINAL ramp was a smoothstep on a POSITION lerp whose target already
+            // converged on the root as O(t) - both curves leave the same point - so the two
+            // together made the displacement fall away as t CUBED. A fifth of the way up a card
+            // the guide had two percent of the say it had at the tip, which is why guides read as
+            // combing only the top half of a groom.
+            //
+            // FLAT was the overcorrection. Weighting every row equally means the base of every
+            // card leaves in the guide's exact WORLD direction, and the scalp is curved, so that
+            // one direction is a different angle to each card's own scalp. Measured across a
+            // normal zone that is nearly THIRTY DEGREES of spread at the root: cards at one end
+            // standing up, cards at the other lying almost flat, from a guide that meant one
+            // thing. Hair that is not tethered to the surface it grows out of.
+            //
+            // LINEAR gets both. At the root the turn is zero, so a card leaves along its own
+            // normal exactly as it would with no guide at all - planted, and uniform across the
+            // zone whatever the scalp is doing under it. By the tip the guide has its full
+            // Amount, so at 1.0 the ends comb parallel, which is what a guide is for.
+            //
+            // It is nothing like as weak as the smoothstep it replaces, because the ramp now
+            // scales an ANGLE rather than a displacement toward a target that was already
+            // vanishing. One twelfth of the way up - the first row of a default card - linear
+            // gives eight percent of the turn where the old arrangement gave a sixth of one
+            // percent. Fifty times the authority at the same height, with a base that still
+            // stays where it was planted.
+            //
+            // Parameterised by ARC LENGTH, not by row index, and the two are not the same thing.
+            // Segment Density decides where rows sit, so a root-heavy curve packs half of them
+            // into the bottom fifth of the card - and a row-index ramp would then be at half
+            // strength a fifth of the way up, handing the base most of the guide's direction
+            // again. That is the exact fault this ramp exists to remove, reappearing under the
+            // setting somebody reaches for when they want a smooth root. arcScratch is already
+            // built for sampling the guide, so this costs a divide and makes the ramp and the
+            // sampling agree on what "how far up the card" means.
+            //
+            // At rows == 2 the only segment is both the root and the tip, so it takes the full
+            // weight whatever the ramp says. A one-segment card has nowhere to ease anything in;
+            // the surface clamp below is what keeps it out of the scalp.
+            float along = 1f;
+            if (totalArc > .000001f) along = arcScratch[i] / totalArc;
+            float influence = strongest * along;
+
             // Slerp, not Lerp. Half Amount should mean half the ANGLE between the two, which is
             // what a person reads off the slider; a normalized linear blend bunches up near
             // whichever direction is closer and makes the middle of the slider feel dead.
@@ -1300,7 +1351,7 @@ public static class GuideDeformation
             // fold through itself if it were hit, so it keeps its own direction there.
             Vector3 blendedDirection = ownDirection;
             if (Vector3.Dot(ownDirection, guideDirection) > -.9999f)
-                blendedDirection = Vector3.Slerp(ownDirection, guideDirection, strongest);
+                blendedDirection = Vector3.Slerp(ownDirection, guideDirection, influence);
 
             // The FIRST segment, and only the first, is held above the scalp it grows out of.
             //
@@ -1311,11 +1362,17 @@ public static class GuideDeformation
             // scalp facing a very different way. Combed hard, that card's root segment would take
             // the guide's launch direction literally and set off into the mesh.
             //
-            // This could not happen while the ramp gave the root two percent of the guide. It can
-            // now, so the root gets the one constraint the rest of the card does not need: hair
-            // further up may sweep back down as much as the guide asks, but it has to leave the
-            // surface first.
-            if (i == 1) blendedDirection = LiftAboveSurface(card, blendedDirection);
+            // The ramp makes this rare - the first segment takes only a fraction of the turn -
+            // but rare is not never: a short card is few segments, and few segments means that
+            // fraction is large. So the root keeps the one constraint the rest of the card does
+            // not need: hair further up may sweep back down as much as the guide asks, but it
+            // has to leave the surface first.
+            // Passed the card's OWN direction as well, so the clamp can tell the difference
+            // between a root the guide pushed down and one the card's own bend had already laid
+            // flat. Without that it fires on bend alone, and it is not scaled by Amount - so a
+            // heavily bent card would snap its root up the moment any guide's weight crossed the
+            // early-out threshold above, from a guide that had barely turned it at all.
+            if (i == 1) blendedDirection = LiftAboveSurface(card, blendedDirection, ownDirection);
 
             spine[i] = spine[i - 1] + blendedDirection * segmentLength;
 
@@ -1323,9 +1380,9 @@ public static class GuideDeformation
             //
             // Without this the ribbon keeps the facing it was built with while its spine points
             // somewhere else, so a card combed across its own width axis shears into a sliver and
-            // RecalculateNormals lights it from the wrong side. The old ramp hid that at the root
-            // by making the displacement there almost zero; now that the guide reaches the root,
-            // the cross-sections have to come with it.
+            // RecalculateNormals lights it from the wrong side. It matters most up the card,
+            // where the ramp hands the guide most of the turn; at the base the turn is near zero
+            // and this rotation with it.
             //
             // FromToRotation, so the ribbon is carried by the shortest rotation onto the new
             // tangent and picks up no roll of its own. Roll along the card is TWIST's job, and it
@@ -1363,7 +1420,7 @@ public static class GuideDeformation
     // The rotation is the minimum one that gets there: the direction is pushed along the normal
     // and re-normalized, which slides it up the cone rather than swinging it to some unrelated
     // heading. A card whose normal is unknown - nothing has planted it yet - is left alone.
-    static Vector3 LiftAboveSurface(HairCard card, Vector3 localDirection)
+    static Vector3 LiftAboveSurface(HairCard card, Vector3 localDirection, Vector3 ownDirection)
     {
         Vector3 normal = card.GetSurfaceNormal();
         if (normal.sqrMagnitude < .000001f) return localDirection;
@@ -1371,11 +1428,18 @@ public static class GuideDeformation
         // Both sides in the card's own space, which is the space the spine is built in.
         Vector3 localNormal = card.transform.InverseTransformDirection(normal.normalized).normalized;
 
+        // The floor is whichever is LOWER: the two degrees a guide may not push a root below, or
+        // wherever the card's own unguided direction already sat. This stops the guide driving a
+        // root into the scalp without ever raising one the card itself laid flat - a card bent
+        // hard enough to graze its own surface is doing that on purpose, and snapping it up the
+        // instant a guide came within range would be a jump with no cause the user could see.
         const float MinRise = .035f;
-        float rise = Vector3.Dot(localDirection, localNormal);
-        if (rise >= MinRise) return localDirection;
+        float floor = Mathf.Min(MinRise, Vector3.Dot(ownDirection, localNormal));
 
-        Vector3 lifted = localDirection + localNormal * (MinRise - rise);
+        float rise = Vector3.Dot(localDirection, localNormal);
+        if (rise >= floor) return localDirection;
+
+        Vector3 lifted = localDirection + localNormal * (floor - rise);
         if (lifted.sqrMagnitude < .000001f) return localNormal;
         return lifted.normalized;
     }
