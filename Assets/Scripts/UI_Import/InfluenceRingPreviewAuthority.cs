@@ -18,7 +18,6 @@ public class InfluenceRingPreviewAuthority : MonoBehaviour
     private FieldInfo placementModeField;
     private FieldInfo placementRadiusField;
     private FieldInfo placementFalloffField;
-    private FieldInfo textureModeField;
     private FieldInfo groomingModeField;
 
     // Last frame on which a placement gesture was genuinely live, and this frame's cached
@@ -61,7 +60,6 @@ public class InfluenceRingPreviewAuthority : MonoBehaviour
             if (viewer != null)
             {
                 BindingFlags viewerFlags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
-                textureModeField = typeof(ModelViewer).GetField("isTextureEditorMode", viewerFlags);
                 groomingModeField = typeof(ModelViewer).GetField("isGroomingMode", viewerFlags);
             }
         }
@@ -322,9 +320,13 @@ public class InfluenceRingPreviewAuthority : MonoBehaviour
         return viewer != null && groomingModeField != null && groomingModeField.GetValue(viewer) is bool b && b;
     }
 
+    // Delegated so every preview in the project answers this the same way. The body was the same
+    // reflection read the probe does; three files had written it out and four had not, and three
+    // of those four were drawing over the texture editor. (The fourth, ClumperRuntimeMarker, has
+    // never drawn anything at all - see the note in it.)
     bool IsTextureMode()
     {
-        return viewer != null && textureModeField != null && textureModeField.GetValue(viewer) is bool b && b;
+        return TextureModeProbe.Active;
     }
 
     void EnsureRenderers()

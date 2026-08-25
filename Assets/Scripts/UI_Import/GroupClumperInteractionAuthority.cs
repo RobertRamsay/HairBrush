@@ -25,6 +25,13 @@ public class GroupClumperInteractionAuthority : MonoBehaviour
     {
         Resolve();
         if (clumpers == null || viewer == null || Mouse.current == null || Keyboard.current == null) return;
+
+        // Nothing groom-related happens while the texture workspace is up. This is not only about
+        // the preview: TryRaycastModel below hits any collider, and the workspace deliberately
+        // switches ON a MeshCollider for its texture preview quad so rectangles can be drawn on it.
+        // A TAB and click meant for the atlas therefore landed a real clumper at a point on that
+        // quad, in whichever group happened to be current, in a mode where nothing draws it.
+        if (TextureModeProbe.Active) return;
         if (!Mouse.current.leftButton.wasPressedThisFrame || lastHandledFrame == Time.frameCount) return;
         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
 

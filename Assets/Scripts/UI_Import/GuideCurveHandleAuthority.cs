@@ -189,8 +189,17 @@ public class GuideCurveHandleAuthority : MonoBehaviour
     {
         Resolve();
 
+        // The texture-mode test is on the DRAWING half only, deliberately. Update above holds
+        // GroomingInputLock for as long as a guide is selected and releases it on a delay when one
+        // is not; gating that on the mode as well would walk out of the frame still holding the
+        // lock, and card placement would stay off after coming back to groom mode.
+        //
+        // The node rings are the worst offender of the lot. Everything else in the viewport at
+        // least depth-tests, and could in principle be hidden by something in front of it; these
+        // draw with ZTest Always and are hidden by nothing at all.
         GuideCurveManager.GuideCurve guide = GetSelectedGuide();
-        if (guide == null || viewer == null || viewer.mainCamera == null || Mouse.current == null)
+        if (guide == null || viewer == null || viewer.mainCamera == null || Mouse.current == null ||
+            TextureModeProbe.Active)
         {
             dragging = -1;
             draggingGuideId = -1;

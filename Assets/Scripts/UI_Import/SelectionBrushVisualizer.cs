@@ -19,7 +19,6 @@ public class SelectionBrushVisualizer : MonoBehaviour
     private FieldInfo hitPointField;
     private FieldInfo hitNormalField;
     private FieldInfo groomingField;
-    private FieldInfo textureModeField;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
@@ -60,7 +59,7 @@ public class SelectionBrushVisualizer : MonoBehaviour
         // and this is active.
         bool onMenuScreen = viewer.uiContainer != null && viewer.uiContainer.activeInHierarchy;
 
-        if (onMenuScreen || (!GetBool(groomingField) && !armedForPost) || GetBool(textureModeField) ||
+        if (onMenuScreen || (!GetBool(groomingField) && !armedForPost) || TextureModeProbe.Active ||
             viewer.mainCamera == null || Mouse.current == null)
         {
             Hide();
@@ -136,7 +135,6 @@ public class SelectionBrushVisualizer : MonoBehaviour
         hitPointField = type.GetField("selectionHitPoint", flags);
         hitNormalField = type.GetField("selectionHitNormal", flags);
         groomingField = type.GetField("isGroomingMode", flags);
-        textureModeField = type.GetField("isTextureEditorMode", flags);
     }
 
     void EnsureLines()

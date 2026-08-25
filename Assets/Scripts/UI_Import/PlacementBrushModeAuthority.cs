@@ -31,7 +31,6 @@ public class PlacementBrushModeAuthority : MonoBehaviour
 
     private ModelViewer viewer;
     private FieldInfo groomingModeField;
-    private FieldInfo textureModeField;
     private FieldInfo selectionModeField;
     private FieldInfo selectionHotspotField;
     private FieldInfo loadedModelField;
@@ -96,7 +95,7 @@ public class PlacementBrushModeAuthority : MonoBehaviour
         restoreSelectionState = selectionWasActive;
         restorePending = false;
 
-        if (!groomingEnabled || GetLoadedModel() == null || GetBool(textureModeField))
+        if (!groomingEnabled || GetLoadedModel() == null || TextureModeProbe.Active)
         {
             HideBrushPreview();
             return;
@@ -240,7 +239,6 @@ public class PlacementBrushModeAuthority : MonoBehaviour
         BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
         System.Type t = typeof(ModelViewer);
         groomingModeField = t.GetField("isGroomingMode", flags);
-        textureModeField = t.GetField("isTextureEditorMode", flags);
         selectionModeField = t.GetField("isSelectionMode", flags);
         selectionHotspotField = t.GetField("hasSelectionHotspot", flags);
         loadedModelField = t.GetField("loadedModel", flags);

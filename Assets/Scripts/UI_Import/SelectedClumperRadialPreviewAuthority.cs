@@ -24,7 +24,9 @@ public class SelectedClumperRadialPreviewAuthority : MonoBehaviour
         if (manager == null) manager = FindFirstObjectByType<GroupClumperManager>();
         GroupClumperManager.GroupClumper clumper = manager != null ? manager.GetSelectedClumper() : null;
 
-        if (clumper == null || clumper.mode == GroupClumperManager.ClumpMode.DispersedEvenly)
+        // Nothing groom-related draws while the texture workspace is up - see TextureModeProbe.
+        if (clumper == null || clumper.mode == GroupClumperManager.ClumpMode.DispersedEvenly ||
+            TextureModeProbe.Active)
         {
             SetVisible(false);
             return;

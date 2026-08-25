@@ -26,8 +26,16 @@ public class ClumperRuntimeMarker : MonoBehaviour
     void LateUpdate()
     {
         Resolve();
+        // Nothing groom-related draws while the texture workspace is up - see TextureModeProbe.
+        //
+        // Currently unreachable, and left in anyway. ActiveClumper casts byGroup's value to a
+        // GroupClumper when the dictionary actually holds a List of them, so it returns null every
+        // frame and this authority has never drawn anything - the same dead cast documented at
+        // InfluenceRingPreviewAuthority.UpdateClumperRings. Fixing it is not a matter of correcting
+        // the cast: SelectedClumperRadialPreviewAuthority already draws these rings, at the same
+        // execution order and under the same object name, so a corrected cast would double them up.
         GroupClumperManager.GroupClumper c = ActiveClumper();
-        if (c == null)
+        if (c == null || TextureModeProbe.Active)
         {
             SetVisible(false);
             return;

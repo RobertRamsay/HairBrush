@@ -23,7 +23,6 @@ public class PlacementModeBannerAuthority : MonoBehaviour
     private ModelViewer viewer;
     private PlacementBrushModeAuthority placement;
     private FieldInfo groomingModeField;
-    private FieldInfo textureModeField;
 
     private GameObject bannerObject;
     private TextMeshProUGUI label;
@@ -45,7 +44,6 @@ public class PlacementModeBannerAuthority : MonoBehaviour
         viewer = null;
         placement = null;
         groomingModeField = null;
-        textureModeField = null;
         bannerObject = null;
         label = null;
         shadow = null;
@@ -63,7 +61,7 @@ public class PlacementModeBannerAuthority : MonoBehaviour
             return;
         }
 
-        if (!ReadBool(groomingModeField) || ReadBool(textureModeField))
+        if (!ReadBool(groomingModeField) || TextureModeProbe.Active)
         {
             SetVisible(false);
             return;
@@ -97,14 +95,12 @@ public class PlacementModeBannerAuthority : MonoBehaviour
         {
             viewer = FindFirstObjectByType<ModelViewer>();
             groomingModeField = null;
-            textureModeField = null;
         }
 
         if (viewer != null && groomingModeField == null)
         {
             BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
             groomingModeField = typeof(ModelViewer).GetField("isGroomingMode", flags);
-            textureModeField = typeof(ModelViewer).GetField("isTextureEditorMode", flags);
         }
 
         if (placement == null) placement = FindFirstObjectByType<PlacementBrushModeAuthority>();

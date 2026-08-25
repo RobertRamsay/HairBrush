@@ -116,7 +116,10 @@ public class GuideCurvePreviewAuthority : MonoBehaviour
         if (manager == null) manager = FindFirstObjectByType<GuideCurveManager>();
         if (viewer == null) viewer = FindFirstObjectByType<ModelViewer>();
 
-        if (manager == null || viewer == null)
+        // The texture workspace parks the camera front-on against an opaque preview plane, and a
+        // curve still drawn there would be a purple stroke across a UV atlas. Nothing in this
+        // authority means anything in that mode, so it draws nothing at all.
+        if (manager == null || viewer == null || TextureModeProbe.Active)
         {
             HideAll();
             return;
@@ -305,11 +308,11 @@ public class GuideCurvePreviewAuthority : MonoBehaviour
     // The same constant-on-screen sizing the handles use, so the curve and the points on it keep
     // their proportions to each other at any zoom.
     //
-    // Deliberately the SAME formula as GuideCurveHandleAuthority.DrawRing, including the fact
-    // that it has no orthographic case. Matching the handles is the whole point - a separately
-    // correct orthographic branch here would only make the curve and its own handles disagree
-    // about their size in the one mode (the texture editor's locked front view) where they are
-    // both drawn under an orthographic camera.
+    // Deliberately the SAME formula as GuideCurveHandleAuthority.DrawRing, including the fact that
+    // it has no orthographic case. Matching the handles is the whole point, and there is nothing
+    // for an orthographic branch to be right about: the texture editor's locked front view was the
+    // only orthographic camera in the project, and neither this nor the handles draw there at all
+    // any more.
     float WorldRadiusAt(Vector3 point)
     {
         Camera cam = viewer.mainCamera;
