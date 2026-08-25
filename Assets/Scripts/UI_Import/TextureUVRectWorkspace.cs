@@ -223,6 +223,15 @@ public class TextureUVRectWorkspace : MonoBehaviour
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
             if (card != null) card.SetSelectionWeight(0f);
 
+        // A selected GUIDE is groom context too, and this is the one that was being left behind.
+        // Its handle rings draw with ZTest Always now, so unlike everything else in the viewport
+        // they are not hidden by the opaque texture preview plane this workspace parks the camera
+        // in front of - a guide left selected on the way in would float its points over the UV
+        // workspace. It also holds GroomingInputLock for as long as it stays selected, which is
+        // card placement switched off waiting for you back in groom mode.
+        GuideCurveManager guides = FindFirstObjectByType<GuideCurveManager>();
+        if (guides != null) guides.ClearSelection();
+
         if (EventSystem.current != null)
             EventSystem.current.SetSelectedGameObject(null);
     }

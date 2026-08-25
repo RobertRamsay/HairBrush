@@ -72,7 +72,27 @@ public class GuideCurveHandleAuthority : MonoBehaviour
 
     private GuideCurveManager manager;
     private ModelViewer viewer;
-    private Material lineMaterial;
+    // Two, because the rings do not all want the same depth behaviour.
+    //
+    // overlayMaterial (HairBrush/Overlay, ZTest Always) goes on the NODE rings - the points you
+    // reach for. surfaceMaterial (Sprites/Default, depth-tested) goes on the contact ring, which
+    // marks where the guide is rooted and therefore sits flat ON the scalp: drawn through the
+    // skull it would be a purple ring floating over the face, which reads as a bug. Same reason
+    // the influence rings in GuideCurvePreviewAuthority keep theirs.
+    private Material overlayMaterial;
+    private Material surfaceMaterial;
+
+    // Once per session, not once per frame - EnsureRings runs every frame a guide is selected.
+    // Reset explicitly, the way GroomingInputLock and GroupParameterClipboardAuthority reset
+    // theirs, because with Disable Domain Reload a static keeps its value from the last run and
+    // the warning would then fire on the first Play of an editor session and never again.
+    private static bool warnedMissingOverlayShader;
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    static void ResetStatics()
+    {
+        warnedMissingOverlayShader = false;
+    }
 
     private LineRenderer contactRing;
     private readonly List<LineRenderer> nodeRings = new List<LineRenderer>();
@@ -98,7 +118,8 @@ public class GuideCurveHandleAuthority : MonoBehaviour
     {
         manager = null;
         viewer = null;
-        lineMaterial = null;
+        overlayMaterial = null;
+        surfaceMaterial = null;
         contactRing = null;
         nodeRings.Clear();
         dragging = -1;
@@ -308,26 +329,20 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         int count = GuideCurveManager.NodeCount(guide);
         if (count == 0) return -1;
 
-        // A handle behind the model is not drawn - the ring material is depth-tested - so it must
-        // not be grabbable either. Without this, clicking the forehead within the grab radius of
-        // an invisible handle on the back of the skull silently grabs it and drags it out of
-        // sight, and the damage is only discovered after orbiting.
+        // NO occlusion test. What is drawn is what can be grabbed, and since the handles moved
+        // to HairBrush/Overlay every handle on the selected guide is drawn.
         //
-        // Unless the guide's CONTACT is visible, in which case a hidden handle is rescued instead.
+        // There used to be one, and the argument for it was that a handle behind the model is not
+        // drawn, so grabbing it would be a blind drag discovered only after orbiting. That was
+        // true of a depth-tested ring and is simply false of this one. Keeping the test now would
+        // invert the complaint: a point sitting plainly on screen, under the cursor, that refuses
+        // to move for no reason the person can see.
         //
-        // The height clamp only holds a handle above the tangent plane at the contact - outside
-        // the mesh on a convex skull, but inside it in a concave one, behind an ear or under a
-        // jaw. A handle buried there would be permanently ungrabbable and the only way back would
-        // be deleting the guide.
+        // It was never a hair test either way. Hair cards carry no colliders at all in this
+        // project, so the raycast it used could not see the very cards that hide the points in
+        // the first place - only the imported head has one. It spoke about the skull and nothing
+        // else, and a point drawn through the skull is one you have gone looking at deliberately.
         //
-        // Contact visibility is what separates the two cases. If the root of the guide can be
-        // seen, you are looking at this guide from its own side and a hidden handle has to be
-        // buried in a concavity - rescue it. If the contact is hidden too, the whole guide is
-        // simply round the back of the head, and grabbing a handle you cannot see there is the
-        // blind drag this test exists to stop. "Both handles hidden" alone would not have
-        // distinguished them, and round-the-back is by far the more common of the two.
-        bool contactVisible = !Occluded(guide.contact);
-
         // The handle FURTHEST out wins a tie, which is what the two point version did and for the
         // same reason: viewed end-on the points project within a few pixels of each other, and
         // the one being reached for is the one nearest the tip. Walking backwards and taking the
@@ -339,7 +354,6 @@ public class GuideCurveHandleAuthority : MonoBehaviour
             Vector3 world = GuideCurveManager.WorldNode(guide, i);
             float distance = ScreenDistance(mouse, world);
             if (distance > GrabPixelRadius) continue;
-            if (Occluded(world) && !contactVisible) continue;
             if (distance >= bestDistance) continue;
 
             bestDistance = distance;
@@ -470,17 +484,6 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         StatusToast.Show("Point removed. " + (GuideCurveManager.NodeCount(guide) + 1) + " points on this guide.");
     }
 
-    bool Occluded(Vector3 world)
-    {
-        Camera cam = viewer.mainCamera;
-        Vector3 delta = world - cam.transform.position;
-        float distance = delta.magnitude;
-        if (distance <= .002f) return false;
-
-        RaycastHit blocker;
-        return Physics.Raycast(cam.transform.position, delta / distance, out blocker, distance - .002f);
-    }
-
     float ScreenDistance(Vector2 mouse, Vector3 world)
     {
         Vector3 screen = viewer.mainCamera.WorldToScreenPoint(world);
@@ -523,7 +526,10 @@ public class GuideCurveHandleAuthority : MonoBehaviour
 
     void EnsureNodeRings(int count)
     {
-        while (nodeRings.Count < count) nodeRings.Add(CreateRing("GuideNodeRing_" + nodeRings.Count));
+        while (nodeRings.Count < count) nodeRings.Add(CreateRing("GuideNodeRing_" + nodeRings.Count, overlayMaterial));
+
+        // Same back-fill EnsureRings does for the contact ring, for the same reason.
+        for (int i = 0; i < nodeRings.Count; i++) BindMaterial(nodeRings[i], overlayMaterial);
     }
 
     // Sized in world units from the pixel radius and the distance to the camera, so the handle
@@ -558,20 +564,58 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         line.enabled = true;
     }
 
+    // The node rings get HairBrush/Overlay: a flat vertex-coloured draw with ZTest Always.
+    //
+    // The points are what you reach for, and a guide runs through the very hair it is guiding, so
+    // in any group with density in it they spent most of their time behind cards. Hair renders as
+    // opaque alpha-cutout at queue 2450 and writes depth; Sprites/Default sits at queue 3000 and
+    // depth-tests, so the points were already being drawn LAST and still lost - being later in
+    // the queue was never the problem, the depth test was.
+    //
+    // The fallback chain is kept so a build that stripped the shader still draws SOMETHING - the
+    // points go back to being depth-tested, exactly what they were before, rather than vanishing.
+    // It is a degraded path, not a supported one: PickHandle no longer refuses a handle it thinks
+    // is hidden, so under the fallback a point behind the skull is invisible and still grabbable.
+    // The shader is registered in the project's Always Included Shaders precisely so this does
+    // not happen, and it says so out loud once if it ever does.
     void EnsureRings()
     {
-        if (lineMaterial == null)
+        if (overlayMaterial == null)
+        {
+            Shader shader = Shader.Find("HairBrush/Overlay");
+            if (shader == null)
+            {
+                if (!warnedMissingOverlayShader)
+                {
+                    warnedMissingOverlayShader = true;
+                    Debug.LogWarning("HairBrush: the HairBrush/Overlay shader was not found, so guide " +
+                                     "points will be hidden by hair again. Check that it is listed under " +
+                                     "Project Settings, Graphics, Always Included Shaders.");
+                }
+                shader = Shader.Find("Sprites/Default");
+            }
+            if (shader == null) shader = Shader.Find("Universal Render Pipeline/Unlit");
+            if (shader == null) shader = Shader.Find("Unlit/Color");
+            if (shader != null) overlayMaterial = new Material(shader) { name = "HairBrushGuideHandle" };
+        }
+
+        if (surfaceMaterial == null)
         {
             Shader shader = Shader.Find("Sprites/Default");
             if (shader == null) shader = Shader.Find("Universal Render Pipeline/Unlit");
             if (shader == null) shader = Shader.Find("Unlit/Color");
-            if (shader != null) lineMaterial = new Material(shader) { name = "HairBrushGuideHandle" };
+            if (shader != null) surfaceMaterial = new Material(shader) { name = "HairBrushGuideContact" };
         }
 
-        if (contactRing == null) contactRing = CreateRing("GuideHandleContact");
+        if (contactRing == null) contactRing = CreateRing("GuideHandleContact", surfaceMaterial);
+
+        // Bound here as well as at creation. CreateRing can only assign what existed at the
+        // moment it ran, and a Shader.Find that came back empty on that first frame would leave
+        // the ring on Unity's built-in default line material for the rest of the session.
+        BindMaterial(contactRing, surfaceMaterial);
     }
 
-    LineRenderer CreateRing(string name)
+    LineRenderer CreateRing(string name, Material material)
     {
         GameObject go = new GameObject(name);
         go.transform.SetParent(transform, false);
@@ -582,9 +626,21 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         line.numCapVertices = 1;
         line.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
         line.receiveShadows = false;
-        if (lineMaterial != null) line.material = lineMaterial;
+
+        // sharedMaterial, not material. Assigning through .material clones the material per
+        // renderer, so twenty-one rings would mean twenty-one copies of one flat unlit material
+        // and twenty-one extra draw setups for no difference on screen. Nothing here writes to
+        // the material at all - the ring colours travel as LineRenderer vertex colours.
+        BindMaterial(line, material);
         line.enabled = false;
         return line;
+    }
+
+    static void BindMaterial(LineRenderer line, Material material)
+    {
+        if (line == null || material == null) return;
+        if (line.sharedMaterial == material) return;
+        line.sharedMaterial = material;
     }
 
     void HideAll()
@@ -617,6 +673,7 @@ public class GuideCurveHandleAuthority : MonoBehaviour
     }
     void OnDestroy()
     {
-        if (lineMaterial != null) Destroy(lineMaterial);
+        if (overlayMaterial != null) Destroy(overlayMaterial);
+        if (surfaceMaterial != null) Destroy(surfaceMaterial);
     }
 }
