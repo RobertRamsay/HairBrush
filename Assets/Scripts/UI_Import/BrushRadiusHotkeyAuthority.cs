@@ -6,11 +6,15 @@ using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.Controls;
 
 // [ and ] resize whichever brush radius is currently relevant: the Ctrl+Click localized
-// selection radius while a selection hotspot is active, otherwise the Spray/Erase placement
-// brush radius while one of those placement modes is active. Tap for one step; hold past
-// 0.5s to auto-repeat, matching standard keyboard-repeat behaviour (e.g. holding backspace
+// selection radius while a selection hotspot is active, otherwise the Spray/Even/Erase
+// placement brush radius while one of those placement modes is active. Tap for one step; hold
+// past 0.5s to auto-repeat, matching standard keyboard-repeat behaviour (e.g. holding backspace
 // in a text field). Place/Paint placement modes have no radius concept to adjust, so the keys
 // are a no-op there unless a Ctrl+Click selection is active.
+//
+// EVEN's SPACING is deliberately not on these keys. The brush radius is how much scalp a stroke
+// covers, which is the same question in all three modes; the spacing is the thing EVEN exists to
+// set, and it belongs on a slider you can see rather than a key that moves it invisibly.
 [DefaultExecutionOrder(1000)]
 public class BrushRadiusHotkeyAuthority : MonoBehaviour
 {
@@ -93,8 +97,13 @@ public class BrushRadiusHotkeyAuthority : MonoBehaviour
         }
 
         if (placement == null || placementModeField == null || placementRadiusField == null) return;
+        // EVEN is in this list because its brush is what decides how much scalp a stroke covers.
+        // Its SPACING is not on these keys: it is the thing that mode exists to set, so it belongs
+        // on a slider you can see rather than on a key that changes it invisibly.
         if (placementModeField.GetValue(placement) is PlacementBrushModeAuthority.PlacementMode mode &&
-            (mode == PlacementBrushModeAuthority.PlacementMode.Spray || mode == PlacementBrushModeAuthority.PlacementMode.Erase))
+            (mode == PlacementBrushModeAuthority.PlacementMode.Spray ||
+             mode == PlacementBrushModeAuthority.PlacementMode.Even ||
+             mode == PlacementBrushModeAuthority.PlacementMode.Erase))
         {
             float current = placementRadiusField.GetValue(placement) is float f ? f : 0f;
             float updated = Mathf.Clamp(current + direction * Step, PlacementMinRadius, PlacementMaxRadius);

@@ -1307,9 +1307,14 @@ public class ModelViewer : MonoBehaviour
         HairCard placed = SpawnHairCard(position, normal, false);
 
         // SYMMETRY. Every placement mode in the project funnels through PinHairCard - the
-        // legacy click and shift-drag here in HandleGrooming, and PLACE / PAINT / SPRAY in
-        // PlacementBrushModeAuthority, which reaches this method by reflection. Hooking it
-        // once therefore covers all five without any of them needing to know symmetry exists.
+        // legacy click and shift-drag here in HandleGrooming, and PLACE / PAINT / SPRAY / EVEN
+        // in PlacementBrushModeAuthority, which reaches this method by reflection. Hooking it
+        // once therefore covers all six without any of them needing to know symmetry exists.
+        //
+        // EVEN is the one caller that needs to know a mirror happened: it keeps a running list of
+        // occupied roots to space against, and a mirror it did not account for would let it place
+        // on top of one. It predicts the mirror by calling TryMirror itself with the same
+        // arguments rather than being told, so nothing here has to report back.
         //
         // Note the mirrored card is spawned through SpawnHairCard, NOT through PinHairCard, so
         // it cannot itself trigger another mirror. TryMirror also declines points near the
