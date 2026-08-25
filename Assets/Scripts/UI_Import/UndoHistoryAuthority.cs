@@ -104,6 +104,20 @@ public class UndoHistoryAuthority : MonoBehaviour
     // everything this step has just restored to it.
     public static bool Restoring { get; private set; }
 
+    // Set by an edit that MaintainCapture's input watching cannot see for itself. It arms on the
+    // left button, on any key, and on the right button only while ALT is held - so a plain right
+    // click that changes something saved, like deleting a UV rectangle, would otherwise leave no
+    // step behind and be folded silently into whatever the user did next.
+    //
+    // Static and consumed once, the same shape as sessionReplaced above, because the callers are
+    // reaching in from a pointer callback with no reference to the instance.
+    private static bool editRequested;
+
+    public static void NotifyEdit()
+    {
+        editRequested = true;
+    }
+
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
     {
@@ -126,6 +140,7 @@ public class UndoHistoryAuthority : MonoBehaviour
         armedAt = 0f;
         restoring = false;
         Restoring = false;
+        editRequested = false;
     }
 
     void Update()
@@ -205,6 +220,11 @@ public class UndoHistoryAuthority : MonoBehaviour
         historyBytes = 0;
         armed = false;
         baselinePending = false;
+
+        // Belongs to the session being discarded, the same as armed does. An edit requested
+        // while Update was still short-circuiting - before a model or any cards existed - would
+        // otherwise be consumed by the first capture of whatever session replaced it.
+        editRequested = false;
 
         // A restore in flight belongs to the session being discarded. Its tail would resume
         // after the new content had loaded and select a group id from the old snapshot, on the
@@ -335,6 +355,17 @@ public class UndoHistoryAuthority : MonoBehaviour
         Keyboard keyboard = Keyboard.current;
 
         bool activity = false;
+
+        // Consumed here rather than in Update, deliberately. Update short-circuits above this
+        // while a restore is landing and for the settle after a load, and an edit made in that
+        // window is still a real edit - it waits and arms the first capture that can actually
+        // run, rather than being thrown away by a frame that was never going to capture anything.
+        if (editRequested)
+        {
+            editRequested = false;
+            activity = true;
+        }
+
         if (mouse != null && mouse.leftButton.wasReleasedThisFrame) activity = true;
 
         // The right button ONLY while ALT is down, which is the one thing it does that changes

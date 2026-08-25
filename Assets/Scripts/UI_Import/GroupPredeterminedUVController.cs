@@ -166,7 +166,15 @@ public class GroupPredeterminedUVController : MonoBehaviour
                 settings.minId = group.uvRectMinId > 0 ? group.uvRectMinId : 1;
                 settings.maxId = group.uvRectMaxId > 0 ? group.uvRectMaxId : settings.minId;
                 settings.seed = group.uvRectSeed;
-                NormalizeRange(group.groupId, settings);
+
+                // Ordered and floored, but NOT clamped to the rectangles that happen to exist
+                // right now. A range can legitimately be saved pointing outside the current set -
+                // a rect was deleted, AUTO replaced the set, the group moved to a smaller atlas -
+                // and ApplyGroup already falls back to a clamped view of it for as long as that
+                // is true, without destroying it. Clamping here would write that fallback into
+                // the settings and then persist it on the next save, so restoring the rectangles
+                // could never restore the range that went with them.
+                SanitizeRange(settings);
             }
         }
 
@@ -417,6 +425,22 @@ public class GroupPredeterminedUVController : MonoBehaviour
         nextUIScan = 0f;
     }
 
+    // Ordering and the floor only. Everything NormalizeRange does that depends on which
+    // rectangles exist at this moment is left out on purpose - see the call in
+    // RestorePendingProject for why that distinction matters.
+    static void SanitizeRange(GroupUVSettings settings)
+    {
+        if (settings == null) return;
+        settings.minId = Mathf.Max(1, settings.minId);
+        settings.maxId = Mathf.Max(1, settings.maxId);
+        if (settings.minId > settings.maxId)
+        {
+            int swap = settings.minId;
+            settings.minId = settings.maxId;
+            settings.maxId = swap;
+        }
+    }
+
     void NormalizeRange(int groupId, GroupUVSettings settings)
     {
         if (settings == null) return;
@@ -472,6 +496,38 @@ public class GroupPredeterminedUVController : MonoBehaviour
             .Where(rect => rect != null && rect.id >= settings.minId && rect.id <= settings.maxId)
             .OrderBy(rect => rect.id)
             .ToList();
+
+        // The rectangle set can shrink underneath a stored range at any time: a rect deleted with
+        // a right click, AUTO replacing five hand-drawn rects with three of its own, a group
+        // reassigned to a material with a smaller atlas. When it does, a range like 4-5 selects
+        // nothing, and this used to return without touching a card - leaving every card in the
+        // group pointing at rectangles that no longer exist, while the panel still read as a
+        // healthy PREDETERMINED group with no way to tell.
+        //
+        // Clamped for THIS pass only, and deliberately never written back to settings. Whatever
+        // took the rectangles away can put them back - UNDO LAST, undo, switching to the material
+        // they came from - and the authored range has to still be there when it does. A clamp
+        // stored in settings would have thrown it away a tenth of a second after it went out of
+        // range, permanently, in response to something the user was about to reverse.
+        if (allowed.Count == 0)
+        {
+            List<UVRectSaveData> live = allRects.Where(rect => rect != null).ToList();
+            if (live.Count == 0) return;
+
+            int lowest = live.Min(rect => rect.id);
+            int highest = live.Max(rect => rect.id);
+            int lo = Mathf.Clamp(settings.minId, lowest, highest);
+            int hi = Mathf.Clamp(settings.maxId, lowest, highest);
+            if (lo > hi)
+            {
+                int swap = lo;
+                lo = hi;
+                hi = swap;
+            }
+
+            allowed = live.Where(rect => rect.id >= lo && rect.id <= hi).OrderBy(rect => rect.id).ToList();
+        }
+
         if (allowed.Count == 0) return;
 
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))

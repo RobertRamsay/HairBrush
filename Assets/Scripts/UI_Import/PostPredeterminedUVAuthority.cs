@@ -193,6 +193,7 @@ public class PostPredeterminedUVAuthority : MonoBehaviour
 
         Dictionary<int, GroupSaveData> groupSettings = new Dictionary<int, GroupSaveData>();
         Dictionary<int, List<UVRectSaveData>> rectsByGroup = new Dictionary<int, List<UVRectSaveData>>();
+        Dictionary<int, List<UVRectSaveData>> allowedByPost = new Dictionary<int, List<UVRectSaveData>>();
 
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
         {
@@ -234,7 +235,17 @@ public class PostPredeterminedUVAuthority : MonoBehaviour
             }
 
             if (chosen == null || chosenSettings == null) continue;
-            if (!TryResolveRect(card, chosenSettings, rects, out UVRectSaveData rect)) continue;
+
+            // Built once per POST rather than once per card. The allowed set depends only on the
+            // POST's range and its group's rectangles, neither of which changes inside this loop,
+            // and the loop runs over every card in the scene every LateUpdate - so working it out
+            // per card was several list allocations and a sort per card per frame.
+            if (!allowedByPost.TryGetValue(chosen.id, out List<UVRectSaveData> allowed))
+            {
+                allowed = BuildAllowedRects(chosenSettings, rects);
+                allowedByPost[chosen.id] = allowed;
+            }
+            if (!TryResolveRect(card, chosenSettings, allowed, out UVRectSaveData rect)) continue;
 
             card.uScale = Mathf.Max(.000001f, rect.uMax - rect.uMin);
             card.vScale = Mathf.Max(.000001f, rect.vMax - rect.vMin);
@@ -345,14 +356,43 @@ public class PostPredeterminedUVAuthority : MonoBehaviour
             : new List<UVRectSaveData>();
     }
 
-    bool TryResolveRect(HairCard card, LocalSettings settings, List<UVRectSaveData> allRects, out UVRectSaveData rect)
+    // The rectangles this POST's range actually selects, worked out once for the whole pass.
+    List<UVRectSaveData> BuildAllowedRects(LocalSettings settings, List<UVRectSaveData> allRects)
     {
-        rect = null;
         List<UVRectSaveData> allowed = allRects
-            .Where(item => item.id >= settings.minId && item.id <= settings.maxId)
+            .Where(item => item != null && item.id >= settings.minId && item.id <= settings.maxId)
             .OrderBy(item => item.id)
             .ToList();
-        if (allowed.Count == 0) return false;
+        if (allowed.Count > 0) return allowed;
+
+        // Same fallback GroupPredeterminedUVController.ApplyGroup makes, and for the same reason:
+        // the rectangle set can shrink underneath this range while it is stored - a rect deleted
+        // with a right click, AUTO replacing the set - and a range that then selects nothing would
+        // leave the POST's override silently dead with no way to notice or recover it.
+        //
+        // Clamped for this pass only, never written back, so restoring the rectangles restores
+        // the range the user actually authored along with them.
+        List<UVRectSaveData> live = allRects.Where(item => item != null).ToList();
+        if (live.Count == 0) return allowed;
+
+        int lowest = live.Min(item => item.id);
+        int highest = live.Max(item => item.id);
+        int lo = Mathf.Clamp(settings.minId, lowest, highest);
+        int hi = Mathf.Clamp(settings.maxId, lowest, highest);
+        if (lo > hi)
+        {
+            int swap = lo;
+            lo = hi;
+            hi = swap;
+        }
+
+        return live.Where(item => item.id >= lo && item.id <= hi).OrderBy(item => item.id).ToList();
+    }
+
+    bool TryResolveRect(HairCard card, LocalSettings settings, List<UVRectSaveData> allowed, out UVRectSaveData rect)
+    {
+        rect = null;
+        if (allowed == null || allowed.Count == 0) return false;
 
         int pick = PositiveMod(StableCardHash(card, card.groupId, settings.seed), allowed.Count);
         rect = allowed[pick];

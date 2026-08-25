@@ -96,6 +96,7 @@ public class TextureUVRectWorkspace : MonoBehaviour
         UpdateOutlineVisual();
         HandleDrawInput();
         UpdateTextureHoverDetection();
+        HandleRightClickDelete();
         UpdateHoverPulse();
         UpdateSummary();
 
@@ -675,6 +676,27 @@ public class TextureUVRectWorkspace : MonoBehaviour
         else if (hoveredRectId >= 0) ClearHoveredRect(hoveredRectId);
     }
 
+    // Right click on a rectangle in the texture view deletes it.
+    //
+    // Deliberately NOT inside HandleDrawInput. That method returns as soon as draw mode is off,
+    // and the whole reason to delete a rectangle is to clear room for one you are about to draw
+    // by hand - most often straight after AUTO has filled the texture with its own guesses, when
+    // draw mode has never been switched on at all.
+    //
+    // hoveredRectId is the hit test. UpdateTextureHoverDetection ran immediately before this in
+    // Update and already did the raycast, the UI check and the topmost-wins containment walk, so
+    // re-deriving any of it here would only give a second answer that could disagree with the
+    // rectangle the person can see flashing under their cursor.
+    void HandleRightClickDelete()
+    {
+        if (dragging || Mouse.current == null) return;
+        if (!Mouse.current.rightButton.wasPressedThisFrame) return;
+        if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
+        if (hoveredRectId < 0) return;
+
+        RemoveRectangle(hoveredRectId, false);
+    }
+
     void EnsureHoverLineMaterial()
     {
         if (hoverLineMaterial != null) return;
@@ -938,6 +960,74 @@ public class TextureUVRectWorkspace : MonoBehaviour
         RefreshSummary();
     }
 
+    // Deletes one rectangle by id. Both right click routes land here: on the texture itself via
+    // HandleRightClickDelete, and on a list row via UVRectSummaryRow.OnPointerDown.
+    //
+    // Ids are renumbered 1..N afterwards, for the same reason ReorderRectangle renumbers. The id
+    // is printed on the row AND on the on-texture label AND is what a group's predetermined UV
+    // range is expressed in, so a hole in the sequence reads as a rectangle that failed to draw
+    // rather than one that was deleted on purpose. The cost is that a group pointing at "rect 4"
+    // now points at whatever moved into slot 4, which is exactly what dragging a row to re-order
+    // has always done here.
+    //
+    // deferRows exists for the row caller only. That row is a GameObject inside the very list
+    // this is about to destroy, and it is mid pointer-event dispatch when it asks - see the
+    // comment at the end of ReorderRectangle for what happens if the list is rebuilt underneath
+    // a callback that is still running.
+    public void RemoveRectangle(int id, bool deferRows)
+    {
+        int index = -1;
+        for (int i = 0; i < rectangles.Count; i++)
+        {
+            if (rectangles[i] == null) continue;
+            if (rectangles[i].id != id) continue;
+            index = i;
+            break;
+        }
+        if (index < 0) return;
+
+        // Before anything is destroyed. ClearHoveredRect restores the normal outline material and
+        // width on the LineRenderer it is holding, and the row skin on the row it is holding, and
+        // RefreshRectangleVisuals below is about to destroy the first of those.
+        if (hoveredRectId == id) ClearHoveredRect(id);
+
+        rectangles.RemoveAt(index);
+
+        for (int i = 0; i < rectangles.Count; i++)
+        {
+            if (rectangles[i] == null) continue;
+            rectangles[i].id = i + 1;
+        }
+        nextRectId = rectangles.Count + 1;
+
+        RefreshRectangleVisuals();
+        UpdateSummary();
+
+        if (deferRows)
+        {
+            // The rebuild is a frame away but the ids stop meaning what they meant right now, so
+            // the rows cannot be left standing until then. RebuildSummaryList retires them too;
+            // this is the same call made early because the rebuild is not happening yet.
+            RetireSummaryRows();
+            summaryListDirty = true;
+        }
+        else
+        {
+            summaryListDirty = false;
+            RebuildSummaryList();
+        }
+
+        // Same commit AUTO makes after ImportDefinitions. Selection polling in
+        // MaterialUVRectAuthority would notice the change a frame later anyway, but only while a
+        // material is selected, and a delete is worth writing through immediately either way.
+        MaterialUVRectAuthority.StoreSelectedWorkspaceNow();
+
+        // A plain right click arms nothing in the undo history by itself - it refuses to, so that
+        // orbiting the model does not pay for a full serialize every time. This is a real edit,
+        // so it says so.
+        UndoHistoryAuthority.NotifyEdit();
+    }
+
     public void ClearDefinitions()
     {
         rectangles.Clear();
@@ -1018,9 +1108,19 @@ public class TextureUVRectWorkspace : MonoBehaviour
     void UpdateSummary()
     {
         if (summaryText == null) return;
-        summaryText.text = rectangles.Count == 0
-            ? "UV Rects: 0  •  click DRAW UV RECT, then drag on the texture"
-            : "UV Rects: " + rectangles.Count + "  (DRAG to RE-ORDER)";
+
+        // The delete hint lives here rather than in the instructions paragraph above because the
+        // section's height budget is exact: 781 is 4 of padding plus 20 of spacing plus the six
+        // children's declared heights with nothing left over, so a third line of instructions
+        // would push the bottom of the scroll list out of the section.
+        if (rectangles.Count == 0)
+        {
+            summaryText.text = "UV Rects: 0  •  click DRAW UV RECT, then drag on the texture";
+        }
+        else
+        {
+            summaryText.text = "UV Rects: " + rectangles.Count + "  (DRAG to ORDER, RMB to DELETE)";
+        }
     }
 
     // Header text plus the row list, for the specific moments the data actually changed
@@ -1033,9 +1133,28 @@ public class TextureUVRectWorkspace : MonoBehaviour
         RebuildSummaryList();
     }
 
+    // Tells every live row that the id it was built with has stopped meaning what it meant.
+    //
+    // Destroying the list's children is NOT enough on its own, which is why this exists. A row
+    // that is mid-drag was reparented onto the root canvas by OnBeginDrag, so it is not a child
+    // of the list any more and the loop below walks straight past it - and then OnEndDrag puts
+    // it back into a list that has since been rebuilt without it, as a dead duplicate row still
+    // answering to a number that now belongs to a different rectangle. Retiring it here is what
+    // makes it destroy itself instead.
+    void RetireSummaryRows()
+    {
+        foreach (UVRectSummaryRow row in summaryRows.Values)
+        {
+            if (row != null) row.Invalidate();
+        }
+        summaryRows.Clear();
+    }
+
     void RebuildSummaryList()
     {
         if (summaryListRoot == null) return;
+
+        RetireSummaryRows();
         for (int i = summaryListRoot.childCount - 1; i >= 0; i--)
             Destroy(summaryListRoot.GetChild(i).gameObject);
         summaryRows.Clear();
