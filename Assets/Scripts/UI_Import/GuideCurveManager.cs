@@ -1072,10 +1072,14 @@ public static class GuideDeformation
 
     // Displaces one card's spine and vertices toward the guides' SHAPE.
     //
-    // Both arrays are moved by the same delta, and that matters: the spine is what the clumper
-    // then reads for its own leader/follower anchors, so guiding it here is what makes the two
+    // Both arrays are rebuilt together, and that matters: the spine is what the clumper then
+    // reads for its own leader/follower anchors, so guiding it here is what makes the two
     // modifiers compose rather than overwrite each other. Leaving the spine behind would have
     // the clumper gathering strands toward where they used to be.
+    //
+    // Not by a shared translation, which is what this used to be. Each row's spine point is
+    // rebuilt from a blended tangent and its three vertices are carried onto it by the same
+    // rotation - see the block inside the loop.
     public static void Apply(HairCard card, List<ActiveGuide> guides, Vector3[] spine, Vector3[] vertices)
     {
         if (card == null || guides == null || guides.Count == 0) return;
@@ -1096,8 +1100,11 @@ public static class GuideDeformation
         // this is belt and braces - but it is one TransformPoint per row against a whole class
         // of bug that would present as "the guide works but is the wrong size".
         //
-        // Using the spine rather than card.length also means a curled or waved card reads the
-        // guide at the distance it has actually travelled, not its nominal length.
+        // Using the spine rather than card.length also means a BENT card reads the guide at the
+        // distance it has actually travelled, not its nominal length. Not a curled or waved one,
+        // though the comment here used to say so: curl and wave are cross-section offsets added
+        // on top of the spine, never into it, so a tight coil and a straight card of the same
+        // bend read the guide at identical arc positions.
         for (int i = 0; i < rows; i++) worldScratch[i] = card.transform.TransformPoint(spine[i]);
 
         arcScratch[0] = 0f;
@@ -1125,12 +1132,62 @@ public static class GuideDeformation
 
         if (strongest <= .0001f) return;
 
-        // Row 0 is the root and never moves - the same anchoring the clumper uses. Hair that
-        // slides out of the scalp when a modifier is raised is the one artifact nobody forgives.
+        // DIRECTIONS ARE BLENDED, NOT POSITIONS, and the card is then rebuilt segment by segment
+        // along the blended directions at its own original segment lengths.
+        //
+        // The previous version moved each row toward the guide's shape and scaled that move by a
+        // smoothstep along the length. Two things were wrong with it.
+        //
+        // THE RAMP. It was inherited from the clumper, which genuinely needs one - a clumper's
+        // target is another card's ABSOLUTE spine, so two cards planted two centimetres apart
+        // differ by two centimetres at every row including the first, and without a ramp raising
+        // Amount would tear the root out of the scalp. A guide's target is not absolute. It is
+        // rootWorld + (guidePoint - guideOrigin), and SampleByLength(0) returns origin exactly,
+        // so at arc length zero the target IS the root. The root was pinned by the arithmetic all
+        // along and the ramp was solving a problem this modifier never had - at the cost of the
+        // whole lower half of every card, because the target already converges as O(t) and a
+        // smoothstep on top made the displacement fall away as t CUBED. A fifth of the way up a
+        // card, the guide had two percent of the say it had at the tip. That is the "guides do
+        // not seem to do anything near the root" this replaces.
+        //
+        // THE LERP ITSELF. Sliding a row part-way toward another curve takes the chord between
+        // them, and a chord is shorter than either side. At half Amount with the two directions
+        // ninety degrees apart every segment came out at .707 of its length - a card visibly
+        // retracting into the scalp as the slider crossed the middle and growing back by the end
+        // of it. Blending the unit tangents and stepping the original distance along the result
+        // keeps every segment exactly as long as it was, at every Amount.
+        //
+        // What this means for the answer to "should bend and the angles get the inverse weight":
+        // they already do, and always did. Blending toward a direction that does not contain them
+        // IS scaling them by one minus the weight. It only ever looked otherwise near the root,
+        // where the ramp was holding the guide off.
+        //
+        // Row 0 never moves. Its cross-section is rotated with the first segment, but the root
+        // vertex itself is written by nobody - hair that slides out of the scalp when a modifier
+        // is raised is the one artifact nobody forgives.
+        Vector3 previousOriginal = spine[0];
+
+        // The target at arc length zero is the root, exactly, so this is the row-0 target without
+        // needing to sample anything for it.
+        Vector3 previousTarget = spine[0];
+        // Local +Z, because that is the axis BuildSegmentFrames grows a card along. Only ever
+        // read if the very first segment has no length at all, which needs two segment positions
+        // to land on the same value - reachable in principle from a Segment Density curve, not in
+        // practice from any of the ones this ships with.
+        Vector3 previousDirection = Vector3.forward;
+
         for (int i = 1; i < rows; i++)
         {
-            float t = (float)i / (rows - 1);
-            float along = t * t * (3f - 2f * t);
+            // Saved before spine[i] is overwritten below: the NEXT row needs this row's original
+            // position to measure its own segment against, and the cross-section offsets are
+            // measured from it too.
+            Vector3 original = spine[i];
+
+            Vector3 ownSegment = original - previousOriginal;
+            float segmentLength = ownSegment.magnitude;
+
+            Vector3 ownDirection = previousDirection;
+            if (segmentLength > .0000001f) ownDirection = ownSegment / segmentLength;
 
             Vector3 weightedTarget = Vector3.zero;
             float weightSum = 0f;
@@ -1151,8 +1208,6 @@ public static class GuideDeformation
                 weightSum += w;
             }
 
-            if (weightSum <= .0001f) continue;
-
             // WHERE to go is the weighted average of the guides' targets. HOW FAR is the
             // STRONGEST single weight, not their sum.
             //
@@ -1162,17 +1217,101 @@ public static class GuideDeformation
             // guide's Amount would silently double the first's effect. Taking the max keeps
             // Amount meaning the same thing whether one guide overlaps a card or five do, and
             // still reduces to plain Amount for the single-guide case.
-            Vector3 blendedTarget = weightedTarget / weightSum;
-            float influence = strongest * along;
-            if (influence <= .0001f) continue;
-            Vector3 delta = (blendedTarget - spine[i]) * influence;
+            Vector3 blendedTarget = previousTarget;
+            if (weightSum > .0001f) blendedTarget = weightedTarget / weightSum;
 
-            spine[i] += delta;
+            Vector3 guideSegment = blendedTarget - previousTarget;
+            Vector3 guideDirection = ownDirection;
+            if (guideSegment.sqrMagnitude > .000000000001f) guideDirection = guideSegment.normalized;
+
+            // Slerp, not Lerp. Half Amount should mean half the ANGLE between the two, which is
+            // what a person reads off the slider; a normalized linear blend bunches up near
+            // whichever direction is closer and makes the middle of the slider feel dead.
+            //
+            // The one case Slerp cannot answer is two directions pointing exactly opposite, where
+            // there is no shorter way round and the result is whatever the implementation picks.
+            // Reachable only by dragging guide nodes back down past the scalp, but the card would
+            // fold through itself if it were hit, so it keeps its own direction there.
+            Vector3 blendedDirection = ownDirection;
+            if (Vector3.Dot(ownDirection, guideDirection) > -.9999f)
+                blendedDirection = Vector3.Slerp(ownDirection, guideDirection, strongest);
+
+            // The FIRST segment, and only the first, is held above the scalp it grows out of.
+            //
+            // A guide cannot point down at its own root - its nodes are clamped above the contact
+            // plane. It can still point down at somebody else's: ZoneWeight measures distance to
+            // the contact and knows nothing about normals, and with the radius slider reaching
+            // .25 on a head about .33 across, a card at full weight can sit on a part of the
+            // scalp facing a very different way. Combed hard, that card's root segment would take
+            // the guide's launch direction literally and set off into the mesh.
+            //
+            // This could not happen while the ramp gave the root two percent of the guide. It can
+            // now, so the root gets the one constraint the rest of the card does not need: hair
+            // further up may sweep back down as much as the guide asks, but it has to leave the
+            // surface first.
+            if (i == 1) blendedDirection = LiftAboveSurface(card, blendedDirection);
+
+            spine[i] = spine[i - 1] + blendedDirection * segmentLength;
+
+            // The cross-section turns with the segment it sits on.
+            //
+            // Without this the ribbon keeps the facing it was built with while its spine points
+            // somewhere else, so a card combed across its own width axis shears into a sliver and
+            // RecalculateNormals lights it from the wrong side. The old ramp hid that at the root
+            // by making the displacement there almost zero; now that the guide reaches the root,
+            // the cross-sections have to come with it.
+            //
+            // FromToRotation, so the ribbon is carried by the shortest rotation onto the new
+            // tangent and picks up no roll of its own. Roll along the card is TWIST's job, and it
+            // is already baked into the offsets this rotates.
+            Quaternion turn = Quaternion.FromToRotation(ownDirection, blendedDirection);
+
             int index = i * columns;
-            vertices[index] += delta;
-            vertices[index + 1] += delta;
-            vertices[index + 2] += delta;
+            vertices[index] = spine[i] + turn * (vertices[index] - original);
+            vertices[index + 1] = spine[i] + turn * (vertices[index + 1] - original);
+            vertices[index + 2] = spine[i] + turn * (vertices[index + 2] - original);
+
+            // The root row's own cross-section, turned by the first segment's rotation. Its spine
+            // point stays exactly where it was - only the facing changes - so the scalp anchor
+            // holds while the ribbon leaves it without a kink.
+            if (i == 1)
+            {
+                vertices[0] = spine[0] + turn * (vertices[0] - spine[0]);
+                vertices[1] = spine[0] + turn * (vertices[1] - spine[0]);
+                vertices[2] = spine[0] + turn * (vertices[2] - spine[0]);
+            }
+
+            previousOriginal = original;
+            previousTarget = blendedTarget;
+            previousDirection = blendedDirection;
         }
+    }
+
+    // Keeps a direction on the outside of the surface the card is planted in.
+    //
+    // A shallow floor rather than the plane itself. Exactly along the surface is still a strand
+    // lying flat on the scalp with its whole length z-fighting the mesh, and the guide handles
+    // use the same .002 idea for the same reason - so the root is asked to clear the surface by
+    // a couple of degrees rather than merely not to breach it.
+    //
+    // The rotation is the minimum one that gets there: the direction is pushed along the normal
+    // and re-normalized, which slides it up the cone rather than swinging it to some unrelated
+    // heading. A card whose normal is unknown - nothing has planted it yet - is left alone.
+    static Vector3 LiftAboveSurface(HairCard card, Vector3 localDirection)
+    {
+        Vector3 normal = card.GetSurfaceNormal();
+        if (normal.sqrMagnitude < .000001f) return localDirection;
+
+        // Both sides in the card's own space, which is the space the spine is built in.
+        Vector3 localNormal = card.transform.InverseTransformDirection(normal.normalized).normalized;
+
+        const float MinRise = .035f;
+        float rise = Vector3.Dot(localDirection, localNormal);
+        if (rise >= MinRise) return localDirection;
+
+        Vector3 lifted = localDirection + localNormal * (MinRise - rise);
+        if (lifted.sqrMagnitude < .000001f) return localNormal;
+        return lifted.normalized;
     }
 
     // Same shape as ThreeColumnClumperMeshAuthority.ZoneWeight, measured from the card's spawn
