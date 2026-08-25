@@ -41,6 +41,14 @@ public class GuideCurveManager : MonoBehaviour
     public const int MinGuideNodes = 2;
     public const int MaxGuideNodes = 20;
 
+    // How far above the surface plane a node has to stay, in world units.
+    //
+    // A guide pointing into the model is meaningless - the cards would be driven through the
+    // scalp - so no node may sit below the tangent plane at the contact. Lives here rather than
+    // in GuideCurveHandleAuthority, which is where it used to be, because MoveGuideRoot has to
+    // apply the same floor and two copies of a limit like this drift.
+    public const float MinNodeHeight = .002f;
+
     public const float DefaultGuideRadius = .04f;
     public const float DefaultGuideFalloff = .04f;
 
@@ -74,11 +82,14 @@ public class GuideCurveManager : MonoBehaviour
         // The points the curve passes through, in that frame, ordered root to tip. Local +Y is
         // the surface normal, so a guide whose offsets are all on the Y axis stands straight out
         // of the surface. The contact is NOT in this list - it is always the first point of the
-        // curve and is not movable independently of the guide.
+        // curve, and it moves through MoveGuideRoot rather than SetNode because it has to stay ON
+        // the model and supplies the normal this whole frame is carried by.
         //
         // Two entries is a guide as it has always been: a mid and an end. Extra points are
-        // inserted between them with ALT+click, and the first and the last can never be removed,
-        // so the shape always keeps a root, something in the middle and a tip.
+        // inserted between them with ALT+click; the TIP can never be removed, and neither can the
+        // removal that would take the list below two, so the shape always keeps a root, something
+        // in the middle and a tip. See RemoveNode for why the FIRST node is deliberately not
+        // protected as well.
         public List<Vector3> nodesLocal = new List<Vector3> { Vector3.up, Vector3.up };
 
         // Starts at zero, exactly like a new clumper: a modifier that changes nothing until it
@@ -530,31 +541,85 @@ public class GuideCurveManager : MonoBehaviour
         if (guide == null || guide.groupId != groupId) return false;
 
         guide.contact = point;
+        TransportFrame(guide, normal);
+        return true;
+    }
 
-        // Minimal rotation from the old normal to the new one, applied to the frame the guide is
-        // already carrying. No reference axis is involved, so there is no seam to cross.
-        if (normal.sqrMagnitude > .000001f)
+    // Plants the ROOT somewhere else and lets the curve re-aim, instead of carrying the whole
+    // guide across rigidly the way MoveSelectedGuide above does.
+    //
+    // The two are the guide's two editing gestures and they are deliberately opposites. SPACE and
+    // click says "this shape, somewhere else" - contact and nodes travel together, the form is
+    // preserved, and it is what you reach for once a guide is shaped the way you want it.
+    // Dragging the root ring says "this tip, from somewhere else" - every other point stays where
+    // it is in the world and the curve swings to reach them from the new base, which is the only
+    // way to change the direction hair leaves the scalp in without moving every point by hand.
+    //
+    // That second one matters more than it used to. The blend now hands the guide the direction
+    // at the root as well as further up, so where the root sits and which way it launches is the
+    // single biggest thing about a guide - and until this it was the one part you could only set
+    // by clicking somewhere else and starting again.
+    //
+    // preservedWorld holds where the nodes should END UP, in world space, and the caller captures
+    // it ONCE when the drag begins rather than letting this read the guide's current positions.
+    //
+    // That distinction is the whole reason this takes an array. A root drag calls in every frame,
+    // and the height clamp below is one-way: a node pushed up to clear a brow stays up, and next
+    // frame that pushed-up position is what "where it was" would mean. Read live, the shape
+    // ratchets - drag across a curve and back and the guide comes home taller than it left. Read
+    // from a snapshot of the moment the handle was grabbed, every frame recomputes from the same
+    // truth, the clamp only ever applies to the surface actually underneath, and dragging back
+    // restores the guide exactly.
+    public bool MoveGuideRoot(GuideCurve guide, Vector3 point, Vector3 normal,
+        Vector3[] preservedWorld, int preservedCount)
+    {
+        if (guide == null || preservedWorld == null) return false;
+
+        int count = Mathf.Min(NodeCount(guide), Mathf.Min(preservedCount, preservedWorld.Length));
+
+        guide.contact = point;
+        TransportFrame(guide, normal);
+
+        for (int i = 0; i < count; i++)
         {
-            Vector3 newNormal = normal.normalized;
+            Vector3 local = ToLocal(guide, preservedWorld[i]);
 
-            // FromToRotation has no defined axis for an exact 180-degree flip - Unity picks an
-            // arbitrary perpendicular, so a guide moved to the precise antipode would roll by an
-            // unpredictable amount. Naming the axis ourselves makes that one point continuous
-            // with its neighbourhood instead of a coin toss.
-            Quaternion transport;
-            if (Vector3.Dot(guide.normal, newNormal) < -.9999f)
-            {
-                transport = Quaternion.AngleAxis(180f, guide.frame * Vector3.forward);
-            }
-            else
-            {
-                transport = Quaternion.FromToRotation(guide.normal, newNormal);
-            }
+            // The one thing that cannot be preserved. A point that was comfortably above the old
+            // surface can be under the new one - drag the root round a brow or into a concavity
+            // and the tangent plane tilts out from under the shape - and a node below it is hair
+            // driven back into the head. So world position is kept exactly wherever it can be,
+            // and this is where it gives.
+            if (local.y < MinNodeHeight) local.y = MinNodeHeight;
 
-            guide.frame = transport * guide.frame;
-            guide.normal = newNormal;
+            SetNode(guide, i, local);
         }
         return true;
+    }
+
+    // Minimal rotation from the old normal to the new one, applied to the frame the guide is
+    // already carrying. No reference axis is involved, so there is no seam to cross.
+    static void TransportFrame(GuideCurve guide, Vector3 normal)
+    {
+        if (guide == null || normal.sqrMagnitude <= .000001f) return;
+
+        Vector3 newNormal = normal.normalized;
+
+        // FromToRotation has no defined axis for an exact 180-degree flip - Unity picks an
+        // arbitrary perpendicular, so a guide moved to the precise antipode would roll by an
+        // unpredictable amount. Naming the axis ourselves makes that one point continuous
+        // with its neighbourhood instead of a coin toss.
+        Quaternion transport;
+        if (Vector3.Dot(guide.normal, newNormal) < -.9999f)
+        {
+            transport = Quaternion.AngleAxis(180f, guide.frame * Vector3.forward);
+        }
+        else
+        {
+            transport = Quaternion.FromToRotation(guide.normal, newNormal);
+        }
+
+        guide.frame = transport * guide.frame;
+        guide.normal = newNormal;
     }
 
     // Cleared from GroupClumperManager.SelectClumper, so picking a clumper drops the guide.
@@ -939,6 +1004,7 @@ public class GuideCurveManager : MonoBehaviour
         done.GetComponent<Button>().onClick.AddListener(ClearSelection);
 
         AddHint(controlsRoot.transform, "Drag the handles to shape the curve");
+        AddHint(controlsRoot.transform, "Drag the ROOT ring to re-aim it from a new spot");
         AddHint(controlsRoot.transform, "ALT + CLICK on the curve adds a point, up to " +
                                         (MaxGuideNodes + 1));
         AddHint(controlsRoot.transform, "ALT + RIGHT CLICK a point removes it (not the tip)");
