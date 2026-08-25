@@ -627,6 +627,16 @@ public class ModelViewer : MonoBehaviour
         btnTextGO.GetComponent<RectTransform>().anchorMax = Vector2.one;
         btnTextGO.GetComponent<RectTransform>().sizeDelta = Vector2.zero;
         btn.onClick.AddListener(() => {
+            // Put down whatever was being edited before the new group arrives. Most of this
+            // already happened by accident - NewGroupRootSelectionAuthority reacts to the new id
+            // and tears down the POST and clumper, and the guide notices the group changed under
+            // it - but an ARMED +POST/+CLUMPER/+GUIDE did not, and it survives with its old group
+            // id, so the next click on the model drops a modifier into the group you just left
+            // while card placement stays switched off. Doing it here rather than leaving it to
+            // that authority also means it happens in the same frame as the click, before
+            // anything else has read the half-torn-down state.
+            ModifierContextExit.LeaveEverything(this);
+
             int newId = GetNextAvailableGroupId();
             allGroupIds.Add(newId);
             groupNames[newId] = "Group " + newId;
@@ -991,8 +1001,24 @@ public class ModelViewer : MonoBehaviour
         GroupSoloVisibilityAuthority.ClearAll();
     }
 
+    // Clicking a group's name means "I want to work on this group", and that is only true if
+    // everything else lets go of the panel first.
+    //
+    // Some of it already worked, unevenly. A POST released itself, but only for a click on this
+    // exact button and not for SOLO or the sidedness toggles next to it. A clumper released
+    // itself for a click anywhere in the row. A guide released itself only if you clicked a
+    // DIFFERENT group - clicking the row of the group you were already in left the guide selected,
+    // its panel covering the groom sliders, and GroomingInputLock still held, so card placement
+    // stayed off with nothing on screen saying why. An armed +POST/+CLUMPER/+GUIDE released
+    // itself for nothing at all, because a click on the panel is deliberately not treated as a
+    // placement. One call covers the lot, and covers it the same way every time.
+    //
+    // Before the double-click branch, not inside it: a rename is still a click on this group, and
+    // the teardown commits any half-typed name on a DIFFERENT group rather than dropping it.
     void HandleGroupItemClick(int gid)
     {
+        ModifierContextExit.LeaveEverything(this);
+
         float timeSinceLastClick = Time.time - lastGroupClickTime;
         if (lastClickedGroupId == gid && timeSinceLastClick < 0.4f) { PromptRenameGroup(gid); lastClickedGroupId = -1; }
         else { SelectGroup(gid); lastClickedGroupId = gid; lastGroupClickTime = Time.time; }

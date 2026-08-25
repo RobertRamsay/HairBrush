@@ -161,7 +161,10 @@ public class NewGroupRootSelectionAuthority : MonoBehaviour
         {
             curves = FindFirstObjectByType<GroomShapeCurveAuthority>();
             if (curves != null)
-                closeCurvePopupMethod = typeof(GroomShapeCurveAuthority).GetMethod("ClosePopup", BindingFlags.Instance | BindingFlags.NonPublic);
+                // Public, not NonPublic. Bound with the wrong flags this came back null and the
+                // invoke below was a permanent no-op, so recycling a group id has never actually
+                // closed a curve popup left open over it.
+                closeCurvePopupMethod = typeof(GroomShapeCurveAuthority).GetMethod("ClosePopup", BindingFlags.Instance | BindingFlags.Public);
         }
     }
 
@@ -233,7 +236,11 @@ public class NewGroupRootSelectionAuthority : MonoBehaviour
     {
         // A numeric group ID may have existed earlier in this session. Remove every known
         // group-keyed cache so reusing that number behaves exactly like a never-used group.
-        closeCurvePopupMethod?.Invoke(curves, null);
+        // Guarded on the target as well as the method. The binding above is cached once and never
+        // cleared, so a re-Resolve that came back without the authority would leave a live
+        // MethodInfo with nothing to invoke it on - which throws, halfway through a teardown that
+        // has already zeroed the POST and clumper and not yet reselected the group.
+        if (curves != null && closeCurvePopupMethod != null) closeCurvePopupMethod.Invoke(curves, null);
         RemoveGroupEntry(rootStatesField, rootState, gid);
         RemoveGroupEntry(varianceSettingsField, variance, gid);
         RemoveGroupEntry(uvSettingsField, uvRouting, gid);

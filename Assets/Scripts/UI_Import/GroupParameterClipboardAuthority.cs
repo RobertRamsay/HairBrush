@@ -167,46 +167,16 @@ public static class GroupParameterClipboardAuthority
     // A POST or CLUMPER still being edited would eat everything written below, and a live brush
     // selection would make SetParameters lerp the write against each card's weight instead of
     // applying it.
+    //
+    // The teardown itself, and the ordering rules that make it correct, moved to
+    // ModifierContextExit when the group buttons needed the same thing. Two things came back with
+    // it, both of which this always should have done: the clumper's scroll host is destroyed with
+    // the clumper, so a COPY pressed with one selected no longer leaves that overlay covering the
+    // grooming panel; and a stranded isSelectionMode is repaired, so a COPY can no longer be the
+    // point at which card placement quietly stops working.
     static void LeaveModifierContext(ModelViewer viewer)
     {
-        // FIRST, before anything below touches it. ReleasePostSelection's last act is to clear
-        // hasSelectionHotspot, and that is the flag this teardown tests to decide whether there
-        // is a brush selection to tear down - run afterwards it always reads false and never
-        // does anything.
-        //
-        // It matters because ReleasePostSelection clears only that one flag and leaves
-        // isSelectionMode set, and ModelViewer refuses to place hair while THAT is set. A COPY
-        // pressed with a brush selection live would otherwise switch card placement off for the
-        // rest of the session with nothing on screen to explain it, and nothing self-heals:
-        // HasLiveSelection returns early on hasSelectionHotspot before it can clean up.
-        ClearSelectionHotspot(viewer);
-
-        PostAffectorManager posts = Object.FindFirstObjectByType<PostAffectorManager>();
-        if (posts != null) posts.ReleasePostSelection();
-
-        GroupClumperManager clumpers = Object.FindFirstObjectByType<GroupClumperManager>();
-        if (clumpers != null) clumpers.ClearSelection();
-
-        GuideCurveManager guides = Object.FindFirstObjectByType<GuideCurveManager>();
-        if (guides != null) guides.ClearSelection();
-
-        // And only now can the curves be trusted. See EnsurePresentationReleased.
-        PostShapeCurveBridge.EnsurePresentationReleased();
-    }
-
-    static void ClearSelectionHotspot(ModelViewer viewer)
-    {
-        if (viewer == null) return;
-
-        // Only when there is something to tear down. Run unconditionally it would zero brush
-        // weights nobody asked it to touch.
-        FieldInfo flag = typeof(ModelViewer).GetField("hasSelectionHotspot",
-            BindingFlags.Instance | BindingFlags.NonPublic);
-        if (flag == null || !(flag.GetValue(viewer) is bool active) || !active) return;
-
-        MethodInfo clear = typeof(ModelViewer).GetMethod("ClearSelectionHotspot",
-            BindingFlags.Instance | BindingFlags.NonPublic);
-        if (clear != null) clear.Invoke(viewer, null);
+        ModifierContextExit.LeaveModifierContext(viewer);
     }
 
     // Always succeeds - the fallback covers the only way it could not - so callers do not test

@@ -218,8 +218,17 @@ public class PlacementBrushModeAuthority : MonoBehaviour
     void LateUpdate()
     {
         if (!restorePending || viewer == null || selectionModeField == null) return;
-        selectionModeField.SetValue(viewer, restoreSelectionState);
         restorePending = false;
+
+        // Only if the flag is still the true THIS authority wrote a moment ago. Anything that
+        // deliberately cleared it in between has to win: ModifierContextExit repairs a stranded
+        // isSelectionMode when a group is clicked, and on the one frame a SHIFT press coincides
+        // with that click, the branch above has already armed a restore. Handing back the stale
+        // true there would undo the repair and leave card placement off with nothing on screen
+        // to explain it.
+        if (!GetBool(selectionModeField)) return;
+
+        selectionModeField.SetValue(viewer, restoreSelectionState);
     }
 
     void Resolve()
