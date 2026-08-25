@@ -1,0 +1,323 @@
+diff --git a/Assets/Scripts/UI_Import/ClumperRuntimeMarker.cs b/Assets/Scripts/UI_Import/ClumperRuntimeMarker.cs
+index 97816a1..f642578 100644
+--- a/Assets/Scripts/UI_Import/ClumperRuntimeMarker.cs
++++ b/Assets/Scripts/UI_Import/ClumperRuntimeMarker.cs
+@@ -26,8 +26,16 @@ public class ClumperRuntimeMarker : MonoBehaviour
+     void LateUpdate()
+     {
+         Resolve();
++        // Nothing groom-related draws while the texture workspace is up - see TextureModeProbe.
++        //
++        // Currently unreachable, and left in anyway. ActiveClumper casts byGroup's value to a
++        // GroupClumper when the dictionary actually holds a List of them, so it returns null every
++        // frame and this authority has never drawn anything - the same dead cast documented at
++        // InfluenceRingPreviewAuthority.UpdateClumperRings. Fixing it is not a matter of correcting
++        // the cast: SelectedClumperRadialPreviewAuthority already draws these rings, at the same
++        // execution order and under the same object name, so a corrected cast would double them up.
+         GroupClumperManager.GroupClumper c = ActiveClumper();
+-        if (c == null)
++        if (c == null || TextureModeProbe.Active)
+         {
+             SetVisible(false);
+             return;
+diff --git a/Assets/Scripts/UI_Import/GroupClumperInteractionAuthority.cs b/Assets/Scripts/UI_Import/GroupClumperInteractionAuthority.cs
+index 3a38e9d..e454d41 100644
+--- a/Assets/Scripts/UI_Import/GroupClumperInteractionAuthority.cs
++++ b/Assets/Scripts/UI_Import/GroupClumperInteractionAuthority.cs
+@@ -25,6 +25,13 @@ public class GroupClumperInteractionAuthority : MonoBehaviour
+     {
+         Resolve();
+         if (clumpers == null || viewer == null || Mouse.current == null || Keyboard.current == null) return;
++
++        // Nothing groom-related happens while the texture workspace is up. This is not only about
++        // the preview: TryRaycastModel below hits any collider, and the workspace deliberately
++        // switches ON a MeshCollider for its texture preview quad so rectangles can be drawn on it.
++        // A TAB and click meant for the atlas therefore landed a real clumper at a point on that
++        // quad, in whichever group happened to be current, in a mode where nothing draws it.
++        if (TextureModeProbe.Active) return;
+         if (!Mouse.current.leftButton.wasPressedThisFrame || lastHandledFrame == Time.frameCount) return;
+         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
+ 
+diff --git a/Assets/Scripts/UI_Import/GuideCurveHandleAuthority.cs b/Assets/Scripts/UI_Import/GuideCurveHandleAuthority.cs
+index 8953323..47d850f 100644
+--- a/Assets/Scripts/UI_Import/GuideCurveHandleAuthority.cs
++++ b/Assets/Scripts/UI_Import/GuideCurveHandleAuthority.cs
+@@ -189,8 +189,17 @@ public class GuideCurveHandleAuthority : MonoBehaviour
+     {
+         Resolve();
+ 
++        // The texture-mode test is on the DRAWING half only, deliberately. Update above holds
++        // GroomingInputLock for as long as a guide is selected and releases it on a delay when one
++        // is not; gating that on the mode as well would walk out of the frame still holding the
++        // lock, and card placement would stay off after coming back to groom mode.
++        //
++        // The node rings are the worst offender of the lot. Everything else in the viewport at
++        // least depth-tests, and could in principle be hidden by something in front of it; these
++        // draw with ZTest Always and are hidden by nothing at all.
+         GuideCurveManager.GuideCurve guide = GetSelectedGuide();
+-        if (guide == null || viewer == null || viewer.mainCamera == null || Mouse.current == null)
++        if (guide == null || viewer == null || viewer.mainCamera == null || Mouse.current == null ||
++            TextureModeProbe.Active)
+         {
+             dragging = -1;
+             draggingGuideId = -1;
+diff --git a/Assets/Scripts/UI_Import/GuideCurvePreviewAuthority.cs b/Assets/Scripts/UI_Import/GuideCurvePreviewAuthority.cs
+index 395abcd..058c3a0 100644
+--- a/Assets/Scripts/UI_Import/GuideCurvePreviewAuthority.cs
++++ b/Assets/Scripts/UI_Import/GuideCurvePreviewAuthority.cs
+@@ -116,7 +116,10 @@ public class GuideCurvePreviewAuthority : MonoBehaviour
+         if (manager == null) manager = FindFirstObjectByType<GuideCurveManager>();
+         if (viewer == null) viewer = FindFirstObjectByType<ModelViewer>();
+ 
+-        if (manager == null || viewer == null)
++        // The texture workspace parks the camera front-on against an opaque preview plane, and a
++        // curve still drawn there would be a purple stroke across a UV atlas. Nothing in this
++        // authority means anything in that mode, so it draws nothing at all.
++        if (manager == null || viewer == null || TextureModeProbe.Active)
+         {
+             HideAll();
+             return;
+@@ -305,11 +308,11 @@ public class GuideCurvePreviewAuthority : MonoBehaviour
+     // The same constant-on-screen sizing the handles use, so the curve and the points on it keep
+     // their proportions to each other at any zoom.
+     //
+-    // Deliberately the SAME formula as GuideCurveHandleAuthority.DrawRing, including the fact
+-    // that it has no orthographic case. Matching the handles is the whole point - a separately
+-    // correct orthographic branch here would only make the curve and its own handles disagree
+-    // about their size in the one mode (the texture editor's locked front view) where they are
+-    // both drawn under an orthographic camera.
++    // Deliberately the SAME formula as GuideCurveHandleAuthority.DrawRing, including the fact that
++    // it has no orthographic case. Matching the handles is the whole point, and there is nothing
++    // for an orthographic branch to be right about: the texture editor's locked front view was the
++    // only orthographic camera in the project, and neither this nor the handles draw there at all
++    // any more.
+     float WorldRadiusAt(Vector3 point)
+     {
+         Camera cam = viewer.mainCamera;
+diff --git a/Assets/Scripts/UI_Import/InfluenceRingPreviewAuthority.cs b/Assets/Scripts/UI_Import/InfluenceRingPreviewAuthority.cs
+index 0fc0ffd..c118306 100644
+--- a/Assets/Scripts/UI_Import/InfluenceRingPreviewAuthority.cs
++++ b/Assets/Scripts/UI_Import/InfluenceRingPreviewAuthority.cs
+@@ -18,7 +18,6 @@ public class InfluenceRingPreviewAuthority : MonoBehaviour
+     private FieldInfo placementModeField;
+     private FieldInfo placementRadiusField;
+     private FieldInfo placementFalloffField;
+-    private FieldInfo textureModeField;
+     private FieldInfo groomingModeField;
+ 
+     // Last frame on which a placement gesture was genuinely live, and this frame's cached
+@@ -61,7 +60,6 @@ public class InfluenceRingPreviewAuthority : MonoBehaviour
+             if (viewer != null)
+             {
+                 BindingFlags viewerFlags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
+-                textureModeField = typeof(ModelViewer).GetField("isTextureEditorMode", viewerFlags);
+                 groomingModeField = typeof(ModelViewer).GetField("isGroomingMode", viewerFlags);
+             }
+         }
+@@ -322,9 +320,13 @@ public class InfluenceRingPreviewAuthority : MonoBehaviour
+         return viewer != null && groomingModeField != null && groomingModeField.GetValue(viewer) is bool b && b;
+     }
+ 
++    // Delegated so every preview in the project answers this the same way. The body was the same
++    // reflection read the probe does; three files had written it out and four had not, and three
++    // of those four were drawing over the texture editor. (The fourth, ClumperRuntimeMarker, has
++    // never drawn anything at all - see the note in it.)
+     bool IsTextureMode()
+     {
+-        return viewer != null && textureModeField != null && textureModeField.GetValue(viewer) is bool b && b;
++        return TextureModeProbe.Active;
+     }
+ 
+     void EnsureRenderers()
+diff --git a/Assets/Scripts/UI_Import/PlacementBrushModeAuthority.cs b/Assets/Scripts/UI_Import/PlacementBrushModeAuthority.cs
+index a12a499..ae2099e 100644
+--- a/Assets/Scripts/UI_Import/PlacementBrushModeAuthority.cs
++++ b/Assets/Scripts/UI_Import/PlacementBrushModeAuthority.cs
+@@ -31,7 +31,6 @@ public class PlacementBrushModeAuthority : MonoBehaviour
+ 
+     private ModelViewer viewer;
+     private FieldInfo groomingModeField;
+-    private FieldInfo textureModeField;
+     private FieldInfo selectionModeField;
+     private FieldInfo selectionHotspotField;
+     private FieldInfo loadedModelField;
+@@ -96,7 +95,7 @@ public class PlacementBrushModeAuthority : MonoBehaviour
+         restoreSelectionState = selectionWasActive;
+         restorePending = false;
+ 
+-        if (!groomingEnabled || GetLoadedModel() == null || GetBool(textureModeField))
++        if (!groomingEnabled || GetLoadedModel() == null || TextureModeProbe.Active)
+         {
+             HideBrushPreview();
+             return;
+@@ -240,7 +239,6 @@ public class PlacementBrushModeAuthority : MonoBehaviour
+         BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
+         System.Type t = typeof(ModelViewer);
+         groomingModeField = t.GetField("isGroomingMode", flags);
+-        textureModeField = t.GetField("isTextureEditorMode", flags);
+         selectionModeField = t.GetField("isSelectionMode", flags);
+         selectionHotspotField = t.GetField("hasSelectionHotspot", flags);
+         loadedModelField = t.GetField("loadedModel", flags);
+diff --git a/Assets/Scripts/UI_Import/PlacementModeBannerAuthority.cs b/Assets/Scripts/UI_Import/PlacementModeBannerAuthority.cs
+index e333d11..02ae4c0 100644
+--- a/Assets/Scripts/UI_Import/PlacementModeBannerAuthority.cs
++++ b/Assets/Scripts/UI_Import/PlacementModeBannerAuthority.cs
+@@ -23,7 +23,6 @@ public class PlacementModeBannerAuthority : MonoBehaviour
+     private ModelViewer viewer;
+     private PlacementBrushModeAuthority placement;
+     private FieldInfo groomingModeField;
+-    private FieldInfo textureModeField;
+ 
+     private GameObject bannerObject;
+     private TextMeshProUGUI label;
+@@ -45,7 +44,6 @@ public class PlacementModeBannerAuthority : MonoBehaviour
+         viewer = null;
+         placement = null;
+         groomingModeField = null;
+-        textureModeField = null;
+         bannerObject = null;
+         label = null;
+         shadow = null;
+@@ -63,7 +61,7 @@ public class PlacementModeBannerAuthority : MonoBehaviour
+             return;
+         }
+ 
+-        if (!ReadBool(groomingModeField) || ReadBool(textureModeField))
++        if (!ReadBool(groomingModeField) || TextureModeProbe.Active)
+         {
+             SetVisible(false);
+             return;
+@@ -97,14 +95,12 @@ public class PlacementModeBannerAuthority : MonoBehaviour
+         {
+             viewer = FindFirstObjectByType<ModelViewer>();
+             groomingModeField = null;
+-            textureModeField = null;
+         }
+ 
+         if (viewer != null && groomingModeField == null)
+         {
+             BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
+             groomingModeField = typeof(ModelViewer).GetField("isGroomingMode", flags);
+-            textureModeField = typeof(ModelViewer).GetField("isTextureEditorMode", flags);
+         }
+ 
+         if (placement == null) placement = FindFirstObjectByType<PlacementBrushModeAuthority>();
+diff --git a/Assets/Scripts/UI_Import/SelectedClumperRadialPreviewAuthority.cs b/Assets/Scripts/UI_Import/SelectedClumperRadialPreviewAuthority.cs
+index d3bc1e3..3d3ac37 100644
+--- a/Assets/Scripts/UI_Import/SelectedClumperRadialPreviewAuthority.cs
++++ b/Assets/Scripts/UI_Import/SelectedClumperRadialPreviewAuthority.cs
+@@ -24,7 +24,9 @@ public class SelectedClumperRadialPreviewAuthority : MonoBehaviour
+         if (manager == null) manager = FindFirstObjectByType<GroupClumperManager>();
+         GroupClumperManager.GroupClumper clumper = manager != null ? manager.GetSelectedClumper() : null;
+ 
+-        if (clumper == null || clumper.mode == GroupClumperManager.ClumpMode.DispersedEvenly)
++        // Nothing groom-related draws while the texture workspace is up - see TextureModeProbe.
++        if (clumper == null || clumper.mode == GroupClumperManager.ClumpMode.DispersedEvenly ||
++            TextureModeProbe.Active)
+         {
+             SetVisible(false);
+             return;
+diff --git a/Assets/Scripts/UI_Import/SelectionBrushVisualizer.cs b/Assets/Scripts/UI_Import/SelectionBrushVisualizer.cs
+index a6a4461..36685a0 100644
+--- a/Assets/Scripts/UI_Import/SelectionBrushVisualizer.cs
++++ b/Assets/Scripts/UI_Import/SelectionBrushVisualizer.cs
+@@ -19,7 +19,6 @@ public class SelectionBrushVisualizer : MonoBehaviour
+     private FieldInfo hitPointField;
+     private FieldInfo hitNormalField;
+     private FieldInfo groomingField;
+-    private FieldInfo textureModeField;
+ 
+     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+     static void Spawn()
+@@ -60,7 +59,7 @@ public class SelectionBrushVisualizer : MonoBehaviour
+         // and this is active.
+         bool onMenuScreen = viewer.uiContainer != null && viewer.uiContainer.activeInHierarchy;
+ 
+-        if (onMenuScreen || (!GetBool(groomingField) && !armedForPost) || GetBool(textureModeField) ||
++        if (onMenuScreen || (!GetBool(groomingField) && !armedForPost) || TextureModeProbe.Active ||
+             viewer.mainCamera == null || Mouse.current == null)
+         {
+             Hide();
+@@ -136,7 +135,6 @@ public class SelectionBrushVisualizer : MonoBehaviour
+         hitPointField = type.GetField("selectionHitPoint", flags);
+         hitNormalField = type.GetField("selectionHitNormal", flags);
+         groomingField = type.GetField("isGroomingMode", flags);
+-        textureModeField = type.GetField("isTextureEditorMode", flags);
+     }
+ 
+     void EnsureLines()
+diff --git a/Assets/Scripts/UI_Import/TextureModeProbe.cs b/Assets/Scripts/UI_Import/TextureModeProbe.cs
+new file mode 100644
+index 0000000..da634ca
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/TextureModeProbe.cs
+@@ -0,0 +1,61 @@
++using System.Reflection;
++using UnityEngine;
++
++// "Is the Texture Editor open?", asked in one place so every caller gets the same answer.
++//
++// Every viewport preview in this project has to stand down while the texture workspace is up. That
++// workspace parks the camera front-on against a texture preview plane and expects to have the view
++// to itself, and it does not get it for free: the plane sits at z = 1.5 while the model and every
++// ring and curve hanging off it sit at the origin, with the camera at z = -3 looking down +z. So
++// the previews are all IN FRONT of the plane. Nothing is hidden by it, depth test or no depth test
++// - a guide left drawing there lays a purple curve straight across the atlas.
++//
++// Seven previews needed this test. Three had written their own copy of it and four had none.
++//
++// ModelViewer.isTextureEditorMode is the answer, and it is private, so reflection is the way in -
++// the same way half a dozen scripts already reached it. The obvious alternative, testing whether
++// TextureEditorPanel is active, is strictly worse here: the panel is created lazily the first time
++// the editor is opened, so a session that never opens it would have nothing to find and would go
++// on searching the whole scene for it forever. It would also answer no later than the flag does
++// and never sooner - SwitchEditorMode sets the flag and only then activates the panel, and it is
++// the only thing in the project that activates it at all.
++public static class TextureModeProbe
++{
++    private static ModelViewer viewer;
++    private static FieldInfo flagField;
++
++    // Statics do not clear themselves when Disable Domain Reload is on, and viewer holds a
++    // reference into a scene that no longer exists.
++    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
++    static void ResetStatics()
++    {
++        viewer = null;
++        flagField = null;
++    }
++
++    public static bool Active
++    {
++        get
++        {
++            if (viewer == null)
++            {
++                viewer = Object.FindFirstObjectByType<ModelViewer>();
++                flagField = null;
++            }
++            if (viewer == null) return false;
++
++            if (flagField == null)
++            {
++                flagField = typeof(ModelViewer).GetField("isTextureEditorMode",
++                    BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
++            }
++            if (flagField == null) return false;
++
++            // Read fresh every time rather than cached per frame. The flag flips inside a button
++            // click, at execution order 0, and PlacementBrushModeAuthority asks this question at
++            // order -5000 - before that click has happened. A frame-cached answer would hand that
++            // authority's stale reading to everyone who asked later in the same frame.
++            return flagField.GetValue(viewer) is bool active && active;
++        }
++    }
++}
+diff --git a/Assets/Scripts/UI_Import/TextureModeProbe.cs.meta b/Assets/Scripts/UI_Import/TextureModeProbe.cs.meta
+new file mode 100644
+index 0000000..c814e0a
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/TextureModeProbe.cs.meta
+@@ -0,0 +1,2 @@
++fileFormatVersion: 2
++guid: 1858dced4d1a468b908dd7363d1fb51c
