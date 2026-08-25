@@ -38,7 +38,17 @@ public class GuideCurveHandleAuthority : MonoBehaviour
 {
     // Grab radius in PIXELS. Handles are drawn at a constant pixel size too, so a guide stays
     // equally grabbable whether the camera is up against the scalp or backed off the whole head.
-    private const float HandlePixelRadius = 9f;
+    // 12 rather than the 9 this started at. At 9 the inner points, drawn at .78 of it, were
+    // fourteen pixels across on a curve that can carry twenty of them - small enough that
+    // picking one out from the curve running behind it took a second look. At 12 they are about
+    // nineteen, and the tip that cannot be removed is twenty four.
+    //
+    // The grab radius deliberately does NOT move with it. It is already wider than the drawn
+    // handle, which is what makes a slightly-off grab forgiving, and it doubles as the band
+    // InsertPointAt refuses to insert inside - so widening it would shrink the gap between two
+    // neighbouring points that will still accept a new one, on exactly the crowded guides where
+    // that gap is already the tightest.
+    private const float HandlePixelRadius = 12f;
     private const float GrabPixelRadius = 16f;
     private const int CircleSegments = 28;
 
