@@ -1,0 +1,650 @@
+diff --git a/Assets/Scripts/UI_Import/GroupAddButtonPlacementAuthority.cs b/Assets/Scripts/UI_Import/GroupAddButtonPlacementAuthority.cs
+index 4b19158..e4a89d0 100644
+--- a/Assets/Scripts/UI_Import/GroupAddButtonPlacementAuthority.cs
++++ b/Assets/Scripts/UI_Import/GroupAddButtonPlacementAuthority.cs
+@@ -572,6 +572,9 @@ public class GroupAddButtonPlacementAuthority : MonoBehaviour
+ public class GroupAddRowUIAuthority : MonoBehaviour
+ {
+     private const string RowPrefix = "GroupAddRow_";
++
++    public const string CopyButtonName = "GroupCopyParamsButton";
++    public const string PasteButtonName = "GroupPasteParamsButton";
+     private const float ScanInterval = .15f;
+     private const float RowHeight = 26f;
+     private const float ButtonHeight = 20f;
+@@ -688,24 +691,44 @@ public class GroupAddRowUIAuthority : MonoBehaviour
+ 
+         int captured = gid;
+ 
+-        GameObject postButton = BuildButton(row.transform, "AddPostButton", "+POST", 66f);
++        GameObject postButton = BuildButton(row.transform, "AddPostButton", "+POST", 52f);
+         postButton.GetComponent<Button>().onClick.AddListener(delegate
+         {
+             GroupAddButtonPlacementAuthority.Arm(GroupAddButtonPlacementAuthority.AddKind.Post, captured);
+         });
+ 
+-        GameObject clumperButton = BuildButton(row.transform, "AddClumperButton", "+CLUMPER", 86f);
++        GameObject clumperButton = BuildButton(row.transform, "AddClumperButton", "+CLUMPER", 70f);
+         clumperButton.GetComponent<Button>().onClick.AddListener(delegate
+         {
+             GroupAddButtonPlacementAuthority.Arm(GroupAddButtonPlacementAuthority.AddKind.Clumper, captured);
+         });
+ 
+-        GameObject guideButton = BuildButton(row.transform, "AddGuideButton", "+GUIDE", 70f);
++        GameObject guideButton = BuildButton(row.transform, "AddGuideButton", "+GUIDE", 58f);
+         guideButton.GetComponent<Button>().onClick.AddListener(delegate
+         {
+             GroupAddButtonPlacementAuthority.Arm(GroupAddButtonPlacementAuthority.AddKind.Guide, captured);
+         });
+ 
++        // COPY and PASTE move a group's whole parameter block to another group. They sit on this
++        // row rather than in the right panel because that makes the group they act on the row's
++        // own, rather than whichever one happens to be selected - the one thing that has to be
++        // unambiguous when the whole point is moving settings between two of them.
++        //
++        // The three add buttons lost width to make room. There is about 314 units of usable strip
++        // once the panel's 10, the content layout's 5 and this row's 8 are paid for on each side;
++        // five buttons at 52 + 70 + 58 + 44 + 50 and four 6-unit gaps come to 298.
++        GameObject copyButton = BuildButton(row.transform, CopyButtonName, "COPY", 44f);
++        copyButton.GetComponent<Button>().onClick.AddListener(delegate
++        {
++            GroupParameterClipboardAuthority.Copy(captured);
++        });
++
++        GameObject pasteButton = BuildButton(row.transform, PasteButtonName, "PASTE", 50f);
++        pasteButton.GetComponent<Button>().onClick.AddListener(delegate
++        {
++            GroupParameterClipboardAuthority.Paste(captured);
++        });
++
+         return row;
+     }
+ 
+@@ -759,6 +782,30 @@ public class GroupAddRowUIAuthority : MonoBehaviour
+         PaintButton(row, "AddGuideButton",
+             armedHere && GroupAddButtonPlacementAuthority.ArmedKind == GroupAddButtonPlacementAuthority.AddKind.Guide,
+             new Color(.26f, .20f, .34f, 1f));
++
++        // COPY is always available. PASTE lights only once something has been copied, and stays
++        // lit for the rest of the session or until COPY is pressed again, so the button itself
++        // answers "do I have anything to paste" without the user having to remember.
++        PaintButton(row, CopyButtonName, false, new Color(.30f, .28f, .20f, 1f));
++        PaintPasteButton(row);
++    }
++
++    static void PaintPasteButton(Transform row)
++    {
++        Transform child = row.Find(PasteButtonName);
++        if (child == null) return;
++
++        bool ready = GroupParameterClipboardAuthority.HasCopy;
++
++        Image image = child.GetComponent<Image>();
++        if (image != null)
++            image.color = ready ? new Color(.44f, .38f, .16f, 1f) : new Color(.17f, .17f, .18f, 1f);
++
++        // The label greys with it. The button is deliberately left clickable so that pressing it
++        // with an empty clipboard says why, rather than doing nothing at all.
++        TextMeshProUGUI label = child.GetComponentInChildren<TextMeshProUGUI>(true);
++        if (label != null)
++            label.color = ready ? Color.white : new Color(.55f, .55f, .58f, 1f);
+     }
+ 
+     static void PaintButton(Transform row, string objectName, bool armed, Color idle)
+diff --git a/Assets/Scripts/UI_Import/GroupParameterClipboardAuthority.cs b/Assets/Scripts/UI_Import/GroupParameterClipboardAuthority.cs
+new file mode 100644
+index 0000000..f74b973
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/GroupParameterClipboardAuthority.cs
+@@ -0,0 +1,420 @@
++using System.Collections.Generic;
++using System.Reflection;
++using UnityEngine;
++
++// COPY PARAMS / PASTE PARAMS: one group's settings onto another.
++//
++// Everything a group owns travels except the modifiers. POSTs, clumpers and guides are anchored
++// to points on the model, so copying them would put another group's hair-shaping in places that
++// mean nothing on the target. What does travel is the shape block, the eleven profile curves,
++// all thirteen variance channels, single or double sided, normal flip, and the UV settings.
++//
++// WHERE A GROUP'S SHAPE ACTUALLY LIVES
++//
++// Nowhere, is the short answer, and that shapes this whole file. There is no per-group slider
++// block in the project format - the save file has ONE global block - so a group's shape exists
++// only on its cards, with GroomRootStateAuthority keeping an opportunistic cache of it.
++//
++// Rather than re-derive that, both buttons select their own group first and then read or write
++// through the panel. ModelViewer.SyncShapeSlidersToGroupRoot already knows how to recover a
++// group's real settings - stored root, else the median of the group's own cards, else defaults -
++// so selecting the source group and reading viewer.current* afterwards reuses that answer
++// instead of writing a second, quietly different one. It also matches what a person would do
++// anyway: click the group you are copying from.
++public static class GroupParameterClipboardAuthority
++{
++    // Session-only: nothing here is written to a project file. It does survive opening another
++    // project, deliberately - the clip holds plain numbers, not references to anything that could
++    // go stale, and carrying a group's settings from one file into the next is useful rather than
++    // surprising. What it must not survive is a domain reload, hence the reset below.
++    private sealed class Clip
++    {
++        public GroomRootStateAuthority.RootState shape;
++        public List<VarianceChannelSaveData> variances;
++        public Dictionary<GroomShapeCurveChannel, List<GroomCurveKeySaveData>> curves;
++        public bool singleSided;
++        public bool normalFlipped;
++        public bool predeterminedUVs;
++        public int uvMinId;
++        public int uvMaxId;
++        public int uvSeed;
++        public int sourceGroupId;
++    }
++
++    private static Clip clip;
++
++    public static bool HasCopy
++    {
++        get { return clip != null; }
++    }
++
++    private static readonly GroomShapeCurveChannel[] Channels =
++    {
++        GroomShapeCurveChannel.Bend,
++        GroomShapeCurveChannel.X,
++        GroomShapeCurveChannel.Y,
++        GroomShapeCurveChannel.Z,
++        GroomShapeCurveChannel.CurlFrequency,
++        GroomShapeCurveChannel.CurlDiameter,
++        GroomShapeCurveChannel.SegmentDensity,
++        GroomShapeCurveChannel.Width,
++        GroomShapeCurveChannel.WaveAmplitude,
++        GroomShapeCurveChannel.WaveFrequency,
++        GroomShapeCurveChannel.WaveDirection,
++    };
++
++    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
++    static void ResetOnEnterPlayMode()
++    {
++        // A clipboard surviving "Disable Domain Reload" would offer to paste a group that no
++        // longer exists, from a session that has ended.
++        clip = null;
++    }
++
++    // ------------------------------------------------------------------------------- copy
++
++    public static void Copy(int groupId)
++    {
++        ModelViewer viewer = Object.FindFirstObjectByType<ModelViewer>();
++        if (viewer == null) return;
++
++        // A selected POST swallows panel edits into its own delta, and - worse for a copy - the
++        // curve registry holds the POST's private Bend/X/Y/Z curves while it is presented, so
++        // Export would hand back the POST's shape as if it were the group's.
++        LeaveModifierContext(viewer);
++        SelectGroup(viewer, groupId);
++
++        Clip fresh = new Clip();
++        fresh.sourceGroupId = groupId;
++        fresh.shape = ReadViewerRoot(viewer);
++
++        GroomVarianceController variance = Object.FindFirstObjectByType<GroomVarianceController>();
++        if (variance != null) fresh.variances = variance.ExportGroupSettings(groupId);
++
++        fresh.curves = new Dictionary<GroomShapeCurveChannel, List<GroomCurveKeySaveData>>();
++        foreach (GroomShapeCurveChannel channel in Channels)
++        {
++            fresh.curves[channel] = GroomShapeCurveRegistry.Export(groupId, channel);
++        }
++
++        fresh.singleSided = GroupSidednessAuthority.IsSingleSided(groupId);
++        fresh.normalFlipped = GroupNormalFlipAuthority.IsFlipped(groupId);
++        ReadGroupUV(groupId, fresh);
++
++        clip = fresh;
++        StatusToast.Show("Copied group " + groupId + " parameters. PASTE is now available.");
++    }
++
++    // ------------------------------------------------------------------------------ paste
++
++    public static void Paste(int groupId)
++    {
++        if (clip == null)
++        {
++            StatusToast.Show("Nothing copied yet. Press COPY on a group first.");
++            return;
++        }
++
++        ModelViewer viewer = Object.FindFirstObjectByType<ModelViewer>();
++        if (viewer == null) return;
++
++        LeaveModifierContext(viewer);
++        SelectGroup(viewer, groupId);
++
++        // The order below is not arbitrary; each step depends on the one before it.
++
++        // 1. Curves first. They are mesh inputs only, so having them in place means the card
++        //    sweep in step 3 rebuilds each card once with the final profiles instead of twice.
++        foreach (GroomShapeCurveChannel channel in Channels)
++        {
++            List<GroomCurveKeySaveData> keys;
++            if (!clip.curves.TryGetValue(channel, out keys)) continue;
++            GroomShapeCurveRegistry.Import(groupId, channel, keys);
++        }
++
++        // 2. Sidedness and normal flip. The flip is picked up on the next mesh rebuild rather
++        //    than applied directly, so setting it before the sweep gets it for free.
++        GroupSidednessAuthority.SetSingleSided(groupId, clip.singleSided);
++        GroupNormalFlipAuthority.SetFlipped(groupId, clip.normalFlipped);
++
++        // 3. The shape block: panel, root cache, then the cards.
++        WriteViewerRoot(viewer, clip.shape);
++        WriteAdjustableUV(viewer, groupId, clip.shape);
++        StoreRootState(groupId, clip.shape);
++        ApplyShapeToCards(groupId, clip.shape);
++
++        // 4. UV mode and range. In PREDETERMINED mode this rewrites every card's UVs
++        //    canonically, so it has to have the last word over step 3.
++        WriteGroupUV(groupId, clip);
++
++        // 5. Variance last. It re-varies every card around the group's ROOT, which step 3 has
++        //    only just written - run earlier, every card would be varied around the numbers the
++        //    target group had before the paste.
++        GroomVarianceController variance = Object.FindFirstObjectByType<GroomVarianceController>();
++        if (variance != null && clip.variances != null) variance.ImportGroupSettings(groupId, clip.variances);
++
++        GroomShapeCurveRegistry.RefreshGroup(groupId);
++        GroomShapeCurveEditor editor = Object.FindFirstObjectByType<GroomShapeCurveEditor>();
++        if (editor != null) editor.RefreshAll();
++
++        viewer.SyncShapeSlidersToGroupRoot(groupId);
++
++        StatusToast.Show("Pasted group " + clip.sourceGroupId + " parameters onto group " + groupId + ".");
++    }
++
++    // --------------------------------------------------------------------------- helpers
++
++    // A POST or CLUMPER still being edited would eat everything written below, and a live brush
++    // selection would make SetParameters lerp the write against each card's weight instead of
++    // applying it.
++    static void LeaveModifierContext(ModelViewer viewer)
++    {
++        // FIRST, before anything below touches it. ReleasePostSelection's last act is to clear
++        // hasSelectionHotspot, and that is the flag this teardown tests to decide whether there
++        // is a brush selection to tear down - run afterwards it always reads false and never
++        // does anything.
++        //
++        // It matters because ReleasePostSelection clears only that one flag and leaves
++        // isSelectionMode set, and ModelViewer refuses to place hair while THAT is set. A COPY
++        // pressed with a brush selection live would otherwise switch card placement off for the
++        // rest of the session with nothing on screen to explain it, and nothing self-heals:
++        // HasLiveSelection returns early on hasSelectionHotspot before it can clean up.
++        ClearSelectionHotspot(viewer);
++
++        PostAffectorManager posts = Object.FindFirstObjectByType<PostAffectorManager>();
++        if (posts != null) posts.ReleasePostSelection();
++
++        GroupClumperManager clumpers = Object.FindFirstObjectByType<GroupClumperManager>();
++        if (clumpers != null) clumpers.ClearSelection();
++
++        GuideCurveManager guides = Object.FindFirstObjectByType<GuideCurveManager>();
++        if (guides != null) guides.ClearSelection();
++
++        // And only now can the curves be trusted. See EnsurePresentationReleased.
++        PostShapeCurveBridge.EnsurePresentationReleased();
++    }
++
++    static void ClearSelectionHotspot(ModelViewer viewer)
++    {
++        if (viewer == null) return;
++
++        // Only when there is something to tear down. Run unconditionally it would zero brush
++        // weights nobody asked it to touch.
++        FieldInfo flag = typeof(ModelViewer).GetField("hasSelectionHotspot",
++            BindingFlags.Instance | BindingFlags.NonPublic);
++        if (flag == null || !(flag.GetValue(viewer) is bool active) || !active) return;
++
++        MethodInfo clear = typeof(ModelViewer).GetMethod("ClearSelectionHotspot",
++            BindingFlags.Instance | BindingFlags.NonPublic);
++        if (clear != null) clear.Invoke(viewer, null);
++    }
++
++    // Always succeeds - the fallback covers the only way it could not - so callers do not test
++    // it. Kept as a separate step because getting the group current is a precondition for
++    // everything either button does, and burying it in the caller reads as if it were optional.
++    static void SelectGroup(ModelViewer viewer, int groupId)
++    {
++        MethodInfo select = typeof(ModelViewer).GetMethod("SelectGroup",
++            BindingFlags.Instance | BindingFlags.NonPublic);
++        if (select == null)
++        {
++            // SyncShapeSlidersToGroupRoot does not touch the four UV fields - SelectGroup writes
++            // those itself from the group dictionaries - so the fallback has to do the same or
++            // it would read the previously selected group's UVs.
++            viewer.currentGroupId = groupId;
++            viewer.currentUScale = GroupFloat(viewer, "groupUScales", groupId, 1f);
++            viewer.currentVScale = GroupFloat(viewer, "groupVScales", groupId, 1f);
++            viewer.currentUOffset = GroupFloat(viewer, "groupUOffsets", groupId, 0f);
++            viewer.currentVOffset = GroupFloat(viewer, "groupVOffsets", groupId, 0f);
++            viewer.SyncShapeSlidersToGroupRoot(groupId);
++            return;
++        }
++
++        select.Invoke(viewer, new object[] { groupId });
++    }
++
++    static GroomRootStateAuthority.RootState ReadViewerRoot(ModelViewer viewer)
++    {
++        return new GroomRootStateAuthority.RootState
++        {
++            length = viewer.currentLength,
++            width = viewer.currentWidth,
++            segments = viewer.currentSegments,
++            bend = viewer.currentBend,
++            twist = viewer.currentTwist,
++            depth = viewer.currentEmbedDepth,
++            x = viewer.currentOffsetX,
++            y = viewer.currentOffsetY,
++            z = viewer.currentOffsetZ,
++            uScale = viewer.currentUScale,
++            vScale = viewer.currentVScale,
++            uOffset = viewer.currentUOffset,
++            vOffset = viewer.currentVOffset,
++            curlFrequency = viewer.currentCurlFrequency,
++            curlDiameter = viewer.currentCurlDiameter,
++            waveAmplitude = viewer.currentWaveAmplitude,
++            waveFrequency = viewer.currentWaveFrequency,
++            waveDirection = viewer.currentWaveDirection,
++            arch = viewer.currentArch
++        };
++    }
++
++    static void WriteViewerRoot(ModelViewer viewer, GroomRootStateAuthority.RootState s)
++    {
++        viewer.currentLength = s.length;
++        viewer.currentWidth = s.width;
++        viewer.currentSegments = s.segments;
++        viewer.currentBend = s.bend;
++        viewer.currentTwist = s.twist;
++        viewer.currentEmbedDepth = s.depth;
++        viewer.currentOffsetX = s.x;
++        viewer.currentOffsetY = s.y;
++        viewer.currentOffsetZ = s.z;
++        viewer.currentUScale = s.uScale;
++        viewer.currentVScale = s.vScale;
++        viewer.currentUOffset = s.uOffset;
++        viewer.currentVOffset = s.vOffset;
++        viewer.currentCurlFrequency = s.curlFrequency;
++        viewer.currentCurlDiameter = s.curlDiameter;
++        viewer.currentWaveAmplitude = s.waveAmplitude;
++        viewer.currentWaveFrequency = s.waveFrequency;
++        viewer.currentWaveDirection = s.waveDirection;
++        viewer.currentArch = s.arch;
++    }
++
++    // Without this the paste is undone on the very next frame. GroomRootStateAuthority runs at
++    // order -1100 and, for a group that carries a modifier, writes its STORED root back over
++    // whatever is on the panel. Storing the pasted block first makes that restore a no-op.
++    static void StoreRootState(int groupId, GroomRootStateAuthority.RootState state)
++    {
++        GroomRootStateAuthority authority = Object.FindFirstObjectByType<GroomRootStateAuthority>();
++        if (authority == null) return;
++
++        FieldInfo field = typeof(GroomRootStateAuthority).GetField("roots",
++            BindingFlags.Instance | BindingFlags.NonPublic);
++        if (field?.GetValue(authority) is Dictionary<int, GroomRootStateAuthority.RootState> roots)
++            roots[groupId] = state;
++    }
++
++    // The four adjustable-UV values live in ModelViewer dictionaries as well as on the cards,
++    // and GroupPredeterminedUVController reads them back out when a group leaves PREDETERMINED
++    // mode. Left stale, switching the target group back to ADJUSTABLE would restore the UVs it
++    // had before the paste.
++    static void WriteAdjustableUV(ModelViewer viewer, int groupId, GroomRootStateAuthority.RootState s)
++    {
++        SetGroupFloat(viewer, "groupUScales", groupId, s.uScale);
++        SetGroupFloat(viewer, "groupVScales", groupId, s.vScale);
++        SetGroupFloat(viewer, "groupUOffsets", groupId, s.uOffset);
++        SetGroupFloat(viewer, "groupVOffsets", groupId, s.vOffset);
++    }
++
++    static float GroupFloat(ModelViewer viewer, string fieldName, int groupId, float fallback)
++    {
++        FieldInfo field = typeof(ModelViewer).GetField(fieldName,
++            BindingFlags.Instance | BindingFlags.NonPublic);
++        if (field?.GetValue(viewer) is Dictionary<int, float> map && map.TryGetValue(groupId, out float value))
++            return value;
++        return fallback;
++    }
++
++    static void SetGroupFloat(ModelViewer viewer, string fieldName, int groupId, float value)
++    {
++        FieldInfo field = typeof(ModelViewer).GetField(fieldName,
++            BindingFlags.Instance | BindingFlags.NonPublic);
++        if (field?.GetValue(viewer) is Dictionary<int, float> map) map[groupId] = value;
++    }
++
++    // Written straight onto the cards rather than through ModelViewer's slider handlers, for
++    // two reasons: those handlers apply their value as a DELTA when the panel is in REL mode,
++    // and they divert to the single active card whenever a brush selection is live. Neither is
++    // wanted here, and both are private state this component would otherwise have to reach into
++    // and put back. GroomSessionResetCoordinator.ResetCurrentGroup writes the group the same way.
++    static void ApplyShapeToCards(int groupId, GroomRootStateAuthority.RootState s)
++    {
++        foreach (HairCard card in Object.FindObjectsByType<HairCard>(FindObjectsSortMode.None))
++        {
++            if (card == null || card.groupId != groupId) continue;
++
++            // SetParameters interpolates against the card's base state while its brush weight
++            // is above zero, so a card still under the brush would take a fraction of the paste.
++            // Not restored afterwards, deliberately: LeaveModifierContext has already torn the
++            // brush selection down, so zero is where these are meant to end up. This is the
++            // backstop for a weight left behind by something that did not go through it.
++            card.SetSelectionWeight(0f);
++            card.SetParameters(
++                Mathf.Max(.0001f, s.length), Mathf.Max(.0005f, s.width),
++                Mathf.Clamp(s.segments, 4, 60), s.bend, s.twist,
++                s.x, s.y, s.z, s.depth, 1f,
++                s.uScale, s.vScale, s.uOffset, s.vOffset,
++                s.curlFrequency, s.curlDiameter,
++                s.waveAmplitude, s.waveFrequency, s.waveDirection, s.arch);
++        }
++    }
++
++    // ------------------------------------------------------------------------------ UV mode
++
++    static void ReadGroupUV(int groupId, Clip into)
++    {
++        GroupPredeterminedUVController controller = Object.FindFirstObjectByType<GroupPredeterminedUVController>();
++        if (controller == null) return;
++
++        // PopulateGroupSave is the controller's own public reader and fills all four at once.
++        // The same throwaway-payload trick GroupRootUVModeAuthority already uses to ask this.
++        GroupSaveData probe = new GroupSaveData { groupId = groupId };
++        controller.PopulateGroupSave(probe);
++
++        into.predeterminedUVs = probe.usePredeterminedUVs;
++        into.uvMinId = probe.uvRectMinId;
++        into.uvMaxId = probe.uvRectMaxId;
++        into.uvSeed = probe.uvRectSeed;
++    }
++
++    static void WriteGroupUV(int groupId, Clip from)
++    {
++        GroupPredeterminedUVController controller = Object.FindFirstObjectByType<GroupPredeterminedUVController>();
++        if (controller == null) return;
++
++        BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
++
++        GroupSaveData current = new GroupSaveData { groupId = groupId };
++        controller.PopulateGroupSave(current);
++
++        // Mode first, range second. ToggleMode's turn-on branch has a "the user never chose a
++        // range" heuristic that replaces 1..1 with the full set of rectangles whenever more than
++        // one exists - so a group deliberately pinned to rectangle 1 would silently arrive using
++        // all of them, but only when the target happened to be in ADJUSTABLE mode beforehand.
++        // Writing the range afterwards makes the paste land the same way either way.
++        //
++        // ToggleMode is a toggle, not a setter, so it is only called when the two disagree.
++        if (current.usePredeterminedUVs != from.predeterminedUVs)
++        {
++            MethodInfo toggle = typeof(GroupPredeterminedUVController).GetMethod("ToggleMode", flags);
++            if (toggle != null) toggle.Invoke(controller, new object[] { groupId });
++        }
++
++        // Min and max, TWICE. SetRangeValue normalises after every single write, and part of
++        // normalising is swapping the pair when min ends up above max - which it does on the
++        // first write whenever the pasted min is above the target's current max. One more round
++        // settles it from either direction: 1..1 taking 3..6 goes 1..3, then 3..6.
++        MethodInfo setRange = typeof(GroupPredeterminedUVController).GetMethod("SetRangeValue", flags);
++        if (setRange != null)
++        {
++            for (int pass = 0; pass < 2; pass++)
++            {
++                setRange.Invoke(controller, new object[] { groupId, true, from.uvMinId.ToString() });
++                setRange.Invoke(controller, new object[] { groupId, false, from.uvMaxId.ToString() });
++            }
++        }
++
++        MethodInfo setSeed = typeof(GroupPredeterminedUVController).GetMethod("SetSeed", flags);
++        if (setSeed != null) setSeed.Invoke(controller, new object[] { groupId, from.uvSeed.ToString() });
++
++        // The controller skips re-applying a card whose assignment signature is unchanged, so
++        // without clearing that the cards keep the rectangles they already had.
++        MethodInfo clearApplied = typeof(GroupPredeterminedUVController).GetMethod("ClearAppliedForGroup", flags);
++        if (clearApplied != null) clearApplied.Invoke(controller, new object[] { groupId });
++
++        MethodInfo forceApply = typeof(GroupPredeterminedUVController).GetMethod("ForceApplyGroup", flags);
++        if (forceApply != null) forceApply.Invoke(controller, new object[] { groupId });
++    }
++}
+diff --git a/Assets/Scripts/UI_Import/GroupParameterClipboardAuthority.cs.meta b/Assets/Scripts/UI_Import/GroupParameterClipboardAuthority.cs.meta
+new file mode 100644
+index 0000000..99f1c1e
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/GroupParameterClipboardAuthority.cs.meta
+@@ -0,0 +1,2 @@
++fileFormatVersion: 2
++guid: add0f69d716f45bcbf52fc4d729745dc
+diff --git a/Assets/Scripts/UI_Import/HairCard.cs b/Assets/Scripts/UI_Import/HairCard.cs
+index 23f6721..05d1212 100644
+--- a/Assets/Scripts/UI_Import/HairCard.cs
++++ b/Assets/Scripts/UI_Import/HairCard.cs
+@@ -614,8 +614,13 @@ public class HairCard : MonoBehaviour
+     // and only the per-frame re-assertion paths (ApplyEvaluatedState, SetParameters) call it.
+     // Every path that MUST write - ThreeColumnClumperMeshAuthority.RestoreRemovedGroups,
+     // GroupClumperManager.RemoveClumper, GroomShapeCurveRegistry.RefreshGroup,
+-    // PostShapeCurveBridge, PostPredeterminedUVAuthority - calls GenerateMesh() directly and
+-    // is completely unaffected.
++    // PostPredeterminedUVAuthority - calls GenerateMesh() directly and is completely unaffected.
++    //
++    // PostShapeCurveBridge used to be on that list and no longer is. Its per-frame pass attaches
++    // POST profile provenance to every card inside the radius, which is a re-assertion rather
++    // than a must-write: the values are identical frame after frame until the user moves
++    // something. Rebuilding them unconditionally was most of the cost of having a POST on screen
++    // at all, and the hash covers every input on that path.
+     //
+     // On top of that there are three independent escape hatches, any one of which forces a
+     // real rebuild even when the hash matches: the foreignMeshWrite flag, the shared curve
+@@ -1043,6 +1048,20 @@ public class HairCard : MonoBehaviour
+ 
+     public void SetSelectionWeight(float weight) { selectionWeight = Mathf.Clamp01(weight); UpdateVisualHighlight(); }
+ 
++    // The same assignment without the highlight pass, for a caller that is about to put the
++    // weight straight back.
++    //
++    // UpdateVisualHighlight is not a cheap no-op at zero: it takes the revert branch, which
++    // DESTROYS this card's material instance, and restoring the weight then allocates a new
++    // one. A caller that drops the weight to zero purely to bypass SetParameters' internal
++    // interpolation therefore destroys and re-creates a Unity Material for every card under
++    // its brush, every frame - hundreds of native allocations a second to change nothing that
++    // is ever drawn, since both writes land inside the same frame.
++    public void SetSelectionWeightSilent(float weight)
++    {
++        selectionWeight = Mathf.Clamp01(weight);
++    }
++
+     // Bumped whenever a hair card enters or leaves the scene.
+     //
+     // Lets anything that needs to notice a membership change do it with one integer compare
+diff --git a/Assets/Scripts/UI_Import/PostShapeCurveBridge.cs b/Assets/Scripts/UI_Import/PostShapeCurveBridge.cs
+index 8e4db4f..96fa99d 100644
+--- a/Assets/Scripts/UI_Import/PostShapeCurveBridge.cs
++++ b/Assets/Scripts/UI_Import/PostShapeCurveBridge.cs
+@@ -145,15 +145,22 @@ public class PostShapeCurveBridge : MonoBehaviour
+             // LateUpdate. Regenerate only the mesh so the newly attached profile provenance
+             // is applied without feeding anything back into canonical state.
+             //
+-            // This rebuild used to be unconditional, which meant a project with NO POSTs at
+-            // all still paid a second full GenerateMesh() for every card in the scene, every
+-            // frame, to attach provenance that did not exist. A card that had no
+-            // contributions last frame and has none this frame cannot have changed here, so
+-            // there is nothing to rebuild. Any other combination - gained one, lost one,
+-            // still has some - still rebuilds exactly as before.
++            // The count test skips the cards a POST does not touch at all. It cannot answer
++            // for the ones it does: a card inside the radius keeps its contributions frame
++            // after frame, falls through, and used to hit the unconditional GenerateMesh -
++            // a full procedural rebuild of every card under the POST, every frame, whether
++            // or not a single number had moved. That is the cost of "the viewport gets heavy
++            // once a POST exists".
++            //
++            // GenerateMeshIfInputsChanged answers it properly, and the hash it compares
++            // already covers this path completely: postId and the bend/x/y/z of every
++            // contribution are hashed individually, PostShapeCurveBridge.Epoch covers a
++            // change of which POST is presented, and GroomShapeCurveRegistry.EpochFor covers
++            // a curve key being dragged in place. Nothing reaches the mesh here that the hash
++            // cannot see.
+             if (contributionsBefore == 0 && card.PostShapeProfileContributionCount == 0) continue;
+ 
+-            card.GenerateMesh();
++            card.GenerateMeshIfInputsChanged();
+         }
+     }
+ 
+@@ -351,6 +358,20 @@ public class PostShapeCurveBridge : MonoBehaviour
+         BumpEpoch();
+     }
+ 
++    // Resolves the presentation swap NOW rather than on this component's next Update.
++    //
++    // While a POST is selected the curve registry holds that POST's private Bend/X/Y/Z for its
++    // group, with the real group root stashed aside. Anything that reads or writes the registry
++    // outside the normal per-frame order has to settle that first: reading without it exports a
++    // POST's curves as the group's, and writing without it has the swap-back overwrite what was
++    // just written AND store it into the POST on the way past. Deselecting the POST is not
++    // enough on its own - that only sets a field this component reads on its next pass.
++    public static void EnsurePresentationReleased()
++    {
++        if (live == null) return;
++        live.SyncPresentedCurveContext();
++    }
++
+     void SyncPresentedCurveContext()
+     {
+         int activeId = GetActiveId();
+diff --git a/Assets/Scripts/UI_Import/SelectionLocalizedEditAuthority.cs b/Assets/Scripts/UI_Import/SelectionLocalizedEditAuthority.cs
+index 765d66c..2cedbc1 100644
+--- a/Assets/Scripts/UI_Import/SelectionLocalizedEditAuthority.cs
++++ b/Assets/Scripts/UI_Import/SelectionLocalizedEditAuthority.cs
+@@ -112,15 +112,20 @@ public class SelectionLocalizedEditAuthority : MonoBehaviour
+             // SetParameters normally applies selectionWeight internally for geometry but
+             // not UVs. We already computed one consistent weighted result for everything,
+             // so temporarily bypass that second interpolation.
++            //
++            // Silent on both sides. The weight is zero for three statements and back before
++            // anything renders, so the highlight has nothing to react to - but the ordinary
++            // setter reacts anyway, destroying this card's material on the way down and
++            // allocating a fresh one on the way back up, for every brushed card every frame.
+             float selectionWeight = card.selectionWeight;
+-            card.SetSelectionWeight(0f);
++            card.SetSelectionWeightSilent(0f);
+             // Curl and wave aren't part of this file's Controls/Snapshot weighted-blend system (unlike
+             // Length/Width/Bend/etc above) - passed through unchanged so it isn't silently
+             // reset to 0 by SetParameters' defaults. Brush-localized curl blending can be added
+             // here later if wanted, following the same pattern as the other channels above.
+             card.SetParameters(length, width, segments, bend, twist, x, y, z, depth, 1f,
+                 uScale, vScale, uOffset, vOffset, card.curlFrequency, card.curlDiameter, card.waveAmplitude, card.waveFrequency, card.waveDirection, card.arch);
+-            card.SetSelectionWeight(selectionWeight);
++            card.SetSelectionWeightSilent(selectionWeight);
+         }
+ 
+         wasSelected = true;

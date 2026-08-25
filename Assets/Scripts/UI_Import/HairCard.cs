@@ -614,8 +614,13 @@ public class HairCard : MonoBehaviour
     // and only the per-frame re-assertion paths (ApplyEvaluatedState, SetParameters) call it.
     // Every path that MUST write - ThreeColumnClumperMeshAuthority.RestoreRemovedGroups,
     // GroupClumperManager.RemoveClumper, GroomShapeCurveRegistry.RefreshGroup,
-    // PostShapeCurveBridge, PostPredeterminedUVAuthority - calls GenerateMesh() directly and
-    // is completely unaffected.
+    // PostPredeterminedUVAuthority - calls GenerateMesh() directly and is completely unaffected.
+    //
+    // PostShapeCurveBridge used to be on that list and no longer is. Its per-frame pass attaches
+    // POST profile provenance to every card inside the radius, which is a re-assertion rather
+    // than a must-write: the values are identical frame after frame until the user moves
+    // something. Rebuilding them unconditionally was most of the cost of having a POST on screen
+    // at all, and the hash covers every input on that path.
     //
     // On top of that there are three independent escape hatches, any one of which forces a
     // real rebuild even when the hash matches: the foreignMeshWrite flag, the shared curve
@@ -1042,6 +1047,20 @@ public class HairCard : MonoBehaviour
     }
 
     public void SetSelectionWeight(float weight) { selectionWeight = Mathf.Clamp01(weight); UpdateVisualHighlight(); }
+
+    // The same assignment without the highlight pass, for a caller that is about to put the
+    // weight straight back.
+    //
+    // UpdateVisualHighlight is not a cheap no-op at zero: it takes the revert branch, which
+    // DESTROYS this card's material instance, and restoring the weight then allocates a new
+    // one. A caller that drops the weight to zero purely to bypass SetParameters' internal
+    // interpolation therefore destroys and re-creates a Unity Material for every card under
+    // its brush, every frame - hundreds of native allocations a second to change nothing that
+    // is ever drawn, since both writes land inside the same frame.
+    public void SetSelectionWeightSilent(float weight)
+    {
+        selectionWeight = Mathf.Clamp01(weight);
+    }
 
     // Bumped whenever a hair card enters or leaves the scene.
     //

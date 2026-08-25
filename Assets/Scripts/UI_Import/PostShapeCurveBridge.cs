@@ -145,15 +145,22 @@ public class PostShapeCurveBridge : MonoBehaviour
             // LateUpdate. Regenerate only the mesh so the newly attached profile provenance
             // is applied without feeding anything back into canonical state.
             //
-            // This rebuild used to be unconditional, which meant a project with NO POSTs at
-            // all still paid a second full GenerateMesh() for every card in the scene, every
-            // frame, to attach provenance that did not exist. A card that had no
-            // contributions last frame and has none this frame cannot have changed here, so
-            // there is nothing to rebuild. Any other combination - gained one, lost one,
-            // still has some - still rebuilds exactly as before.
+            // The count test skips the cards a POST does not touch at all. It cannot answer
+            // for the ones it does: a card inside the radius keeps its contributions frame
+            // after frame, falls through, and used to hit the unconditional GenerateMesh -
+            // a full procedural rebuild of every card under the POST, every frame, whether
+            // or not a single number had moved. That is the cost of "the viewport gets heavy
+            // once a POST exists".
+            //
+            // GenerateMeshIfInputsChanged answers it properly, and the hash it compares
+            // already covers this path completely: postId and the bend/x/y/z of every
+            // contribution are hashed individually, PostShapeCurveBridge.Epoch covers a
+            // change of which POST is presented, and GroomShapeCurveRegistry.EpochFor covers
+            // a curve key being dragged in place. Nothing reaches the mesh here that the hash
+            // cannot see.
             if (contributionsBefore == 0 && card.PostShapeProfileContributionCount == 0) continue;
 
-            card.GenerateMesh();
+            card.GenerateMeshIfInputsChanged();
         }
     }
 
@@ -349,6 +356,20 @@ public class PostShapeCurveBridge : MonoBehaviour
         // Rewrites byPost several frames after a legacy project load, changing what
         // EvaluatePost returns without touching the registry - so nothing else would notice.
         BumpEpoch();
+    }
+
+    // Resolves the presentation swap NOW rather than on this component's next Update.
+    //
+    // While a POST is selected the curve registry holds that POST's private Bend/X/Y/Z for its
+    // group, with the real group root stashed aside. Anything that reads or writes the registry
+    // outside the normal per-frame order has to settle that first: reading without it exports a
+    // POST's curves as the group's, and writing without it has the swap-back overwrite what was
+    // just written AND store it into the POST on the way past. Deselecting the POST is not
+    // enough on its own - that only sets a field this component reads on its next pass.
+    public static void EnsurePresentationReleased()
+    {
+        if (live == null) return;
+        live.SyncPresentedCurveContext();
     }
 
     void SyncPresentedCurveContext()

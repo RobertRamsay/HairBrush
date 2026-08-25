@@ -572,6 +572,9 @@ public class GroupAddButtonPlacementAuthority : MonoBehaviour
 public class GroupAddRowUIAuthority : MonoBehaviour
 {
     private const string RowPrefix = "GroupAddRow_";
+
+    public const string CopyButtonName = "GroupCopyParamsButton";
+    public const string PasteButtonName = "GroupPasteParamsButton";
     private const float ScanInterval = .15f;
     private const float RowHeight = 26f;
     private const float ButtonHeight = 20f;
@@ -688,22 +691,42 @@ public class GroupAddRowUIAuthority : MonoBehaviour
 
         int captured = gid;
 
-        GameObject postButton = BuildButton(row.transform, "AddPostButton", "+POST", 66f);
+        GameObject postButton = BuildButton(row.transform, "AddPostButton", "+POST", 52f);
         postButton.GetComponent<Button>().onClick.AddListener(delegate
         {
             GroupAddButtonPlacementAuthority.Arm(GroupAddButtonPlacementAuthority.AddKind.Post, captured);
         });
 
-        GameObject clumperButton = BuildButton(row.transform, "AddClumperButton", "+CLUMPER", 86f);
+        GameObject clumperButton = BuildButton(row.transform, "AddClumperButton", "+CLUMPER", 70f);
         clumperButton.GetComponent<Button>().onClick.AddListener(delegate
         {
             GroupAddButtonPlacementAuthority.Arm(GroupAddButtonPlacementAuthority.AddKind.Clumper, captured);
         });
 
-        GameObject guideButton = BuildButton(row.transform, "AddGuideButton", "+GUIDE", 70f);
+        GameObject guideButton = BuildButton(row.transform, "AddGuideButton", "+GUIDE", 58f);
         guideButton.GetComponent<Button>().onClick.AddListener(delegate
         {
             GroupAddButtonPlacementAuthority.Arm(GroupAddButtonPlacementAuthority.AddKind.Guide, captured);
+        });
+
+        // COPY and PASTE move a group's whole parameter block to another group. They sit on this
+        // row rather than in the right panel because that makes the group they act on the row's
+        // own, rather than whichever one happens to be selected - the one thing that has to be
+        // unambiguous when the whole point is moving settings between two of them.
+        //
+        // The three add buttons lost width to make room. There is about 314 units of usable strip
+        // once the panel's 10, the content layout's 5 and this row's 8 are paid for on each side;
+        // five buttons at 52 + 70 + 58 + 44 + 50 and four 6-unit gaps come to 298.
+        GameObject copyButton = BuildButton(row.transform, CopyButtonName, "COPY", 44f);
+        copyButton.GetComponent<Button>().onClick.AddListener(delegate
+        {
+            GroupParameterClipboardAuthority.Copy(captured);
+        });
+
+        GameObject pasteButton = BuildButton(row.transform, PasteButtonName, "PASTE", 50f);
+        pasteButton.GetComponent<Button>().onClick.AddListener(delegate
+        {
+            GroupParameterClipboardAuthority.Paste(captured);
         });
 
         return row;
@@ -759,6 +782,30 @@ public class GroupAddRowUIAuthority : MonoBehaviour
         PaintButton(row, "AddGuideButton",
             armedHere && GroupAddButtonPlacementAuthority.ArmedKind == GroupAddButtonPlacementAuthority.AddKind.Guide,
             new Color(.26f, .20f, .34f, 1f));
+
+        // COPY is always available. PASTE lights only once something has been copied, and stays
+        // lit for the rest of the session or until COPY is pressed again, so the button itself
+        // answers "do I have anything to paste" without the user having to remember.
+        PaintButton(row, CopyButtonName, false, new Color(.30f, .28f, .20f, 1f));
+        PaintPasteButton(row);
+    }
+
+    static void PaintPasteButton(Transform row)
+    {
+        Transform child = row.Find(PasteButtonName);
+        if (child == null) return;
+
+        bool ready = GroupParameterClipboardAuthority.HasCopy;
+
+        Image image = child.GetComponent<Image>();
+        if (image != null)
+            image.color = ready ? new Color(.44f, .38f, .16f, 1f) : new Color(.17f, .17f, .18f, 1f);
+
+        // The label greys with it. The button is deliberately left clickable so that pressing it
+        // with an empty clipboard says why, rather than doing nothing at all.
+        TextMeshProUGUI label = child.GetComponentInChildren<TextMeshProUGUI>(true);
+        if (label != null)
+            label.color = ready ? Color.white : new Color(.55f, .55f, .58f, 1f);
     }
 
     static void PaintButton(Transform row, string objectName, bool armed, Color idle)

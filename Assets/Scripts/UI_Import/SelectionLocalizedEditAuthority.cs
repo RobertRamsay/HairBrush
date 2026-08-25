@@ -112,15 +112,20 @@ public class SelectionLocalizedEditAuthority : MonoBehaviour
             // SetParameters normally applies selectionWeight internally for geometry but
             // not UVs. We already computed one consistent weighted result for everything,
             // so temporarily bypass that second interpolation.
+            //
+            // Silent on both sides. The weight is zero for three statements and back before
+            // anything renders, so the highlight has nothing to react to - but the ordinary
+            // setter reacts anyway, destroying this card's material on the way down and
+            // allocating a fresh one on the way back up, for every brushed card every frame.
             float selectionWeight = card.selectionWeight;
-            card.SetSelectionWeight(0f);
+            card.SetSelectionWeightSilent(0f);
             // Curl and wave aren't part of this file's Controls/Snapshot weighted-blend system (unlike
             // Length/Width/Bend/etc above) - passed through unchanged so it isn't silently
             // reset to 0 by SetParameters' defaults. Brush-localized curl blending can be added
             // here later if wanted, following the same pattern as the other channels above.
             card.SetParameters(length, width, segments, bend, twist, x, y, z, depth, 1f,
                 uScale, vScale, uOffset, vOffset, card.curlFrequency, card.curlDiameter, card.waveAmplitude, card.waveFrequency, card.waveDirection, card.arch);
-            card.SetSelectionWeight(selectionWeight);
+            card.SetSelectionWeightSilent(selectionWeight);
         }
 
         wasSelected = true;
