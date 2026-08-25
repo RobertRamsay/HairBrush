@@ -336,6 +336,18 @@ public class UndoHistoryAuthority : MonoBehaviour
 
         bool activity = false;
         if (mouse != null && mouse.leftButton.wasReleasedThisFrame) activity = true;
+
+        // The right button ONLY while ALT is down, which is the one thing it does that changes
+        // anything saved: removing a point from a guide. Arming on every right release would
+        // arm on every orbit, and an arm is not free - the commit that follows builds the whole
+        // save payload and gzips it before it can compare hashes, so a plain look around the
+        // model would pay for a full serialize a third of a second later.
+        //
+        // The ALT keydown that precedes the gesture does arm it, but that is not enough on its
+        // own: a run of removals under one continuous ALT hold produces no further keydown, and
+        // every removal after the first would be invisible to undo.
+        if (mouse != null && keyboard != null && mouse.rightButton.wasReleasedThisFrame &&
+            (keyboard.leftAltKey.isPressed || keyboard.rightAltKey.isPressed)) activity = true;
         if (!activity && keyboard != null && !keyboard.ctrlKey.isPressed) activity = AnyKeyWentDown(keyboard);
 
         if (activity)

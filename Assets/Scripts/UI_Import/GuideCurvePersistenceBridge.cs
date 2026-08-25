@@ -180,14 +180,47 @@ public class GuideCurvePersistenceBridge : MonoBehaviour
             frameX = s.frameX, frameY = s.frameY, frameZ = s.frameZ, frameW = s.frameW,
             midX = s.midX, midY = s.midY, midZ = s.midZ,
             endX = s.endX, endY = s.endY, endZ = s.endZ,
+            nodes = CloneNodes(s.nodes),
             amount = s.amount,
             radius = s.radius,
             falloff = s.falloff
         };
     }
 
+    static List<GuideNodeSaveData> ToNodes(GuideCurveManager.GuideCurve guide)
+    {
+        List<GuideNodeSaveData> nodes = new List<GuideNodeSaveData>();
+        if (guide.nodesLocal == null) return nodes;
+
+        foreach (Vector3 node in guide.nodesLocal)
+        {
+            nodes.Add(new GuideNodeSaveData { x = node.x, y = node.y, z = node.z });
+        }
+        return nodes;
+    }
+
+    static List<GuideNodeSaveData> CloneNodes(List<GuideNodeSaveData> source)
+    {
+        List<GuideNodeSaveData> copy = new List<GuideNodeSaveData>();
+        if (source == null) return copy;
+
+        foreach (GuideNodeSaveData node in source)
+        {
+            if (node == null) continue;
+            copy.Add(new GuideNodeSaveData { x = node.x, y = node.y, z = node.z });
+        }
+        return copy;
+    }
+
     static GuideCurveSaveData ToSave(GuideCurveManager.GuideCurve guide)
     {
+        // The legacy pair still goes out, mirroring the ends, so a build that predates multi
+        // point guides still reads a usable three point curve out of a file written here.
+        Vector3 first = GuideCurveManager.NodeCount(guide) > 0 ? guide.nodesLocal[0] : Vector3.up;
+        Vector3 last = GuideCurveManager.NodeCount(guide) > 0
+            ? guide.nodesLocal[guide.nodesLocal.Count - 1]
+            : Vector3.up;
+
         return new GuideCurveSaveData
         {
             id = guide.id,
@@ -201,12 +234,13 @@ public class GuideCurvePersistenceBridge : MonoBehaviour
             frameY = guide.frame.y,
             frameZ = guide.frame.z,
             frameW = guide.frame.w,
-            midX = guide.midLocal.x,
-            midY = guide.midLocal.y,
-            midZ = guide.midLocal.z,
-            endX = guide.endLocal.x,
-            endY = guide.endLocal.y,
-            endZ = guide.endLocal.z,
+            midX = first.x,
+            midY = first.y,
+            midZ = first.z,
+            endX = last.x,
+            endY = last.y,
+            endZ = last.z,
+            nodes = ToNodes(guide),
             amount = guide.amount,
             radius = guide.radius,
             falloff = guide.falloff
@@ -343,12 +377,49 @@ public class GuideCurvePersistenceBridge : MonoBehaviour
             contact = new Vector3(saved.contactX, saved.contactY, saved.contactZ),
             normal = normal,
             frame = frame,
-            midLocal = new Vector3(saved.midX, saved.midY, saved.midZ),
-            endLocal = new Vector3(saved.endX, saved.endY, saved.endZ),
+            nodesLocal = FromNodes(saved),
             amount = Mathf.Clamp01(saved.amount),
             radius = Mathf.Max(.001f, saved.radius),
             falloff = Mathf.Max(0f, saved.falloff)
         };
+    }
+
+    // A file written before guides had more than three points has no nodes list at all, so the
+    // legacy mid/end pair is what rebuilds it. Anything shorter than the floor is padded from
+    // the same pair rather than rejected, so a hand-edited file cannot produce a guide with no
+    // tip to drag.
+    static List<Vector3> FromNodes(GuideCurveSaveData saved)
+    {
+        List<Vector3> nodes = new List<Vector3>();
+
+        if (saved.nodes != null)
+        {
+            foreach (GuideNodeSaveData node in saved.nodes)
+            {
+                if (node == null) continue;
+                nodes.Add(new Vector3(node.x, node.y, node.z));
+            }
+
+            // Over the ceiling, keep the first ones AND the last. Trimming the tail instead
+            // throws the tip away, so the guide silently shortens to wherever the last surviving
+            // point happened to be - the one change a load must never make without saying so.
+            if (nodes.Count > GuideCurveManager.MaxGuideNodes)
+            {
+                Vector3 tip = nodes[nodes.Count - 1];
+                nodes.RemoveRange(GuideCurveManager.MaxGuideNodes - 1,
+                                  nodes.Count - (GuideCurveManager.MaxGuideNodes - 1));
+                nodes.Add(tip);
+                Debug.LogWarning("HairBrush: a guide carried more than " +
+                                 GuideCurveManager.MaxGuideNodes +
+                                 " points and was trimmed. Its root and tip are unchanged.");
+            }
+        }
+
+        if (nodes.Count == 0) nodes.Add(new Vector3(saved.midX, saved.midY, saved.midZ));
+        if (nodes.Count < GuideCurveManager.MinGuideNodes)
+            nodes.Add(new Vector3(saved.endX, saved.endY, saved.endZ));
+
+        return nodes;
     }
 
     // Ids are unique across every group, because that is how the runtime allocates them and

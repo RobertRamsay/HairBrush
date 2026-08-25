@@ -1,9 +1,17 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 
-// Screen-space drag handles for the selected GUIDE's MID and END control points, and the
-// card-placement lockout that makes them safe to use.
+// Screen-space drag handles for the selected GUIDE's control points, and the card-placement
+// lockout that makes them safe to use.
+//
+// A guide starts with two draggable points, a middle and a tip, and can be given up to twenty.
+// ALT and left click ON the curve inserts a point where it was clicked; ALT and right click on a
+// point removes it. The first and the last always refuse, so a guide keeps a root, a middle and
+// a tip whatever is done to it. ALT owns those two clicks outright - neither can also start a
+// drag, and ModelViewer stands its camera orbit down while ALT is held so the right click is
+// free to mean this.
 //
 // THE LOCKOUT IS THE POINT, not a detail. Both handles float off the model on the end of a curve,
 // so a grab that misses one continues straight past and hits the surface behind it - and the
@@ -38,11 +46,18 @@ public class GuideCurveHandleAuthority : MonoBehaviour
     // scalp - so a handle cannot be dragged below the surface plane it grows out of.
     private const float MinHeightAboveSurface = .002f;
 
-    private enum Grab { None = 0, Mid = 1, End = 2 }
+    // How close, in pixels, a click has to land to the drawn curve to count as ON it. Wider than
+    // the grab radius would make an ALT+click near a handle ambiguous; much narrower and the
+    // curve becomes hard to hit at a shallow angle.
+    private const float CurvePixelRadius = 14f;
 
     private static readonly Color ContactColor = new Color(.72f, .45f, 1f, .55f);
     private static readonly Color MidColor = new Color(1f, .78f, .30f, .95f);
     private static readonly Color EndColor = new Color(.40f, .85f, 1f, .95f);
+
+    // The points between the two ends. Colour marks position along the curve, not when a point
+    // was added - see DrawHandles, where SIZE is what marks the tip as the one that stays.
+    private static readonly Color InnerColor = new Color(.62f, .55f, .90f, .95f);
     private static readonly Color HotColor = new Color(1f, 1f, 1f, 1f);
 
     private GuideCurveManager manager;
@@ -50,10 +65,10 @@ public class GuideCurveHandleAuthority : MonoBehaviour
     private Material lineMaterial;
 
     private LineRenderer contactRing;
-    private LineRenderer midRing;
-    private LineRenderer endRing;
+    private readonly List<LineRenderer> nodeRings = new List<LineRenderer>();
 
-    private Grab dragging;
+    // Index into the guide's node list, or -1 for nothing.
+    private int dragging = -1;
     private int draggingGuideId = -1;
 
     private const string LockOwner = "GuideHandleEditing";
@@ -75,9 +90,8 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         viewer = null;
         lineMaterial = null;
         contactRing = null;
-        midRing = null;
-        endRing = null;
-        dragging = Grab.None;
+        nodeRings.Clear();
+        dragging = -1;
         draggingGuideId = -1;
         restorePending = false;
         restoreRequestedFrame = -1;
@@ -147,7 +161,7 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         GuideCurveManager.GuideCurve guide = GetSelectedGuide();
         if (guide == null || viewer == null || viewer.mainCamera == null || Mouse.current == null)
         {
-            dragging = Grab.None;
+            dragging = -1;
             draggingGuideId = -1;
             HideAll();
             return;
@@ -157,20 +171,43 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         // during one would let a placement click grab a handle instead of placing anything.
         if (GroupAddButtonPlacementAuthority.ArmedKind != GroupAddButtonPlacementAuthority.AddKind.None)
         {
-            dragging = Grab.None;
-            DrawHandles(guide, Grab.None);
+            dragging = -1;
+            DrawHandles(guide, -1);
             return;
         }
 
-        Vector3 midWorld = GuideCurveManager.WorldMid(guide);
-        Vector3 endWorld = GuideCurveManager.WorldEnd(guide);
         bool pointerOverUI = EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
         Vector2 mouse = Mouse.current.position.ReadValue();
 
         if (Mouse.current.leftButton.wasReleasedThisFrame)
         {
-            dragging = Grab.None;
+            dragging = -1;
             draggingGuideId = -1;
+        }
+
+        // ALT is the point editor: ALT plus left adds a point where the curve was clicked, ALT
+        // plus right removes the point that was clicked. Handled before everything below so an
+        // ALT click can never also start a drag, and returning afterwards so it cannot fall
+        // through into the deselect test either.
+        bool altHeld = Keyboard.current != null &&
+                       (Keyboard.current.leftAltKey.isPressed || Keyboard.current.rightAltKey.isPressed);
+        if (altHeld && !pointerOverUI)
+        {
+            if (Mouse.current.leftButton.wasPressedThisFrame)
+            {
+                dragging = -1;
+                InsertPointAt(guide, mouse);
+                DrawHandles(guide, -1);
+                return;
+            }
+
+            if (Mouse.current.rightButton.wasPressedThisFrame)
+            {
+                dragging = -1;
+                RemovePointAt(guide, mouse);
+                DrawHandles(guide, -1);
+                return;
+            }
         }
 
         // Orbiting or panning mid-drag drops the drag. DragTo solves against a plane rebuilt from
@@ -181,12 +218,14 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         bool cameraGesture = Mouse.current.rightButton.isPressed || Mouse.current.middleButton.isPressed;
         if (cameraGesture)
         {
-            dragging = Grab.None;
+            dragging = -1;
             draggingGuideId = -1;
         }
 
-        // The guide can be swapped or deleted mid-drag; never keep dragging a stale one.
-        if (dragging != Grab.None && draggingGuideId != guide.id) dragging = Grab.None;
+        // The guide can be swapped or deleted mid-drag; never keep dragging a stale one. A point
+        // removed from under the drag is the same problem, hence the count test.
+        if (dragging >= 0 && (draggingGuideId != guide.id || dragging >= GuideCurveManager.NodeCount(guide)))
+            dragging = -1;
 
         // CTRL, TAB and SPACE all mean "this click belongs to another gesture". SPACE+click in
         // particular repositions the guide, and GuideCurveManager has already moved its contact by
@@ -199,11 +238,11 @@ public class GuideCurveHandleAuthority : MonoBehaviour
                              Keyboard.current.tabKey.isPressed ||
                              Keyboard.current.spaceKey.isPressed);
 
-        if (dragging == Grab.None && !pointerOverUI && !modifierHeld &&
+        if (dragging < 0 && !pointerOverUI && !modifierHeld &&
             Mouse.current.leftButton.wasPressedThisFrame)
         {
-            Grab hit = PickHandle(mouse, guide.contact, midWorld, endWorld);
-            if (hit != Grab.None)
+            int hit = PickHandle(guide, mouse);
+            if (hit >= 0)
             {
                 dragging = hit;
                 draggingGuideId = guide.id;
@@ -226,18 +265,13 @@ public class GuideCurveHandleAuthority : MonoBehaviour
             }
         }
 
-        if (dragging != Grab.None && Mouse.current.leftButton.isPressed)
+        if (dragging >= 0 && Mouse.current.leftButton.isPressed)
         {
-            Vector3 anchor = midWorld;
-            if (dragging == Grab.End) anchor = endWorld;
-            DragTo(guide, anchor, mouse);
-
-            midWorld = GuideCurveManager.WorldMid(guide);
-            endWorld = GuideCurveManager.WorldEnd(guide);
+            DragTo(guide, GuideCurveManager.WorldNode(guide, dragging), mouse);
         }
 
-        Grab hot = dragging;
-        if (hot == Grab.None && !pointerOverUI && !modifierHeld) hot = PickHandle(mouse, guide.contact, midWorld, endWorld);
+        int hot = dragging;
+        if (hot < 0 && !pointerOverUI && !modifierHeld) hot = PickHandle(guide, mouse);
         DrawHandles(guide, hot);
     }
 
@@ -256,14 +290,13 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         Vector3 local = GuideCurveManager.ToLocal(guide, world);
         if (local.y < MinHeightAboveSurface) local.y = MinHeightAboveSurface;
 
-        if (dragging == Grab.Mid) guide.midLocal = local;
-        else guide.endLocal = local;
+        GuideCurveManager.SetNode(guide, dragging, local);
     }
 
-    Grab PickHandle(Vector2 mouse, Vector3 contactWorld, Vector3 midWorld, Vector3 endWorld)
+    int PickHandle(GuideCurveManager.GuideCurve guide, Vector2 mouse)
     {
-        float midDistance = ScreenDistance(mouse, midWorld);
-        float endDistance = ScreenDistance(mouse, endWorld);
+        int count = GuideCurveManager.NodeCount(guide);
+        if (count == 0) return -1;
 
         // A handle behind the model is not drawn - the ring material is depth-tested - so it must
         // not be grabbable either. Without this, clicking the forehead within the grab radius of
@@ -283,16 +316,148 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         // simply round the back of the head, and grabbing a handle you cannot see there is the
         // blind drag this test exists to stop. "Both handles hidden" alone would not have
         // distinguished them, and round-the-back is by far the more common of the two.
-        bool contactVisible = !Occluded(contactWorld);
-        if (Occluded(midWorld) && !contactVisible) midDistance = float.MaxValue;
-        if (Occluded(endWorld) && !contactVisible) endDistance = float.MaxValue;
+        bool contactVisible = !Occluded(guide.contact);
 
-        // END wins a tie. It is the handle that sits furthest out, so it is the one most often
-        // overlapping the other when the curve is viewed end-on, and it is the one being reached
-        // for in that situation.
-        if (endDistance <= GrabPixelRadius && endDistance <= midDistance) return Grab.End;
-        if (midDistance <= GrabPixelRadius) return Grab.Mid;
-        return Grab.None;
+        // The handle FURTHEST out wins a tie, which is what the two point version did and for the
+        // same reason: viewed end-on the points project within a few pixels of each other, and
+        // the one being reached for is the one nearest the tip. Walking backwards and taking the
+        // first inside the radius gives that for any number of them.
+        int best = -1;
+        float bestDistance = float.MaxValue;
+        for (int i = count - 1; i >= 0; i--)
+        {
+            Vector3 world = GuideCurveManager.WorldNode(guide, i);
+            float distance = ScreenDistance(mouse, world);
+            if (distance > GrabPixelRadius) continue;
+            if (Occluded(world) && !contactVisible) continue;
+            if (distance >= bestDistance) continue;
+
+            bestDistance = distance;
+            best = i;
+        }
+
+        return best;
+    }
+
+    // ---------------------------------------------------------------------------------
+    // Adding and removing points
+    // ---------------------------------------------------------------------------------
+
+    // ALT plus left. The new point goes where the curve was clicked, not where the cursor is:
+    // the curve is a line in the air, so the nearest point ON it is the only reading of "here"
+    // that leaves the shape alone. Clicking anywhere else does nothing at all.
+    void InsertPointAt(GuideCurveManager.GuideCurve guide, Vector2 mouse)
+    {
+        if (GuideCurveManager.NodeCount(guide) >= GuideCurveManager.MaxGuideNodes)
+        {
+            StatusToast.Show("This guide already has the maximum of " +
+                             (GuideCurveManager.MaxGuideNodes + 1) + " points.");
+            return;
+        }
+
+        Vector3[] control = GuideCurveManager.WorldPoints(guide);
+        if (control.Length < 2) return;
+
+        int spans = control.Length - 1;
+
+        // Coarse pass then a refinement around the winner. A single fixed sweep is a count in
+        // curve parameter while the tolerance below is in PIXELS, so on a curve that fills the
+        // screen the samples end up further apart than the tolerance and a click landing exactly
+        // on the line is rejected - in bands, which reads as the feature being broken. The second
+        // pass makes the accepted position independent of zoom as well as the acceptance itself.
+        int steps = Mathf.Clamp(24 * spans, 48, 480);
+        float bestT = NearestT(control, mouse, 0f, 1f, steps);
+        float window = 1f / steps;
+        bestT = NearestT(control, mouse, bestT - window, bestT + window, 24);
+
+        float bestDistance = ScreenDistance(mouse, GuideCurveManager.EvaluatePoints(control, bestT));
+        if (bestDistance > CurvePixelRadius)
+        {
+            StatusToast.Show("ALT and click ON the guide curve to add a point.");
+            return;
+        }
+
+        // A click that lands on a point already there would insert a second one in the same
+        // place, and Catmull-Rom does not ignore a zero length span - it bulges around it - so
+        // a click meant for a handle would visibly kink the curve.
+        //
+        // Measured in PIXELS, against the same grab radius that decides whether a click counts
+        // as being on a handle at all. A band expressed as a fraction of a span looks equivalent
+        // and is not: a span is a slice of curve parameter, so on a long span zoomed in it covers
+        // hundreds of pixels of open curve, and on a twenty point guide it shrinks below the
+        // radius that accepts the click in the first place. Either way the rule stops matching
+        // what the user can see.
+        for (int i = 0; i < control.Length; i++)
+        {
+            if (ScreenDistance(mouse, control[i]) > GrabPixelRadius) continue;
+            StatusToast.Show("That is a point already. Click the curve between two of them.");
+            return;
+        }
+
+        // Which span the hit falls in decides where the node is inserted, so the point lands
+        // between the two it was drawn between rather than at the end of the list.
+        int span = Mathf.Clamp(Mathf.FloorToInt(bestT * spans), 0, spans - 1);
+        Vector3 point = GuideCurveManager.EvaluatePoints(control, bestT);
+
+        // Clamped exactly as a drag is. The curve can bow below the contact plane between two
+        // points that are both legally above it, and a node planted down there would be one the
+        // drag handles could never reproduce.
+        Vector3 local = GuideCurveManager.ToLocal(guide, point);
+        if (local.y < MinHeightAboveSurface) local.y = MinHeightAboveSurface;
+
+        int index = GuideCurveManager.InsertNode(guide, span, local);
+        if (index < 0) return;
+
+        StatusToast.Show("Point added. " + (GuideCurveManager.NodeCount(guide) + 1) +
+                         " points on this guide. ALT and right click a point to remove it.");
+    }
+
+    // Nearest point on the curve to the cursor, in screen space, searched over a range of t.
+    float NearestT(Vector3[] control, Vector2 mouse, float from, float to, int steps)
+    {
+        float low = Mathf.Clamp01(Mathf.Min(from, to));
+        float high = Mathf.Clamp01(Mathf.Max(from, to));
+
+        float bestT = low;
+        float bestDistance = float.MaxValue;
+        for (int i = 0; i <= steps; i++)
+        {
+            float t = steps == 0 ? low : Mathf.Lerp(low, high, (float)i / steps);
+            float distance = ScreenDistance(mouse, GuideCurveManager.EvaluatePoints(control, t));
+            if (distance >= bestDistance) continue;
+
+            bestDistance = distance;
+            bestT = t;
+        }
+        return bestT;
+    }
+
+    // ALT plus right. The tip refuses, and so does the last removal that would take the guide
+    // below two points, so a guide always keeps a root, something between and a tip.
+    void RemovePointAt(GuideCurveManager.GuideCurve guide, Vector2 mouse)
+    {
+        int index = PickHandle(guide, mouse);
+        if (index < 0)
+        {
+            StatusToast.Show("ALT and right click one of the guide's points to remove it.");
+            return;
+        }
+
+        int count = GuideCurveManager.NodeCount(guide);
+        if (index == count - 1)
+        {
+            StatusToast.Show("The tip stays. Remove one of the points below it instead.");
+            return;
+        }
+
+        if (count <= GuideCurveManager.MinGuideNodes)
+        {
+            StatusToast.Show("A guide keeps a root, a middle and a tip. Nothing left to remove.");
+            return;
+        }
+
+        if (!GuideCurveManager.RemoveNode(guide, index)) return;
+        StatusToast.Show("Point removed. " + (GuideCurveManager.NodeCount(guide) + 1) + " points on this guide.");
     }
 
     bool Occluded(Vector3 world)
@@ -317,18 +482,38 @@ public class GuideCurveHandleAuthority : MonoBehaviour
     // Drawing
     // ---------------------------------------------------------------------------------
 
-    void DrawHandles(GuideCurveManager.GuideCurve guide, Grab hot)
+    void DrawHandles(GuideCurveManager.GuideCurve guide, int hot)
     {
         EnsureRings();
-
-        Color midColor = MidColor;
-        if (hot == Grab.Mid) midColor = HotColor;
-        Color endColor = EndColor;
-        if (hot == Grab.End) endColor = HotColor;
-
         DrawRing(contactRing, guide.contact, ContactColor, HandlePixelRadius * .7f);
-        DrawRing(midRing, GuideCurveManager.WorldMid(guide), midColor, HandlePixelRadius);
-        DrawRing(endRing, GuideCurveManager.WorldEnd(guide), endColor, HandlePixelRadius);
+
+        int count = GuideCurveManager.NodeCount(guide);
+        EnsureNodeRings(count);
+
+        for (int i = 0; i < nodeRings.Count; i++)
+        {
+            if (i >= count)
+            {
+                SetEnabled(nodeRings[i], false);
+                continue;
+            }
+
+            // Size says what can be removed, colour says where on the curve it sits. The tip is
+            // the only point that refuses removal, so it is the only one drawn large - anything
+            // else large would read as protected too, which is what made the previous version
+            // confusing the moment a point was inserted below the original middle.
+            bool tip = i == count - 1;
+            Color color = tip ? EndColor : (i == 0 ? MidColor : InnerColor);
+            float radius = tip ? HandlePixelRadius : HandlePixelRadius * .78f;
+            if (i == hot) color = HotColor;
+
+            DrawRing(nodeRings[i], GuideCurveManager.WorldNode(guide, i), color, radius);
+        }
+    }
+
+    void EnsureNodeRings(int count)
+    {
+        while (nodeRings.Count < count) nodeRings.Add(CreateRing("GuideNodeRing_" + nodeRings.Count));
     }
 
     // Sized in world units from the pixel radius and the distance to the camera, so the handle
@@ -374,8 +559,6 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         }
 
         if (contactRing == null) contactRing = CreateRing("GuideHandleContact");
-        if (midRing == null) midRing = CreateRing("GuideHandleMid");
-        if (endRing == null) endRing = CreateRing("GuideHandleEnd");
     }
 
     LineRenderer CreateRing(string name)
@@ -397,8 +580,7 @@ public class GuideCurveHandleAuthority : MonoBehaviour
     void HideAll()
     {
         SetEnabled(contactRing, false);
-        SetEnabled(midRing, false);
-        SetEnabled(endRing, false);
+        foreach (LineRenderer ring in nodeRings) SetEnabled(ring, false);
     }
 
     static void SetEnabled(LineRenderer line, bool enabled)

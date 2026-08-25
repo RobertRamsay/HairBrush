@@ -144,12 +144,28 @@ public class GuideCurveSaveData
     public float frameW=1f;
 
     // Mid and end control points, in that frame.
+    //
+    // These are now a MIRROR of the first and last entries of nodes below, kept because a guide
+    // used to be exactly three points and this is what older files carry and older builds read.
+    // A file with no nodes list at all is rebuilt from these; a file with a single node borrows
+    // the end from them to reach the two node floor; a complete list ignores them.
     public float midX,midY,midZ;
     public float endX,endY,endZ;
+
+    // Every point the curve passes through, root to tip, the contact excluded. Two entries is
+    // the original mid-and-end guide; more are the points added with ALT+click.
+    public List<GuideNodeSaveData> nodes=new();
 
     public float amount;
     public float radius=GuideCurveManager.DefaultGuideRadius;
     public float falloff=GuideCurveManager.DefaultGuideFalloff;
+}
+
+// One point on a guide, in the guide's own contact frame.
+[Serializable]
+public class GuideNodeSaveData
+{
+    public float x,y,z;
 }
 
 [Serializable] public class PostAffectorControlSaveData

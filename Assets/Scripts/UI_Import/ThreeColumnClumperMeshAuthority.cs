@@ -352,12 +352,18 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
                     hash = Mix(hash, g.normal.x.GetHashCode());
                     hash = Mix(hash, g.normal.y.GetHashCode());
                     hash = Mix(hash, g.normal.z.GetHashCode());
-                    hash = Mix(hash, g.midLocal.x.GetHashCode());
-                    hash = Mix(hash, g.midLocal.y.GetHashCode());
-                    hash = Mix(hash, g.midLocal.z.GetHashCode());
-                    hash = Mix(hash, g.endLocal.x.GetHashCode());
-                    hash = Mix(hash, g.endLocal.y.GetHashCode());
-                    hash = Mix(hash, g.endLocal.z.GetHashCode());
+                    // Every node, and the count with them - a guide that gains or loses a point
+                    // has the same first and last as before, so the count is what separates them.
+                    hash = Mix(hash, g.nodesLocal != null ? g.nodesLocal.Count : 0);
+                    if (g.nodesLocal != null)
+                    {
+                        foreach (Vector3 node in g.nodesLocal)
+                        {
+                            hash = Mix(hash, node.x.GetHashCode());
+                            hash = Mix(hash, node.y.GetHashCode());
+                            hash = Mix(hash, node.z.GetHashCode());
+                        }
+                    }
                     // The frame turns the two local offsets into world points, so it is as much
                     // geometry as they are. It used to be safe to leave out, because the only
                     // thing that wrote it also wrote contact and normal in the same call. Guides

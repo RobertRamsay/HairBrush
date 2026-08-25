@@ -34,6 +34,13 @@ public class GuideCurveManager : MonoBehaviour
 {
     // Matches the CLUMPER creation defaults. A guide's zone is the same kind of thing and
     // starting them at the same size makes the two directly comparable on the model.
+    // Two nodes plus the contact is the original three point guide and the floor. Twenty plus
+    // the contact is the ceiling: a guide is as long as the hair it steers, so past about that
+    // the points are closer together than the cards are and the extra control buys nothing but
+    // a curve that is harder to aim at.
+    public const int MinGuideNodes = 2;
+    public const int MaxGuideNodes = 20;
+
     public const float DefaultGuideRadius = .04f;
     public const float DefaultGuideFalloff = .04f;
 
@@ -41,6 +48,8 @@ public class GuideCurveManager : MonoBehaviour
     // between samples; this only has to be fine enough that the cumulative-length approximation
     // does not visibly shorten the curve.
     private const int PathSamples = 32;
+    private const int SamplesPerSpan = 16;
+    private const int MaxPathSamples = 321;
 
     [Serializable]
     public class GuideCurve
@@ -62,10 +71,15 @@ public class GuideCurveManager : MonoBehaviour
         // all, so a guide dragged from the side of a head to the crown keeps its shape exactly.
         public Quaternion frame = Quaternion.identity;
 
-        // Offsets in that frame. Local +Y is the surface normal, so a guide with both offsets on
-        // the Y axis stands straight out of the surface.
-        public Vector3 midLocal = Vector3.up;
-        public Vector3 endLocal = Vector3.up;
+        // The points the curve passes through, in that frame, ordered root to tip. Local +Y is
+        // the surface normal, so a guide whose offsets are all on the Y axis stands straight out
+        // of the surface. The contact is NOT in this list - it is always the first point of the
+        // curve and is not movable independently of the guide.
+        //
+        // Two entries is a guide as it has always been: a mid and an end. Extra points are
+        // inserted between them with ALT+click, and the first and the last can never be removed,
+        // so the shape always keeps a root, something in the middle and a tip.
+        public List<Vector3> nodesLocal = new List<Vector3> { Vector3.up, Vector3.up };
 
         // Starts at zero, exactly like a new clumper: a modifier that changes nothing until it
         // is asked to. Dropping a guide onto the model should never move hair by itself.
@@ -150,16 +164,88 @@ public class GuideCurveManager : MonoBehaviour
         return Quaternion.LookRotation(tangent.normalized, n);
     }
 
-    public static Vector3 WorldMid(GuideCurve guide)
+    public static int NodeCount(GuideCurve guide)
     {
-        if (guide == null) return Vector3.zero;
-        return guide.contact + guide.frame * guide.midLocal;
+        if (guide == null || guide.nodesLocal == null) return 0;
+        return guide.nodesLocal.Count;
     }
 
-    public static Vector3 WorldEnd(GuideCurve guide)
+    public static Vector3 WorldNode(GuideCurve guide, int index)
     {
-        if (guide == null) return Vector3.zero;
-        return guide.contact + guide.frame * guide.endLocal;
+        if (guide == null || guide.nodesLocal == null) return Vector3.zero;
+        if (index < 0 || index >= guide.nodesLocal.Count) return Vector3.zero;
+        return guide.contact + guide.frame * guide.nodesLocal[index];
+    }
+
+    public static void SetNode(GuideCurve guide, int index, Vector3 local)
+    {
+        if (guide == null || guide.nodesLocal == null) return;
+        if (index < 0 || index >= guide.nodesLocal.Count) return;
+        guide.nodesLocal[index] = local;
+    }
+
+    // Every point of the curve, contact first, in world space. Allocated per call, so callers
+    // that run per frame build it once and hand it around rather than asking twice.
+    public static Vector3[] WorldPoints(GuideCurve guide)
+    {
+        int count = NodeCount(guide);
+        if (count == 0) return new Vector3[0];
+
+        Vector3[] points = new Vector3[count + 1];
+        points[0] = guide.contact;
+        for (int i = 0; i < count; i++) points[i + 1] = WorldNode(guide, i);
+        return points;
+    }
+
+    // ------------------------------------------------------------------ adding and removing
+
+    // Inserts a point, already in the guide's frame, into the span it belongs to. Returns the
+    // index of the new node, or -1 if the guide is already at its ceiling.
+    //
+    // Takes a LOCAL offset rather than a world point on purpose: the caller has to clamp it above
+    // the contact plane first, and handing this a world position would put the one writer that
+    // skips that clamp right here.
+    public static int InsertNode(GuideCurve guide, int spanIndex, Vector3 local)
+    {
+        if (guide == null || guide.nodesLocal == null) return -1;
+        if (guide.nodesLocal.Count >= MaxGuideNodes) return -1;
+
+        // spanIndex counts spans of the drawn curve: span 0 runs contact to node 0, span 1 runs
+        // node 0 to node 1, and so on. A point in span i becomes node i.
+        //
+        // Clamped BELOW the last node, not to the count. Inserting at the count appends past the
+        // tip and makes the new point the tip, which is the one thing RemoveNode is written to
+        // guarantee cannot happen - and an invariant guarded at one end only is not an invariant.
+        int index = Mathf.Clamp(spanIndex, 0, guide.nodesLocal.Count - 1);
+        guide.nodesLocal.Insert(index, local);
+        return index;
+    }
+
+    // Only the TIP is permanent, plus the two-node floor. Making the FIRST node permanent as well
+    // sounds right and is not: a point inserted in the first span becomes index 0, so the node
+    // the user had been shaping would be demoted to removable and the one they had just added
+    // would be the protected one. Guarding the last node and the count gives the same guarantee
+    // that matters - a root, something between, and a tip - without depending on which index a
+    // point happens to hold this minute.
+    public static bool RemoveNode(GuideCurve guide, int index)
+    {
+        if (guide == null || guide.nodesLocal == null) return false;
+        if (guide.nodesLocal.Count <= MinGuideNodes) return false;
+        if (index < 0 || index >= guide.nodesLocal.Count - 1) return false;
+
+        guide.nodesLocal.RemoveAt(index);
+        return true;
+    }
+
+    // Is anything at all being shaped right now. Read by ModelViewer, which stands its right
+    // button orbit down while ALT is held so ALT plus right can mean "remove this point".
+    public static bool AnyGuideSelected
+    {
+        get
+        {
+            if (instance == null) return false;
+            return instance.GetSelectedGuide() != null;
+        }
     }
 
     // World point back into the guide's own frame. This is what a drag handle writes through.
@@ -189,6 +275,47 @@ public class GuideCurveManager : MonoBehaviour
         float b = -8f * t + 4f;
         float c = 4f * t - 1f;
         return p0 * a + p1 * b + p2 * c;
+    }
+
+    // The whole curve, for any number of points, as one parameter from 0 at the contact to 1 at
+    // the tip.
+    //
+    // THREE points keep the quadratic above, exactly. That is not tidiness, it is every guide
+    // ever authored: a spline through three points is a different curve from the parabola
+    // through them, so routing the three point case through the general path would quietly
+    // reshape every guide in every saved project the moment it loaded.
+    //
+    // FOUR or more use a Catmull-Rom spline, which interpolates every point it is given - the
+    // same property the quadratic was chosen for. The end tangents are taken from the doubled
+    // end points, so the curve leaves the contact and arrives at the tip along the chords, which
+    // is what makes an added point feel like it bends the curve rather than moving it.
+    public static Vector3 EvaluatePoints(Vector3[] points, float t)
+    {
+        if (points == null || points.Length == 0) return Vector3.zero;
+        if (points.Length == 1) return points[0];
+        if (points.Length == 2) return Vector3.Lerp(points[0], points[1], Mathf.Clamp01(t));
+        if (points.Length == 3) return Evaluate(points[0], points[1], points[2], t);
+
+        int spans = points.Length - 1;
+        float scaled = Mathf.Clamp01(t) * spans;
+        int span = Mathf.Min((int)scaled, spans - 1);
+        float u = scaled - span;
+
+        Vector3 a = points[Mathf.Max(span - 1, 0)];
+        Vector3 b = points[span];
+        Vector3 c = points[span + 1];
+        Vector3 d = points[Mathf.Min(span + 2, points.Length - 1)];
+        return CatmullRom(a, b, c, d, u);
+    }
+
+    static Vector3 CatmullRom(Vector3 a, Vector3 b, Vector3 c, Vector3 d, float u)
+    {
+        float u2 = u * u;
+        float u3 = u2 * u;
+        return .5f * ((2f * b) +
+                      (-a + c) * u +
+                      (2f * a - 5f * b + 4f * c - d) * u2 +
+                      (-a + 3f * b - 3f * c + d) * u3);
     }
 
     // A guide flattened into a world-space polyline with a cumulative arc-length table, so a
@@ -229,19 +356,22 @@ public class GuideCurveManager : MonoBehaviour
     {
         if (guide == null) return null;
 
-        Vector3 p0 = guide.contact;
-        Vector3 p1 = WorldMid(guide);
-        Vector3 p2 = WorldEnd(guide);
+        Vector3[] control = WorldPoints(guide);
+        if (control.Length < 2) return null;
+
+        // Sampled per span rather than at a fixed count. Thirty two points was ample for one
+        // parabola and would visibly facet a twenty point curve.
+        int samples = Mathf.Clamp(SamplesPerSpan * (control.Length - 1) + 1, PathSamples, MaxPathSamples);
 
         GuidePath path = new GuidePath();
-        path.points = new Vector3[PathSamples];
-        path.cumulative = new float[PathSamples];
-        path.origin = p0;
+        path.points = new Vector3[samples];
+        path.cumulative = new float[samples];
+        path.origin = control[0];
 
-        for (int i = 0; i < PathSamples; i++)
+        for (int i = 0; i < samples; i++)
         {
-            float t = (float)i / (PathSamples - 1);
-            path.points[i] = Evaluate(p0, p1, p2, t);
+            float t = (float)i / (samples - 1);
+            path.points[i] = EvaluatePoints(control, t);
             if (i == 0)
             {
                 path.cumulative[i] = 0f;
@@ -250,12 +380,14 @@ public class GuideCurveManager : MonoBehaviour
             path.cumulative[i] = path.cumulative[i - 1] + Vector3.Distance(path.points[i], path.points[i - 1]);
         }
 
-        path.totalLength = path.cumulative[PathSamples - 1];
+        path.totalLength = path.cumulative[samples - 1];
 
-        // The analytic derivative at the end, falling back to the last chord when the three
-        // points are collinear-and-coincident enough that the derivative degenerates.
-        Vector3 tangent = EvaluateTangent(p0, p1, p2, 1f);
-        if (tangent.sqrMagnitude < .00000001f) tangent = path.points[PathSamples - 1] - path.points[PathSamples - 2];
+        // The analytic derivative at the end for the three point case, and the last chord for
+        // everything else - which is also the fallback when the points are collinear and close
+        // enough together that the derivative degenerates.
+        Vector3 tangent = Vector3.zero;
+        if (control.Length == 3) tangent = EvaluateTangent(control[0], control[1], control[2], 1f);
+        if (tangent.sqrMagnitude < .00000001f) tangent = path.points[samples - 1] - path.points[samples - 2];
         if (tangent.sqrMagnitude < .00000001f) tangent = guide.normal;
         if (tangent.sqrMagnitude < .00000001f) tangent = Vector3.up;
         path.exitTangent = tangent.normalized;
@@ -374,8 +506,11 @@ public class GuideCurveManager : MonoBehaviour
             contact = point,
             normal = safeNormal,
             frame = BuildInitialFrame(safeNormal),
-            midLocal = new Vector3(0f, reach * .5f, 0f),
-            endLocal = new Vector3(0f, reach, 0f),
+            nodesLocal = new List<Vector3>
+            {
+                new Vector3(0f, reach * .5f, 0f),
+                new Vector3(0f, reach, 0f)
+            },
             amount = 0f,
             radius = DefaultGuideRadius,
             falloff = DefaultGuideFalloff
@@ -386,7 +521,7 @@ public class GuideCurveManager : MonoBehaviour
         return guide;
     }
 
-    // Keeps midLocal/endLocal untouched, which IS the "keeps its general form" requirement -
+    // Keeps every node untouched, which IS the "keeps its general form" requirement -
     // they are frame-relative, so re-seating the contact and its normal carries the whole shape
     // to the new spot and re-aims it along the new surface.
     public bool MoveSelectedGuide(int groupId, Vector3 point, Vector3 normal)
@@ -803,7 +938,10 @@ public class GuideCurveManager : MonoBehaviour
         GameObject done = AddButton(controlsRoot.transform, "DONE", 120f);
         done.GetComponent<Button>().onClick.AddListener(ClearSelection);
 
-        AddHint(controlsRoot.transform, "Drag the AMBER and BLUE handles to shape the curve");
+        AddHint(controlsRoot.transform, "Drag the handles to shape the curve");
+        AddHint(controlsRoot.transform, "ALT + CLICK on the curve adds a point, up to " +
+                                        (MaxGuideNodes + 1));
+        AddHint(controlsRoot.transform, "ALT + RIGHT CLICK a point removes it (not the tip)");
         AddHint(controlsRoot.transform, "SPACE + CLICK moves this guide, keeping its shape");
         AddHint(controlsRoot.transform, "Card placing is OFF while a guide is selected");
         AddHint(controlsRoot.transform, "DONE, ESC, empty space or another group closes this");

@@ -87,6 +87,9 @@ public class ModelViewer : MonoBehaviour
     public float brushFalloffDistance = 0.05f;
     public float selectionStrength = 0.25f;
     private bool isSelectionMode = false;
+    // Latched on the right button press edge; see HandleCameraControls.
+    private bool orbitSuppressed = false;
+
     private bool hasSelectionHotspot = false;
     private bool isRelativeMode = false;
     private Vector3 selectionHitPoint;
@@ -1325,7 +1328,30 @@ public class ModelViewer : MonoBehaviour
     void HandleCameraControls()
     {
         if (Mouse.current == null) return;
-        if (Mouse.current.rightButton.isPressed)
+
+        // Guide point editing needs ALT plus right click to mean "remove this point", and orbiting
+        // is on the right button and would otherwise run at the same moment - the point would go
+        // and the view would swing while it went. So an orbit REFUSES TO START on a right press
+        // made with ALT down while a guide is being shaped.
+        //
+        // Both halves of that matter. Tested on isPressed rather than the press edge, an orbit
+        // already under way would freeze the instant ALT was touched; and applied whether or not
+        // a guide is selected, ALT plus right would stop the camera everywhere in the app in
+        // exchange for nothing, when holding ALT while dragging the view around is an ordinary
+        // thing to be doing.
+        bool altHeld = Keyboard.current != null &&
+                       (Keyboard.current.leftAltKey.isPressed || Keyboard.current.rightAltKey.isPressed);
+
+        // Over a panel the guide editor stands down and removes nothing, so suppressing the orbit
+        // there would cost a drag and buy nothing.
+        bool overUI = EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
+        if (Mouse.current.rightButton.wasPressedThisFrame)
+            orbitSuppressed = altHeld && !overUI &&
+                              GroupAddButtonPlacementAuthority.ArmedKind == GroupAddButtonPlacementAuthority.AddKind.None &&
+                              GuideCurveManager.AnyGuideSelected;
+        if (!Mouse.current.rightButton.isPressed) orbitSuppressed = false;
+
+        if (Mouse.current.rightButton.isPressed && !orbitSuppressed)
         {
             float mouseX = Mouse.current.delta.x.ReadValue() * 0.1f;
             float mouseY = Mouse.current.delta.y.ReadValue() * 0.1f;

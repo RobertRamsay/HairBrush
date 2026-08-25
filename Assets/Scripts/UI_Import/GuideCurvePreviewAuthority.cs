@@ -23,6 +23,7 @@ using UnityEngine;
 public class GuideCurvePreviewAuthority : MonoBehaviour
 {
     private const int CurveSegments = 48;
+    private const int MaxCurveSegments = 320;
     private const int RingSegments = 48;
 
     private static readonly Color SelectedCurve = new Color(.72f, .45f, 1f, .95f);
@@ -35,6 +36,9 @@ public class GuideCurvePreviewAuthority : MonoBehaviour
 
     // One, not a pool. Only the selected guide is ever drawn, and a pool sized to the group
     // would be permanently all-but-empty with nothing left to explain what it was for.
+    // Reused between frames; see DrawCurve.
+    private Vector3[] control;
+
     private LineRenderer curveLine;
     private LineRenderer zoneInner;
     private LineRenderer zoneOuter;
@@ -53,6 +57,7 @@ public class GuideCurvePreviewAuthority : MonoBehaviour
         manager = null;
         viewer = null;
         lineMaterial = null;
+        control = null;
         curveLine = null;
         zoneInner = null;
         zoneOuter = null;
@@ -97,15 +102,24 @@ public class GuideCurvePreviewAuthority : MonoBehaviour
     {
         if (line == null) return;
 
-        Vector3 p0 = guide.contact;
-        Vector3 p1 = GuideCurveManager.WorldMid(guide);
-        Vector3 p2 = GuideCurveManager.WorldEnd(guide);
+        // Filled in place rather than through WorldPoints, which allocates. This runs every
+        // LateUpdate a guide is selected, and the array only changes size when a point is added
+        // or removed.
+        int nodes = GuideCurveManager.NodeCount(guide);
+        if (nodes < 1) return;
+        if (control == null || control.Length != nodes + 1) control = new Vector3[nodes + 1];
+        control[0] = guide.contact;
+        for (int n = 0; n < nodes; n++) control[n + 1] = GuideCurveManager.WorldNode(guide, n);
 
-        line.positionCount = CurveSegments;
-        for (int i = 0; i < CurveSegments; i++)
+        // Enough samples for the number of spans, so a twenty point guide is not drawn as a
+        // chain of visible straight runs.
+        int steps = Mathf.Clamp(CurveSegments * (control.Length - 1) / 2, CurveSegments, MaxCurveSegments);
+
+        line.positionCount = steps;
+        for (int i = 0; i < steps; i++)
         {
-            float t = (float)i / (CurveSegments - 1);
-            line.SetPosition(i, GuideCurveManager.Evaluate(p0, p1, p2, t));
+            float t = (float)i / (steps - 1);
+            line.SetPosition(i, GuideCurveManager.EvaluatePoints(control, t));
         }
 
         line.startColor = color;
