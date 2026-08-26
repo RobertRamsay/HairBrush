@@ -34,9 +34,13 @@ public class GroupPanelPostHintStats : MonoBehaviour
     private const float SoloButtonWidth = 52f;
     private const float SidednessButtonWidth = 40f;
     private const float NormalFlipButtonWidth = 36f;
-    // Eight lines at fontSize 11. Bump this whenever a line is added to ApplyHintStyle,
-    // or the last one gets clipped.
-    private const float ControlsHintHeight = 113f;
+    // Bump this whenever a line is added to ApplyHintStyle, or the last one gets clipped.
+    // 113 carried nine lines at font 11, so about 12.6 each. Ten lines since the group pick got
+    // a line of its own - it used to be ALT + CLICK and was not listed here at all, which was
+    // survivable while ALT was a single key and is not now that it is a two-key chord nobody
+    // will guess. 126 keeps the same per-line room; trimming a line is the cheaper fix if this
+    // list ever needs an eleventh.
+    private const float ControlsHintHeight = 126f;
 
     private const string InstructionsHeaderName = "InstructionsHeader";
     private const float InstructionsHeaderHeight = 26f;
@@ -150,6 +154,7 @@ public class GroupPanelPostHintStats : MonoBehaviour
         if (hint == null) return;
         hint.text = "CTRL + CLICK to ADD a POST Modifier\n" +
                     "TAB + CLICK to ADD a CLUMP Modifier\n" +
+                    "CTRL + SHIFT + CLICK selects a hair's group\n" +
                     "SHIFT to Toggle brushing mode\n" +
                     "Click UV:ADJ/PRE for UV Mode\n" +
                     "Double Click Group name to rename it.\n" +
@@ -199,6 +204,7 @@ public class GroupPanelPostHintStats : MonoBehaviour
         // LAST sibling so it draws over the group list. Listing it here would pull it into this
         // front block and put it underneath. It is deliberately absent.
         AddIfPresent(panel, GroomSymmetryAuthority.ButtonName);
+        AddIfPresent(panel, MayaNavigationAuthority.ButtonName);
         AddIfPresent(panel, "TitleText");
         AddIfPresent(panel, "NewGroupButton");
         AddIfPresent(panel, "GroupScrollView");
@@ -454,6 +460,13 @@ public class GroupHeaderBackgroundClickProxy : MonoBehaviour, IPointerClickHandl
     public void OnPointerClick(PointerEventData eventData)
     {
         if (eventData == null || eventData.button != PointerEventData.InputButton.Left) return;
+
+        // Consistent with CustomClickDetector on the same row: an ALT+LMB tumble begun over empty
+        // header space should not switch the selected group and close the modifier panel the user
+        // was working in. No data loss here, but the same gesture should not do two different
+        // things depending on which pixel of a row it started on.
+        if (MayaNavigationAuthority.CameraGestureActive) return;
+
         if (labelButton == null) return;
         labelButton.onClick.Invoke();
         eventData.Use();

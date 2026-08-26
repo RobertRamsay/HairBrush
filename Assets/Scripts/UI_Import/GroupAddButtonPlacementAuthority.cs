@@ -245,7 +245,20 @@ public class GroupAddButtonPlacementAuthority : MonoBehaviour
 
         if (Mouse.current == null) return;
 
-        if (Mouse.current.rightButton.wasPressedThisFrame)
+        // Right click cancels an armed placement - unless it is the MAYA-NAV DOLLY. Zooming in for
+        // a closer look at where the POST should go is not a request to cancel placing it.
+        //
+        // CameraGestureActive, NOT AltReserved. With MAYA-NAV off, ALT+RMB is the ordinary classic
+        // ORBIT and has cancelled an armed placement since the button existed; exempting it there
+        // would leave the placement armed after a gesture the user reads as a cancel, grooming
+        // locked off behind it, and the next left click planting the thing they thought they had
+        // thrown away.
+        //
+        // The other two camera gestures need no test here: ALT+MMB fails this line's own
+        // right-button test, and ALT+LMB reaches IsShortcutModifierHeld further down and is
+        // refused there. Of the three camera gestures only the right button can reach a Disarm,
+        // so only it needs saying here.
+        if (Mouse.current.rightButton.wasPressedThisFrame && !MayaNavigationAuthority.CameraGestureActive)
         {
             Disarm();
             return;
@@ -269,7 +282,22 @@ public class GroupAddButtonPlacementAuthority : MonoBehaviour
         // modifier to come up rather than placing a duplicate; the mode stays armed.
         if (IsShortcutModifierHeld())
         {
-            StatusToast.Show("Release CTRL / TAB / SPACE, then click the effect point.", false, 2f);
+            // A MAYA-NAV camera gesture is not a mistake and gets no toast. ALT is how the user
+            // moves the camera there, so telling them to release it while they line up the very
+            // shot they want to place into is worse than saying nothing - the placement stays
+            // armed either way, and the toast would fire on every tumble.
+            //
+            // CameraGestureActive, NOT AltReserved. Written against AltReserved this return fires
+            // whenever ALT is down in EITHER mode, which makes the toast below unreachable while
+            // ALT is held - so it could only ever name a key the user is guaranteed not to be
+            // holding, and the MAYA-NAV-off user with an armed placement and ALT down out of old
+            // habit would click, get nothing, and be told nothing.
+            if (MayaNavigationAuthority.CameraGestureActive) return;
+
+            // Names ALT as well, for the case where it IS a mistake: MAYA-NAV off, where ALT is
+            // reserved and means nothing. Without it the toast sends the user hunting for three
+            // keys none of which are down.
+            StatusToast.Show("Release ALT / CTRL / TAB / SPACE, then click the effect point.", false, 2f);
             return;
         }
 
@@ -367,12 +395,34 @@ public class GroupAddButtonPlacementAuthority : MonoBehaviour
         StatusToast.Show("GUIDE placed on group " + groupId + ". Raise Guide Amount to comb.", false, 3f);
     }
 
+    // "Some other gesture owns this click, so an armed placement stands down."
+    //
+    // Two aim rings have to stay in step with this, and NOT in the same way:
+    //
+    //   SelectionBrushVisualizer.blockedModifier mirrors this set exactly.
+    //   InfluenceRingPreviewAuthority.blockedModifierHeld mirrors it MINUS TAB, deliberately -
+    //   TAB+click is picked up by GroupClumperInteractionAuthority and does create a clumper, so
+    //   the ring is telling the truth there.
+    //
+    // Anything added here has to be considered for both, but only copied verbatim into the first.
+    // Get that wrong in either direction and a ring starts promising a placement the click will
+    // not make, or hiding one it will.
     static bool IsShortcutModifierHeld()
     {
         if (Keyboard.current == null) return false;
         if (Keyboard.current.ctrlKey.isPressed) return true;
         if (Keyboard.current.tabKey.isPressed) return true;
         if (Keyboard.current.spaceKey.isPressed) return true;
+
+        // ALT. Under MAYA-NAV this is a camera gesture and an armed placement must not fire
+        // underneath a tumble. With MAYA-NAV off ALT is reserved rather than meaningless -
+        // ModelViewer.HandleGrooming and PlacementBrushModeAuthority both refuse an ALT click
+        // outright, so that a user reaching for the old ALT+click group pick gets nothing instead
+        // of a card planted on the model - and this is the same reservation.
+        //
+        // It was never in this list, which was a latent bug for as long as ALT+click WAS the group
+        // pick: picking a group with a +POST armed both selected the group AND placed the POST.
+        if (MayaNavigationAuthority.AltReserved) return true;
         return false;
     }
 

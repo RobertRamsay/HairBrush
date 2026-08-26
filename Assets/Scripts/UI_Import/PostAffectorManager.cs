@@ -139,6 +139,19 @@ public class PostAffectorManager : MonoBehaviour
     {
         if (Mouse.current == null || Keyboard.current == null) return;
         if (!Keyboard.current.ctrlKey.isPressed || !Mouse.current.leftButton.wasPressedThisFrame) return;
+
+        // CTRL+SHIFT+LMB is the group pick, not POST creation. Nothing else here would have
+        // stopped it: this authority sweeps the scene on its own and never asks ModelViewer
+        // whether the click was already claimed, so without this test every group pick made
+        // while a selection was live would leave a POST behind it on the way past.
+        if (Keyboard.current.shiftKey.isPressed) return;
+
+        // ALT is reserved for the camera, and CTRL+ALT+LMB is a hand shape Maya users make
+        // constantly - it is a camera gesture in Maya itself. With a selection live, which is the
+        // state you are in immediately after any CTRL+click, tumbling with CTRL still resting
+        // under the hand would plant a POST at the cursor and make it active as the view swung.
+        if (MayaNavigationAuthority.AltReserved) return;
+
         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
         if (!HasSelection()) return;
         if (lastCreatedFrame == Time.frameCount) return;

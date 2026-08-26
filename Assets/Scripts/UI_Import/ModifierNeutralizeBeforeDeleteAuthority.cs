@@ -129,6 +129,23 @@ public class ModifierDeleteNeutralizeHook : MonoBehaviour, IPointerDownHandler
     public void OnPointerDown(PointerEventData eventData)
     {
         if (eventData == null || eventData.button != PointerEventData.InputButton.Left) return;
+
+        // NO MAYA-NAV GUARD HERE, deliberately, and it is worth saying why because every other
+        // panel handler in the project has one.
+        //
+        // This is phase ONE of a two-phase delete. It zeroes the modifier's weight on the press;
+        // phase two is the DEL button's own onClick, which this component does not own and cannot
+        // suppress - it is added ONTO that button and leaves its listeners alone. Guard only phase
+        // one and an ALT-held click on DEL skips the neutralize and still deletes, which strands
+        // the mesh at its last evaluated shape. That is the exact failure this file exists to
+        // prevent (see the header, and claude/clumper-post-frozen-mesh-root-cause.md), it is
+        // written to the save file, and there is no way back from it.
+        //
+        // Left unguarded, the worst an ALT+LMB tumble begun over DEL can do is neutralize a
+        // modifier whose delete then never fires, because the cursor left the button before
+        // release. That leaves a zeroed POST or clumper still in the list - visible, and undone by
+        // raising its weight again. It is also not new: press-and-drag-away on DEL has always done
+        // exactly this. A recoverable pre-existing bug beats an unrecoverable new one.
         if (kind == Kind.Clumper) NeutralizeClumper();
         else NeutralizePost();
     }

@@ -36,6 +36,11 @@ public class PostSpaceRepositionAuthority : MonoBehaviour
     {
         Resolve();
         if (posts == null || viewer == null || Mouse.current == null || Keyboard.current == null) return;
+        // ALT is reserved for the camera. Under MAYA-NAV, ALT+SPACE (or ALT+TAB) plus a click is
+        // an awkward chord rather than an impossible one, and it would both tumble the view and
+        // fire this gesture. True whenever ALT is held, in either mode.
+        if (MayaNavigationAuthority.AltReserved) return;
+
         if (!Keyboard.current.spaceKey.isPressed || !Mouse.current.leftButton.wasPressedThisFrame) return;
         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
 

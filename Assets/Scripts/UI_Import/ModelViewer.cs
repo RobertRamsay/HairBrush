@@ -90,6 +90,13 @@ public class ModelViewer : MonoBehaviour
     // Latched on the right button press edge; see HandleCameraControls.
     private bool orbitSuppressed = false;
 
+    // MAYA-NAV only, one per button: this button's press landed on a panel, so its camera
+    // gesture moves nothing. Per button rather than one shared flag - see HandleCameraControls.
+    // Initialised here rather than tested for.
+    private bool navSuppressedLeft = false;
+    private bool navSuppressedMiddle = false;
+    private bool navSuppressedRight = false;
+
     private bool hasSelectionHotspot = false;
     private bool isRelativeMode = false;
     private Vector3 selectionHitPoint;
@@ -1174,20 +1181,33 @@ public class ModelViewer : MonoBehaviour
         // SHIFT/ALT/CTRL are name characters and modifiers while a text box is open.
         if (GroupNameInlineEditAuthority.IsEnteringText) return;
         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
-        bool isHoldingAlt = Keyboard.current != null && (Keyboard.current.leftAltKey.isPressed || Keyboard.current.rightAltKey.isPressed);
+
+        bool altReserved = MayaNavigationAuthority.AltReserved;
         bool isHoldingCtrl = Keyboard.current != null && Keyboard.current.ctrlKey.isPressed;
         bool isHoldingShift = Keyboard.current != null && (Keyboard.current.leftShiftKey.isPressed || Keyboard.current.rightShiftKey.isPressed);
-        if (isHoldingAlt && Mouse.current.leftButton.wasPressedThisFrame)
-        {
-            Ray altRay = mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
-            if (Physics.Raycast(altRay, out RaycastHit altHit))
-            {
-                HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
-                if (allCards.Length > 0) { HairCard nearestCard = allCards.OrderBy(c => Vector3.Distance(altHit.point, c.transform.position)).FirstOrDefault(); if (nearestCard != null) SelectGroup(nearestCard.groupId); }
-            }
-            return;
-        }
-        if (isHoldingShift && !wasHoldingShiftDrag) { wasHoldingShiftDrag = true; sessionPlacedCards.Clear(); }
+
+        // A SHIFT hold opens a "these cards become a new group" stroke session. CTRL+SHIFT is now
+        // the group pick, so without excluding CTRL here a pick made CTRL-first would also open a
+        // session - and releasing the keys afterwards would run the teardown over a stroke that
+        // never happened.
+        //
+        // A pick made SHIFT-first still opens one, for the frames before CTRL lands. That is not
+        // worth more machinery: the session is a list of cards placed during the stroke, no card
+        // can be placed while CTRL is down, so the list is empty and the teardown below does
+        // nothing but refresh a panel.
+        bool isShiftStroke = isHoldingShift && !isHoldingCtrl;
+        if (isShiftStroke && !wasHoldingShiftDrag) { wasHoldingShiftDrag = true; sessionPlacedCards.Clear(); }
+
+        // The session STARTS on isShiftStroke but ENDS on the raw SHIFT being let go, and the
+        // asymmetry is deliberate. Ending on isShiftStroke would mean a stray CTRL tapped in the
+        // middle of a shift stroke reads as "SHIFT released" and runs the teardown over a stroke
+        // the user has not finished - and CTRL is now the likeliest key of any of them to be
+        // brushed mid-stroke, since the group pick lives on it.
+        //
+        // Both this and the start above sit ABOVE the ALT return below, so that holding ALT does
+        // not freeze the state machine. Letting go of SHIFT while ALT happened to be down would
+        // otherwise leave the session open until ALT was next released, and the teardown would
+        // then fire at an unrelated later moment.
         if (wasHoldingShiftDrag && !isHoldingShift)
         {
 #if UNITY_EDITOR
@@ -1213,17 +1233,68 @@ public class ModelViewer : MonoBehaviour
             sessionPlacedCards.Clear();
             RefreshGroupListUI();
         }
-        if (isHoldingCtrl && Mouse.current.leftButton.wasPressedThisFrame)
+
+        // ALT is reserved for the camera, and reserved in BOTH modes rather than only while
+        // MAYA-NAV is on. Everything from here down consumes a click; nothing above it does.
+        //
+        // With MAYA-NAV on the reason is plain: the tumble is ALT plus a MOUSE BUTTON, mouse
+        // buttons are what the branches below author with, and nothing about a tumble blocks a
+        // raycast - they all read Mouse.current directly - so ALT+LMB would paint a stroke
+        // underneath the swing.
+        //
+        // With MAYA-NAV off the reason is subtler and matters more. ALT+LMB used to be the group
+        // pick; it is CTRL+SHIFT now. If ALT simply stopped meaning anything it would fall through
+        // to the placement branch at the bottom of this method and PLANT A CARD - so everyone with
+        // the old muscle memory would drop hair on the model, in the exact spot they were trying
+        // to inspect. Inert is the only safe answer for a binding that moved.
+        if (altReserved) return;
+
+        // Group pick. This was ALT+click until MAYA-NAV took ALT for the camera; see
+        // MayaNavigationAuthority for why the whole ALT set moved rather than half of it.
+        //
+        // CTRL alone could not have it - that is POST authoring - so the pick is CTRL+SHIFT, and
+        // the SHIFT half is why the stroke session above has to exclude CTRL.
+        if (isHoldingCtrl && isHoldingShift && Mouse.current.leftButton.wasPressedThisFrame)
+        {
+            Ray pickRay = mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
+            if (Physics.Raycast(pickRay, out RaycastHit pickHit))
+            {
+                HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
+                if (allCards.Length > 0) { HairCard nearestCard = allCards.OrderBy(c => Vector3.Distance(pickHit.point, c.transform.position)).FirstOrDefault(); if (nearestCard != null) SelectGroup(nearestCard.groupId); }
+            }
+            return;
+        }
+
+        // !isHoldingShift, even though the group pick above returns unconditionally and this can
+        // never be reached under CTRL+SHIFT today. PlacementBrushModeAuthority's twin branch says
+        // the same thing for the same reason: a branch that is only correct because of what sits
+        // above it breaks silently the first time somebody reorders the file, and these two have
+        // to stay in step.
+        if (isHoldingCtrl && !isHoldingShift && Mouse.current.leftButton.wasPressedThisFrame)
         {
             Ray ray = mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
             if (Physics.Raycast(ray, out RaycastHit hit)) EnterSelectionMode(hit.point, hit.normal); else ClearSelectionHotspot();
             return;
         }
-        bool shouldSpawn = isHoldingShift ? (Mouse.current.leftButton.isPressed && Time.time >= lastSpawnTime + spawnCooldown) : Mouse.current.leftButton.wasPressedThisFrame;
+        // isShiftStroke, NOT isHoldingShift. A held SHIFT is what turns a click into a continuous
+        // stroke, so reading the raw SHIFT here would make CTRL+SHIFT paint: the group pick above
+        // only returns on the PRESS frame, and every frame after it - button still down, keys
+        // still held - would fall through to this line and spawn a card per cooldown. The pick
+        // would leave a trail of hair behind it.
+        bool shouldSpawn;
+        if (isShiftStroke)
+        {
+            shouldSpawn = Mouse.current.leftButton.isPressed && Time.time >= lastSpawnTime + spawnCooldown;
+        }
+        else
+        {
+            shouldSpawn = Mouse.current.leftButton.wasPressedThisFrame;
+        }
+
         if (shouldSpawn && !isSelectionMode)
         {
             Ray ray = mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
-            if (Physics.Raycast(ray, out RaycastHit hit)) { HairCard card = PinHairCard(hit.point, hit.normal); if (isHoldingShift && card != null) sessionPlacedCards.Add(card); lastSpawnTime = Time.time; }
+            if (Physics.Raycast(ray, out RaycastHit hit)) { HairCard card = PinHairCard(hit.point, hit.normal); if (isShiftStroke && card != null) sessionPlacedCards.Add(card); lastSpawnTime = Time.time; }
         }
     }
 
@@ -1364,31 +1435,106 @@ public class ModelViewer : MonoBehaviour
         // orbit and pan below read the mouse directly and never ask whether the pointer is over
         // UI, so without this the head spins behind the card while it is being read.
         // Always false in a PRO build - nothing there ever raises one.
+        // The per-button nav latches below are deliberately NOT cleared here, for the same reason
+        // orbitSuppressed is not. false is the PERMISSIVE value: clearing them would discard a
+        // suppression that was correctly latched - press ALT+LMB over the left panel, have the buy
+        // card come and go while the button is still down, and the tumble the latch existed to
+        // prevent would then run behind the panel. A press made WHILE the card is up cannot set
+        // them either way, since this return is above the latching.
         if (DemoUpgradePrompt.IsOpen) return;
 
-        // Guide point editing needs ALT plus right click to mean "remove this point", and orbiting
-        // is on the right button and would otherwise run at the same moment - the point would go
-        // and the view would swing while it went. So an orbit REFUSES TO START on a right press
-        // made with ALT down while a guide is being shaped.
+        // Guide point editing needs CTRL+SHIFT plus right click to mean "remove this point", and
+        // in the CLASSIC scheme the right button is the orbit - so the point would go and the view
+        // would swing while it went. The right button's camera gesture therefore REFUSES TO START
+        // on a right press made with CTRL+SHIFT down while a guide is being shaped.
         //
-        // Both halves of that matter. Tested on isPressed rather than the press edge, an orbit
-        // already under way would freeze the instant ALT was touched; and applied whether or not
-        // a guide is selected, ALT plus right would stop the camera everywhere in the app in
-        // exchange for nothing, when holding ALT while dragging the view around is an ordinary
-        // thing to be doing.
-        bool altHeld = Keyboard.current != null &&
-                       (Keyboard.current.leftAltKey.isPressed || Keyboard.current.rightAltKey.isPressed);
+        // Under MAYA-NAV the collision cannot arise at all: the right button dollies only with ALT
+        // held, and GuideCurveHandleAuthority returns on ALT before it ever reaches the point
+        // editor - so no point can be removed during a dolly, and a bare CTRL+SHIFT right click
+        // moves no camera. The flag is applied to the dolly branch anyway rather than fenced off
+        // to the classic one, purely because a suppression that exists in only one of two branches
+        // is one refactor away from being lost.
+        //
+        // Both halves of that matter. Tested on isPressed rather than the press edge, a drag
+        // already under way would freeze the instant the modifier was touched; and applied whether
+        // or not a guide is selected, CTRL+SHIFT plus right would stop the camera everywhere in the
+        // app in exchange for nothing, when holding modifiers while dragging the view around is an
+        // ordinary thing to be doing.
+        //
+        // This read ALT until MAYA-NAV arrived. The gesture it protects moved to CTRL+SHIFT
+        // wholesale - see MayaNavigationAuthority for why ALT had to be evacuated - and this test
+        // moved with it. Deliberately NOT conditional on MAYA-NAV: the gesture is not conditional.
+        bool pointEditHeld = Keyboard.current != null &&
+                             Keyboard.current.ctrlKey.isPressed &&
+                             Keyboard.current.shiftKey.isPressed;
 
-        // Over a panel the guide editor stands down and removes nothing, so suppressing the orbit
-        // there would cost a drag and buy nothing.
+        // Over a panel the guide editor stands down and removes nothing, so suppressing the drag
+        // there would cost a gesture and buy nothing.
         bool overUI = EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
         if (Mouse.current.rightButton.wasPressedThisFrame)
-            orbitSuppressed = altHeld && !overUI &&
+            orbitSuppressed = pointEditHeld && !overUI &&
                               GroupAddButtonPlacementAuthority.ArmedKind == GroupAddButtonPlacementAuthority.AddKind.None &&
                               GuideCurveManager.AnyGuideSelected;
         if (!Mouse.current.rightButton.isPressed) orbitSuppressed = false;
 
-        if (Mouse.current.rightButton.isPressed && !orbitSuppressed)
+        // A camera gesture must not START on a press made over a panel.
+        //
+        // This was not needed before MAYA-NAV and is now. Orbit and pan have always been on the
+        // right and middle buttons, which no UI control uses, so a press over a slider could never
+        // be both. MAYA-NAV puts a camera gesture on the LEFT button, which every button, slider
+        // and group row in the tool uses - so without this, ALT+clicking the MAYA-NAV button to
+        // switch it back off would tumble the model behind the panel while it did so.
+        //
+        // Latched on the press edge and held for the gesture, exactly like orbitSuppressed above:
+        // read live, dragging the cursor across a panel mid-tumble would freeze the camera until
+        // it came out the other side.
+        //
+        // ONE FLAG PER BUTTON, which is the part that is easy to get wrong. A single shared flag
+        // latched on "some button went down while none were down" gets both of the two-button
+        // cases backwards: press LMB on a scrollbar and then, still holding it, ALT+MMB in the
+        // viewport, and the track is dead for its whole life; begin an ALT+LMB tumble in the
+        // viewport, drift over the panel and press RMB, and the dolly runs over the panel that
+        // suppression exists to protect. Each button answering for its own press has neither
+        // problem, and needs no memory of the frame before.
+        if (Mouse.current.leftButton.wasPressedThisFrame) navSuppressedLeft = overUI;
+        if (Mouse.current.middleButton.wasPressedThisFrame) navSuppressedMiddle = overUI;
+        if (Mouse.current.rightButton.wasPressedThisFrame) navSuppressedRight = overUI;
+        if (!Mouse.current.leftButton.isPressed) navSuppressedLeft = false;
+        if (!Mouse.current.middleButton.isPressed) navSuppressedMiddle = false;
+        if (!Mouse.current.rightButton.isPressed) navSuppressedRight = false;
+
+        // MAYA-NAV: ALT + LMB tumbles, ALT + MMB tracks, ALT + RMB dollies, and nothing moves the
+        // camera without ALT held. Off, the scheme is what it always was - RMB orbits, MMB pans.
+        //
+        // The two schemes are resolved into three booleans rather than branching around two copies
+        // of the maths, because the maths is the part that must not drift: a fix to the pitch clamp
+        // made in one copy and missed in the other is a bug that only shows for the half of users
+        // on the other scheme, and only sometimes.
+        // Read locally rather than through MayaNavigationAuthority.AltReserved because this is the
+        // one place asking a different question: not "must this click stand down" but "is the user
+        // driving the camera". The two happen to have the same answer; conflating them in the file
+        // that OWNS the camera would be the thing that hides it if they ever stop.
+        bool mayaNav = MayaNavigationAuthority.Enabled;
+        bool altHeld = Keyboard.current != null &&
+                       (Keyboard.current.leftAltKey.isPressed || Keyboard.current.rightAltKey.isPressed);
+
+        bool orbiting;
+        bool panning;
+        bool dollying;
+        if (mayaNav)
+        {
+            orbiting = altHeld && Mouse.current.leftButton.isPressed && !navSuppressedLeft;
+            panning = altHeld && Mouse.current.middleButton.isPressed && !navSuppressedMiddle;
+            dollying = altHeld && Mouse.current.rightButton.isPressed && !navSuppressedRight && !orbitSuppressed;
+        }
+        else
+        {
+            orbiting = Mouse.current.rightButton.isPressed && !orbitSuppressed;
+            panning = Mouse.current.middleButton.isPressed;
+            dollying = false;
+        }
+
+        if (orbiting)
         {
             float mouseX = Mouse.current.delta.x.ReadValue() * 0.1f;
             float mouseY = Mouse.current.delta.y.ReadValue() * 0.1f;
@@ -1397,13 +1543,31 @@ public class ModelViewer : MonoBehaviour
             pitch = Mathf.Clamp(pitch, -89f, 89f);
             cameraPivot.eulerAngles = new Vector3(pitch, cameraPivot.eulerAngles.y, 0f);
         }
-        if (Mouse.current.middleButton.isPressed)
+        if (panning)
         {
             float mouseX = Mouse.current.delta.x.ReadValue() * 0.1f;
             float mouseY = Mouse.current.delta.y.ReadValue() * 0.1f;
             cameraPivot.Translate(Vector3.left * mouseX * panSpeed, Space.Self);
             cameraPivot.Translate(Vector3.down * mouseY * panSpeed, Space.Self);
         }
+        if (dollying)
+        {
+            // Horizontal drag only, right is closer - Maya's own convention. Vertical movement is
+            // ignored rather than summed in: tumble and dolly are the same hand shape one button
+            // apart, so a dolly that also answered to Y would creep on every gesture meant to be
+            // horizontal, and the creep would be invisible until the model had drifted.
+            //
+            // The 0.03 is DERIVED from the wheel below, not measured on a machine. The wheel moves
+            // scroll * 0.001 * zoomSpeed and Windows reports 120 per detent, so one notch is
+            // 0.12 * zoomSpeed. delta.x is pixels, pre-scaled by 0.1 as above, so a 100px drag at
+            // 0.03 gives 0.3 * zoomSpeed - about two and a half notches for a gesture crossing a
+            // third of a 1080p viewport. If it wants tuning after a real session, tune it here.
+            float mouseX = Mouse.current.delta.x.ReadValue() * 0.1f;
+            mainCamera.transform.Translate(Vector3.forward * (mouseX * 0.03f) * zoomSpeed, Space.Self);
+        }
+
+        // The wheel zooms in BOTH schemes. Maya has a wheel zoom of its own, so keeping it costs
+        // nothing in fidelity, and taking it away would cost every user who reaches for it.
         float scroll = Mouse.current.scroll.y.ReadValue();
         if (scroll != 0.0f)
         {
@@ -1601,7 +1765,20 @@ public class ModelViewer : MonoBehaviour
 public class CustomClickDetector : MonoBehaviour, IPointerClickHandler
 {
     public System.Action onRightClick;
-    public void OnPointerClick(PointerEventData eventData) { if (eventData.button == PointerEventData.InputButton.Right) onRightClick?.Invoke(); }
+
+    // The right click this carries raises the delete-group prompt, and under MAYA-NAV ALT+RMB is
+    // the DOLLY - so reaching for the zoom with the cursor over a group row would ask to delete
+    // that group. HandleCameraControls' per-button nav latch suppresses the camera half of that
+    // collision; nothing was suppressing this half.
+    //
+    // CameraGestureActive rather than AltReserved: with MAYA-NAV off, ALT+right-clicking a group
+    // row has always opened the prompt and nothing about that needs to change.
+    public void OnPointerClick(PointerEventData eventData)
+    {
+        if (eventData.button != PointerEventData.InputButton.Right) return;
+        if (MayaNavigationAuthority.CameraGestureActive) return;
+        onRightClick?.Invoke();
+    }
 }
 
 #if UNITY_EDITOR

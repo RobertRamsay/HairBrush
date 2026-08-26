@@ -576,6 +576,22 @@ public class TextureUVRectWorkspace : MonoBehaviour
 
         bool pointerOverUI = EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
 
+        // ALT is reserved, so an ALT+LMB press must not draw a rectangle - in either mode.
+        //
+        // Note what this is NOT about: the camera does not actually move in here. HandleCameraControls
+        // has no texture-mode gate and does run, but EnforceWorkspaceCamera in this file's own
+        // LateUpdate hard-resets the pivot and the camera transform every frame, and LateUpdate
+        // always follows Update - so any motion is erased in the frame it happened. This guard is
+        // about the CLICK, not the camera: under MAYA-NAV the user reaching for a tumble gets no
+        // view change either way, and without this they would also get a UV rectangle dragged out
+        // and committed on release.
+        //
+        // A drag ALREADY UNDER WAY is left alone rather than cancelled. Tested as a plain return
+        // it only refuses to START one, so brushing ALT part-way through drawing a rectangle no
+        // longer throws the rectangle away - which it would have done in both modes, and which is
+        // neither of the things ALT is supposed to do.
+        if (MayaNavigationAuthority.AltReserved && !dragging) return;
+
         if (!dragging && Mouse.current.leftButton.wasPressedThisFrame)
         {
             if (pointerOverUI) return;
@@ -699,6 +715,17 @@ public class TextureUVRectWorkspace : MonoBehaviour
     void HandleRightClickDelete()
     {
         if (dragging || Mouse.current == null) return;
+
+        // ALT is reserved, so an ALT+RMB press must not delete a rectangle. Under MAYA-NAV that
+        // press is someone reaching for the dolly; the rectangle under the cursor would go, with
+        // nothing on screen to say so.
+        //
+        // As with the guard in HandleDrawInput, this is about the click rather than the camera -
+        // EnforceWorkspaceCamera pins the view every LateUpdate, so nothing moves in here anyway.
+        // It has to be repeated here because this method is deliberately called from Update
+        // separately, so the guard in HandleDrawInput does not cover it.
+        if (MayaNavigationAuthority.AltReserved) return;
+
         if (!Mouse.current.rightButton.wasPressedThisFrame) return;
         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
         if (hoveredRectId < 0) return;

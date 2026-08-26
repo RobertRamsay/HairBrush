@@ -1024,6 +1024,12 @@ public class GroomCurveGraphInput : MonoBehaviour, IPointerClickHandler
     public void OnPointerClick(PointerEventData eventData)
     {
         if (editor == null || eventData == null || eventData.button != PointerEventData.InputButton.Left) return;
+        // A MAYA-NAV camera gesture begun over this control must not also drive it. See
+        // MayaNavigationAuthority for why panel handlers use CameraGestureActive rather than
+        // AltReserved: ALT+click on a panel never meant anything, so there is nothing to reserve
+        // when MAYA-NAV is off.
+        if (MayaNavigationAuthority.CameraGestureActive) return;
+
         if (editor.ScreenToNormalized(eventData, out Vector2 normalized))
             editor.AddKey(normalized);
     }
@@ -1048,6 +1054,17 @@ public class GroomCurvePointHandle : MonoBehaviour, IDragHandler, IPointerDownHa
     public void OnDrag(PointerEventData eventData)
     {
         if (editor == null) return;
+
+        // Left only. The input module dispatches drag for every button, so without this an ALT+RMB
+        // dolly begun over a handle drags the keyframe even though OnPointerDown refused to delete
+        // it - the guard there covers the delete, not the drag.
+        if (eventData == null || eventData.button != PointerEventData.InputButton.Left) return;
+
+        // And not while the camera is being driven. These handles are a few pixels across, so an
+        // ALT+LMB tumble started anywhere near one would reshape the curve while the view - which
+        // ModelViewer's per-button nav latch correctly suppresses over UI - does not move at all.
+        if (MayaNavigationAuthority.CameraGestureActive) return;
+
         if (editor.ScreenToNormalized(eventData, out Vector2 normalized))
             editor.DragKey(this, keyIndex, normalized);
     }
@@ -1057,6 +1074,11 @@ public class GroomCurvePointHandle : MonoBehaviour, IDragHandler, IPointerDownHa
         if (editor == null || eventData == null) return;
         if (eventData.button == PointerEventData.InputButton.Right)
         {
+            // Under MAYA-NAV, ALT+RMB is the DOLLY, and these handles are a few pixels across -
+            // starting a zoom with the cursor on one would delete the keyframe under it and
+            // reshape the curve. Same guard as SliderRightClickReset, for the same gesture.
+            if (MayaNavigationAuthority.CameraGestureActive) return;
+
             editor.RemoveKey(keyIndex);
             eventData.Use();
         }

@@ -2,8 +2,6 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
-using System.IO;
-using System.Text;
 using TMPro;
 using UnityEngine;
 using UnityEngine.Networking;
@@ -18,7 +16,12 @@ using UnityEngine.UI;
 //
 // Settings live in an ini beside the player's other saved data rather than next to the
 // executable, because an installed build usually sits somewhere the user cannot write to.
-// Application.persistentDataPath is the one location guaranteed writable on every platform.
+// HairBrushSettings owns that file; this panel is one of its two callers.
+//
+// The card also carries the MAYA-NAV checkbox. That is discovery rather than control - the
+// control is the left-panel button, reachable at any time - and it is here because this is the
+// one screen every user looks at, and because a navigation scheme is something a Maya user wants
+// in the first thirty seconds or not at all.
 [DefaultExecutionOrder(9700)]
 public class WelcomeWhatsNewAuthority : MonoBehaviour
 {
@@ -47,18 +50,25 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
     }
 
     // Five at most, one line each - the panel does not scroll.
+    //
+    // This release REBINDS two gestures that have been on ALT since the tool shipped, and does it
+    // unconditionally. Three of the five lines are spent saying so, which is not generosity: this
+    // panel is the only place the change is announced, and a user who finds ALT+click has stopped
+    // picking groups with nothing on screen to explain it will read it as a broken build.
     private static readonly string[] ReleaseNotes =
     {
-        "EVEN placement - fills the brush to a spacing you set, never closer.",
-        "Card Spacing slider, with a green ring showing the exclusion radius.",
-        "Drag a GUIDE's green ROOT ring to re-aim it from a new spot.",
-        "GUIDEs now lay hair ON the curve, and the roots stay planted.",
-        "Guided hair keeps its Length, whatever the guide is doing.",
+        "MAYA-NAV: ALT + drag to tumble, track and dolly. Remembered between runs.",
+        "Turn it on with the MAYA-NAV button, or the tick box on this card.",
+        "Group pick has moved: CTRL + SHIFT + CLICK selects a hair's group.",
+        "Guide points have moved: CTRL + SHIFT + CLICK adds, + RIGHT CLICK removes.",
+        "ALT is the camera key now - it no longer picks groups or edits guides.",
     };
 
     // ---------------------------------------------------------------------------------
 
-    private const string SettingsFileName = "hairbrush.ini";
+    // The ini itself lives in HairBrushSettings now - see that file for why there is exactly
+    // one reader and one writer of it, and why the file survives a version bump even though
+    // THIS key deliberately does not.
     private const string SuppressKey = "suppressWelcomeForVersion";
 
     // Bump the file in the repo when a release goes out and every running copy sees it.
@@ -85,7 +95,10 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
     // the contents never squash.
     private const float CardLeft = .10f;
     private const float CardRight = .90f;
-    private const float CardHeight = 360f;
+    // 400 rather than the 360 it was. The footer carries two rows now - the MAYA-NAV checkbox
+    // above the suppress checkbox - and the notes well below is already within a few pixels of
+    // full at five notes, so the height had to come from the card rather than from the well.
+    private const float CardHeight = 400f;
 
     // The card's top edge is measured from the logo at runtime rather than fixed, because
     // the branding sits on the START SCREEN's canvas, which is Constant Pixel Size and does
@@ -94,7 +107,10 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
     // 4K. Reading where the artwork actually ends solves it at any size or aspect.
     private const float LogoGap = 26f;
     private const float FallbackCardTop = .62f;
-    private const float MinCardTop = .34f;
+    // Raised with CardHeight, and for the same 40 pixels. This clamp is what stops a very low
+    // logo pushing the card off the bottom of the screen; at .34 with a 400-tall card the bottom
+    // edge would have gone under it, where at .34 with the old 360 it cleared by a few pixels.
+    private const float MinCardTop = .38f;
     private const float MaxCardTop = .95f;
 
     private const float Pad = 22f;
@@ -110,6 +126,13 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
     private const float FooterHeight = 34f;
     private const float StartButtonPadX = 22f;
     private const float SuppressWidth = 380f;
+
+    // The MAYA-NAV caption spells the three drags out rather than saying "Maya-style camera" and
+    // leaving the user to find out which button does what, so its row is wider. The card is 80%
+    // of the screen - about 1530px at the 1920 reference - so there is room to spare, and nothing
+    // else sits on this row.
+    private const float MayaNavWidth = 760f;
+    private const float FooterRowGap = 6f;
     private const float BoxSize = 22f;
 
     private const float TitleFont = 25f;
@@ -163,67 +186,16 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
     }
 
     // -------------------------------------------------------------------------- settings
-
-    static string SettingsPath()
-    {
-        return Path.Combine(Application.persistentDataPath, SettingsFileName);
-    }
-
-    static Dictionary<string, string> ReadSettings()
-    {
-        Dictionary<string, string> values = new Dictionary<string, string>();
-
-        try
-        {
-            string path = SettingsPath();
-            if (!File.Exists(path)) return values;
-
-            foreach (string line in File.ReadAllLines(path))
-            {
-                string trimmed = line.Trim();
-                if (trimmed.Length == 0) continue;
-                if (trimmed.StartsWith(";") || trimmed.StartsWith("#") || trimmed.StartsWith("[")) continue;
-
-                int split = trimmed.IndexOf('=');
-                if (split <= 0) continue;
-
-                values[trimmed.Substring(0, split).Trim()] = trimmed.Substring(split + 1).Trim();
-            }
-        }
-        catch (Exception error)
-        {
-            // A settings file that cannot be read is not worth failing a launch over.
-            Debug.LogWarning("HairBrush: could not read " + SettingsFileName + " - " + error.Message);
-        }
-
-        return values;
-    }
-
-    static void WriteSetting(string key, string value)
-    {
-        Dictionary<string, string> values = ReadSettings();
-        values[key] = value;
-
-        StringBuilder builder = new StringBuilder();
-        builder.AppendLine("; HairBrush settings. Safe to delete - it will be rebuilt.");
-        builder.AppendLine("[HairBrush]");
-        foreach (KeyValuePair<string, string> pair in values)
-            builder.AppendLine(pair.Key + "=" + pair.Value);
-
-        try
-        {
-            File.WriteAllText(SettingsPath(), builder.ToString());
-        }
-        catch (Exception error)
-        {
-            Debug.LogWarning("HairBrush: could not write " + SettingsFileName + " - " + error.Message);
-        }
-    }
+    //
+    // These used to be private helpers right here, reading and writing the ini directly. They
+    // moved to HairBrushSettings when MAYA-NAV gained a preference that is written from two
+    // places and read before either exists; two independent read-modify-writes of the same file
+    // is how a setting gets silently dropped. See that file.
 
     static bool IsSuppressedForThisVersion()
     {
         string stored;
-        if (!ReadSettings().TryGetValue(SuppressKey, out stored)) return false;
+        if (!HairBrushSettings.ReadSettings().TryGetValue(SuppressKey, out stored)) return false;
         return string.Equals(stored, Application.version, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -381,6 +353,7 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         StyleLine(updateLabel, "Checking for updates...", LineFont, FontStyles.Bold, UITheme.TextMuted);
 
         BuildNotes(card.transform);
+        BuildMayaNavToggle(card.transform);
         BuildSuppressToggle(card.transform);
         BuildStartButton(card.transform);
 
@@ -431,7 +404,9 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         RectTransform rect = well.GetComponent<RectTransform>();
         rect.anchorMin = Vector2.zero;
         rect.anchorMax = Vector2.one;
-        rect.offsetMin = new Vector2(Pad, FooterHeight + Pad + 10f);
+        // Clears BOTH footer rows plus the gap between them - MAYA-NAV sits directly above the
+        // suppress checkbox, and the notes well would otherwise draw over it.
+        rect.offsetMin = new Vector2(Pad, (FooterHeight * 2f) + FooterRowGap + Pad + 10f);
         rect.offsetMax = new Vector2(-Pad, -NotesTop);
         // Deliberately a flat fill, not a second FineEdge: two nested 9-slice borders
         // read as boxes clipping each other rather than as one panel.
@@ -512,12 +487,48 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         button.spriteState = state;
     }
 
+    // MAYA-NAV's DISCOVERY, not its control. The control is the left-panel button, which is
+    // reachable at any time - this box exists because nobody finds a left-panel button they are
+    // not already looking for, and a navigation scheme is exactly the kind of thing a Maya user
+    // wants in the first thirty seconds or never.
+    //
+    // It writes through on change rather than on Close, so it agrees with the left-panel button
+    // the instant it is clicked - both go through MayaNavigationAuthority.SetEnabled, which is the
+    // single writer. Reading its starting state from Enabled rather than from false matters too:
+    // this panel reappears on every version bump, and a box that showed unticked while MAYA-NAV
+    // was on would invite the user to "turn it on" and silently turn it off.
+    void BuildMayaNavToggle(Transform parent)
+    {
+        Toggle toggle = BuildCheckbox(parent, "MayaNavToggle", new Vector2(Pad, Pad + FooterHeight + FooterRowGap),
+            MayaNavWidth, "Maya-style camera - ALT + drag: LEFT tumbles, MIDDLE tracks, RIGHT dollies");
+
+        // isOn BEFORE the listener, deliberately. Wired the other way round, setting the initial
+        // state would fire onValueChanged and write the value straight back - harmless while the
+        // value matches, and a silent rewrite of the user's preference the moment it does not.
+        toggle.isOn = MayaNavigationAuthority.Enabled;
+        toggle.onValueChanged.AddListener(MayaNavigationAuthority.SetEnabled);
+    }
+
     void BuildSuppressToggle(Transform parent)
     {
-        GameObject toggleGO = new GameObject("SuppressToggle", typeof(RectTransform), typeof(Toggle));
+        suppressToggle = BuildCheckbox(parent, "SuppressToggle", new Vector2(Pad, Pad),
+            SuppressWidth, "Don't show this again for v" + Application.version);
+        suppressToggle.isOn = false;
+    }
+
+    // The two footer checkboxes are identical apart from where they sit, how wide they are and
+    // what they say, so the second one is not a second copy of this. offset is from the card's
+    // bottom-LEFT corner.
+    //
+    // width is not cosmetic. StyleLine sets NoWrap with Ellipsis, so a caption wider than the row
+    // is not wrapped or shrunk - it is silently cut off with a "...", which is how a checkbox ends
+    // up shipping as "Maya-style camera - ALT + drag: LEFT tumbles, MID...".
+    Toggle BuildCheckbox(Transform parent, string name, Vector2 offset, float width, string caption)
+    {
+        GameObject toggleGO = new GameObject(name, typeof(RectTransform), typeof(Toggle));
         toggleGO.transform.SetParent(parent, false);
         PinToCorner(toggleGO.GetComponent<RectTransform>(), new Vector2(0f, 0f),
-            new Vector2(Pad, Pad), new Vector2(SuppressWidth, FooterHeight));
+            offset, new Vector2(width, FooterHeight));
 
         GameObject boxGO = new GameObject("Box", typeof(RectTransform), typeof(Image));
         boxGO.transform.SetParent(toggleGO.transform, false);
@@ -540,19 +551,19 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
 
         GameObject captionGO = new GameObject("Caption", typeof(RectTransform), typeof(TextMeshProUGUI));
         captionGO.transform.SetParent(toggleGO.transform, false);
-        RectTransform caption = captionGO.GetComponent<RectTransform>();
-        caption.anchorMin = Vector2.zero;
-        caption.anchorMax = Vector2.one;
-        caption.offsetMin = new Vector2(BoxSize + 10f, 0f);
-        caption.offsetMax = Vector2.zero;
+        RectTransform captionRect = captionGO.GetComponent<RectTransform>();
+        captionRect.anchorMin = Vector2.zero;
+        captionRect.anchorMax = Vector2.one;
+        captionRect.offsetMin = new Vector2(BoxSize + 10f, 0f);
+        captionRect.offsetMax = Vector2.zero;
 
         StyleLine(captionGO.GetComponent<TextMeshProUGUI>(),
-            "Don't show this again for v" + Application.version, LineFont, FontStyles.Normal, UITheme.TextMuted);
+            caption, LineFont, FontStyles.Normal, UITheme.TextMuted);
 
-        suppressToggle = toggleGO.GetComponent<Toggle>();
-        suppressToggle.targetGraphic = boxGO.GetComponent<Image>();
-        suppressToggle.graphic = tickGO.GetComponent<Image>();
-        suppressToggle.isOn = false;
+        Toggle toggle = toggleGO.GetComponent<Toggle>();
+        toggle.targetGraphic = boxGO.GetComponent<Image>();
+        toggle.graphic = tickGO.GetComponent<Image>();
+        return toggle;
     }
 
     // ------------------------------------------------------------------- menu visibility
@@ -585,7 +596,7 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         // Only records anything if the box is ticked. Left unticked, the panel comes back
         // next launch - and either way a version bump makes the stored value stop matching.
         if (suppressToggle != null && suppressToggle.isOn)
-            WriteSetting(SuppressKey, Application.version);
+            HairBrushSettings.WriteSetting(SuppressKey, Application.version);
 
         RestoreMenuButtons();
 

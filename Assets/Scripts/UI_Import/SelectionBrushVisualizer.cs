@@ -71,15 +71,18 @@ public class SelectionBrushVisualizer : MonoBehaviour
         float strength = Mathf.Clamp01(viewer.selectionStrength);
 
         // While the +POST button is armed, GroupAddButtonPlacementAuthority refuses its own
-        // placement if CTRL, TAB or SPACE is held - and TAB+click is picked up instead by
+        // placement if CTRL, ALT, TAB or SPACE is held - and TAB+click is picked up instead by
         // GroupClumperInteractionAuthority, which creates a CLUMPER. So resting a hand on TAB
         // during an armed +POST used to put two aim rings on the same cursor point, a POST one
         // at .025 and a clumper one at .04, and the click produced the clumper. The armed ring
-        // now stands down for exactly the modifiers the armed placement stands down for.
-        bool blockedModifier = Keyboard.current != null &&
-                               (Keyboard.current.ctrlKey.isPressed ||
-                                Keyboard.current.tabKey.isPressed ||
-                                Keyboard.current.spaceKey.isPressed);
+        // stands down for exactly the modifiers the armed placement stands down for - so this
+        // list has to keep matching IsShortcutModifierHeld, ALT included, or the ring goes back
+        // to promising a placement the click will not make.
+        bool blockedModifier = MayaNavigationAuthority.AltReserved ||
+                               (Keyboard.current != null &&
+                                (Keyboard.current.ctrlKey.isPressed ||
+                                 Keyboard.current.tabKey.isPressed ||
+                                 Keyboard.current.spaceKey.isPressed));
         bool armedAiming = armedForPost && !blockedModifier;
 
         // Two different rings, and they must not be drawn from the same numbers.
@@ -92,7 +95,19 @@ public class SelectionBrushVisualizer : MonoBehaviour
         // radius. Tune a POST to 0.15, then Ctrl+hover to place another: the ring showed 0.15,
         // you aimed with it, and the POST that appeared was 0.025 - the ring visibly snapping
         // smaller the instant you clicked.
-        if ((ctrl || armedAiming) && !pointerOverUI)
+        //
+        // ctrlAiming, not ctrl. CTRL+SHIFT is the group pick and PostAffectorManager refuses to
+        // create anything under it - so a bare CTRL test drew a green POST ring, at the exact
+        // radius of the POST about to appear, over a click that creates no POST at all. Same
+        // failure the comment above describes, one modifier along: a ring you aim with and a
+        // result that does not match it.
+        // ALT as well as SHIFT. blockedModifier above already stands the ARMED ring down for ALT;
+        // leaving it out here meant the CTRL-hover ring still drew under CTRL+ALT, over a click
+        // that now creates nothing at all. The two tests in this method have to agree.
+        bool ctrlAiming = ctrl &&
+                          !(Keyboard.current != null && Keyboard.current.shiftKey.isPressed) &&
+                          !MayaNavigationAuthority.AltReserved;
+        if ((ctrlAiming || armedAiming) && !pointerOverUI)
         {
             Ray ray = viewer.mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
             if (Physics.Raycast(ray, out RaycastHit hit))

@@ -153,7 +153,7 @@ public class GuideCurveSaveData
     public float endX,endY,endZ;
 
     // Every point the curve passes through, root to tip, the contact excluded. Two entries is
-    // the original mid-and-end guide; more are the points added with ALT+click.
+    // the original mid-and-end guide; more are the points added with CTRL+SHIFT+click.
     public List<GuideNodeSaveData> nodes=new();
 
     public float amount;

@@ -12,11 +12,15 @@ using UnityEngine.InputSystem;
 // way to change the direction hair leaves the scalp in without moving each point by hand. SPACE
 // and click is deliberately the opposite gesture: it carries the whole guide across with its form
 // intact.
-// ALT and left click ON the curve inserts a point where it was clicked; ALT and right click on a
-// point removes it. The TIP always refuses, and so does any removal that would take a guide below
-// two nodes, so a guide keeps a root, something in the middle and a tip whatever is done to it.
-// ALT owns those two clicks outright - neither can also start a drag, and ModelViewer stands its
-// camera orbit down while ALT is held so the right click is free to mean this.
+// CTRL+SHIFT and left click ON the curve inserts a point where it was clicked; CTRL+SHIFT and
+// right click on a point removes it. The TIP always refuses, and so does any removal that would
+// take a guide below two nodes, so a guide keeps a root, something in the middle and a tip
+// whatever is done to it. CTRL+SHIFT owns those two clicks outright - neither can also start a
+// drag, and ModelViewer stands the right button's camera gesture down while CTRL+SHIFT is held so
+// the right click is free to mean this.
+//
+// These were ALT clicks until MAYA-NAV needed ALT for the camera. See MayaNavigationAuthority for
+// why the whole ALT set moved at once, and why it moved whether MAYA-NAV is on or off.
 //
 // THE LOCKOUT IS THE POINT, not a detail. Both handles float off the model on the end of a curve,
 // so a grab that misses one continues straight past and hits the surface behind it - and the
@@ -68,7 +72,7 @@ public class GuideCurveHandleAuthority : MonoBehaviour
     private const int RootHandle = -2;
 
     // How close, in pixels, a click has to land to the drawn curve to count as ON it. Wider than
-    // the grab radius would make an ALT+click near a handle ambiguous; much narrower and the
+    // the grab radius would make a CTRL+SHIFT click near a handle ambiguous; much narrower and the
     // curve becomes hard to hit at a shallow angle.
     private const float CurvePixelRadius = 14f;
 
@@ -259,13 +263,40 @@ public class GuideCurveHandleAuthority : MonoBehaviour
             draggingGuideId = -1;
         }
 
-        // ALT is the point editor: ALT plus left adds a point where the curve was clicked, ALT
-        // plus right removes the point that was clicked. Handled before everything below so an
-        // ALT click can never also start a drag, and returning afterwards so it cannot fall
-        // through into the deselect test either.
-        bool altHeld = Keyboard.current != null &&
-                       (Keyboard.current.leftAltKey.isPressed || Keyboard.current.rightAltKey.isPressed);
-        if (altHeld && !pointerOverUI)
+        // ALT is reserved for the camera, in BOTH modes.
+        //
+        // Under MAYA-NAV the tumble is ALT plus a mouse button and every branch below reads a
+        // mouse button, so without this ALT+LMB would grab whatever handle happened to be under
+        // the cursor and drag the guide around with the camera.
+        //
+        // With MAYA-NAV off it matters just as much, and is easier to miss. ALT+click used to be
+        // the point editor and returned right here; now that the editor is CTRL+SHIFT, an ALT
+        // click with no test would fall through to the handle pick below and DEFORM the guide -
+        // or, missing both handles and the model, reach the deselect test and close guide editing.
+        // Both silent, and the drag is a saved change. Anyone reaching for the old binding would
+        // wreck the curve they were trying to edit.
+        bool altReserved = MayaNavigationAuthority.AltReserved;
+        if (altReserved)
+        {
+            dragging = -1;
+            draggingGuideId = -1;
+            DrawHandles(guide, -1);
+            return;
+        }
+
+        // CTRL+SHIFT is the point editor: plus left adds a point where the curve was clicked, plus
+        // right removes the point that was clicked. Handled before everything below so the click
+        // can never also start a drag, and returning afterwards so it cannot fall through into the
+        // deselect test either.
+        //
+        // This was ALT until MAYA-NAV took ALT for the camera - see MayaNavigationAuthority. CTRL
+        // on its own was not available (that is POST authoring), hence the pair. The modifierHeld
+        // test further down already stands the handle drag down for CTRL, so the two cannot both
+        // claim the same press even if this branch ever stopped returning.
+        bool pointEditHeld = Keyboard.current != null &&
+                             Keyboard.current.ctrlKey.isPressed &&
+                             Keyboard.current.shiftKey.isPressed;
+        if (pointEditHeld && !pointerOverUI)
         {
             if (Mouse.current.leftButton.wasPressedThisFrame)
             {
@@ -284,11 +315,16 @@ public class GuideCurveHandleAuthority : MonoBehaviour
             }
         }
 
-        // Orbiting or panning mid-drag drops the drag. DragTo solves against a plane rebuilt from
+        // A camera gesture mid-drag drops the drag. DragTo solves against a plane rebuilt from
         // the CURRENT camera forward through the handle's CURRENT position, so while the camera
         // swings the solution keeps the same screen position and depth - the handle is carried
         // rigidly around the model and the height clamp then slides it along the surface, leaving
         // the guide arbitrarily deformed by a gesture that was only meant to change the view.
+        //
+        // Under MAYA-NAV a bare right or middle press moves no camera at all, and this still drops
+        // the drag. Deliberate: what the test really means is "the user has started doing
+        // something else with the mouse", the drop costs nothing but the drag, and a test that had
+        // to know which scheme is live would be one more thing to keep in step.
         bool cameraGesture = Mouse.current.rightButton.isPressed || Mouse.current.middleButton.isPressed;
         if (cameraGesture)
         {
@@ -472,7 +508,7 @@ public class GuideCurveHandleAuthority : MonoBehaviour
     // Adding and removing points
     // ---------------------------------------------------------------------------------
 
-    // ALT plus left. The new point goes where the curve was clicked, not where the cursor is:
+    // CTRL+SHIFT plus left. The new point goes where the curve was clicked, not where the cursor is:
     // the curve is a line in the air, so the nearest point ON it is the only reading of "here"
     // that leaves the shape alone. Clicking anywhere else does nothing at all.
     void InsertPointAt(GuideCurveManager.GuideCurve guide, Vector2 mouse)
@@ -502,7 +538,7 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         float bestDistance = ScreenDistance(mouse, GuideCurveManager.EvaluatePoints(control, bestT));
         if (bestDistance > CurvePixelRadius)
         {
-            StatusToast.Show("ALT and click ON the guide curve to add a point.");
+            StatusToast.Show("CTRL + SHIFT and click ON the guide curve to add a point.");
             return;
         }
 
@@ -538,7 +574,7 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         if (index < 0) return;
 
         StatusToast.Show("Point added. " + (GuideCurveManager.NodeCount(guide) + 1) +
-                         " points on this guide. ALT and right click a point to remove it.");
+                         " points on this guide. CTRL + SHIFT and right click a point to remove it.");
     }
 
     // Nearest point on the curve to the cursor, in screen space, searched over a range of t.
@@ -561,7 +597,7 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         return bestT;
     }
 
-    // ALT plus right. The tip refuses, and so does the last removal that would take the guide
+    // CTRL+SHIFT plus right. The tip refuses, and so does the last removal that would take the guide
     // below two points, so a guide always keeps a root, something between and a tip.
     void RemovePointAt(GuideCurveManager.GuideCurve guide, Vector2 mouse)
     {
@@ -577,7 +613,7 @@ public class GuideCurveHandleAuthority : MonoBehaviour
 
         if (index < 0)
         {
-            StatusToast.Show("ALT and right click one of the guide's points to remove it.");
+            StatusToast.Show("CTRL + SHIFT and right click one of the guide's points to remove it.");
             return;
         }
 

@@ -32,6 +32,12 @@ public class GroupClumperInteractionFix : MonoBehaviour
     {
         Resolve();
         if (viewer == null || manager == null || Mouse.current == null || Keyboard.current == null) return;
+        // ALT is reserved for the camera. GroupClumperInteractionAuthority stands its half of
+        // TAB+click down for the same reason, and these two have to agree: this is the half that
+        // does the real work - it moves the group's clumper to the click and force-opens the
+        // CLUMPER editor - so a guard on only the other one would stop nothing.
+        if (MayaNavigationAuthority.AltReserved) return;
+
         if (!Keyboard.current.tabKey.isPressed || !Mouse.current.leftButton.wasPressedThisFrame) return;
         if (handledFrame == Time.frameCount) return;
         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;

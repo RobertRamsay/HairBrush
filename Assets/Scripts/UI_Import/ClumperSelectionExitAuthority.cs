@@ -34,8 +34,18 @@ public class ClumperSelectionExitAuthority : MonoBehaviour
 
         // Ctrl+Click is POST authoring, regardless of which modifier currently owns the
         // right panel. Exit CLUMPER before ModelViewer/PostAffectorManager process the click.
+        //
+        // CTRL+SHIFT is excluded because that is the group pick, which is not POST authoring and
+        // has no business closing the CLUMPER the user is working on. Picking a group is how you
+        // check what you are looking at; losing the modifier panel for it would be a punishment.
+        // ALT is excluded for the same reason, in both modes. Under MAYA-NAV, CTRL+ALT+LMB is a
+        // camera gesture - Maya's own - so with CTRL resting under the hand the panel would close
+        // on every swing. With MAYA-NAV off it is a click that is supposed to do nothing at all,
+        // and closing the panel is not nothing.
         if (Keyboard.current != null && Mouse.current != null &&
-            Keyboard.current.ctrlKey.isPressed && Mouse.current.leftButton.wasPressedThisFrame &&
+            Keyboard.current.ctrlKey.isPressed && !Keyboard.current.shiftKey.isPressed &&
+            !MayaNavigationAuthority.AltReserved &&
+            Mouse.current.leftButton.wasPressedThisFrame &&
             (EventSystem.current == null || !EventSystem.current.IsPointerOverGameObject()) &&
             lastCtrlExitFrame != Time.frameCount)
         {

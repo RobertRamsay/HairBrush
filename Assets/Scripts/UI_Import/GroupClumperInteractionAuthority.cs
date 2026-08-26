@@ -35,6 +35,11 @@ public class GroupClumperInteractionAuthority : MonoBehaviour
         if (!Mouse.current.leftButton.wasPressedThisFrame || lastHandledFrame == Time.frameCount) return;
         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
 
+        // ALT is reserved for the camera. Under MAYA-NAV, ALT+SPACE (or ALT+TAB) plus a click is
+        // an awkward chord rather than an impossible one, and it would both tumble the view and
+        // fire this gesture. True whenever ALT is held, in either mode.
+        if (MayaNavigationAuthority.AltReserved) return;
+
         bool tab = Keyboard.current.tabKey.isPressed;
         bool space = Keyboard.current.spaceKey.isPressed;
         if (!tab && !space) return;

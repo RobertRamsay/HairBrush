@@ -74,7 +74,7 @@ public class ModifierEmptySpaceExitAuthority : MonoBehaviour
         if (Keyboard.current != null &&
             (Keyboard.current.ctrlKey.isPressed ||
              Keyboard.current.shiftKey.isPressed ||
-             Keyboard.current.altKey.isPressed ||
+             MayaNavigationAuthority.AltReserved ||
              Keyboard.current.spaceKey.isPressed ||
              Keyboard.current.tabKey.isPressed))
             return false;

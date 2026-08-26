@@ -34,8 +34,22 @@ public class RuntimeToolInteractionFixes : MonoBehaviour
         // behind it, would reroll that group's variance seed or drop a caret in a hidden text
         // field. Always false in a PRO build.
         if (DemoUpgradePrompt.IsOpen) return;
+
         Vector2 mouse = Mouse.current.position.ReadValue();
-        bool pressed = Mouse.current.leftButton.wasPressedThisFrame;
+
+        // Same argument as the modal above, one modifier along. This authority ignores the
+        // EventSystem by design, so it also ignores the per-button nav latch that stops an ALT
+        // press over the panel from moving the camera - and an ALT+LMB tumble begun over a group's
+        // R button would reroll that group's variance seed. Conditional on MAYA-NAV: with it off
+        // there is no gesture here to protect against.
+        //
+        // It suppresses the PRESS, not the whole method. Returning early would have been the
+        // obvious move and is wrong: everything below force-paints hover and focus tints every
+        // frame, and under MAYA-NAV ALT is held more or less continuously - so an early return
+        // freezes those tints for as long as the user is driving the camera. Hover the R button,
+        // hold ALT to swing the view away, and it stays lit until ALT comes up.
+        bool pressed = Mouse.current.leftButton.wasPressedThisFrame &&
+                       !MayaNavigationAuthority.CameraGestureActive;
 
         TMP_InputField[] fields = FindObjectsByType<TMP_InputField>(FindObjectsInactive.Exclude, FindObjectsSortMode.None)
             .Where(f => f.gameObject.name == "SeedInput").ToArray();

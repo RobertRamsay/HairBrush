@@ -252,6 +252,13 @@ public class UVSeedPointerRelay : MonoBehaviour, IPointerDownHandler
     public void OnPointerDown(PointerEventData eventData)
     {
         if (eventData.button != PointerEventData.InputButton.Left) return;
+
+        // Press edge, and the ONLY route to Reshuffle - the button's own onClick listeners are
+        // removed. So an ALT+LMB tumble begun over the UV seed button rerolls the group's seed and
+        // rewrites every card's UVs, with no click-based fallback that a drag would suppress.
+        // RuntimeToolInteractionFixes guards the variance seed button beside it the same way.
+        if (MayaNavigationAuthority.CameraGestureActive) return;
+
         onPress?.Invoke();
         eventData.Use();
     }

@@ -48,6 +48,13 @@ public class ModifierGestureReservation : MonoBehaviour
         // never came back for the rest of the session, with nothing on screen to explain it.
         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
 
+        // ALT is reserved for the camera, and every authority this reservation is made on behalf
+        // of now stands down while it is held: PostSpaceRepositionAuthority, PostAffectorSurfaceMoveUX
+        // and GuideCurveManager for SPACE, GroupClumperInteractionAuthority and
+        // GroupClumperInteractionFix for TAB. Reserving anyway would drive grooming off for a
+        // frame on behalf of a gesture that is not going to happen.
+        if (MayaNavigationAuthority.AltReserved) return;
+
         bool reserved = Keyboard.current.tabKey.isPressed || Keyboard.current.spaceKey.isPressed;
         if (!reserved) return;
 

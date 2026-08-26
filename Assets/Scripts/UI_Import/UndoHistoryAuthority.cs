@@ -4,6 +4,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Text;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.Controls;
 
@@ -85,6 +86,17 @@ public class UndoHistoryAuthority : MonoBehaviour
 
     private bool armed;
     private float armedAt;
+
+    // Whether the left button press currently in progress was an ALT press in the viewport - a
+    // MAYA-NAV tumble, or, with MAYA-NAV off, the reserved ALT that authors nothing. Initialised
+    // here rather than tested for. MaintainPressOrigins owns it - sets it at the press, clears it
+    // the frame after the release - and MaintainCapture only reads it.
+    private bool leftPressWasNavigation = false;
+
+    // Whether the right button press currently in progress carried CTRL+SHIFT - i.e. was a guide
+    // point removal, the one thing the right button does that changes anything saved. Initialised
+    // here; MaintainPressOrigins owns it on the same terms as the flag above.
+    private bool rightPressWasPointEdit = false;
     private bool restoring;
     private bool baselinePending;
 
@@ -105,7 +117,7 @@ public class UndoHistoryAuthority : MonoBehaviour
     public static bool Restoring { get; private set; }
 
     // Set by an edit that MaintainCapture's input watching cannot see for itself. It arms on the
-    // left button, on any key, and on the right button only while ALT is held - so a plain right
+    // left button, on any key, and on the right button only while CTRL+SHIFT is held - so a plain right
     // click that changes something saved, like deleting a UV rectangle, would otherwise leave no
     // step behind and be folded silently into whatever the user did next.
     //
@@ -145,6 +157,14 @@ public class UndoHistoryAuthority : MonoBehaviour
 
     void Update()
     {
+        // Before Resolve and before every short-circuit below, deliberately. This is per-GESTURE
+        // state, not per-session state, and Update skips MaintainCapture on plenty of frames -
+        // during a restore, during the settle after a load, before a baseline exists. A press
+        // whose frame lands in one of those windows would record nothing, and the release that
+        // followed would arm a full serialize the gesture never earned. Nothing in Awake or
+        // Clear() resets it either, because neither of those is a gesture boundary.
+        MaintainPressOrigins();
+
         if (!Resolve()) return;
 
         // Loading a model or a project replaces the session outright. Its history belongs to a
@@ -366,19 +386,39 @@ public class UndoHistoryAuthority : MonoBehaviour
             activity = true;
         }
 
-        if (mouse != null && mouse.leftButton.wasReleasedThisFrame) activity = true;
-
-        // The right button ONLY while ALT is down, which is the one thing it does that changes
-        // anything saved: removing a point from a guide. Arming on every right release would
-        // arm on every orbit, and an arm is not free - the commit that follows builds the whole
-        // save payload and gzips it before it can compare hashes, so a plain look around the
-        // model would pay for a full serialize a third of a second later.
+        // A camera gesture changes nothing that is saved. Arming on one buys a full serialize and
+        // gzip of the whole session, 300ms after every tumble, to discover the hash is unchanged -
+        // and under MAYA-NAV the tumble is on the LEFT button, so without this the cost the right
+        // button was carefully protected from would simply have moved to the left one.
         //
-        // The ALT keydown that precedes the gesture does arm it, but that is not enough on its
-        // own: a run of removals under one continuous ALT hold produces no further keydown, and
-        // every removal after the first would be invisible to undo.
-        if (mouse != null && keyboard != null && mouse.rightButton.wasReleasedThisFrame &&
-            (keyboard.leftAltKey.isPressed || keyboard.rightAltKey.isPressed)) activity = true;
+        // The flag is set at the PRESS by MaintainPressOrigins, not read live here. Under
+        // MAYA-NAV, letting go of ALT before letting go of the mouse is an ordinary way to end a
+        // tumble - asked live at the release, that ordering reads as a plain click.
+        if (mouse != null && mouse.leftButton.wasReleasedThisFrame && !leftPressWasNavigation) activity = true;
+
+        // The right button ONLY while CTRL+SHIFT is down, which is the one thing it does that
+        // changes anything saved: removing a point from a guide. Arming on every right release
+        // would arm on every orbit, and an arm is not free - the commit that follows builds the
+        // whole save payload and gzips it before it can compare hashes, so a plain look around
+        // the model would pay for a full serialize a third of a second later.
+        //
+        // This read ALT until MAYA-NAV took ALT for the camera and the guide-point gestures moved
+        // to CTRL+SHIFT; see MayaNavigationAuthority. Left reading ALT it would have become worse
+        // than useless the moment MAYA-NAV was switched on, because there ALT+right is the DOLLY:
+        // it would have armed a full capture after every zoom, which is the exact cost the
+        // paragraph above exists to avoid.
+        //
+        // A keydown cannot be relied on to arm this instead. A run of removals under one
+        // continuous hold produces no further keydown, so every removal after the first would be
+        // invisible to undo - and the line below stops watching keydowns entirely while CTRL is
+        // held, so under this chord there is no keydown arming anything in the first place.
+        // Read from the latch, not live. The removal happens on the PRESS, and by the release the
+        // user may well have let CTRL or SHIFT go first - two keys means twice as many ways to
+        // finish the gesture in an order that reads as a plain right click. Tested live, the
+        // removal would arm nothing, and nothing else would catch it: the line below stops
+        // watching keydowns entirely while CTRL is held, and no NotifyEdit sits on the removal
+        // path. The step would be folded into whatever the user did next, or lost.
+        if (mouse != null && mouse.rightButton.wasReleasedThisFrame && rightPressWasPointEdit) activity = true;
         if (!activity && keyboard != null && !keyboard.ctrlKey.isPressed) activity = AnyKeyWentDown(keyboard);
 
         if (activity)
@@ -398,16 +438,72 @@ public class UndoHistoryAuthority : MonoBehaviour
         CommitIfChanged();
     }
 
+    // Owns leftPressWasNavigation and rightPressWasPointEdit outright: sets them, and clears
+    // them. Called from the top of Update so it runs on every frame, including the ones
+    // MaintainCapture never reaches.
+    //
+    // The clear deliberately spares the release frame itself - isPressed is already false there,
+    // and MaintainCapture, which runs later in the same frame, still has to see what the press
+    // was. It goes on the frame after instead. If MaintainCapture was skipped on that release
+    // frame, the flag is cleared anyway rather than left standing to suppress the next real click.
+    void MaintainPressOrigins()
+    {
+        Mouse mouse = Mouse.current;
+        if (mouse == null)
+        {
+            leftPressWasNavigation = false;
+            rightPressWasPointEdit = false;
+            return;
+        }
+
+        Keyboard keyboard = Keyboard.current;
+        if (mouse.rightButton.wasPressedThisFrame)
+            rightPressWasPointEdit = keyboard != null &&
+                                     keyboard.ctrlKey.isPressed && keyboard.shiftKey.isPressed;
+
+        if (!mouse.rightButton.isPressed && !mouse.rightButton.wasReleasedThisFrame)
+            rightPressWasPointEdit = false;
+
+        // Over-UI is what separates "this press is a tumble" from "this press is a slider". Under
+        // MAYA-NAV, keeping ALT down between tumbling the model and reaching for the Length slider
+        // is the ordinary way to work, and AltReserved alone reads that slider drag as
+        // a camera gesture - so the parameter change would get NO undo step at all. AnyKeyWentDown
+        // no longer arms on ALT either, so nothing else would catch it.
+        //
+        // A press over the VIEWPORT with ALT down authors nothing in either mode, ALT being
+        // reserved, so suppressing there is always right.
+        if (mouse.leftButton.wasPressedThisFrame)
+        {
+            bool overUI = EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
+            leftPressWasNavigation = MayaNavigationAuthority.AltReserved && !overUI;
+        }
+
+        if (!mouse.leftButton.isPressed && !mouse.leftButton.wasReleasedThisFrame)
+            leftPressWasNavigation = false;
+    }
+
     // Per key, not keyboard.anyKey. anyKey reads "some key is down", so its wasPressedThisFrame
     // is the edge from no keys to any key - and every gesture in this app that presses a key
-    // while ALT, SHIFT, TAB or SPACE is already held would therefore never arm. Flipping a
-    // group single-sided with 1 while orbiting on ALT is a saved change that would get no step
-    // of its own and be folded silently into whatever the user did next.
+    // while SHIFT, TAB or SPACE is already held would therefore never arm. Flipping a group
+    // single-sided with 1 while panning on the middle button is a saved change that would get no
+    // step of its own and be folded silently into whatever the user did next.
+    //
+    // ALT is the one key that does NOT arm. It is no longer a modifier for anything that changes
+    // a groom - the gestures that used to ride on it all moved to CTRL+SHIFT, see
+    // MayaNavigationAuthority - so under MAYA-NAV it is pure camera, and with MAYA-NAV off it does
+    // nothing whatsoever. Arming on it buys a full serialize and gzip of the session, 300ms later,
+    // to discover nothing changed. Under MAYA-NAV that would be the price of every single camera
+    // move, because reaching for the camera IS pressing ALT.
+    //
+    // A key pressed WHILE ALT is held still arms: it is only the ALT keydown itself that is
+    // skipped, so the 1-while-tumbling case above keeps its step.
     static bool AnyKeyWentDown(Keyboard keyboard)
     {
         foreach (KeyControl key in keyboard.allKeys)
         {
-            if (key != null && key.wasPressedThisFrame) return true;
+            if (key == null) continue;
+            if (key == keyboard.leftAltKey || key == keyboard.rightAltKey) continue;
+            if (key.wasPressedThisFrame) return true;
         }
         return false;
     }

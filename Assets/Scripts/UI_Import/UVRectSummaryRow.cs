@@ -18,6 +18,11 @@ public class UVRectSummaryRow : MonoBehaviour, IPointerEnterHandler, IPointerExi
     private Image background;
     private CanvasGroup canvasGroup;
     private Canvas rootCanvas;
+    // Whether OnBeginDrag actually accepted this drag. The input module runs its drag machinery
+    // whether or not the handler did anything, so this is what the rest of the chain - OnDrag,
+    // OnEndDrag, and the OnDrop on the TARGET row - tests instead of assuming a delivered event
+    // means an accepted one. Initialised here.
+    private bool dragBegan = false;
     private Transform originalParent;
     private int originalSiblingIndex;
     private bool pointerHovered;
@@ -106,6 +111,15 @@ public class UVRectSummaryRow : MonoBehaviour, IPointerEnterHandler, IPointerExi
         if (eventData.button != PointerEventData.InputButton.Right) return;
         if (workspace == null) return;
 
+        // Under MAYA-NAV, ALT+RMB is the DOLLY. Starting a zoom with the cursor a few pixels
+        // inside this list deletes the row it landed on - and a delete renumbers every rectangle
+        // after it, so every group pointing at "rect 4" quietly points at something else.
+        // TextureUVRectWorkspace.HandleRightClickDelete guards the on-texture half of this same
+        // gesture, and deliberately uses the OTHER predicate: that one is a viewport click, where
+        // ALT is reserved in both modes, and this one is a panel click, where it is not. Same
+        // gesture, two layers, two correct answers - do not "fix" one to match the other.
+        if (MayaNavigationAuthority.CameraGestureActive) return;
+
         // This row is about to stop standing for anything, so drop its highlight claims before
         // asking. OnPointerExit will never arrive - the GameObject is destroyed by the rebuild.
         pointerHovered = false;
@@ -137,6 +151,20 @@ public class UVRectSummaryRow : MonoBehaviour, IPointerEnterHandler, IPointerExi
     {
         if (eventData == null || eventData.button != PointerEventData.InputButton.Left) return;
 
+        // An ALT+LMB tumble begun over this list would tear the row out and drop it somewhere
+        // else, and a reorder renumbers every rectangle exactly as the delete above does. The
+        // camera does not move either - navSuppressedLeft has already killed it - so the user gets
+        // a silently reordered atlas and nothing they asked for.
+        //
+        // Refusing HERE is not enough on its own, which is the whole reason dragBegan exists
+        // below. The input module does not ask whether OnBeginDrag did anything: it sets
+        // pointerDrag at the press and dragging in ProcessDrag regardless, then delivers OnDrag
+        // and, on release, OnDrop to whatever is under the cursor. So a refusal that only returned
+        // from this method would leave the drag running with the row never reparented - still
+        // moving under the cursor, still landing on a target row, still reordering the atlas.
+        if (MayaNavigationAuthority.CameraGestureActive) return;
+
+        dragBegan = true;
         originalParent = transform.parent;
         originalSiblingIndex = transform.GetSiblingIndex();
         if (rootCanvas == null) rootCanvas = GetComponentInParent<Canvas>();
@@ -158,12 +186,26 @@ public class UVRectSummaryRow : MonoBehaviour, IPointerEnterHandler, IPointerExi
     public void OnDrag(PointerEventData eventData)
     {
         if (eventData == null || eventData.button != PointerEventData.InputButton.Left) return;
+
+        // OnBeginDrag refused this one. Moving the row anyway would drag it out of the list with
+        // none of the setup that makes a drag reversible - no saved parent, no saved sibling
+        // index - so OnEndDrag would have nothing to put back and the row would simply stay where
+        // the cursor left it.
+        if (!dragBegan) return;
+
         transform.position = eventData.position;
     }
 
     public void OnEndDrag(PointerEventData eventData)
     {
         if (eventData == null || eventData.button != PointerEventData.InputButton.Left) return;
+
+        // Cleared here rather than in OnDrop, because OnDrop is delivered to the TARGET row and
+        // may not be delivered at all - a drag released over empty space ends with no drop.
+        bool began = dragBegan;
+        dragBegan = false;
+        if (!began) return;
+
         if (canvasGroup != null) canvasGroup.blocksRaycasts = true;
         pointerHovered = false;
 
@@ -192,6 +234,11 @@ public class UVRectSummaryRow : MonoBehaviour, IPointerEnterHandler, IPointerExi
         if (draggedGO == null) return;
         UVRectSummaryRow draggedRow = draggedGO.GetComponent<UVRectSummaryRow>();
         if (draggedRow == null || draggedRow == this) return;
+
+        // The reorder lives HERE, on the target row, not on the dragged one - so this is the test
+        // that actually decides whether the atlas gets renumbered. A drag the source refused never
+        // set dragBegan, and must not be completed by whatever it happens to be released over.
+        if (!draggedRow.dragBegan) return;
 
         // Either row can have been invalidated between the drag starting and this drop, by a
         // delete that has not had its frame to rebuild the list yet.

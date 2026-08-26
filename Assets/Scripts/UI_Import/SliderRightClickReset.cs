@@ -19,6 +19,13 @@ public class SliderRightClickReset : MonoBehaviour, IPointerClickHandler
     public void OnPointerClick(PointerEventData eventData)
     {
         if (eventData.button != PointerEventData.InputButton.Right) return;
+
+        // Under MAYA-NAV, ALT+RMB is the DOLLY. Reaching for it with the cursor a few pixels
+        // inside the panel would reset this slider to its default on the way past - and
+        // ModelViewer's per-button nav latch only stops the camera half of that collision, not
+        // this half. Conditional on MAYA-NAV: with it off, ALT+right-clicking a slider to reset it
+        // is something that has always worked and there is no reason to take it away.
+        if (MayaNavigationAuthority.CameraGestureActive) return;
         if (slider == null) slider = GetComponent<Slider>();
         if (slider == null || !slider.interactable) return;
 

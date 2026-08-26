@@ -57,6 +57,22 @@ public class PlacementBrushModeAuthority : MonoBehaviour
     // number, like the brush radius beside it, means whatever that model's units mean.
     private float cardSpacing = .008f;
     private float nextActionTime;
+
+    // The mode a SHIFT press just cycled away from, and whether that cycle is still revertible.
+    // Both initialised here. See the SHIFT block in Update for why the revert exists and why it
+    // needs no timer.
+    private PlacementMode shiftCycleRevertTo = PlacementMode.Place;
+
+    // What the cycle left behind. A revert is refused unless the mode is still this, so it can
+    // only ever undo its own cycle and never a deliberate choice made afterwards.
+    private PlacementMode shiftCycleRevertFrom = PlacementMode.Place;
+    private bool shiftCycleRevertArmed = false;
+
+    // Whether the left-button hold currently in progress was claimed at its PRESS by a gesture
+    // that is not painting. Initialised here, latched at the press, cleared when the button comes
+    // up. See MaintainLeftHoldClaim.
+    private bool leftHoldClaimed = false;
+
     private float nextUIScan;
     private bool restorePending;
     private bool restoreSelectionState;
@@ -142,6 +158,16 @@ public class PlacementBrushModeAuthority : MonoBehaviour
         Resolve();
         if (viewer == null) return;
 
+        // Above every early return below, deliberately. Grooming is held off for the whole of an
+        // armed placement, and TextureModeProbe.Active parks this method for the whole texture
+        // workspace, so the returns further down are not rare frames - they are minutes at a time.
+        // A latch maintained only on the frames this method gets all the way through is not a latch.
+        //
+        // Only a CLAIM lives up here, never a decision to act. A latch that is safe to maintain
+        // above the returns is one that can only ever suppress something; anything that could
+        // TRIGGER something has to be read where the returns can stop it.
+        MaintainLeftHoldClaim();
+
         // Keeps the slider correct if brushRadius was changed from outside this script - the
         // [ ] hotkey - rather than through the slider itself.
         //
@@ -209,19 +235,93 @@ public class PlacementBrushModeAuthority : MonoBehaviour
             return;
         }
 
-        bool shiftPressed = Keyboard.current.leftShiftKey.wasPressedThisFrame || Keyboard.current.rightShiftKey.wasPressedThisFrame;
-        if (shiftPressed)
+        // ALT is reserved for the camera, in both modes - the same reservation
+        // ModelViewer.HandleGrooming makes, for the same reason. Under MAYA-NAV the tumble is ALT
+        // plus a mouse button and every click branch below reads a mouse button directly, so
+        // ALT+LMB would re-select a group under the cursor as the view swung. With MAYA-NAV off
+        // ALT means nothing, and must go on meaning nothing rather than falling through.
+        //
+        // This sits ABOVE the SHIFT mode cycle as well as above the click branches, so ALT+SHIFT
+        // does not cycle the brush mode either. That is deliberate rather than incidental: under
+        // MAYA-NAV, ALT is held for the whole of every camera move, and a SHIFT brushed during one
+        // would walk the mode strip through five modes with the user's hand nowhere near it. The
+        // cost is that ALT+SHIFT stops cycling with MAYA-NAV off too, where it did before - a
+        // chord with no reason to be pressed, against a misfire that lands in ERASE.
+        bool altReserved = MayaNavigationAuthority.AltReserved;
+        if (altReserved)
         {
+            HideBrushPreview();
+            return;
+        }
+
+        bool ctrl = Keyboard.current.ctrlKey.isPressed;
+        bool shift = Keyboard.current.leftShiftKey.isPressed || Keyboard.current.rightShiftKey.isPressed;
+        bool tab = Keyboard.current.tabKey.isPressed;
+        bool space = Keyboard.current.spaceKey.isPressed;
+
+        // A bare SHIFT press cycles the brush mode. CTRL+SHIFT is now the group pick, so without
+        // excluding CTRL the mode would cycle every time somebody picked a group - they would be
+        // painting in a mode they never chose, having done nothing but click on hair.
+        //
+        // The !ctrl test alone only covers CTRL-first. That IS how the chord is usually made - left
+        // CTRL sits below left SHIFT and the hand rolls up onto it - but SHIFT-first is perfectly
+        // ordinary, and there the SHIFT press lands before CTRL and the mode cycles anyway.
+        //
+        // That is not survivable on its own. CycleMode walks FIVE modes, so the damage is not
+        // "press SHIFT again to undo it": recovering from one accidental cycle costs four more
+        // taps, and the route back from PLACE runs through ERASE. Four unlucky group picks and an
+        // ordinary left-drag deletes hair instead of placing it.
+        //
+        // So the cycle is REVERTED if CTRL arrives while SHIFT is still down. No timer: a
+        // deliberate SHIFT tap has let SHIFT go long before the user reaches for CTRL, and a chord
+        // holds both. The revert can only ever put back a value this same block just set, which is
+        // why it is safe to sit up here with the cycle rather than needing a latch of its own.
+        //
+        // The cost is a visible flicker of the mode strip on a SHIFT-first pick. That was weighed
+        // against the two alternatives:
+        //
+        //   Cycling on SHIFT RELEASE, vetoed by any CTRL seen during the hold, is order-independent
+        //   and was tried. It is silently wrong. To be a latch at all it has to be maintained above
+        //   this method's early returns, and this method returns for whole minutes at a time -
+        //   while a group name is being renamed, while the texture workspace is open, while a
+        //   placement is armed. Type a capital letter into a rename box and the mode cycles the
+        //   moment the box closes, with the user having touched nothing.
+        //
+        //   Leaving SHIFT-first uncovered is the four-taps-through-ERASE case above.
+        //
+        // A flicker the user sees and that corrects itself beats both. Read this before changing it.
+        bool shiftPressed = Keyboard.current.leftShiftKey.wasPressedThisFrame ||
+                            Keyboard.current.rightShiftKey.wasPressedThisFrame;
+        if (shiftPressed && !ctrl)
+        {
+            shiftCycleRevertTo = mode;
             CycleMode();
+            shiftCycleRevertFrom = mode;
+            shiftCycleRevertArmed = true;
             HideBrushPreview();
             SuppressLegacyPlacement(selectionWasActive);
             return;
         }
 
-        bool alt = Keyboard.current.leftAltKey.isPressed || Keyboard.current.rightAltKey.isPressed;
-        bool ctrl = Keyboard.current.ctrlKey.isPressed;
-        bool tab = Keyboard.current.tabKey.isPressed;
-        bool space = Keyboard.current.spaceKey.isPressed;
+        // CTRL landed on a SHIFT that is still held: the press above was the leading edge of a
+        // CTRL+SHIFT group pick, not a mode change. Put the mode back.
+        //
+        // The mode == shiftCycleRevertFrom test is what keeps this honest. Without it the arm
+        // survives any OTHER mode change made while SHIFT is still down - clicking the panel's
+        // MODE button, say, which is a deliberate choice - and a CTRL pressed afterwards would
+        // throw that choice away and drop the user somewhere they never picked. A revert may only
+        // ever undo the exact cycle it armed; if the mode has moved on since, there is nothing
+        // here to undo.
+        if (shiftCycleRevertArmed && ctrl && shift && mode == shiftCycleRevertFrom)
+        {
+            shiftCycleRevertArmed = false;
+            SetMode(shiftCycleRevertTo);
+        }
+        else if (shiftCycleRevertArmed && mode != shiftCycleRevertFrom)
+        {
+            shiftCycleRevertArmed = false;
+        }
+
 
         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
         {
@@ -229,7 +329,8 @@ public class PlacementBrushModeAuthority : MonoBehaviour
             return;
         }
 
-        if (alt && Mouse.current.leftButton.wasPressedThisFrame)
+        // Group pick, formerly ALT+click. See MayaNavigationAuthority for why it moved.
+        if (ctrl && shift && Mouse.current.leftButton.wasPressedThisFrame)
         {
             if (RaycastCursor(out RaycastHit hit)) SelectNearestGroup(hit.point);
             HideBrushPreview();
@@ -237,7 +338,11 @@ public class PlacementBrushModeAuthority : MonoBehaviour
             return;
         }
 
-        if (ctrl && Mouse.current.leftButton.wasPressedThisFrame)
+        // POST authoring. The group pick above returns first, so CTRL+SHIFT never reaches this -
+        // but the !shift is here anyway rather than resting on the ordering, because a branch that
+        // is only correct because of what sits above it breaks silently the first time somebody
+        // reorders the file.
+        if (ctrl && !shift && Mouse.current.leftButton.wasPressedThisFrame)
         {
             bool selected = false;
             if (RaycastCursor(out RaycastHit hit))
@@ -268,18 +373,26 @@ public class PlacementBrushModeAuthority : MonoBehaviour
         else
             HideBrushPreview();
 
+        // The continuous modes act on the button being DOWN, not on the press edge, which is what
+        // makes the claim latch necessary rather than nice to have. Every modified click in this
+        // tool returns on wasPressedThisFrame and is then silent for the rest of the hold - so
+        // without the latch, frame two of any such gesture falls straight through to here with the
+        // button still down, and paints or erases underneath it. See MaintainLeftHoldClaim.
         bool act = false;
-        switch (mode)
+        if (!leftHoldClaimed)
         {
-            case PlacementMode.Place:
-                act = Mouse.current.leftButton.wasPressedThisFrame;
-                break;
-            case PlacementMode.Paint:
-            case PlacementMode.Spray:
-            case PlacementMode.Even:
-            case PlacementMode.Erase:
-                act = Mouse.current.leftButton.isPressed && Time.unscaledTime >= nextActionTime;
-                break;
+            switch (mode)
+            {
+                case PlacementMode.Place:
+                    act = Mouse.current.leftButton.wasPressedThisFrame;
+                    break;
+                case PlacementMode.Paint:
+                case PlacementMode.Spray:
+                case PlacementMode.Even:
+                case PlacementMode.Erase:
+                    act = Mouse.current.leftButton.isPressed && Time.unscaledTime >= nextActionTime;
+                    break;
+            }
         }
 
         if (act && hasSurface)
@@ -306,6 +419,69 @@ public class PlacementBrushModeAuthority : MonoBehaviour
         // Block only ModelViewer's old placement branch for this frame. Grooming remains
         // enabled, so normal card creation/state and modifier systems stay live.
         SuppressLegacyPlacement(selectionWasActive);
+    }
+
+    // Two latches, both of which have to be maintained on every frame rather than only on the
+    // frames the main method survives. Both are SUPPRESSIONS - they can refuse something but never
+    // cause anything - which is what makes them safe to run above the early returns. The SHIFT
+    // revert they pair with is a trigger and deliberately stays below them.
+    //
+    // THE SHIFT DISARM. Left beside the revert it was a real bug: the returns below last minutes
+    // at a time, not frames, so a SHIFT released while a rename box is open, or the texture
+    // workspace is up, or a placement is armed, never reached it. The arm survived, and the next
+    // CTRL+SHIFT group pick - however much later - reverted a mode change from another session of
+    // work. Cycle out of ERASE, rename a group, and a pick minutes later puts ERASE back.
+    //
+    // THE LEFT-HOLD CLAIM: "this left-button hold belongs to something other than the brush."
+    //
+    // Every modified click in this tool is written as `modifier && wasPressedThisFrame`, acts, and
+    // returns - and is then completely silent for the rest of the hold. The brush is not: PAINT,
+    // SPRAY, EVEN and ERASE all act on `isPressed`, every ActionInterval, for as long as the button
+    // is down. So the press frame of a modified gesture returns cleanly and frame two paints.
+    //
+    // Three ways that bit, all of which this latch closes:
+    //
+    //   CTRL+SHIFT to pick a group. Held for the ~100ms an ordinary click lasts, that used to
+    //   place a card or two - or, in ERASE, quietly delete the hair being pointed at. The old
+    //   ALT+click pick had the same hole; it was never noticed because nobody thinks of a click
+    //   as a hold.
+    //
+    //   MAYA-NAV tumble, ALT+LMB. Letting go of ALT before the mouse button is an ordinary way to
+    //   end a tumble, and on that frame the gesture stops being a nav gesture while the button is
+    //   still down - so the brush would start firing mid-swing. Testing AltReserved at
+    //   the act site cannot fix that; only remembering what the PRESS was can.
+    //
+    //   ALT+LMB with MAYA-NAV off. ALT is reserved for the camera whether or not the camera is
+    //   currently using it, so it plants nothing in either mode. Anyone still reaching for the old
+    //   ALT+click group pick gets nothing rather than a card dropped on the model.
+    void MaintainLeftHoldClaim()
+    {
+        bool alt = MayaNavigationAuthority.AltReserved;
+        bool ctrl = Keyboard.current != null && Keyboard.current.ctrlKey.isPressed;
+
+        // SHIFT let go: the cycle was meant, and stands. FIRST in this method, above the mouse
+        // test, because it needs no mouse - and a disarm skipped because no mouse device happened
+        // to be present is the same stale arm this exists to prevent.
+        bool shiftDown = Keyboard.current != null &&
+                         (Keyboard.current.leftShiftKey.isPressed || Keyboard.current.rightShiftKey.isPressed);
+        if (!shiftDown) shiftCycleRevertArmed = false;
+
+        if (Mouse.current == null) return;
+
+        // ALT, CTRL, TAB and SPACE - every modifier a click in this tool can carry. TAB and SPACE
+        // matter as much as the other two: SPACE+click repositions the selected POST or clumper,
+        // and letting SPACE go before the mouse button is the natural way to end a click. Without
+        // them in this list, the frame after SPACE comes up finds the button still down and the
+        // brush plants a card on top of the modifier that was just moved - or, in ERASE, deletes
+        // the hair around it.
+        if (Mouse.current.leftButton.wasPressedThisFrame)
+        {
+            bool tab = Keyboard.current != null && Keyboard.current.tabKey.isPressed;
+            bool space = Keyboard.current != null && Keyboard.current.spaceKey.isPressed;
+            leftHoldClaimed = alt || ctrl || tab || space;
+        }
+
+        if (!Mouse.current.leftButton.isPressed) leftHoldClaimed = false;
     }
 
     void SuppressLegacyPlacement(bool stateToRestore)

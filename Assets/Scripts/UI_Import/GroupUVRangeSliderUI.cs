@@ -349,6 +349,25 @@ public class DualIntRangeSlider : MonoBehaviour, IPointerDownHandler, IDragHandl
     public void OnPointerDown(PointerEventData eventData)
     {
         if (!isInteractable || root == null) return;
+
+        // The button was never filtered here, so a RIGHT press grabbed a handle and a right drag
+        // moved it. That was harmless while nothing used the right button over a panel; under
+        // MAYA-NAV, ALT+RMB is the DOLLY, so reaching for a zoom over this strip rewrote the
+        // group's UV range across its whole span while the camera - correctly suppressed by
+        // ModelViewer's per-button nav latch - did not move at all.
+        //
+        // The button filter is the whole fix for the reported bug, which was a RIGHT press - the
+        // dolly - grabbing a handle and dragging it.
+        //
+        // No MAYA-NAV guard on the LEFT button here, deliberately. Several panel handlers do carry
+        // one, and they are the ones where a single press or click commits something: a delete, a
+        // seed reroll, a keyframe. This is a continuous drag against a visible handle, so a user
+        // who is dragging it knows they are dragging it, and the camera is already suppressed over
+        // UI by navSuppressedLeft - the guard would buy nothing and cost the control to anyone who
+        // keeps ALT resting down, which UndoHistoryAuthority's own over-UI test assumes is the
+        // ordinary way to work.
+        if (eventData != null && eventData.button != PointerEventData.InputButton.Left) return;
+
         float n = PointerNormalized(eventData);
         float lowN = ValueNormalized(lowValue);
         float highN = ValueNormalized(highValue);
@@ -375,6 +394,10 @@ public class DualIntRangeSlider : MonoBehaviour, IPointerDownHandler, IDragHandl
 
     public void OnDrag(PointerEventData eventData)
     {
+        // activeHandle == 0 means no press ever claimed a handle, which is what the filtered
+        // OnPointerDown above now leaves behind for a right press or a nav gesture. No second
+        // guard needed here, and none wanted: a drag already under way must not be dropped
+        // halfway just because ALT was brushed.
         if (!isInteractable || activeHandle == 0) return;
         ApplyPointer(eventData);
     }

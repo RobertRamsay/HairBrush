@@ -86,7 +86,7 @@ public class GuideCurveManager : MonoBehaviour
         // the model and supplies the normal this whole frame is carried by.
         //
         // Two entries is a guide as it has always been: a mid and an end. Extra points are
-        // inserted between them with ALT+click; the TIP can never be removed, and neither can the
+        // inserted between them with CTRL+SHIFT+click; the TIP can never be removed, and neither can the
         // removal that would take the list below two, so the shape always keeps a root, something
         // in the middle and a tip. See RemoveNode for why the FIRST node is deliberately not
         // protected as well.
@@ -249,7 +249,8 @@ public class GuideCurveManager : MonoBehaviour
     }
 
     // Is anything at all being shaped right now. Read by ModelViewer, which stands its right
-    // button orbit down while ALT is held so ALT plus right can mean "remove this point".
+    // button's camera gesture down while CTRL+SHIFT is held so CTRL+SHIFT plus right can mean
+    // "remove this point".
     public static bool AnyGuideSelected
     {
         get
@@ -750,6 +751,11 @@ public class GuideCurveManager : MonoBehaviour
     void HandleSpaceReposition()
     {
         if (Keyboard.current == null || Mouse.current == null) return;
+        // ALT is reserved for the camera. Under MAYA-NAV, ALT+SPACE (or ALT+TAB) plus a click is
+        // an awkward chord rather than an impossible one, and it would both tumble the view and
+        // fire this gesture. True whenever ALT is held, in either mode.
+        if (MayaNavigationAuthority.AltReserved) return;
+
         if (!Keyboard.current.spaceKey.isPressed) return;
         if (!Mouse.current.leftButton.wasPressedThisFrame) return;
         if (lastHandledFrame == Time.frameCount) return;
@@ -1005,9 +1011,9 @@ public class GuideCurveManager : MonoBehaviour
 
         AddHint(controlsRoot.transform, "Drag the handles to shape the curve");
         AddHint(controlsRoot.transform, "Drag the ROOT ring to re-aim it from a new spot");
-        AddHint(controlsRoot.transform, "ALT + CLICK on the curve adds a point, up to " +
+        AddHint(controlsRoot.transform, "CTRL + SHIFT + CLICK on the curve adds a point, up to " +
                                         (MaxGuideNodes + 1));
-        AddHint(controlsRoot.transform, "ALT + RIGHT CLICK a point removes it (not the tip)");
+        AddHint(controlsRoot.transform, "CTRL + SHIFT + RIGHT CLICK a point removes it (not the tip)");
         AddHint(controlsRoot.transform, "SPACE + CLICK moves this guide, keeping its shape");
         AddHint(controlsRoot.transform, "Card placing is OFF while a guide is selected");
         AddHint(controlsRoot.transform, "DONE, ESC, empty space or another group closes this");

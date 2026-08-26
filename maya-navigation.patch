@@ -1,0 +1,2409 @@
+diff --git a/Assets/Scripts/UI_Import/ClumperSelectionExitAuthority.cs b/Assets/Scripts/UI_Import/ClumperSelectionExitAuthority.cs
+index 7a26de3..2d97d7c 100644
+--- a/Assets/Scripts/UI_Import/ClumperSelectionExitAuthority.cs
++++ b/Assets/Scripts/UI_Import/ClumperSelectionExitAuthority.cs
+@@ -34,8 +34,18 @@ public class ClumperSelectionExitAuthority : MonoBehaviour
+ 
+         // Ctrl+Click is POST authoring, regardless of which modifier currently owns the
+         // right panel. Exit CLUMPER before ModelViewer/PostAffectorManager process the click.
++        //
++        // CTRL+SHIFT is excluded because that is the group pick, which is not POST authoring and
++        // has no business closing the CLUMPER the user is working on. Picking a group is how you
++        // check what you are looking at; losing the modifier panel for it would be a punishment.
++        // ALT is excluded for the same reason, in both modes. Under MAYA-NAV, CTRL+ALT+LMB is a
++        // camera gesture - Maya's own - so with CTRL resting under the hand the panel would close
++        // on every swing. With MAYA-NAV off it is a click that is supposed to do nothing at all,
++        // and closing the panel is not nothing.
+         if (Keyboard.current != null && Mouse.current != null &&
+-            Keyboard.current.ctrlKey.isPressed && Mouse.current.leftButton.wasPressedThisFrame &&
++            Keyboard.current.ctrlKey.isPressed && !Keyboard.current.shiftKey.isPressed &&
++            !MayaNavigationAuthority.AltReserved &&
++            Mouse.current.leftButton.wasPressedThisFrame &&
+             (EventSystem.current == null || !EventSystem.current.IsPointerOverGameObject()) &&
+             lastCtrlExitFrame != Time.frameCount)
+         {
+diff --git a/Assets/Scripts/UI_Import/GroomShapeCurveAuthority.cs b/Assets/Scripts/UI_Import/GroomShapeCurveAuthority.cs
+index f543d67..7650910 100644
+--- a/Assets/Scripts/UI_Import/GroomShapeCurveAuthority.cs
++++ b/Assets/Scripts/UI_Import/GroomShapeCurveAuthority.cs
+@@ -1024,6 +1024,12 @@ public class GroomCurveGraphInput : MonoBehaviour, IPointerClickHandler
+     public void OnPointerClick(PointerEventData eventData)
+     {
+         if (editor == null || eventData == null || eventData.button != PointerEventData.InputButton.Left) return;
++        // A MAYA-NAV camera gesture begun over this control must not also drive it. See
++        // MayaNavigationAuthority for why panel handlers use CameraGestureActive rather than
++        // AltReserved: ALT+click on a panel never meant anything, so there is nothing to reserve
++        // when MAYA-NAV is off.
++        if (MayaNavigationAuthority.CameraGestureActive) return;
++
+         if (editor.ScreenToNormalized(eventData, out Vector2 normalized))
+             editor.AddKey(normalized);
+     }
+@@ -1048,6 +1054,17 @@ public class GroomCurvePointHandle : MonoBehaviour, IDragHandler, IPointerDownHa
+     public void OnDrag(PointerEventData eventData)
+     {
+         if (editor == null) return;
++
++        // Left only. The input module dispatches drag for every button, so without this an ALT+RMB
++        // dolly begun over a handle drags the keyframe even though OnPointerDown refused to delete
++        // it - the guard there covers the delete, not the drag.
++        if (eventData == null || eventData.button != PointerEventData.InputButton.Left) return;
++
++        // And not while the camera is being driven. These handles are a few pixels across, so an
++        // ALT+LMB tumble started anywhere near one would reshape the curve while the view - which
++        // ModelViewer's per-button nav latch correctly suppresses over UI - does not move at all.
++        if (MayaNavigationAuthority.CameraGestureActive) return;
++
+         if (editor.ScreenToNormalized(eventData, out Vector2 normalized))
+             editor.DragKey(this, keyIndex, normalized);
+     }
+@@ -1057,6 +1074,11 @@ public class GroomCurvePointHandle : MonoBehaviour, IDragHandler, IPointerDownHa
+         if (editor == null || eventData == null) return;
+         if (eventData.button == PointerEventData.InputButton.Right)
+         {
++            // Under MAYA-NAV, ALT+RMB is the DOLLY, and these handles are a few pixels across -
++            // starting a zoom with the cursor on one would delete the keyframe under it and
++            // reshape the curve. Same guard as SliderRightClickReset, for the same gesture.
++            if (MayaNavigationAuthority.CameraGestureActive) return;
++
+             editor.RemoveKey(keyIndex);
+             eventData.Use();
+         }
+diff --git a/Assets/Scripts/UI_Import/GroupAddButtonPlacementAuthority.cs b/Assets/Scripts/UI_Import/GroupAddButtonPlacementAuthority.cs
+index e4a89d0..21e8a89 100644
+--- a/Assets/Scripts/UI_Import/GroupAddButtonPlacementAuthority.cs
++++ b/Assets/Scripts/UI_Import/GroupAddButtonPlacementAuthority.cs
+@@ -245,7 +245,20 @@ public class GroupAddButtonPlacementAuthority : MonoBehaviour
+ 
+         if (Mouse.current == null) return;
+ 
+-        if (Mouse.current.rightButton.wasPressedThisFrame)
++        // Right click cancels an armed placement - unless it is the MAYA-NAV DOLLY. Zooming in for
++        // a closer look at where the POST should go is not a request to cancel placing it.
++        //
++        // CameraGestureActive, NOT AltReserved. With MAYA-NAV off, ALT+RMB is the ordinary classic
++        // ORBIT and has cancelled an armed placement since the button existed; exempting it there
++        // would leave the placement armed after a gesture the user reads as a cancel, grooming
++        // locked off behind it, and the next left click planting the thing they thought they had
++        // thrown away.
++        //
++        // The other two camera gestures need no test here: ALT+MMB fails this line's own
++        // right-button test, and ALT+LMB reaches IsShortcutModifierHeld further down and is
++        // refused there. Of the three camera gestures only the right button can reach a Disarm,
++        // so only it needs saying here.
++        if (Mouse.current.rightButton.wasPressedThisFrame && !MayaNavigationAuthority.CameraGestureActive)
+         {
+             Disarm();
+             return;
+@@ -269,7 +282,22 @@ public class GroupAddButtonPlacementAuthority : MonoBehaviour
+         // modifier to come up rather than placing a duplicate; the mode stays armed.
+         if (IsShortcutModifierHeld())
+         {
+-            StatusToast.Show("Release CTRL / TAB / SPACE, then click the effect point.", false, 2f);
++            // A MAYA-NAV camera gesture is not a mistake and gets no toast. ALT is how the user
++            // moves the camera there, so telling them to release it while they line up the very
++            // shot they want to place into is worse than saying nothing - the placement stays
++            // armed either way, and the toast would fire on every tumble.
++            //
++            // CameraGestureActive, NOT AltReserved. Written against AltReserved this return fires
++            // whenever ALT is down in EITHER mode, which makes the toast below unreachable while
++            // ALT is held - so it could only ever name a key the user is guaranteed not to be
++            // holding, and the MAYA-NAV-off user with an armed placement and ALT down out of old
++            // habit would click, get nothing, and be told nothing.
++            if (MayaNavigationAuthority.CameraGestureActive) return;
++
++            // Names ALT as well, for the case where it IS a mistake: MAYA-NAV off, where ALT is
++            // reserved and means nothing. Without it the toast sends the user hunting for three
++            // keys none of which are down.
++            StatusToast.Show("Release ALT / CTRL / TAB / SPACE, then click the effect point.", false, 2f);
+             return;
+         }
+ 
+@@ -367,12 +395,34 @@ public class GroupAddButtonPlacementAuthority : MonoBehaviour
+         StatusToast.Show("GUIDE placed on group " + groupId + ". Raise Guide Amount to comb.", false, 3f);
+     }
+ 
++    // "Some other gesture owns this click, so an armed placement stands down."
++    //
++    // Two aim rings have to stay in step with this, and NOT in the same way:
++    //
++    //   SelectionBrushVisualizer.blockedModifier mirrors this set exactly.
++    //   InfluenceRingPreviewAuthority.blockedModifierHeld mirrors it MINUS TAB, deliberately -
++    //   TAB+click is picked up by GroupClumperInteractionAuthority and does create a clumper, so
++    //   the ring is telling the truth there.
++    //
++    // Anything added here has to be considered for both, but only copied verbatim into the first.
++    // Get that wrong in either direction and a ring starts promising a placement the click will
++    // not make, or hiding one it will.
+     static bool IsShortcutModifierHeld()
+     {
+         if (Keyboard.current == null) return false;
+         if (Keyboard.current.ctrlKey.isPressed) return true;
+         if (Keyboard.current.tabKey.isPressed) return true;
+         if (Keyboard.current.spaceKey.isPressed) return true;
++
++        // ALT. Under MAYA-NAV this is a camera gesture and an armed placement must not fire
++        // underneath a tumble. With MAYA-NAV off ALT is reserved rather than meaningless -
++        // ModelViewer.HandleGrooming and PlacementBrushModeAuthority both refuse an ALT click
++        // outright, so that a user reaching for the old ALT+click group pick gets nothing instead
++        // of a card planted on the model - and this is the same reservation.
++        //
++        // It was never in this list, which was a latent bug for as long as ALT+click WAS the group
++        // pick: picking a group with a +POST armed both selected the group AND placed the POST.
++        if (MayaNavigationAuthority.AltReserved) return true;
+         return false;
+     }
+ 
+diff --git a/Assets/Scripts/UI_Import/GroupClumperInteractionAuthority.cs b/Assets/Scripts/UI_Import/GroupClumperInteractionAuthority.cs
+index e454d41..f124f86 100644
+--- a/Assets/Scripts/UI_Import/GroupClumperInteractionAuthority.cs
++++ b/Assets/Scripts/UI_Import/GroupClumperInteractionAuthority.cs
+@@ -35,6 +35,11 @@ public class GroupClumperInteractionAuthority : MonoBehaviour
+         if (!Mouse.current.leftButton.wasPressedThisFrame || lastHandledFrame == Time.frameCount) return;
+         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
+ 
++        // ALT is reserved for the camera. Under MAYA-NAV, ALT+SPACE (or ALT+TAB) plus a click is
++        // an awkward chord rather than an impossible one, and it would both tumble the view and
++        // fire this gesture. True whenever ALT is held, in either mode.
++        if (MayaNavigationAuthority.AltReserved) return;
++
+         bool tab = Keyboard.current.tabKey.isPressed;
+         bool space = Keyboard.current.spaceKey.isPressed;
+         if (!tab && !space) return;
+diff --git a/Assets/Scripts/UI_Import/GroupClumperInteractionFix.cs b/Assets/Scripts/UI_Import/GroupClumperInteractionFix.cs
+index 6e4fdc2..a963393 100644
+--- a/Assets/Scripts/UI_Import/GroupClumperInteractionFix.cs
++++ b/Assets/Scripts/UI_Import/GroupClumperInteractionFix.cs
+@@ -32,6 +32,12 @@ public class GroupClumperInteractionFix : MonoBehaviour
+     {
+         Resolve();
+         if (viewer == null || manager == null || Mouse.current == null || Keyboard.current == null) return;
++        // ALT is reserved for the camera. GroupClumperInteractionAuthority stands its half of
++        // TAB+click down for the same reason, and these two have to agree: this is the half that
++        // does the real work - it moves the group's clumper to the click and force-opens the
++        // CLUMPER editor - so a guard on only the other one would stop nothing.
++        if (MayaNavigationAuthority.AltReserved) return;
++
+         if (!Keyboard.current.tabKey.isPressed || !Mouse.current.leftButton.wasPressedThisFrame) return;
+         if (handledFrame == Time.frameCount) return;
+         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
+diff --git a/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs b/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs
+index 63d03c1..91e23de 100644
+--- a/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs
++++ b/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs
+@@ -34,9 +34,13 @@ public class GroupPanelPostHintStats : MonoBehaviour
+     private const float SoloButtonWidth = 52f;
+     private const float SidednessButtonWidth = 40f;
+     private const float NormalFlipButtonWidth = 36f;
+-    // Eight lines at fontSize 11. Bump this whenever a line is added to ApplyHintStyle,
+-    // or the last one gets clipped.
+-    private const float ControlsHintHeight = 113f;
++    // Bump this whenever a line is added to ApplyHintStyle, or the last one gets clipped.
++    // 113 carried nine lines at font 11, so about 12.6 each. Ten lines since the group pick got
++    // a line of its own - it used to be ALT + CLICK and was not listed here at all, which was
++    // survivable while ALT was a single key and is not now that it is a two-key chord nobody
++    // will guess. 126 keeps the same per-line room; trimming a line is the cheaper fix if this
++    // list ever needs an eleventh.
++    private const float ControlsHintHeight = 126f;
+ 
+     private const string InstructionsHeaderName = "InstructionsHeader";
+     private const float InstructionsHeaderHeight = 26f;
+@@ -150,6 +154,7 @@ public class GroupPanelPostHintStats : MonoBehaviour
+         if (hint == null) return;
+         hint.text = "CTRL + CLICK to ADD a POST Modifier\n" +
+                     "TAB + CLICK to ADD a CLUMP Modifier\n" +
++                    "CTRL + SHIFT + CLICK selects a hair's group\n" +
+                     "SHIFT to Toggle brushing mode\n" +
+                     "Click UV:ADJ/PRE for UV Mode\n" +
+                     "Double Click Group name to rename it.\n" +
+@@ -199,6 +204,7 @@ public class GroupPanelPostHintStats : MonoBehaviour
+         // LAST sibling so it draws over the group list. Listing it here would pull it into this
+         // front block and put it underneath. It is deliberately absent.
+         AddIfPresent(panel, GroomSymmetryAuthority.ButtonName);
++        AddIfPresent(panel, MayaNavigationAuthority.ButtonName);
+         AddIfPresent(panel, "TitleText");
+         AddIfPresent(panel, "NewGroupButton");
+         AddIfPresent(panel, "GroupScrollView");
+@@ -454,6 +460,13 @@ public class GroupHeaderBackgroundClickProxy : MonoBehaviour, IPointerClickHandl
+     public void OnPointerClick(PointerEventData eventData)
+     {
+         if (eventData == null || eventData.button != PointerEventData.InputButton.Left) return;
++
++        // Consistent with CustomClickDetector on the same row: an ALT+LMB tumble begun over empty
++        // header space should not switch the selected group and close the modifier panel the user
++        // was working in. No data loss here, but the same gesture should not do two different
++        // things depending on which pixel of a row it started on.
++        if (MayaNavigationAuthority.CameraGestureActive) return;
++
+         if (labelButton == null) return;
+         labelButton.onClick.Invoke();
+         eventData.Use();
+diff --git a/Assets/Scripts/UI_Import/GroupUVRangeSliderUI.cs b/Assets/Scripts/UI_Import/GroupUVRangeSliderUI.cs
+index f323774..92f7765 100644
+--- a/Assets/Scripts/UI_Import/GroupUVRangeSliderUI.cs
++++ b/Assets/Scripts/UI_Import/GroupUVRangeSliderUI.cs
+@@ -349,6 +349,25 @@ public class DualIntRangeSlider : MonoBehaviour, IPointerDownHandler, IDragHandl
+     public void OnPointerDown(PointerEventData eventData)
+     {
+         if (!isInteractable || root == null) return;
++
++        // The button was never filtered here, so a RIGHT press grabbed a handle and a right drag
++        // moved it. That was harmless while nothing used the right button over a panel; under
++        // MAYA-NAV, ALT+RMB is the DOLLY, so reaching for a zoom over this strip rewrote the
++        // group's UV range across its whole span while the camera - correctly suppressed by
++        // ModelViewer's per-button nav latch - did not move at all.
++        //
++        // The button filter is the whole fix for the reported bug, which was a RIGHT press - the
++        // dolly - grabbing a handle and dragging it.
++        //
++        // No MAYA-NAV guard on the LEFT button here, deliberately. Several panel handlers do carry
++        // one, and they are the ones where a single press or click commits something: a delete, a
++        // seed reroll, a keyframe. This is a continuous drag against a visible handle, so a user
++        // who is dragging it knows they are dragging it, and the camera is already suppressed over
++        // UI by navSuppressedLeft - the guard would buy nothing and cost the control to anyone who
++        // keeps ALT resting down, which UndoHistoryAuthority's own over-UI test assumes is the
++        // ordinary way to work.
++        if (eventData != null && eventData.button != PointerEventData.InputButton.Left) return;
++
+         float n = PointerNormalized(eventData);
+         float lowN = ValueNormalized(lowValue);
+         float highN = ValueNormalized(highValue);
+@@ -375,6 +394,10 @@ public class DualIntRangeSlider : MonoBehaviour, IPointerDownHandler, IDragHandl
+ 
+     public void OnDrag(PointerEventData eventData)
+     {
++        // activeHandle == 0 means no press ever claimed a handle, which is what the filtered
++        // OnPointerDown above now leaves behind for a right press or a nav gesture. No second
++        // guard needed here, and none wanted: a drag already under way must not be dropped
++        // halfway just because ALT was brushed.
+         if (!isInteractable || activeHandle == 0) return;
+         ApplyPointer(eventData);
+     }
+diff --git a/Assets/Scripts/UI_Import/GroupUVSeedButtonFix.cs b/Assets/Scripts/UI_Import/GroupUVSeedButtonFix.cs
+index 8bcd454..be1d1f6 100644
+--- a/Assets/Scripts/UI_Import/GroupUVSeedButtonFix.cs
++++ b/Assets/Scripts/UI_Import/GroupUVSeedButtonFix.cs
+@@ -252,6 +252,13 @@ public class UVSeedPointerRelay : MonoBehaviour, IPointerDownHandler
+     public void OnPointerDown(PointerEventData eventData)
+     {
+         if (eventData.button != PointerEventData.InputButton.Left) return;
++
++        // Press edge, and the ONLY route to Reshuffle - the button's own onClick listeners are
++        // removed. So an ALT+LMB tumble begun over the UV seed button rerolls the group's seed and
++        // rewrites every card's UVs, with no click-based fallback that a drag would suppress.
++        // RuntimeToolInteractionFixes guards the variance seed button beside it the same way.
++        if (MayaNavigationAuthority.CameraGestureActive) return;
++
+         onPress?.Invoke();
+         eventData.Use();
+     }
+diff --git a/Assets/Scripts/UI_Import/GuideCurveHandleAuthority.cs b/Assets/Scripts/UI_Import/GuideCurveHandleAuthority.cs
+index 89060b7..692e427 100644
+--- a/Assets/Scripts/UI_Import/GuideCurveHandleAuthority.cs
++++ b/Assets/Scripts/UI_Import/GuideCurveHandleAuthority.cs
+@@ -12,11 +12,15 @@ using UnityEngine.InputSystem;
+ // way to change the direction hair leaves the scalp in without moving each point by hand. SPACE
+ // and click is deliberately the opposite gesture: it carries the whole guide across with its form
+ // intact.
+-// ALT and left click ON the curve inserts a point where it was clicked; ALT and right click on a
+-// point removes it. The TIP always refuses, and so does any removal that would take a guide below
+-// two nodes, so a guide keeps a root, something in the middle and a tip whatever is done to it.
+-// ALT owns those two clicks outright - neither can also start a drag, and ModelViewer stands its
+-// camera orbit down while ALT is held so the right click is free to mean this.
++// CTRL+SHIFT and left click ON the curve inserts a point where it was clicked; CTRL+SHIFT and
++// right click on a point removes it. The TIP always refuses, and so does any removal that would
++// take a guide below two nodes, so a guide keeps a root, something in the middle and a tip
++// whatever is done to it. CTRL+SHIFT owns those two clicks outright - neither can also start a
++// drag, and ModelViewer stands the right button's camera gesture down while CTRL+SHIFT is held so
++// the right click is free to mean this.
++//
++// These were ALT clicks until MAYA-NAV needed ALT for the camera. See MayaNavigationAuthority for
++// why the whole ALT set moved at once, and why it moved whether MAYA-NAV is on or off.
+ //
+ // THE LOCKOUT IS THE POINT, not a detail. Both handles float off the model on the end of a curve,
+ // so a grab that misses one continues straight past and hits the surface behind it - and the
+@@ -68,7 +72,7 @@ public class GuideCurveHandleAuthority : MonoBehaviour
+     private const int RootHandle = -2;
+ 
+     // How close, in pixels, a click has to land to the drawn curve to count as ON it. Wider than
+-    // the grab radius would make an ALT+click near a handle ambiguous; much narrower and the
++    // the grab radius would make a CTRL+SHIFT click near a handle ambiguous; much narrower and the
+     // curve becomes hard to hit at a shallow angle.
+     private const float CurvePixelRadius = 14f;
+ 
+@@ -259,13 +263,40 @@ public class GuideCurveHandleAuthority : MonoBehaviour
+             draggingGuideId = -1;
+         }
+ 
+-        // ALT is the point editor: ALT plus left adds a point where the curve was clicked, ALT
+-        // plus right removes the point that was clicked. Handled before everything below so an
+-        // ALT click can never also start a drag, and returning afterwards so it cannot fall
+-        // through into the deselect test either.
+-        bool altHeld = Keyboard.current != null &&
+-                       (Keyboard.current.leftAltKey.isPressed || Keyboard.current.rightAltKey.isPressed);
+-        if (altHeld && !pointerOverUI)
++        // ALT is reserved for the camera, in BOTH modes.
++        //
++        // Under MAYA-NAV the tumble is ALT plus a mouse button and every branch below reads a
++        // mouse button, so without this ALT+LMB would grab whatever handle happened to be under
++        // the cursor and drag the guide around with the camera.
++        //
++        // With MAYA-NAV off it matters just as much, and is easier to miss. ALT+click used to be
++        // the point editor and returned right here; now that the editor is CTRL+SHIFT, an ALT
++        // click with no test would fall through to the handle pick below and DEFORM the guide -
++        // or, missing both handles and the model, reach the deselect test and close guide editing.
++        // Both silent, and the drag is a saved change. Anyone reaching for the old binding would
++        // wreck the curve they were trying to edit.
++        bool altReserved = MayaNavigationAuthority.AltReserved;
++        if (altReserved)
++        {
++            dragging = -1;
++            draggingGuideId = -1;
++            DrawHandles(guide, -1);
++            return;
++        }
++
++        // CTRL+SHIFT is the point editor: plus left adds a point where the curve was clicked, plus
++        // right removes the point that was clicked. Handled before everything below so the click
++        // can never also start a drag, and returning afterwards so it cannot fall through into the
++        // deselect test either.
++        //
++        // This was ALT until MAYA-NAV took ALT for the camera - see MayaNavigationAuthority. CTRL
++        // on its own was not available (that is POST authoring), hence the pair. The modifierHeld
++        // test further down already stands the handle drag down for CTRL, so the two cannot both
++        // claim the same press even if this branch ever stopped returning.
++        bool pointEditHeld = Keyboard.current != null &&
++                             Keyboard.current.ctrlKey.isPressed &&
++                             Keyboard.current.shiftKey.isPressed;
++        if (pointEditHeld && !pointerOverUI)
+         {
+             if (Mouse.current.leftButton.wasPressedThisFrame)
+             {
+@@ -284,11 +315,16 @@ public class GuideCurveHandleAuthority : MonoBehaviour
+             }
+         }
+ 
+-        // Orbiting or panning mid-drag drops the drag. DragTo solves against a plane rebuilt from
++        // A camera gesture mid-drag drops the drag. DragTo solves against a plane rebuilt from
+         // the CURRENT camera forward through the handle's CURRENT position, so while the camera
+         // swings the solution keeps the same screen position and depth - the handle is carried
+         // rigidly around the model and the height clamp then slides it along the surface, leaving
+         // the guide arbitrarily deformed by a gesture that was only meant to change the view.
++        //
++        // Under MAYA-NAV a bare right or middle press moves no camera at all, and this still drops
++        // the drag. Deliberate: what the test really means is "the user has started doing
++        // something else with the mouse", the drop costs nothing but the drag, and a test that had
++        // to know which scheme is live would be one more thing to keep in step.
+         bool cameraGesture = Mouse.current.rightButton.isPressed || Mouse.current.middleButton.isPressed;
+         if (cameraGesture)
+         {
+@@ -472,7 +508,7 @@ public class GuideCurveHandleAuthority : MonoBehaviour
+     // Adding and removing points
+     // ---------------------------------------------------------------------------------
+ 
+-    // ALT plus left. The new point goes where the curve was clicked, not where the cursor is:
++    // CTRL+SHIFT plus left. The new point goes where the curve was clicked, not where the cursor is:
+     // the curve is a line in the air, so the nearest point ON it is the only reading of "here"
+     // that leaves the shape alone. Clicking anywhere else does nothing at all.
+     void InsertPointAt(GuideCurveManager.GuideCurve guide, Vector2 mouse)
+@@ -502,7 +538,7 @@ public class GuideCurveHandleAuthority : MonoBehaviour
+         float bestDistance = ScreenDistance(mouse, GuideCurveManager.EvaluatePoints(control, bestT));
+         if (bestDistance > CurvePixelRadius)
+         {
+-            StatusToast.Show("ALT and click ON the guide curve to add a point.");
++            StatusToast.Show("CTRL + SHIFT and click ON the guide curve to add a point.");
+             return;
+         }
+ 
+@@ -538,7 +574,7 @@ public class GuideCurveHandleAuthority : MonoBehaviour
+         if (index < 0) return;
+ 
+         StatusToast.Show("Point added. " + (GuideCurveManager.NodeCount(guide) + 1) +
+-                         " points on this guide. ALT and right click a point to remove it.");
++                         " points on this guide. CTRL + SHIFT and right click a point to remove it.");
+     }
+ 
+     // Nearest point on the curve to the cursor, in screen space, searched over a range of t.
+@@ -561,7 +597,7 @@ public class GuideCurveHandleAuthority : MonoBehaviour
+         return bestT;
+     }
+ 
+-    // ALT plus right. The tip refuses, and so does the last removal that would take the guide
++    // CTRL+SHIFT plus right. The tip refuses, and so does the last removal that would take the guide
+     // below two points, so a guide always keeps a root, something between and a tip.
+     void RemovePointAt(GuideCurveManager.GuideCurve guide, Vector2 mouse)
+     {
+@@ -577,7 +613,7 @@ public class GuideCurveHandleAuthority : MonoBehaviour
+ 
+         if (index < 0)
+         {
+-            StatusToast.Show("ALT and right click one of the guide's points to remove it.");
++            StatusToast.Show("CTRL + SHIFT and right click one of the guide's points to remove it.");
+             return;
+         }
+ 
+diff --git a/Assets/Scripts/UI_Import/GuideCurveManager.cs b/Assets/Scripts/UI_Import/GuideCurveManager.cs
+index e39e887..5e54a5a 100644
+--- a/Assets/Scripts/UI_Import/GuideCurveManager.cs
++++ b/Assets/Scripts/UI_Import/GuideCurveManager.cs
+@@ -86,7 +86,7 @@ public class GuideCurveManager : MonoBehaviour
+         // the model and supplies the normal this whole frame is carried by.
+         //
+         // Two entries is a guide as it has always been: a mid and an end. Extra points are
+-        // inserted between them with ALT+click; the TIP can never be removed, and neither can the
++        // inserted between them with CTRL+SHIFT+click; the TIP can never be removed, and neither can the
+         // removal that would take the list below two, so the shape always keeps a root, something
+         // in the middle and a tip. See RemoveNode for why the FIRST node is deliberately not
+         // protected as well.
+@@ -249,7 +249,8 @@ public class GuideCurveManager : MonoBehaviour
+     }
+ 
+     // Is anything at all being shaped right now. Read by ModelViewer, which stands its right
+-    // button orbit down while ALT is held so ALT plus right can mean "remove this point".
++    // button's camera gesture down while CTRL+SHIFT is held so CTRL+SHIFT plus right can mean
++    // "remove this point".
+     public static bool AnyGuideSelected
+     {
+         get
+@@ -750,6 +751,11 @@ public class GuideCurveManager : MonoBehaviour
+     void HandleSpaceReposition()
+     {
+         if (Keyboard.current == null || Mouse.current == null) return;
++        // ALT is reserved for the camera. Under MAYA-NAV, ALT+SPACE (or ALT+TAB) plus a click is
++        // an awkward chord rather than an impossible one, and it would both tumble the view and
++        // fire this gesture. True whenever ALT is held, in either mode.
++        if (MayaNavigationAuthority.AltReserved) return;
++
+         if (!Keyboard.current.spaceKey.isPressed) return;
+         if (!Mouse.current.leftButton.wasPressedThisFrame) return;
+         if (lastHandledFrame == Time.frameCount) return;
+@@ -1005,9 +1011,9 @@ public class GuideCurveManager : MonoBehaviour
+ 
+         AddHint(controlsRoot.transform, "Drag the handles to shape the curve");
+         AddHint(controlsRoot.transform, "Drag the ROOT ring to re-aim it from a new spot");
+-        AddHint(controlsRoot.transform, "ALT + CLICK on the curve adds a point, up to " +
++        AddHint(controlsRoot.transform, "CTRL + SHIFT + CLICK on the curve adds a point, up to " +
+                                         (MaxGuideNodes + 1));
+-        AddHint(controlsRoot.transform, "ALT + RIGHT CLICK a point removes it (not the tip)");
++        AddHint(controlsRoot.transform, "CTRL + SHIFT + RIGHT CLICK a point removes it (not the tip)");
+         AddHint(controlsRoot.transform, "SPACE + CLICK moves this guide, keeping its shape");
+         AddHint(controlsRoot.transform, "Card placing is OFF while a guide is selected");
+         AddHint(controlsRoot.transform, "DONE, ESC, empty space or another group closes this");
+diff --git a/Assets/Scripts/UI_Import/HairBrushSettings.cs b/Assets/Scripts/UI_Import/HairBrushSettings.cs
+new file mode 100644
+index 0000000..4cf5a77
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/HairBrushSettings.cs
+@@ -0,0 +1,117 @@
++using System;
++using System.Collections.Generic;
++using System.Globalization;
++using System.IO;
++using System.Text;
++using UnityEngine;
++
++// The one reader and the one writer of hairbrush.ini.
++//
++// This used to live as private helpers inside WelcomeWhatsNewAuthority, which was fine while
++// the welcome panel was the only thing with anything to remember. It is not any more - the
++// MAYA-NAV preference is written from two places (the left-panel button and the welcome card's
++// checkbox) and read before either of them exists. Two copies of a read-modify-write against
++// the same file is how a setting gets silently dropped: whichever copy wrote last would have
++// rebuilt the file from ITS OWN snapshot of the contents, discarding anything the other copy
++// had added in between. Hence one class, and everything goes through it.
++//
++// The file lives in Application.persistentDataPath rather than beside the executable, because
++// an installed build usually sits somewhere the user cannot write to. On Windows that is
++// %USERPROFILE%\AppData\LocalLow\<company>\<product>.
++//
++// Note what that path is keyed on: company and PRODUCT, not version. The ini therefore
++// survives a version bump, which is the whole point for a preference like MAYA-NAV - making
++// somebody re-pick their navigation scheme after every update would be a bug. It also survives
++// buying, because the DEMO and PRO editions share a product name and so share the file.
++//
++// The ONE key that is deliberately version-scoped is the welcome panel's
++// suppressWelcomeForVersion, and it achieves that by storing the version as its VALUE rather
++// than by the file being version-scoped. Nothing else has to work that way, and nothing else
++// should.
++public static class HairBrushSettings
++{
++    public const string SettingsFileName = "hairbrush.ini";
++
++    public static string SettingsPath()
++    {
++        return Path.Combine(Application.persistentDataPath, SettingsFileName);
++    }
++
++    // Always returns a dictionary, never null, so callers can index or TryGetValue without a
++    // guard. A missing or unreadable file reads as "no settings", which is the correct answer
++    // on a first launch and the only safe answer on a corrupt one.
++    public static Dictionary<string, string> ReadSettings()
++    {
++        Dictionary<string, string> values = new Dictionary<string, string>();
++
++        try
++        {
++            string path = SettingsPath();
++            if (!File.Exists(path)) return values;
++
++            foreach (string line in File.ReadAllLines(path))
++            {
++                string trimmed = line.Trim();
++                if (trimmed.Length == 0) continue;
++                if (trimmed.StartsWith(";") || trimmed.StartsWith("#") || trimmed.StartsWith("[")) continue;
++
++                int split = trimmed.IndexOf('=');
++                if (split <= 0) continue;
++
++                values[trimmed.Substring(0, split).Trim()] = trimmed.Substring(split + 1).Trim();
++            }
++        }
++        catch (Exception error)
++        {
++            // A settings file that cannot be read is not worth failing a launch over.
++            Debug.LogWarning("HairBrush: could not read " + SettingsFileName + " - " + error.Message);
++        }
++
++        return values;
++    }
++
++    // Read-modify-write of the whole file. Every other key is preserved because ReadSettings
++    // runs first and its result is what gets written back out.
++    public static void WriteSetting(string key, string value)
++    {
++        Dictionary<string, string> values = ReadSettings();
++        values[key] = value;
++
++        StringBuilder builder = new StringBuilder();
++        builder.AppendLine("; HairBrush settings. Safe to delete - it will be rebuilt.");
++        builder.AppendLine("[HairBrush]");
++        foreach (KeyValuePair<string, string> pair in values)
++            builder.AppendLine(pair.Key + "=" + pair.Value);
++
++        try
++        {
++            File.WriteAllText(SettingsPath(), builder.ToString());
++        }
++        catch (Exception error)
++        {
++            Debug.LogWarning("HairBrush: could not write " + SettingsFileName + " - " + error.Message);
++        }
++    }
++
++    // Written as "1"/"0", but "true"/"yes"/"on" are accepted on the way back in - the file is
++    // plain text sitting in a folder the user can open, and somebody WILL hand-edit it. A value
++    // that is present but unrecognised falls back rather than reading as false, so a typo does
++    // not silently switch a preference off.
++    public static bool GetBool(string key, bool fallback)
++    {
++        string stored;
++        if (!ReadSettings().TryGetValue(key, out stored)) return fallback;
++
++        string normalised = stored.Trim().ToLower(CultureInfo.InvariantCulture);
++        if (normalised == "1" || normalised == "true" || normalised == "yes" || normalised == "on") return true;
++        if (normalised == "0" || normalised == "false" || normalised == "no" || normalised == "off") return false;
++        return fallback;
++    }
++
++    public static void SetBool(string key, bool value)
++    {
++        string written = "0";
++        if (value) written = "1";
++        WriteSetting(key, written);
++    }
++}
+diff --git a/Assets/Scripts/UI_Import/HairBrushSettings.cs.meta b/Assets/Scripts/UI_Import/HairBrushSettings.cs.meta
+new file mode 100644
+index 0000000..547bca9
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/HairBrushSettings.cs.meta
+@@ -0,0 +1,2 @@
++fileFormatVersion: 2
++guid: 16b2aa1c87ba4b37bdd8c61b754178bc
+diff --git a/Assets/Scripts/UI_Import/HairCardSaveData.cs b/Assets/Scripts/UI_Import/HairCardSaveData.cs
+index 4b20a8b..9546933 100644
+--- a/Assets/Scripts/UI_Import/HairCardSaveData.cs
++++ b/Assets/Scripts/UI_Import/HairCardSaveData.cs
+@@ -153,7 +153,7 @@ public class GuideCurveSaveData
+     public float endX,endY,endZ;
+ 
+     // Every point the curve passes through, root to tip, the contact excluded. Two entries is
+-    // the original mid-and-end guide; more are the points added with ALT+click.
++    // the original mid-and-end guide; more are the points added with CTRL+SHIFT+click.
+     public List<GuideNodeSaveData> nodes=new();
+ 
+     public float amount;
+diff --git a/Assets/Scripts/UI_Import/InfluenceRingPreviewAuthority.cs b/Assets/Scripts/UI_Import/InfluenceRingPreviewAuthority.cs
+index c118306..62a5b7f 100644
+--- a/Assets/Scripts/UI_Import/InfluenceRingPreviewAuthority.cs
++++ b/Assets/Scripts/UI_Import/InfluenceRingPreviewAuthority.cs
+@@ -104,8 +104,14 @@ public class InfluenceRingPreviewAuthority : MonoBehaviour
+         // TAB in Spray mode used to leave a stray cyan ring on the cursor. Harmless when it was
+         // the only thing on screen - actively misleading now that the clumper aim ring draws
+         // there too, since the two describe different sizes and only one is what the click makes.
++        // ALT belongs in this list as much as TAB and SPACE do. PlacementBrushModeAuthority hides
++        // its own brush ring and places nothing while ALT is held, so without it the cyan falloff
++        // ring went on drawing on the cursor for the whole of a tumble - the same "ring you aim
++        // with over a click that does nothing" this file already guards against for the clumper.
+         bool modifierGesture = Keyboard.current != null &&
+-                               (Keyboard.current.tabKey.isPressed || Keyboard.current.spaceKey.isPressed);
++                               (Keyboard.current.tabKey.isPressed ||
++                                Keyboard.current.spaceKey.isPressed ||
++                                MayaNavigationAuthority.AltReserved);
+ 
+         // The !groomingEnabled half of PlacementBrushModeAuthority's own hide condition, which
+         // this ring never mirrored. It matters now: a +CLUMPER placement holds grooming off for
+@@ -218,20 +224,32 @@ public class InfluenceRingPreviewAuthority : MonoBehaviour
+         bool armedForClumper = GroupAddButtonPlacementAuthority.ArmedKind ==
+                                GroupAddButtonPlacementAuthority.AddKind.Clumper;
+         bool tabHeld = Keyboard.current != null && Keyboard.current.tabKey.isPressed;
+-        bool ctrlOrSpaceHeld = Keyboard.current != null &&
+-                               (Keyboard.current.ctrlKey.isPressed || Keyboard.current.spaceKey.isPressed);
++        bool blockedModifierHeld = MayaNavigationAuthority.AltReserved ||
++                               (Keyboard.current != null &&
++                                (Keyboard.current.ctrlKey.isPressed ||
++                                 Keyboard.current.spaceKey.isPressed));
+ 
+         // TAB always aims: GroupClumperInteractionAuthority creates a clumper on TAB+click at
+         // exactly these defaults, and it does so even while a +POST or +GUIDE placement is
+         // armed, so the ring is telling the truth in all of those combinations.
+         //
+         // The armed +CLUMPER button only aims while no OTHER modifier is down, because
+-        // GroupAddButtonPlacementAuthority refuses its own placement whenever CTRL, TAB or
+-        // SPACE is held. With SPACE resting under a hand the click does not create anything -
+-        // it repositions the SELECTED clumper, at that clumper's own radius - so a ring
+-        // promising a new 0.04 clump would be a straight lie. TAB is excluded from that test
++        // GroupAddButtonPlacementAuthority.IsShortcutModifierHeld refuses its own placement
++        // whenever CTRL, ALT, TAB or SPACE is held. With SPACE resting under a hand the click
++        // does not create anything - it repositions the SELECTED clumper, at that clumper's own
++        // radius - so a ring promising a new 0.04 clump would be a straight lie. ALT is in that
++        // set because under MAYA-NAV it is a camera gesture. TAB is excluded from this test
+         // because the TAB path picks the click up and does create one.
+-        bool aiming = tabHeld || (armedForClumper && !ctrlOrSpaceHeld);
++        //
++        // This list has to keep matching IsShortcutModifierHeld. It is not shared with it because
++        // TAB is treated differently on the two sides.
++        // tabHeld is qualified by ALT rather than standing alone. TAB "always aims" because
++        // TAB+click always creates a clumper - except that it no longer does while ALT is held,
++        // since both TAB+click handlers now stand down for the camera. Left as a bare disjunct it
++        // short-circuited the ALT that was just added to blockedModifierHeld, and drew the green
++        // 0.04 ring under an ALT+TAB the click would ignore.
++        bool aiming = (tabHeld && !MayaNavigationAuthority.AltReserved) ||
++                      (armedForClumper && !blockedModifierHeld);
+         if (!aiming)
+         {
+             HideClumperAim();
+diff --git a/Assets/Scripts/UI_Import/MayaNavigationAuthority.cs b/Assets/Scripts/UI_Import/MayaNavigationAuthority.cs
+new file mode 100644
+index 0000000..13d25b7
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/MayaNavigationAuthority.cs
+@@ -0,0 +1,302 @@
++using TMPro;
++using UnityEngine;
++using UnityEngine.InputSystem;
++using UnityEngine.UI;
++
++// MAYA-NAV: drive the camera the way Maya does.
++//
++//   ALT + LMB  tumble (orbit)
++//   ALT + MMB  track  (pan)
++//   ALT + RMB  dolly  (zoom)
++//
++// Off - which is how every existing groom opens - the camera is exactly what it always was:
++// RMB orbits, MMB pans, the wheel zooms, no modifier involved. The wheel keeps working in
++// BOTH modes. Maya has a wheel zoom too, and taking it away in exchange for a modifier chord
++// would be a loss with nothing bought.
++//
++// Two responsibilities here, same shape as GroomSymmetryAuthority:
++//
++//   1. The on/off state - which, unlike SYMMETRY and SOLO, is NOT session-only. It is a
++//      preference about how the user's hands work, not a property of the groom, so it lives in
++//      hairbrush.ini and survives quitting, updating and buying. See HairBrushSettings for why
++//      the file outlives a version bump.
++//
++//   2. The toggle button in the left panel, under SYMMETRY.
++//
++// The camera gestures themselves are NOT here. They live in ModelViewer.HandleCameraControls,
++// which is where every other camera gesture in this project lives, and it reads Enabled.
++//
++// ----------------------------------------------------------------------------------------
++// Why ALT had to be evacuated first, and what it cost
++// ----------------------------------------------------------------------------------------
++// ALT was already load-bearing in six places before any of this, and two of them wanted the
++// exact chords Maya wants: ALT+LMB picked the group of the hair under the cursor, and
++// ALT+click on a guide curve added a point while ALT+right-click removed one. There is no
++// arrangement in which ALT+LMB both tumbles the camera and selects a group.
++//
++// So those two gestures moved to CTRL+SHIFT, and they moved UNCONDITIONALLY - not only while
++// MAYA-NAV is on. A binding that depends on a toggle is a binding nobody can build a habit
++// around, and it would have made the manual's key reference a table with an if in it.
++//
++// CTRL alone was not available: CTRL+LMB is POST authoring, which is the single most-used
++// authoring gesture in the tool, and CTRL+Z/Y is undo. Adding SHIFT is what keeps clear of it.
++//
++// Adding SHIFT is not free either. The reasoning for each collision is recorded where it is
++// fixed rather than here, but the index has to be complete or the next one gets missed:
++//   PlacementBrushModeAuthority    a bare SHIFT press cycles the brush mode
++//   ModelViewer.HandleGrooming     a SHIFT hold opens a new-group stroke session
++//   PostAffectorManager            CTRL+LMB creates a POST, and would fire on CTRL+SHIFT+LMB too
++//   ClumperSelectionExitAuthority  the same click, exiting CLUMPER ahead of it
++//   SelectionBrushVisualizer       the CTRL-hover aim ring, which would promise that POST
++[DefaultExecutionOrder(8955)]
++public class MayaNavigationAuthority : MonoBehaviour
++{
++    // GroupPanelPostHintStats orders the left panel and needs to know this button by name.
++    public const string ButtonName = "MayaNavToggleButton";
++
++    // A plain key, deliberately not version-scoped. See HairBrushSettings.
++    public const string SettingsKey = "mayaNavigation";
++
++    private const float ScanInterval = .25f;
++    private const float ButtonHeight = 32f;
++
++    // ---- state ------------------------------------------------------------------------
++    // Initialised here so nothing downstream has to test for existence.
++    private static bool mayaNavOn;
++
++    // The ini is read once, lazily, on the first question anybody asks - NOT in ResetStatics
++    // below. Application.persistentDataPath is a property with real work behind it and
++    // SubsystemRegistration runs early enough that reaching for the filesystem there is asking
++    // for trouble; the first Enabled read happens inside a frame, where it is ordinary.
++    private static bool loaded;
++
++    // Statics survive "Enter Play Mode -> Disable Domain Reload". Clearing `loaded` rather
++    // than clearing `mayaNavOn` is the point: the next read re-reads the file, so a value the
++    // user changed on disk between play sessions is picked up instead of a stale one persisting.
++    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
++    private static void ResetStatics()
++    {
++        mayaNavOn = false;
++        loaded = false;
++    }
++
++    public static bool Enabled
++    {
++        get
++        {
++            if (!loaded)
++            {
++                loaded = true;
++                mayaNavOn = HairBrushSettings.GetBool(SettingsKey, false);
++            }
++            return mayaNavOn;
++        }
++    }
++
++    // Sets the state AND records it, in that order, so a failed write still leaves the running
++    // session behaving the way the user just asked. HairBrushSettings swallows write failures
++    // by design - a read-only settings folder should not cost you the toggle you just pressed.
++    public static void SetEnabled(bool value)
++    {
++        loaded = true;
++        mayaNavOn = value;
++        HairBrushSettings.SetBool(SettingsKey, value);
++    }
++
++    // The one question every click-consuming script has to ask: "is ALT down?"
++    //
++    // It does NOT consult Enabled, and that is the whole design. ALT is reserved for the camera
++    // in BOTH modes, so this is one predicate with one answer rather than a scheme-dependent one.
++    //
++    // Why it has to be unconditional. A camera gesture in MAYA-NAV is a modifier plus a MOUSE
++    // BUTTON, and mouse buttons are what the rest of this tool authors with - so with MAYA-NAV on,
++    // ALT+LMB tumbling the view would otherwise ALSO paint hair, place an armed POST, move a
++    // clumper and grab a guide handle, all on the same press. Nothing here blocks raycasts: the
++    // scripts that read Mouse.current directly never ask about raycasts, which is exactly the
++    // lesson DemoUpgradePrompt.IsOpen records, so each one has to stand down for itself.
++    //
++    // With MAYA-NAV OFF the reason is different and easier to get wrong. ALT used to carry the
++    // group pick and the guide point editor; both moved to CTRL+SHIFT. If ALT merely stopped
++    // meaning anything, every ALT click would fall THROUGH to whatever sat below the branch that
++    // used to catch it - planting a card, dragging a guide handle, creating a clumper - so
++    // everyone with the old muscle memory would damage the thing they were pointing at. Inert is
++    // the only safe answer for a binding that has moved.
++    //
++    // An earlier cut of this was a single MAYA-NAV-conditional test, and the split it created is
++    // what made it wrong: six authorities guarded on it and five reserved ALT outright, so with
++    // MAYA-NAV off an ALT+TAB click still created a clumper while the aim ring that promised one
++    // stayed hidden. Everything that authors into the VIEWPORT now asks this one question.
++    //
++    // Tested on ALT being HELD, not on a button being down, so a script stands down for the whole
++    // gesture including the press frame that starts it.
++    public static bool AltReserved
++    {
++        get
++        {
++            if (Keyboard.current == null) return false;
++            return Keyboard.current.leftAltKey.isPressed || Keyboard.current.rightAltKey.isPressed;
++        }
++    }
++
++    // The OTHER question, and the line between the two is worth getting right because collapsing
++    // them was a bug in both directions.
++    //
++    // AltReserved above means "ALT must author nothing". It is unconditional because the gestures
++    // that used to live on ALT have MOVED, so an ALT click in the viewport has to be inert in both
++    // schemes or it falls through and damages what it is pointing at.
++    //
++    // This one means "the user is driving the camera RIGHT NOW", and it is conditional because
++    // that is only true when MAYA-NAV is on. Use it where the question is about the camera rather
++    // than about authoring:
++    //
++    //   PANEL controls. ALT+click on a slider or a group row never meant anything special, so
++    //   there is nothing to reserve - but under MAYA-NAV that press is someone reaching for the
++    //   tumble with the cursor a few pixels inside the panel, and it must not reset the slider or
++    //   raise the delete-group prompt. Guarding those on AltReserved instead would break
++    //   ALT+clicking a panel for everyone who never turns MAYA-NAV on.
++    //
++    //   MESSAGING. "Release ALT" is correct advice when ALT is a dead key and terrible advice when
++    //   ALT is how the user moves the camera.
++    //
++    //   Anything that CANCELS on a gesture. With MAYA-NAV off, ALT+RMB is the ordinary classic
++    //   orbit and has always cancelled an armed placement; only the dolly should be exempt.
++    public static bool CameraGestureActive
++    {
++        get { return Enabled && AltReserved; }
++    }
++
++    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
++    private static void Spawn()
++    {
++        if (FindFirstObjectByType<MayaNavigationAuthority>() != null) return;
++        GameObject go = new GameObject(nameof(MayaNavigationAuthority));
++        DontDestroyOnLoad(go);
++        go.AddComponent<MayaNavigationAuthority>();
++    }
++
++    // ---- the button ---------------------------------------------------------------------
++
++    private GameObject boundPanel;
++    private Button button;
++    private TextMeshProUGUI label;
++    private Image image;
++    private float nextScan;
++
++    private void Update()
++    {
++        if (Time.unscaledTime < nextScan) return;
++        nextScan = Time.unscaledTime + ScanInterval;
++
++        // The left panel is destroyed and rebuilt on every model and project load, so the
++        // binding has to be re-checked rather than established once.
++        //
++        // Note what does NOT happen here, and does in GroomSymmetryAuthority: a model swap
++        // does not switch this off. SYMMETRY turns itself off with the model because a mirror
++        // plane belongs to a particular body. A navigation scheme belongs to the person.
++        GameObject panel = GameObject.Find("GroupManagerPanel");
++        if (panel == null)
++        {
++            boundPanel = null;
++            button = null;
++            label = null;
++            image = null;
++            return;
++        }
++
++        if (boundPanel != panel || button == null) Bind(panel);
++        Repaint();
++    }
++
++    private void Bind(GameObject panel)
++    {
++        boundPanel = panel;
++
++        Transform existing = panel.transform.Find(ButtonName);
++        if (existing != null)
++        {
++            button = existing.GetComponent<Button>();
++            label = existing.GetComponentInChildren<TextMeshProUGUI>(true);
++            image = existing.GetComponent<Image>();
++            if (button != null) return;
++
++            // A half-built husk from an interrupted rebuild - start again rather than adopt it.
++            Destroy(existing.gameObject);
++        }
++
++        BuildButton(panel.transform);
++    }
++
++    private void BuildButton(Transform parent)
++    {
++        GameObject go = new GameObject(ButtonName, typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
++        go.transform.SetParent(parent, false);
++        go.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, ButtonHeight);
++        go.GetComponent<LayoutElement>().preferredHeight = ButtonHeight;
++
++        image = go.GetComponent<Image>();
++        button = go.GetComponent<Button>();
++        button.onClick.AddListener(Toggle);
++
++        GameObject textGO = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
++        textGO.transform.SetParent(go.transform, false);
++        RectTransform textRect = textGO.GetComponent<RectTransform>();
++        textRect.anchorMin = Vector2.zero;
++        textRect.anchorMax = Vector2.one;
++        textRect.offsetMin = Vector2.zero;
++        textRect.offsetMax = Vector2.zero;
++
++        label = textGO.GetComponent<TextMeshProUGUI>();
++        label.fontSize = 13f;
++        label.fontStyle = FontStyles.Bold;
++        label.alignment = TextAlignmentOptions.Center;
++        label.color = Color.white;
++        label.raycastTarget = false;
++
++        // First guess only. GroupPanelPostHintStats.MaintainPanelOrder is the running order
++        // authority for this panel and puts this button under the SYMMETRY toggle every scan.
++        Transform symmetry = parent.Find(GroomSymmetryAuthority.ButtonName);
++        if (symmetry != null) go.transform.SetSiblingIndex(Mathf.Clamp(symmetry.GetSiblingIndex() + 1, 0, parent.childCount - 1));
++
++        Repaint();
++    }
++
++    private void Repaint()
++    {
++        // Only write when the value actually changed - a TMP text assignment forces a mesh
++        // rebuild of the label whether or not the string differs.
++        if (label != null)
++        {
++            string text = "MAYA-NAV: OFF";
++            if (Enabled) text = "MAYA-NAV: ON";
++            if (label.text != text) label.text = text;
++        }
++
++        if (image != null)
++        {
++            // The same off-grey and on-teal SYMMETRY uses. There is no amber third state here:
++            // SYMMETRY needs one because a mirror can be unreliable on an asymmetric model,
++            // and a navigation scheme is either the one you picked or it is not.
++            Color colour = new Color(.28f, .28f, .28f, 1f);
++            if (Enabled) colour = new Color(.20f, .58f, .45f, 1f);
++            if (image.color != colour) image.color = colour;
++        }
++    }
++
++    private void Toggle()
++    {
++        SetEnabled(!Enabled);
++
++        if (Enabled)
++        {
++            StatusToast.Show("MAYA-NAV ON - ALT and drag: LEFT tumbles, MIDDLE tracks, RIGHT dollies.", false, 4f);
++        }
++        else
++        {
++            StatusToast.Show("MAYA-NAV OFF - RIGHT drag orbits, MIDDLE drag pans, wheel zooms.", false, 4f);
++        }
++
++        // Repaint on the very next frame rather than waiting out the scan interval.
++        nextScan = 0f;
++        Repaint();
++    }
++}
+diff --git a/Assets/Scripts/UI_Import/MayaNavigationAuthority.cs.meta b/Assets/Scripts/UI_Import/MayaNavigationAuthority.cs.meta
+new file mode 100644
+index 0000000..aa9138e
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/MayaNavigationAuthority.cs.meta
+@@ -0,0 +1,2 @@
++fileFormatVersion: 2
++guid: eac97c467a8b44369ab51ccfb7ebbec5
+diff --git a/Assets/Scripts/UI_Import/ModelViewer.cs b/Assets/Scripts/UI_Import/ModelViewer.cs
+index 01b2d9c..3b6ded9 100644
+--- a/Assets/Scripts/UI_Import/ModelViewer.cs
++++ b/Assets/Scripts/UI_Import/ModelViewer.cs
+@@ -90,6 +90,13 @@ public class ModelViewer : MonoBehaviour
+     // Latched on the right button press edge; see HandleCameraControls.
+     private bool orbitSuppressed = false;
+ 
++    // MAYA-NAV only, one per button: this button's press landed on a panel, so its camera
++    // gesture moves nothing. Per button rather than one shared flag - see HandleCameraControls.
++    // Initialised here rather than tested for.
++    private bool navSuppressedLeft = false;
++    private bool navSuppressedMiddle = false;
++    private bool navSuppressedRight = false;
++
+     private bool hasSelectionHotspot = false;
+     private bool isRelativeMode = false;
+     private Vector3 selectionHitPoint;
+@@ -1174,20 +1181,33 @@ public class ModelViewer : MonoBehaviour
+         // SHIFT/ALT/CTRL are name characters and modifiers while a text box is open.
+         if (GroupNameInlineEditAuthority.IsEnteringText) return;
+         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
+-        bool isHoldingAlt = Keyboard.current != null && (Keyboard.current.leftAltKey.isPressed || Keyboard.current.rightAltKey.isPressed);
++
++        bool altReserved = MayaNavigationAuthority.AltReserved;
+         bool isHoldingCtrl = Keyboard.current != null && Keyboard.current.ctrlKey.isPressed;
+         bool isHoldingShift = Keyboard.current != null && (Keyboard.current.leftShiftKey.isPressed || Keyboard.current.rightShiftKey.isPressed);
+-        if (isHoldingAlt && Mouse.current.leftButton.wasPressedThisFrame)
+-        {
+-            Ray altRay = mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
+-            if (Physics.Raycast(altRay, out RaycastHit altHit))
+-            {
+-                HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
+-                if (allCards.Length > 0) { HairCard nearestCard = allCards.OrderBy(c => Vector3.Distance(altHit.point, c.transform.position)).FirstOrDefault(); if (nearestCard != null) SelectGroup(nearestCard.groupId); }
+-            }
+-            return;
+-        }
+-        if (isHoldingShift && !wasHoldingShiftDrag) { wasHoldingShiftDrag = true; sessionPlacedCards.Clear(); }
++
++        // A SHIFT hold opens a "these cards become a new group" stroke session. CTRL+SHIFT is now
++        // the group pick, so without excluding CTRL here a pick made CTRL-first would also open a
++        // session - and releasing the keys afterwards would run the teardown over a stroke that
++        // never happened.
++        //
++        // A pick made SHIFT-first still opens one, for the frames before CTRL lands. That is not
++        // worth more machinery: the session is a list of cards placed during the stroke, no card
++        // can be placed while CTRL is down, so the list is empty and the teardown below does
++        // nothing but refresh a panel.
++        bool isShiftStroke = isHoldingShift && !isHoldingCtrl;
++        if (isShiftStroke && !wasHoldingShiftDrag) { wasHoldingShiftDrag = true; sessionPlacedCards.Clear(); }
++
++        // The session STARTS on isShiftStroke but ENDS on the raw SHIFT being let go, and the
++        // asymmetry is deliberate. Ending on isShiftStroke would mean a stray CTRL tapped in the
++        // middle of a shift stroke reads as "SHIFT released" and runs the teardown over a stroke
++        // the user has not finished - and CTRL is now the likeliest key of any of them to be
++        // brushed mid-stroke, since the group pick lives on it.
++        //
++        // Both this and the start above sit ABOVE the ALT return below, so that holding ALT does
++        // not freeze the state machine. Letting go of SHIFT while ALT happened to be down would
++        // otherwise leave the session open until ALT was next released, and the teardown would
++        // then fire at an unrelated later moment.
+         if (wasHoldingShiftDrag && !isHoldingShift)
+         {
+ #if UNITY_EDITOR
+@@ -1213,17 +1233,68 @@ public class ModelViewer : MonoBehaviour
+             sessionPlacedCards.Clear();
+             RefreshGroupListUI();
+         }
+-        if (isHoldingCtrl && Mouse.current.leftButton.wasPressedThisFrame)
++
++        // ALT is reserved for the camera, and reserved in BOTH modes rather than only while
++        // MAYA-NAV is on. Everything from here down consumes a click; nothing above it does.
++        //
++        // With MAYA-NAV on the reason is plain: the tumble is ALT plus a MOUSE BUTTON, mouse
++        // buttons are what the branches below author with, and nothing about a tumble blocks a
++        // raycast - they all read Mouse.current directly - so ALT+LMB would paint a stroke
++        // underneath the swing.
++        //
++        // With MAYA-NAV off the reason is subtler and matters more. ALT+LMB used to be the group
++        // pick; it is CTRL+SHIFT now. If ALT simply stopped meaning anything it would fall through
++        // to the placement branch at the bottom of this method and PLANT A CARD - so everyone with
++        // the old muscle memory would drop hair on the model, in the exact spot they were trying
++        // to inspect. Inert is the only safe answer for a binding that moved.
++        if (altReserved) return;
++
++        // Group pick. This was ALT+click until MAYA-NAV took ALT for the camera; see
++        // MayaNavigationAuthority for why the whole ALT set moved rather than half of it.
++        //
++        // CTRL alone could not have it - that is POST authoring - so the pick is CTRL+SHIFT, and
++        // the SHIFT half is why the stroke session above has to exclude CTRL.
++        if (isHoldingCtrl && isHoldingShift && Mouse.current.leftButton.wasPressedThisFrame)
++        {
++            Ray pickRay = mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
++            if (Physics.Raycast(pickRay, out RaycastHit pickHit))
++            {
++                HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
++                if (allCards.Length > 0) { HairCard nearestCard = allCards.OrderBy(c => Vector3.Distance(pickHit.point, c.transform.position)).FirstOrDefault(); if (nearestCard != null) SelectGroup(nearestCard.groupId); }
++            }
++            return;
++        }
++
++        // !isHoldingShift, even though the group pick above returns unconditionally and this can
++        // never be reached under CTRL+SHIFT today. PlacementBrushModeAuthority's twin branch says
++        // the same thing for the same reason: a branch that is only correct because of what sits
++        // above it breaks silently the first time somebody reorders the file, and these two have
++        // to stay in step.
++        if (isHoldingCtrl && !isHoldingShift && Mouse.current.leftButton.wasPressedThisFrame)
+         {
+             Ray ray = mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
+             if (Physics.Raycast(ray, out RaycastHit hit)) EnterSelectionMode(hit.point, hit.normal); else ClearSelectionHotspot();
+             return;
+         }
+-        bool shouldSpawn = isHoldingShift ? (Mouse.current.leftButton.isPressed && Time.time >= lastSpawnTime + spawnCooldown) : Mouse.current.leftButton.wasPressedThisFrame;
++        // isShiftStroke, NOT isHoldingShift. A held SHIFT is what turns a click into a continuous
++        // stroke, so reading the raw SHIFT here would make CTRL+SHIFT paint: the group pick above
++        // only returns on the PRESS frame, and every frame after it - button still down, keys
++        // still held - would fall through to this line and spawn a card per cooldown. The pick
++        // would leave a trail of hair behind it.
++        bool shouldSpawn;
++        if (isShiftStroke)
++        {
++            shouldSpawn = Mouse.current.leftButton.isPressed && Time.time >= lastSpawnTime + spawnCooldown;
++        }
++        else
++        {
++            shouldSpawn = Mouse.current.leftButton.wasPressedThisFrame;
++        }
++
+         if (shouldSpawn && !isSelectionMode)
+         {
+             Ray ray = mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
+-            if (Physics.Raycast(ray, out RaycastHit hit)) { HairCard card = PinHairCard(hit.point, hit.normal); if (isHoldingShift && card != null) sessionPlacedCards.Add(card); lastSpawnTime = Time.time; }
++            if (Physics.Raycast(ray, out RaycastHit hit)) { HairCard card = PinHairCard(hit.point, hit.normal); if (isShiftStroke && card != null) sessionPlacedCards.Add(card); lastSpawnTime = Time.time; }
+         }
+     }
+ 
+@@ -1364,31 +1435,106 @@ public class ModelViewer : MonoBehaviour
+         // orbit and pan below read the mouse directly and never ask whether the pointer is over
+         // UI, so without this the head spins behind the card while it is being read.
+         // Always false in a PRO build - nothing there ever raises one.
++        // The per-button nav latches below are deliberately NOT cleared here, for the same reason
++        // orbitSuppressed is not. false is the PERMISSIVE value: clearing them would discard a
++        // suppression that was correctly latched - press ALT+LMB over the left panel, have the buy
++        // card come and go while the button is still down, and the tumble the latch existed to
++        // prevent would then run behind the panel. A press made WHILE the card is up cannot set
++        // them either way, since this return is above the latching.
+         if (DemoUpgradePrompt.IsOpen) return;
+ 
+-        // Guide point editing needs ALT plus right click to mean "remove this point", and orbiting
+-        // is on the right button and would otherwise run at the same moment - the point would go
+-        // and the view would swing while it went. So an orbit REFUSES TO START on a right press
+-        // made with ALT down while a guide is being shaped.
++        // Guide point editing needs CTRL+SHIFT plus right click to mean "remove this point", and
++        // in the CLASSIC scheme the right button is the orbit - so the point would go and the view
++        // would swing while it went. The right button's camera gesture therefore REFUSES TO START
++        // on a right press made with CTRL+SHIFT down while a guide is being shaped.
+         //
+-        // Both halves of that matter. Tested on isPressed rather than the press edge, an orbit
+-        // already under way would freeze the instant ALT was touched; and applied whether or not
+-        // a guide is selected, ALT plus right would stop the camera everywhere in the app in
+-        // exchange for nothing, when holding ALT while dragging the view around is an ordinary
+-        // thing to be doing.
+-        bool altHeld = Keyboard.current != null &&
+-                       (Keyboard.current.leftAltKey.isPressed || Keyboard.current.rightAltKey.isPressed);
+-
+-        // Over a panel the guide editor stands down and removes nothing, so suppressing the orbit
+-        // there would cost a drag and buy nothing.
++        // Under MAYA-NAV the collision cannot arise at all: the right button dollies only with ALT
++        // held, and GuideCurveHandleAuthority returns on ALT before it ever reaches the point
++        // editor - so no point can be removed during a dolly, and a bare CTRL+SHIFT right click
++        // moves no camera. The flag is applied to the dolly branch anyway rather than fenced off
++        // to the classic one, purely because a suppression that exists in only one of two branches
++        // is one refactor away from being lost.
++        //
++        // Both halves of that matter. Tested on isPressed rather than the press edge, a drag
++        // already under way would freeze the instant the modifier was touched; and applied whether
++        // or not a guide is selected, CTRL+SHIFT plus right would stop the camera everywhere in the
++        // app in exchange for nothing, when holding modifiers while dragging the view around is an
++        // ordinary thing to be doing.
++        //
++        // This read ALT until MAYA-NAV arrived. The gesture it protects moved to CTRL+SHIFT
++        // wholesale - see MayaNavigationAuthority for why ALT had to be evacuated - and this test
++        // moved with it. Deliberately NOT conditional on MAYA-NAV: the gesture is not conditional.
++        bool pointEditHeld = Keyboard.current != null &&
++                             Keyboard.current.ctrlKey.isPressed &&
++                             Keyboard.current.shiftKey.isPressed;
++
++        // Over a panel the guide editor stands down and removes nothing, so suppressing the drag
++        // there would cost a gesture and buy nothing.
+         bool overUI = EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
+         if (Mouse.current.rightButton.wasPressedThisFrame)
+-            orbitSuppressed = altHeld && !overUI &&
++            orbitSuppressed = pointEditHeld && !overUI &&
+                               GroupAddButtonPlacementAuthority.ArmedKind == GroupAddButtonPlacementAuthority.AddKind.None &&
+                               GuideCurveManager.AnyGuideSelected;
+         if (!Mouse.current.rightButton.isPressed) orbitSuppressed = false;
+ 
+-        if (Mouse.current.rightButton.isPressed && !orbitSuppressed)
++        // A camera gesture must not START on a press made over a panel.
++        //
++        // This was not needed before MAYA-NAV and is now. Orbit and pan have always been on the
++        // right and middle buttons, which no UI control uses, so a press over a slider could never
++        // be both. MAYA-NAV puts a camera gesture on the LEFT button, which every button, slider
++        // and group row in the tool uses - so without this, ALT+clicking the MAYA-NAV button to
++        // switch it back off would tumble the model behind the panel while it did so.
++        //
++        // Latched on the press edge and held for the gesture, exactly like orbitSuppressed above:
++        // read live, dragging the cursor across a panel mid-tumble would freeze the camera until
++        // it came out the other side.
++        //
++        // ONE FLAG PER BUTTON, which is the part that is easy to get wrong. A single shared flag
++        // latched on "some button went down while none were down" gets both of the two-button
++        // cases backwards: press LMB on a scrollbar and then, still holding it, ALT+MMB in the
++        // viewport, and the track is dead for its whole life; begin an ALT+LMB tumble in the
++        // viewport, drift over the panel and press RMB, and the dolly runs over the panel that
++        // suppression exists to protect. Each button answering for its own press has neither
++        // problem, and needs no memory of the frame before.
++        if (Mouse.current.leftButton.wasPressedThisFrame) navSuppressedLeft = overUI;
++        if (Mouse.current.middleButton.wasPressedThisFrame) navSuppressedMiddle = overUI;
++        if (Mouse.current.rightButton.wasPressedThisFrame) navSuppressedRight = overUI;
++        if (!Mouse.current.leftButton.isPressed) navSuppressedLeft = false;
++        if (!Mouse.current.middleButton.isPressed) navSuppressedMiddle = false;
++        if (!Mouse.current.rightButton.isPressed) navSuppressedRight = false;
++
++        // MAYA-NAV: ALT + LMB tumbles, ALT + MMB tracks, ALT + RMB dollies, and nothing moves the
++        // camera without ALT held. Off, the scheme is what it always was - RMB orbits, MMB pans.
++        //
++        // The two schemes are resolved into three booleans rather than branching around two copies
++        // of the maths, because the maths is the part that must not drift: a fix to the pitch clamp
++        // made in one copy and missed in the other is a bug that only shows for the half of users
++        // on the other scheme, and only sometimes.
++        // Read locally rather than through MayaNavigationAuthority.AltReserved because this is the
++        // one place asking a different question: not "must this click stand down" but "is the user
++        // driving the camera". The two happen to have the same answer; conflating them in the file
++        // that OWNS the camera would be the thing that hides it if they ever stop.
++        bool mayaNav = MayaNavigationAuthority.Enabled;
++        bool altHeld = Keyboard.current != null &&
++                       (Keyboard.current.leftAltKey.isPressed || Keyboard.current.rightAltKey.isPressed);
++
++        bool orbiting;
++        bool panning;
++        bool dollying;
++        if (mayaNav)
++        {
++            orbiting = altHeld && Mouse.current.leftButton.isPressed && !navSuppressedLeft;
++            panning = altHeld && Mouse.current.middleButton.isPressed && !navSuppressedMiddle;
++            dollying = altHeld && Mouse.current.rightButton.isPressed && !navSuppressedRight && !orbitSuppressed;
++        }
++        else
++        {
++            orbiting = Mouse.current.rightButton.isPressed && !orbitSuppressed;
++            panning = Mouse.current.middleButton.isPressed;
++            dollying = false;
++        }
++
++        if (orbiting)
+         {
+             float mouseX = Mouse.current.delta.x.ReadValue() * 0.1f;
+             float mouseY = Mouse.current.delta.y.ReadValue() * 0.1f;
+@@ -1397,13 +1543,31 @@ public class ModelViewer : MonoBehaviour
+             pitch = Mathf.Clamp(pitch, -89f, 89f);
+             cameraPivot.eulerAngles = new Vector3(pitch, cameraPivot.eulerAngles.y, 0f);
+         }
+-        if (Mouse.current.middleButton.isPressed)
++        if (panning)
+         {
+             float mouseX = Mouse.current.delta.x.ReadValue() * 0.1f;
+             float mouseY = Mouse.current.delta.y.ReadValue() * 0.1f;
+             cameraPivot.Translate(Vector3.left * mouseX * panSpeed, Space.Self);
+             cameraPivot.Translate(Vector3.down * mouseY * panSpeed, Space.Self);
+         }
++        if (dollying)
++        {
++            // Horizontal drag only, right is closer - Maya's own convention. Vertical movement is
++            // ignored rather than summed in: tumble and dolly are the same hand shape one button
++            // apart, so a dolly that also answered to Y would creep on every gesture meant to be
++            // horizontal, and the creep would be invisible until the model had drifted.
++            //
++            // The 0.03 is DERIVED from the wheel below, not measured on a machine. The wheel moves
++            // scroll * 0.001 * zoomSpeed and Windows reports 120 per detent, so one notch is
++            // 0.12 * zoomSpeed. delta.x is pixels, pre-scaled by 0.1 as above, so a 100px drag at
++            // 0.03 gives 0.3 * zoomSpeed - about two and a half notches for a gesture crossing a
++            // third of a 1080p viewport. If it wants tuning after a real session, tune it here.
++            float mouseX = Mouse.current.delta.x.ReadValue() * 0.1f;
++            mainCamera.transform.Translate(Vector3.forward * (mouseX * 0.03f) * zoomSpeed, Space.Self);
++        }
++
++        // The wheel zooms in BOTH schemes. Maya has a wheel zoom of its own, so keeping it costs
++        // nothing in fidelity, and taking it away would cost every user who reaches for it.
+         float scroll = Mouse.current.scroll.y.ReadValue();
+         if (scroll != 0.0f)
+         {
+@@ -1601,7 +1765,20 @@ public class ModelViewer : MonoBehaviour
+ public class CustomClickDetector : MonoBehaviour, IPointerClickHandler
+ {
+     public System.Action onRightClick;
+-    public void OnPointerClick(PointerEventData eventData) { if (eventData.button == PointerEventData.InputButton.Right) onRightClick?.Invoke(); }
++
++    // The right click this carries raises the delete-group prompt, and under MAYA-NAV ALT+RMB is
++    // the DOLLY - so reaching for the zoom with the cursor over a group row would ask to delete
++    // that group. HandleCameraControls' per-button nav latch suppresses the camera half of that
++    // collision; nothing was suppressing this half.
++    //
++    // CameraGestureActive rather than AltReserved: with MAYA-NAV off, ALT+right-clicking a group
++    // row has always opened the prompt and nothing about that needs to change.
++    public void OnPointerClick(PointerEventData eventData)
++    {
++        if (eventData.button != PointerEventData.InputButton.Right) return;
++        if (MayaNavigationAuthority.CameraGestureActive) return;
++        onRightClick?.Invoke();
++    }
+ }
+ 
+ #if UNITY_EDITOR
+diff --git a/Assets/Scripts/UI_Import/ModifierEmptySpaceExitAuthority.cs b/Assets/Scripts/UI_Import/ModifierEmptySpaceExitAuthority.cs
+index 684293b..91c6d73 100644
+--- a/Assets/Scripts/UI_Import/ModifierEmptySpaceExitAuthority.cs
++++ b/Assets/Scripts/UI_Import/ModifierEmptySpaceExitAuthority.cs
+@@ -74,7 +74,7 @@ public class ModifierEmptySpaceExitAuthority : MonoBehaviour
+         if (Keyboard.current != null &&
+             (Keyboard.current.ctrlKey.isPressed ||
+              Keyboard.current.shiftKey.isPressed ||
+-             Keyboard.current.altKey.isPressed ||
++             MayaNavigationAuthority.AltReserved ||
+              Keyboard.current.spaceKey.isPressed ||
+              Keyboard.current.tabKey.isPressed))
+             return false;
+diff --git a/Assets/Scripts/UI_Import/ModifierGestureReservation.cs b/Assets/Scripts/UI_Import/ModifierGestureReservation.cs
+index 9dc8198..df278d1 100644
+--- a/Assets/Scripts/UI_Import/ModifierGestureReservation.cs
++++ b/Assets/Scripts/UI_Import/ModifierGestureReservation.cs
+@@ -48,6 +48,13 @@ public class ModifierGestureReservation : MonoBehaviour
+         // never came back for the rest of the session, with nothing on screen to explain it.
+         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
+ 
++        // ALT is reserved for the camera, and every authority this reservation is made on behalf
++        // of now stands down while it is held: PostSpaceRepositionAuthority, PostAffectorSurfaceMoveUX
++        // and GuideCurveManager for SPACE, GroupClumperInteractionAuthority and
++        // GroupClumperInteractionFix for TAB. Reserving anyway would drive grooming off for a
++        // frame on behalf of a gesture that is not going to happen.
++        if (MayaNavigationAuthority.AltReserved) return;
++
+         bool reserved = Keyboard.current.tabKey.isPressed || Keyboard.current.spaceKey.isPressed;
+         if (!reserved) return;
+ 
+diff --git a/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs b/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs
+index 614c9b2..a38802b 100644
+--- a/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs
++++ b/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs
+@@ -129,6 +129,23 @@ public class ModifierDeleteNeutralizeHook : MonoBehaviour, IPointerDownHandler
+     public void OnPointerDown(PointerEventData eventData)
+     {
+         if (eventData == null || eventData.button != PointerEventData.InputButton.Left) return;
++
++        // NO MAYA-NAV GUARD HERE, deliberately, and it is worth saying why because every other
++        // panel handler in the project has one.
++        //
++        // This is phase ONE of a two-phase delete. It zeroes the modifier's weight on the press;
++        // phase two is the DEL button's own onClick, which this component does not own and cannot
++        // suppress - it is added ONTO that button and leaves its listeners alone. Guard only phase
++        // one and an ALT-held click on DEL skips the neutralize and still deletes, which strands
++        // the mesh at its last evaluated shape. That is the exact failure this file exists to
++        // prevent (see the header, and claude/clumper-post-frozen-mesh-root-cause.md), it is
++        // written to the save file, and there is no way back from it.
++        //
++        // Left unguarded, the worst an ALT+LMB tumble begun over DEL can do is neutralize a
++        // modifier whose delete then never fires, because the cursor left the button before
++        // release. That leaves a zeroed POST or clumper still in the list - visible, and undone by
++        // raising its weight again. It is also not new: press-and-drag-away on DEL has always done
++        // exactly this. A recoverable pre-existing bug beats an unrecoverable new one.
+         if (kind == Kind.Clumper) NeutralizeClumper();
+         else NeutralizePost();
+     }
+diff --git a/Assets/Scripts/UI_Import/PlacementBrushModeAuthority.cs b/Assets/Scripts/UI_Import/PlacementBrushModeAuthority.cs
+index 270a3a4..c2c9d5d 100644
+--- a/Assets/Scripts/UI_Import/PlacementBrushModeAuthority.cs
++++ b/Assets/Scripts/UI_Import/PlacementBrushModeAuthority.cs
+@@ -57,6 +57,22 @@ public class PlacementBrushModeAuthority : MonoBehaviour
+     // number, like the brush radius beside it, means whatever that model's units mean.
+     private float cardSpacing = .008f;
+     private float nextActionTime;
++
++    // The mode a SHIFT press just cycled away from, and whether that cycle is still revertible.
++    // Both initialised here. See the SHIFT block in Update for why the revert exists and why it
++    // needs no timer.
++    private PlacementMode shiftCycleRevertTo = PlacementMode.Place;
++
++    // What the cycle left behind. A revert is refused unless the mode is still this, so it can
++    // only ever undo its own cycle and never a deliberate choice made afterwards.
++    private PlacementMode shiftCycleRevertFrom = PlacementMode.Place;
++    private bool shiftCycleRevertArmed = false;
++
++    // Whether the left-button hold currently in progress was claimed at its PRESS by a gesture
++    // that is not painting. Initialised here, latched at the press, cleared when the button comes
++    // up. See MaintainLeftHoldClaim.
++    private bool leftHoldClaimed = false;
++
+     private float nextUIScan;
+     private bool restorePending;
+     private bool restoreSelectionState;
+@@ -142,6 +158,16 @@ public class PlacementBrushModeAuthority : MonoBehaviour
+         Resolve();
+         if (viewer == null) return;
+ 
++        // Above every early return below, deliberately. Grooming is held off for the whole of an
++        // armed placement, and TextureModeProbe.Active parks this method for the whole texture
++        // workspace, so the returns further down are not rare frames - they are minutes at a time.
++        // A latch maintained only on the frames this method gets all the way through is not a latch.
++        //
++        // Only a CLAIM lives up here, never a decision to act. A latch that is safe to maintain
++        // above the returns is one that can only ever suppress something; anything that could
++        // TRIGGER something has to be read where the returns can stop it.
++        MaintainLeftHoldClaim();
++
+         // Keeps the slider correct if brushRadius was changed from outside this script - the
+         // [ ] hotkey - rather than through the slider itself.
+         //
+@@ -209,27 +235,102 @@ public class PlacementBrushModeAuthority : MonoBehaviour
+             return;
+         }
+ 
+-        bool shiftPressed = Keyboard.current.leftShiftKey.wasPressedThisFrame || Keyboard.current.rightShiftKey.wasPressedThisFrame;
+-        if (shiftPressed)
++        // ALT is reserved for the camera, in both modes - the same reservation
++        // ModelViewer.HandleGrooming makes, for the same reason. Under MAYA-NAV the tumble is ALT
++        // plus a mouse button and every click branch below reads a mouse button directly, so
++        // ALT+LMB would re-select a group under the cursor as the view swung. With MAYA-NAV off
++        // ALT means nothing, and must go on meaning nothing rather than falling through.
++        //
++        // This sits ABOVE the SHIFT mode cycle as well as above the click branches, so ALT+SHIFT
++        // does not cycle the brush mode either. That is deliberate rather than incidental: under
++        // MAYA-NAV, ALT is held for the whole of every camera move, and a SHIFT brushed during one
++        // would walk the mode strip through five modes with the user's hand nowhere near it. The
++        // cost is that ALT+SHIFT stops cycling with MAYA-NAV off too, where it did before - a
++        // chord with no reason to be pressed, against a misfire that lands in ERASE.
++        bool altReserved = MayaNavigationAuthority.AltReserved;
++        if (altReserved)
+         {
+-            CycleMode();
+             HideBrushPreview();
+-            SuppressLegacyPlacement(selectionWasActive);
+             return;
+         }
+ 
+-        bool alt = Keyboard.current.leftAltKey.isPressed || Keyboard.current.rightAltKey.isPressed;
+         bool ctrl = Keyboard.current.ctrlKey.isPressed;
++        bool shift = Keyboard.current.leftShiftKey.isPressed || Keyboard.current.rightShiftKey.isPressed;
+         bool tab = Keyboard.current.tabKey.isPressed;
+         bool space = Keyboard.current.spaceKey.isPressed;
+ 
++        // A bare SHIFT press cycles the brush mode. CTRL+SHIFT is now the group pick, so without
++        // excluding CTRL the mode would cycle every time somebody picked a group - they would be
++        // painting in a mode they never chose, having done nothing but click on hair.
++        //
++        // The !ctrl test alone only covers CTRL-first. That IS how the chord is usually made - left
++        // CTRL sits below left SHIFT and the hand rolls up onto it - but SHIFT-first is perfectly
++        // ordinary, and there the SHIFT press lands before CTRL and the mode cycles anyway.
++        //
++        // That is not survivable on its own. CycleMode walks FIVE modes, so the damage is not
++        // "press SHIFT again to undo it": recovering from one accidental cycle costs four more
++        // taps, and the route back from PLACE runs through ERASE. Four unlucky group picks and an
++        // ordinary left-drag deletes hair instead of placing it.
++        //
++        // So the cycle is REVERTED if CTRL arrives while SHIFT is still down. No timer: a
++        // deliberate SHIFT tap has let SHIFT go long before the user reaches for CTRL, and a chord
++        // holds both. The revert can only ever put back a value this same block just set, which is
++        // why it is safe to sit up here with the cycle rather than needing a latch of its own.
++        //
++        // The cost is a visible flicker of the mode strip on a SHIFT-first pick. That was weighed
++        // against the two alternatives:
++        //
++        //   Cycling on SHIFT RELEASE, vetoed by any CTRL seen during the hold, is order-independent
++        //   and was tried. It is silently wrong. To be a latch at all it has to be maintained above
++        //   this method's early returns, and this method returns for whole minutes at a time -
++        //   while a group name is being renamed, while the texture workspace is open, while a
++        //   placement is armed. Type a capital letter into a rename box and the mode cycles the
++        //   moment the box closes, with the user having touched nothing.
++        //
++        //   Leaving SHIFT-first uncovered is the four-taps-through-ERASE case above.
++        //
++        // A flicker the user sees and that corrects itself beats both. Read this before changing it.
++        bool shiftPressed = Keyboard.current.leftShiftKey.wasPressedThisFrame ||
++                            Keyboard.current.rightShiftKey.wasPressedThisFrame;
++        if (shiftPressed && !ctrl)
++        {
++            shiftCycleRevertTo = mode;
++            CycleMode();
++            shiftCycleRevertFrom = mode;
++            shiftCycleRevertArmed = true;
++            HideBrushPreview();
++            SuppressLegacyPlacement(selectionWasActive);
++            return;
++        }
++
++        // CTRL landed on a SHIFT that is still held: the press above was the leading edge of a
++        // CTRL+SHIFT group pick, not a mode change. Put the mode back.
++        //
++        // The mode == shiftCycleRevertFrom test is what keeps this honest. Without it the arm
++        // survives any OTHER mode change made while SHIFT is still down - clicking the panel's
++        // MODE button, say, which is a deliberate choice - and a CTRL pressed afterwards would
++        // throw that choice away and drop the user somewhere they never picked. A revert may only
++        // ever undo the exact cycle it armed; if the mode has moved on since, there is nothing
++        // here to undo.
++        if (shiftCycleRevertArmed && ctrl && shift && mode == shiftCycleRevertFrom)
++        {
++            shiftCycleRevertArmed = false;
++            SetMode(shiftCycleRevertTo);
++        }
++        else if (shiftCycleRevertArmed && mode != shiftCycleRevertFrom)
++        {
++            shiftCycleRevertArmed = false;
++        }
++
++
+         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
+         {
+             HideBrushPreview();
+             return;
+         }
+ 
+-        if (alt && Mouse.current.leftButton.wasPressedThisFrame)
++        // Group pick, formerly ALT+click. See MayaNavigationAuthority for why it moved.
++        if (ctrl && shift && Mouse.current.leftButton.wasPressedThisFrame)
+         {
+             if (RaycastCursor(out RaycastHit hit)) SelectNearestGroup(hit.point);
+             HideBrushPreview();
+@@ -237,7 +338,11 @@ public class PlacementBrushModeAuthority : MonoBehaviour
+             return;
+         }
+ 
+-        if (ctrl && Mouse.current.leftButton.wasPressedThisFrame)
++        // POST authoring. The group pick above returns first, so CTRL+SHIFT never reaches this -
++        // but the !shift is here anyway rather than resting on the ordering, because a branch that
++        // is only correct because of what sits above it breaks silently the first time somebody
++        // reorders the file.
++        if (ctrl && !shift && Mouse.current.leftButton.wasPressedThisFrame)
+         {
+             bool selected = false;
+             if (RaycastCursor(out RaycastHit hit))
+@@ -268,18 +373,26 @@ public class PlacementBrushModeAuthority : MonoBehaviour
+         else
+             HideBrushPreview();
+ 
++        // The continuous modes act on the button being DOWN, not on the press edge, which is what
++        // makes the claim latch necessary rather than nice to have. Every modified click in this
++        // tool returns on wasPressedThisFrame and is then silent for the rest of the hold - so
++        // without the latch, frame two of any such gesture falls straight through to here with the
++        // button still down, and paints or erases underneath it. See MaintainLeftHoldClaim.
+         bool act = false;
+-        switch (mode)
++        if (!leftHoldClaimed)
+         {
+-            case PlacementMode.Place:
+-                act = Mouse.current.leftButton.wasPressedThisFrame;
+-                break;
+-            case PlacementMode.Paint:
+-            case PlacementMode.Spray:
+-            case PlacementMode.Even:
+-            case PlacementMode.Erase:
+-                act = Mouse.current.leftButton.isPressed && Time.unscaledTime >= nextActionTime;
+-                break;
++            switch (mode)
++            {
++                case PlacementMode.Place:
++                    act = Mouse.current.leftButton.wasPressedThisFrame;
++                    break;
++                case PlacementMode.Paint:
++                case PlacementMode.Spray:
++                case PlacementMode.Even:
++                case PlacementMode.Erase:
++                    act = Mouse.current.leftButton.isPressed && Time.unscaledTime >= nextActionTime;
++                    break;
++            }
+         }
+ 
+         if (act && hasSurface)
+@@ -308,6 +421,69 @@ public class PlacementBrushModeAuthority : MonoBehaviour
+         SuppressLegacyPlacement(selectionWasActive);
+     }
+ 
++    // Two latches, both of which have to be maintained on every frame rather than only on the
++    // frames the main method survives. Both are SUPPRESSIONS - they can refuse something but never
++    // cause anything - which is what makes them safe to run above the early returns. The SHIFT
++    // revert they pair with is a trigger and deliberately stays below them.
++    //
++    // THE SHIFT DISARM. Left beside the revert it was a real bug: the returns below last minutes
++    // at a time, not frames, so a SHIFT released while a rename box is open, or the texture
++    // workspace is up, or a placement is armed, never reached it. The arm survived, and the next
++    // CTRL+SHIFT group pick - however much later - reverted a mode change from another session of
++    // work. Cycle out of ERASE, rename a group, and a pick minutes later puts ERASE back.
++    //
++    // THE LEFT-HOLD CLAIM: "this left-button hold belongs to something other than the brush."
++    //
++    // Every modified click in this tool is written as `modifier && wasPressedThisFrame`, acts, and
++    // returns - and is then completely silent for the rest of the hold. The brush is not: PAINT,
++    // SPRAY, EVEN and ERASE all act on `isPressed`, every ActionInterval, for as long as the button
++    // is down. So the press frame of a modified gesture returns cleanly and frame two paints.
++    //
++    // Three ways that bit, all of which this latch closes:
++    //
++    //   CTRL+SHIFT to pick a group. Held for the ~100ms an ordinary click lasts, that used to
++    //   place a card or two - or, in ERASE, quietly delete the hair being pointed at. The old
++    //   ALT+click pick had the same hole; it was never noticed because nobody thinks of a click
++    //   as a hold.
++    //
++    //   MAYA-NAV tumble, ALT+LMB. Letting go of ALT before the mouse button is an ordinary way to
++    //   end a tumble, and on that frame the gesture stops being a nav gesture while the button is
++    //   still down - so the brush would start firing mid-swing. Testing AltReserved at
++    //   the act site cannot fix that; only remembering what the PRESS was can.
++    //
++    //   ALT+LMB with MAYA-NAV off. ALT is reserved for the camera whether or not the camera is
++    //   currently using it, so it plants nothing in either mode. Anyone still reaching for the old
++    //   ALT+click group pick gets nothing rather than a card dropped on the model.
++    void MaintainLeftHoldClaim()
++    {
++        bool alt = MayaNavigationAuthority.AltReserved;
++        bool ctrl = Keyboard.current != null && Keyboard.current.ctrlKey.isPressed;
++
++        // SHIFT let go: the cycle was meant, and stands. FIRST in this method, above the mouse
++        // test, because it needs no mouse - and a disarm skipped because no mouse device happened
++        // to be present is the same stale arm this exists to prevent.
++        bool shiftDown = Keyboard.current != null &&
++                         (Keyboard.current.leftShiftKey.isPressed || Keyboard.current.rightShiftKey.isPressed);
++        if (!shiftDown) shiftCycleRevertArmed = false;
++
++        if (Mouse.current == null) return;
++
++        // ALT, CTRL, TAB and SPACE - every modifier a click in this tool can carry. TAB and SPACE
++        // matter as much as the other two: SPACE+click repositions the selected POST or clumper,
++        // and letting SPACE go before the mouse button is the natural way to end a click. Without
++        // them in this list, the frame after SPACE comes up finds the button still down and the
++        // brush plants a card on top of the modifier that was just moved - or, in ERASE, deletes
++        // the hair around it.
++        if (Mouse.current.leftButton.wasPressedThisFrame)
++        {
++            bool tab = Keyboard.current != null && Keyboard.current.tabKey.isPressed;
++            bool space = Keyboard.current != null && Keyboard.current.spaceKey.isPressed;
++            leftHoldClaimed = alt || ctrl || tab || space;
++        }
++
++        if (!Mouse.current.leftButton.isPressed) leftHoldClaimed = false;
++    }
++
+     void SuppressLegacyPlacement(bool stateToRestore)
+     {
+         if (viewer == null || selectionModeField == null) return;
+diff --git a/Assets/Scripts/UI_Import/PostAffectorManager.cs b/Assets/Scripts/UI_Import/PostAffectorManager.cs
+index e5aeedc..8717ec3 100644
+--- a/Assets/Scripts/UI_Import/PostAffectorManager.cs
++++ b/Assets/Scripts/UI_Import/PostAffectorManager.cs
+@@ -139,6 +139,19 @@ public class PostAffectorManager : MonoBehaviour
+     {
+         if (Mouse.current == null || Keyboard.current == null) return;
+         if (!Keyboard.current.ctrlKey.isPressed || !Mouse.current.leftButton.wasPressedThisFrame) return;
++
++        // CTRL+SHIFT+LMB is the group pick, not POST creation. Nothing else here would have
++        // stopped it: this authority sweeps the scene on its own and never asks ModelViewer
++        // whether the click was already claimed, so without this test every group pick made
++        // while a selection was live would leave a POST behind it on the way past.
++        if (Keyboard.current.shiftKey.isPressed) return;
++
++        // ALT is reserved for the camera, and CTRL+ALT+LMB is a hand shape Maya users make
++        // constantly - it is a camera gesture in Maya itself. With a selection live, which is the
++        // state you are in immediately after any CTRL+click, tumbling with CTRL still resting
++        // under the hand would plant a POST at the cursor and make it active as the view swung.
++        if (MayaNavigationAuthority.AltReserved) return;
++
+         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
+         if (!HasSelection()) return;
+         if (lastCreatedFrame == Time.frameCount) return;
+diff --git a/Assets/Scripts/UI_Import/PostAffectorSurfaceMoveUX.cs b/Assets/Scripts/UI_Import/PostAffectorSurfaceMoveUX.cs
+index 267e647..98fd270 100644
+--- a/Assets/Scripts/UI_Import/PostAffectorSurfaceMoveUX.cs
++++ b/Assets/Scripts/UI_Import/PostAffectorSurfaceMoveUX.cs
+@@ -85,6 +85,11 @@ public class PostAffectorSurfaceMoveUX : MonoBehaviour
+     void TryMoveActivePost()
+     {
+         if (Mouse.current == null || Keyboard.current == null) return;
++        // ALT is reserved for the camera. Under MAYA-NAV, ALT+SPACE (or ALT+TAB) plus a click is
++        // an awkward chord rather than an impossible one, and it would both tumble the view and
++        // fire this gesture. True whenever ALT is held, in either mode.
++        if (MayaNavigationAuthority.AltReserved) return;
++
+         if (!Keyboard.current.spaceKey.isPressed || !Mouse.current.leftButton.wasPressedThisFrame) return;
+         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
+         if (viewer.mainCamera == null) return;
+diff --git a/Assets/Scripts/UI_Import/PostSpaceRepositionAuthority.cs b/Assets/Scripts/UI_Import/PostSpaceRepositionAuthority.cs
+index 6b90710..c3a9303 100644
+--- a/Assets/Scripts/UI_Import/PostSpaceRepositionAuthority.cs
++++ b/Assets/Scripts/UI_Import/PostSpaceRepositionAuthority.cs
+@@ -36,6 +36,11 @@ public class PostSpaceRepositionAuthority : MonoBehaviour
+     {
+         Resolve();
+         if (posts == null || viewer == null || Mouse.current == null || Keyboard.current == null) return;
++        // ALT is reserved for the camera. Under MAYA-NAV, ALT+SPACE (or ALT+TAB) plus a click is
++        // an awkward chord rather than an impossible one, and it would both tumble the view and
++        // fire this gesture. True whenever ALT is held, in either mode.
++        if (MayaNavigationAuthority.AltReserved) return;
++
+         if (!Keyboard.current.spaceKey.isPressed || !Mouse.current.leftButton.wasPressedThisFrame) return;
+         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
+ 
+diff --git a/Assets/Scripts/UI_Import/RuntimeToolInteractionFixes.cs b/Assets/Scripts/UI_Import/RuntimeToolInteractionFixes.cs
+index 3e4aa27..8ea1874 100644
+--- a/Assets/Scripts/UI_Import/RuntimeToolInteractionFixes.cs
++++ b/Assets/Scripts/UI_Import/RuntimeToolInteractionFixes.cs
+@@ -34,8 +34,22 @@ public class RuntimeToolInteractionFixes : MonoBehaviour
+         // behind it, would reroll that group's variance seed or drop a caret in a hidden text
+         // field. Always false in a PRO build.
+         if (DemoUpgradePrompt.IsOpen) return;
++
+         Vector2 mouse = Mouse.current.position.ReadValue();
+-        bool pressed = Mouse.current.leftButton.wasPressedThisFrame;
++
++        // Same argument as the modal above, one modifier along. This authority ignores the
++        // EventSystem by design, so it also ignores the per-button nav latch that stops an ALT
++        // press over the panel from moving the camera - and an ALT+LMB tumble begun over a group's
++        // R button would reroll that group's variance seed. Conditional on MAYA-NAV: with it off
++        // there is no gesture here to protect against.
++        //
++        // It suppresses the PRESS, not the whole method. Returning early would have been the
++        // obvious move and is wrong: everything below force-paints hover and focus tints every
++        // frame, and under MAYA-NAV ALT is held more or less continuously - so an early return
++        // freezes those tints for as long as the user is driving the camera. Hover the R button,
++        // hold ALT to swing the view away, and it stays lit until ALT comes up.
++        bool pressed = Mouse.current.leftButton.wasPressedThisFrame &&
++                       !MayaNavigationAuthority.CameraGestureActive;
+ 
+         TMP_InputField[] fields = FindObjectsByType<TMP_InputField>(FindObjectsInactive.Exclude, FindObjectsSortMode.None)
+             .Where(f => f.gameObject.name == "SeedInput").ToArray();
+diff --git a/Assets/Scripts/UI_Import/SelectionBrushVisualizer.cs b/Assets/Scripts/UI_Import/SelectionBrushVisualizer.cs
+index 36685a0..a5114fe 100644
+--- a/Assets/Scripts/UI_Import/SelectionBrushVisualizer.cs
++++ b/Assets/Scripts/UI_Import/SelectionBrushVisualizer.cs
+@@ -71,15 +71,18 @@ public class SelectionBrushVisualizer : MonoBehaviour
+         float strength = Mathf.Clamp01(viewer.selectionStrength);
+ 
+         // While the +POST button is armed, GroupAddButtonPlacementAuthority refuses its own
+-        // placement if CTRL, TAB or SPACE is held - and TAB+click is picked up instead by
++        // placement if CTRL, ALT, TAB or SPACE is held - and TAB+click is picked up instead by
+         // GroupClumperInteractionAuthority, which creates a CLUMPER. So resting a hand on TAB
+         // during an armed +POST used to put two aim rings on the same cursor point, a POST one
+         // at .025 and a clumper one at .04, and the click produced the clumper. The armed ring
+-        // now stands down for exactly the modifiers the armed placement stands down for.
+-        bool blockedModifier = Keyboard.current != null &&
+-                               (Keyboard.current.ctrlKey.isPressed ||
+-                                Keyboard.current.tabKey.isPressed ||
+-                                Keyboard.current.spaceKey.isPressed);
++        // stands down for exactly the modifiers the armed placement stands down for - so this
++        // list has to keep matching IsShortcutModifierHeld, ALT included, or the ring goes back
++        // to promising a placement the click will not make.
++        bool blockedModifier = MayaNavigationAuthority.AltReserved ||
++                               (Keyboard.current != null &&
++                                (Keyboard.current.ctrlKey.isPressed ||
++                                 Keyboard.current.tabKey.isPressed ||
++                                 Keyboard.current.spaceKey.isPressed));
+         bool armedAiming = armedForPost && !blockedModifier;
+ 
+         // Two different rings, and they must not be drawn from the same numbers.
+@@ -92,7 +95,19 @@ public class SelectionBrushVisualizer : MonoBehaviour
+         // radius. Tune a POST to 0.15, then Ctrl+hover to place another: the ring showed 0.15,
+         // you aimed with it, and the POST that appeared was 0.025 - the ring visibly snapping
+         // smaller the instant you clicked.
+-        if ((ctrl || armedAiming) && !pointerOverUI)
++        //
++        // ctrlAiming, not ctrl. CTRL+SHIFT is the group pick and PostAffectorManager refuses to
++        // create anything under it - so a bare CTRL test drew a green POST ring, at the exact
++        // radius of the POST about to appear, over a click that creates no POST at all. Same
++        // failure the comment above describes, one modifier along: a ring you aim with and a
++        // result that does not match it.
++        // ALT as well as SHIFT. blockedModifier above already stands the ARMED ring down for ALT;
++        // leaving it out here meant the CTRL-hover ring still drew under CTRL+ALT, over a click
++        // that now creates nothing at all. The two tests in this method have to agree.
++        bool ctrlAiming = ctrl &&
++                          !(Keyboard.current != null && Keyboard.current.shiftKey.isPressed) &&
++                          !MayaNavigationAuthority.AltReserved;
++        if ((ctrlAiming || armedAiming) && !pointerOverUI)
+         {
+             Ray ray = viewer.mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
+             if (Physics.Raycast(ray, out RaycastHit hit))
+diff --git a/Assets/Scripts/UI_Import/SliderRightClickReset.cs b/Assets/Scripts/UI_Import/SliderRightClickReset.cs
+index 7953bd9..c63a417 100644
+--- a/Assets/Scripts/UI_Import/SliderRightClickReset.cs
++++ b/Assets/Scripts/UI_Import/SliderRightClickReset.cs
+@@ -19,6 +19,13 @@ public class SliderRightClickReset : MonoBehaviour, IPointerClickHandler
+     public void OnPointerClick(PointerEventData eventData)
+     {
+         if (eventData.button != PointerEventData.InputButton.Right) return;
++
++        // Under MAYA-NAV, ALT+RMB is the DOLLY. Reaching for it with the cursor a few pixels
++        // inside the panel would reset this slider to its default on the way past - and
++        // ModelViewer's per-button nav latch only stops the camera half of that collision, not
++        // this half. Conditional on MAYA-NAV: with it off, ALT+right-clicking a slider to reset it
++        // is something that has always worked and there is no reason to take it away.
++        if (MayaNavigationAuthority.CameraGestureActive) return;
+         if (slider == null) slider = GetComponent<Slider>();
+         if (slider == null || !slider.interactable) return;
+ 
+diff --git a/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs b/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs
+index 901efc2..44c4f2e 100644
+--- a/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs
++++ b/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs
+@@ -576,6 +576,22 @@ public class TextureUVRectWorkspace : MonoBehaviour
+ 
+         bool pointerOverUI = EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
+ 
++        // ALT is reserved, so an ALT+LMB press must not draw a rectangle - in either mode.
++        //
++        // Note what this is NOT about: the camera does not actually move in here. HandleCameraControls
++        // has no texture-mode gate and does run, but EnforceWorkspaceCamera in this file's own
++        // LateUpdate hard-resets the pivot and the camera transform every frame, and LateUpdate
++        // always follows Update - so any motion is erased in the frame it happened. This guard is
++        // about the CLICK, not the camera: under MAYA-NAV the user reaching for a tumble gets no
++        // view change either way, and without this they would also get a UV rectangle dragged out
++        // and committed on release.
++        //
++        // A drag ALREADY UNDER WAY is left alone rather than cancelled. Tested as a plain return
++        // it only refuses to START one, so brushing ALT part-way through drawing a rectangle no
++        // longer throws the rectangle away - which it would have done in both modes, and which is
++        // neither of the things ALT is supposed to do.
++        if (MayaNavigationAuthority.AltReserved && !dragging) return;
++
+         if (!dragging && Mouse.current.leftButton.wasPressedThisFrame)
+         {
+             if (pointerOverUI) return;
+@@ -699,6 +715,17 @@ public class TextureUVRectWorkspace : MonoBehaviour
+     void HandleRightClickDelete()
+     {
+         if (dragging || Mouse.current == null) return;
++
++        // ALT is reserved, so an ALT+RMB press must not delete a rectangle. Under MAYA-NAV that
++        // press is someone reaching for the dolly; the rectangle under the cursor would go, with
++        // nothing on screen to say so.
++        //
++        // As with the guard in HandleDrawInput, this is about the click rather than the camera -
++        // EnforceWorkspaceCamera pins the view every LateUpdate, so nothing moves in here anyway.
++        // It has to be repeated here because this method is deliberately called from Update
++        // separately, so the guard in HandleDrawInput does not cover it.
++        if (MayaNavigationAuthority.AltReserved) return;
++
+         if (!Mouse.current.rightButton.wasPressedThisFrame) return;
+         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
+         if (hoveredRectId < 0) return;
+diff --git a/Assets/Scripts/UI_Import/UVRectSummaryRow.cs b/Assets/Scripts/UI_Import/UVRectSummaryRow.cs
+index da16b3e..077a102 100644
+--- a/Assets/Scripts/UI_Import/UVRectSummaryRow.cs
++++ b/Assets/Scripts/UI_Import/UVRectSummaryRow.cs
+@@ -18,6 +18,11 @@ public class UVRectSummaryRow : MonoBehaviour, IPointerEnterHandler, IPointerExi
+     private Image background;
+     private CanvasGroup canvasGroup;
+     private Canvas rootCanvas;
++    // Whether OnBeginDrag actually accepted this drag. The input module runs its drag machinery
++    // whether or not the handler did anything, so this is what the rest of the chain - OnDrag,
++    // OnEndDrag, and the OnDrop on the TARGET row - tests instead of assuming a delivered event
++    // means an accepted one. Initialised here.
++    private bool dragBegan = false;
+     private Transform originalParent;
+     private int originalSiblingIndex;
+     private bool pointerHovered;
+@@ -106,6 +111,15 @@ public class UVRectSummaryRow : MonoBehaviour, IPointerEnterHandler, IPointerExi
+         if (eventData.button != PointerEventData.InputButton.Right) return;
+         if (workspace == null) return;
+ 
++        // Under MAYA-NAV, ALT+RMB is the DOLLY. Starting a zoom with the cursor a few pixels
++        // inside this list deletes the row it landed on - and a delete renumbers every rectangle
++        // after it, so every group pointing at "rect 4" quietly points at something else.
++        // TextureUVRectWorkspace.HandleRightClickDelete guards the on-texture half of this same
++        // gesture, and deliberately uses the OTHER predicate: that one is a viewport click, where
++        // ALT is reserved in both modes, and this one is a panel click, where it is not. Same
++        // gesture, two layers, two correct answers - do not "fix" one to match the other.
++        if (MayaNavigationAuthority.CameraGestureActive) return;
++
+         // This row is about to stop standing for anything, so drop its highlight claims before
+         // asking. OnPointerExit will never arrive - the GameObject is destroyed by the rebuild.
+         pointerHovered = false;
+@@ -137,6 +151,20 @@ public class UVRectSummaryRow : MonoBehaviour, IPointerEnterHandler, IPointerExi
+     {
+         if (eventData == null || eventData.button != PointerEventData.InputButton.Left) return;
+ 
++        // An ALT+LMB tumble begun over this list would tear the row out and drop it somewhere
++        // else, and a reorder renumbers every rectangle exactly as the delete above does. The
++        // camera does not move either - navSuppressedLeft has already killed it - so the user gets
++        // a silently reordered atlas and nothing they asked for.
++        //
++        // Refusing HERE is not enough on its own, which is the whole reason dragBegan exists
++        // below. The input module does not ask whether OnBeginDrag did anything: it sets
++        // pointerDrag at the press and dragging in ProcessDrag regardless, then delivers OnDrag
++        // and, on release, OnDrop to whatever is under the cursor. So a refusal that only returned
++        // from this method would leave the drag running with the row never reparented - still
++        // moving under the cursor, still landing on a target row, still reordering the atlas.
++        if (MayaNavigationAuthority.CameraGestureActive) return;
++
++        dragBegan = true;
+         originalParent = transform.parent;
+         originalSiblingIndex = transform.GetSiblingIndex();
+         if (rootCanvas == null) rootCanvas = GetComponentInParent<Canvas>();
+@@ -158,12 +186,26 @@ public class UVRectSummaryRow : MonoBehaviour, IPointerEnterHandler, IPointerExi
+     public void OnDrag(PointerEventData eventData)
+     {
+         if (eventData == null || eventData.button != PointerEventData.InputButton.Left) return;
++
++        // OnBeginDrag refused this one. Moving the row anyway would drag it out of the list with
++        // none of the setup that makes a drag reversible - no saved parent, no saved sibling
++        // index - so OnEndDrag would have nothing to put back and the row would simply stay where
++        // the cursor left it.
++        if (!dragBegan) return;
++
+         transform.position = eventData.position;
+     }
+ 
+     public void OnEndDrag(PointerEventData eventData)
+     {
+         if (eventData == null || eventData.button != PointerEventData.InputButton.Left) return;
++
++        // Cleared here rather than in OnDrop, because OnDrop is delivered to the TARGET row and
++        // may not be delivered at all - a drag released over empty space ends with no drop.
++        bool began = dragBegan;
++        dragBegan = false;
++        if (!began) return;
++
+         if (canvasGroup != null) canvasGroup.blocksRaycasts = true;
+         pointerHovered = false;
+ 
+@@ -193,6 +235,11 @@ public class UVRectSummaryRow : MonoBehaviour, IPointerEnterHandler, IPointerExi
+         UVRectSummaryRow draggedRow = draggedGO.GetComponent<UVRectSummaryRow>();
+         if (draggedRow == null || draggedRow == this) return;
+ 
++        // The reorder lives HERE, on the target row, not on the dragged one - so this is the test
++        // that actually decides whether the atlas gets renumbered. A drag the source refused never
++        // set dragBegan, and must not be completed by whatever it happens to be released over.
++        if (!draggedRow.dragBegan) return;
++
+         // Either row can have been invalidated between the drag starting and this drop, by a
+         // delete that has not had its frame to rebuild the list yet.
+         if (rectId < 0 || draggedRow.rectId < 0) return;
+diff --git a/Assets/Scripts/UI_Import/UndoHistoryAuthority.cs b/Assets/Scripts/UI_Import/UndoHistoryAuthority.cs
+index 8c44494..a9e3e26 100644
+--- a/Assets/Scripts/UI_Import/UndoHistoryAuthority.cs
++++ b/Assets/Scripts/UI_Import/UndoHistoryAuthority.cs
+@@ -4,6 +4,7 @@ using System.IO;
+ using System.IO.Compression;
+ using System.Text;
+ using UnityEngine;
++using UnityEngine.EventSystems;
+ using UnityEngine.InputSystem;
+ using UnityEngine.InputSystem.Controls;
+ 
+@@ -85,6 +86,17 @@ public class UndoHistoryAuthority : MonoBehaviour
+ 
+     private bool armed;
+     private float armedAt;
++
++    // Whether the left button press currently in progress was an ALT press in the viewport - a
++    // MAYA-NAV tumble, or, with MAYA-NAV off, the reserved ALT that authors nothing. Initialised
++    // here rather than tested for. MaintainPressOrigins owns it - sets it at the press, clears it
++    // the frame after the release - and MaintainCapture only reads it.
++    private bool leftPressWasNavigation = false;
++
++    // Whether the right button press currently in progress carried CTRL+SHIFT - i.e. was a guide
++    // point removal, the one thing the right button does that changes anything saved. Initialised
++    // here; MaintainPressOrigins owns it on the same terms as the flag above.
++    private bool rightPressWasPointEdit = false;
+     private bool restoring;
+     private bool baselinePending;
+ 
+@@ -105,7 +117,7 @@ public class UndoHistoryAuthority : MonoBehaviour
+     public static bool Restoring { get; private set; }
+ 
+     // Set by an edit that MaintainCapture's input watching cannot see for itself. It arms on the
+-    // left button, on any key, and on the right button only while ALT is held - so a plain right
++    // left button, on any key, and on the right button only while CTRL+SHIFT is held - so a plain right
+     // click that changes something saved, like deleting a UV rectangle, would otherwise leave no
+     // step behind and be folded silently into whatever the user did next.
+     //
+@@ -145,6 +157,14 @@ public class UndoHistoryAuthority : MonoBehaviour
+ 
+     void Update()
+     {
++        // Before Resolve and before every short-circuit below, deliberately. This is per-GESTURE
++        // state, not per-session state, and Update skips MaintainCapture on plenty of frames -
++        // during a restore, during the settle after a load, before a baseline exists. A press
++        // whose frame lands in one of those windows would record nothing, and the release that
++        // followed would arm a full serialize the gesture never earned. Nothing in Awake or
++        // Clear() resets it either, because neither of those is a gesture boundary.
++        MaintainPressOrigins();
++
+         if (!Resolve()) return;
+ 
+         // Loading a model or a project replaces the session outright. Its history belongs to a
+@@ -366,19 +386,39 @@ public class UndoHistoryAuthority : MonoBehaviour
+             activity = true;
+         }
+ 
+-        if (mouse != null && mouse.leftButton.wasReleasedThisFrame) activity = true;
+-
+-        // The right button ONLY while ALT is down, which is the one thing it does that changes
+-        // anything saved: removing a point from a guide. Arming on every right release would
+-        // arm on every orbit, and an arm is not free - the commit that follows builds the whole
+-        // save payload and gzips it before it can compare hashes, so a plain look around the
+-        // model would pay for a full serialize a third of a second later.
++        // A camera gesture changes nothing that is saved. Arming on one buys a full serialize and
++        // gzip of the whole session, 300ms after every tumble, to discover the hash is unchanged -
++        // and under MAYA-NAV the tumble is on the LEFT button, so without this the cost the right
++        // button was carefully protected from would simply have moved to the left one.
++        //
++        // The flag is set at the PRESS by MaintainPressOrigins, not read live here. Under
++        // MAYA-NAV, letting go of ALT before letting go of the mouse is an ordinary way to end a
++        // tumble - asked live at the release, that ordering reads as a plain click.
++        if (mouse != null && mouse.leftButton.wasReleasedThisFrame && !leftPressWasNavigation) activity = true;
++
++        // The right button ONLY while CTRL+SHIFT is down, which is the one thing it does that
++        // changes anything saved: removing a point from a guide. Arming on every right release
++        // would arm on every orbit, and an arm is not free - the commit that follows builds the
++        // whole save payload and gzips it before it can compare hashes, so a plain look around
++        // the model would pay for a full serialize a third of a second later.
++        //
++        // This read ALT until MAYA-NAV took ALT for the camera and the guide-point gestures moved
++        // to CTRL+SHIFT; see MayaNavigationAuthority. Left reading ALT it would have become worse
++        // than useless the moment MAYA-NAV was switched on, because there ALT+right is the DOLLY:
++        // it would have armed a full capture after every zoom, which is the exact cost the
++        // paragraph above exists to avoid.
+         //
+-        // The ALT keydown that precedes the gesture does arm it, but that is not enough on its
+-        // own: a run of removals under one continuous ALT hold produces no further keydown, and
+-        // every removal after the first would be invisible to undo.
+-        if (mouse != null && keyboard != null && mouse.rightButton.wasReleasedThisFrame &&
+-            (keyboard.leftAltKey.isPressed || keyboard.rightAltKey.isPressed)) activity = true;
++        // A keydown cannot be relied on to arm this instead. A run of removals under one
++        // continuous hold produces no further keydown, so every removal after the first would be
++        // invisible to undo - and the line below stops watching keydowns entirely while CTRL is
++        // held, so under this chord there is no keydown arming anything in the first place.
++        // Read from the latch, not live. The removal happens on the PRESS, and by the release the
++        // user may well have let CTRL or SHIFT go first - two keys means twice as many ways to
++        // finish the gesture in an order that reads as a plain right click. Tested live, the
++        // removal would arm nothing, and nothing else would catch it: the line below stops
++        // watching keydowns entirely while CTRL is held, and no NotifyEdit sits on the removal
++        // path. The step would be folded into whatever the user did next, or lost.
++        if (mouse != null && mouse.rightButton.wasReleasedThisFrame && rightPressWasPointEdit) activity = true;
+         if (!activity && keyboard != null && !keyboard.ctrlKey.isPressed) activity = AnyKeyWentDown(keyboard);
+ 
+         if (activity)
+@@ -398,16 +438,72 @@ public class UndoHistoryAuthority : MonoBehaviour
+         CommitIfChanged();
+     }
+ 
++    // Owns leftPressWasNavigation and rightPressWasPointEdit outright: sets them, and clears
++    // them. Called from the top of Update so it runs on every frame, including the ones
++    // MaintainCapture never reaches.
++    //
++    // The clear deliberately spares the release frame itself - isPressed is already false there,
++    // and MaintainCapture, which runs later in the same frame, still has to see what the press
++    // was. It goes on the frame after instead. If MaintainCapture was skipped on that release
++    // frame, the flag is cleared anyway rather than left standing to suppress the next real click.
++    void MaintainPressOrigins()
++    {
++        Mouse mouse = Mouse.current;
++        if (mouse == null)
++        {
++            leftPressWasNavigation = false;
++            rightPressWasPointEdit = false;
++            return;
++        }
++
++        Keyboard keyboard = Keyboard.current;
++        if (mouse.rightButton.wasPressedThisFrame)
++            rightPressWasPointEdit = keyboard != null &&
++                                     keyboard.ctrlKey.isPressed && keyboard.shiftKey.isPressed;
++
++        if (!mouse.rightButton.isPressed && !mouse.rightButton.wasReleasedThisFrame)
++            rightPressWasPointEdit = false;
++
++        // Over-UI is what separates "this press is a tumble" from "this press is a slider". Under
++        // MAYA-NAV, keeping ALT down between tumbling the model and reaching for the Length slider
++        // is the ordinary way to work, and AltReserved alone reads that slider drag as
++        // a camera gesture - so the parameter change would get NO undo step at all. AnyKeyWentDown
++        // no longer arms on ALT either, so nothing else would catch it.
++        //
++        // A press over the VIEWPORT with ALT down authors nothing in either mode, ALT being
++        // reserved, so suppressing there is always right.
++        if (mouse.leftButton.wasPressedThisFrame)
++        {
++            bool overUI = EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
++            leftPressWasNavigation = MayaNavigationAuthority.AltReserved && !overUI;
++        }
++
++        if (!mouse.leftButton.isPressed && !mouse.leftButton.wasReleasedThisFrame)
++            leftPressWasNavigation = false;
++    }
++
+     // Per key, not keyboard.anyKey. anyKey reads "some key is down", so its wasPressedThisFrame
+     // is the edge from no keys to any key - and every gesture in this app that presses a key
+-    // while ALT, SHIFT, TAB or SPACE is already held would therefore never arm. Flipping a
+-    // group single-sided with 1 while orbiting on ALT is a saved change that would get no step
+-    // of its own and be folded silently into whatever the user did next.
++    // while SHIFT, TAB or SPACE is already held would therefore never arm. Flipping a group
++    // single-sided with 1 while panning on the middle button is a saved change that would get no
++    // step of its own and be folded silently into whatever the user did next.
++    //
++    // ALT is the one key that does NOT arm. It is no longer a modifier for anything that changes
++    // a groom - the gestures that used to ride on it all moved to CTRL+SHIFT, see
++    // MayaNavigationAuthority - so under MAYA-NAV it is pure camera, and with MAYA-NAV off it does
++    // nothing whatsoever. Arming on it buys a full serialize and gzip of the session, 300ms later,
++    // to discover nothing changed. Under MAYA-NAV that would be the price of every single camera
++    // move, because reaching for the camera IS pressing ALT.
++    //
++    // A key pressed WHILE ALT is held still arms: it is only the ALT keydown itself that is
++    // skipped, so the 1-while-tumbling case above keeps its step.
+     static bool AnyKeyWentDown(Keyboard keyboard)
+     {
+         foreach (KeyControl key in keyboard.allKeys)
+         {
+-            if (key != null && key.wasPressedThisFrame) return true;
++            if (key == null) continue;
++            if (key == keyboard.leftAltKey || key == keyboard.rightAltKey) continue;
++            if (key.wasPressedThisFrame) return true;
+         }
+         return false;
+     }
+diff --git a/Assets/Scripts/UI_Import/WelcomeWhatsNewAuthority.cs b/Assets/Scripts/UI_Import/WelcomeWhatsNewAuthority.cs
+index ef0f355..c386e1b 100644
+--- a/Assets/Scripts/UI_Import/WelcomeWhatsNewAuthority.cs
++++ b/Assets/Scripts/UI_Import/WelcomeWhatsNewAuthority.cs
+@@ -2,8 +2,6 @@ using System;
+ using System.Collections;
+ using System.Collections.Generic;
+ using System.Globalization;
+-using System.IO;
+-using System.Text;
+ using TMPro;
+ using UnityEngine;
+ using UnityEngine.Networking;
+@@ -18,7 +16,12 @@ using UnityEngine.UI;
+ //
+ // Settings live in an ini beside the player's other saved data rather than next to the
+ // executable, because an installed build usually sits somewhere the user cannot write to.
+-// Application.persistentDataPath is the one location guaranteed writable on every platform.
++// HairBrushSettings owns that file; this panel is one of its two callers.
++//
++// The card also carries the MAYA-NAV checkbox. That is discovery rather than control - the
++// control is the left-panel button, reachable at any time - and it is here because this is the
++// one screen every user looks at, and because a navigation scheme is something a Maya user wants
++// in the first thirty seconds or not at all.
+ [DefaultExecutionOrder(9700)]
+ public class WelcomeWhatsNewAuthority : MonoBehaviour
+ {
+@@ -47,18 +50,25 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
+     }
+ 
+     // Five at most, one line each - the panel does not scroll.
++    //
++    // This release REBINDS two gestures that have been on ALT since the tool shipped, and does it
++    // unconditionally. Three of the five lines are spent saying so, which is not generosity: this
++    // panel is the only place the change is announced, and a user who finds ALT+click has stopped
++    // picking groups with nothing on screen to explain it will read it as a broken build.
+     private static readonly string[] ReleaseNotes =
+     {
+-        "EVEN placement - fills the brush to a spacing you set, never closer.",
+-        "Card Spacing slider, with a green ring showing the exclusion radius.",
+-        "Drag a GUIDE's green ROOT ring to re-aim it from a new spot.",
+-        "GUIDEs now lay hair ON the curve, and the roots stay planted.",
+-        "Guided hair keeps its Length, whatever the guide is doing.",
++        "MAYA-NAV: ALT + drag to tumble, track and dolly. Remembered between runs.",
++        "Turn it on with the MAYA-NAV button, or the tick box on this card.",
++        "Group pick has moved: CTRL + SHIFT + CLICK selects a hair's group.",
++        "Guide points have moved: CTRL + SHIFT + CLICK adds, + RIGHT CLICK removes.",
++        "ALT is the camera key now - it no longer picks groups or edits guides.",
+     };
+ 
+     // ---------------------------------------------------------------------------------
+ 
+-    private const string SettingsFileName = "hairbrush.ini";
++    // The ini itself lives in HairBrushSettings now - see that file for why there is exactly
++    // one reader and one writer of it, and why the file survives a version bump even though
++    // THIS key deliberately does not.
+     private const string SuppressKey = "suppressWelcomeForVersion";
+ 
+     // Bump the file in the repo when a release goes out and every running copy sees it.
+@@ -85,7 +95,10 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
+     // the contents never squash.
+     private const float CardLeft = .10f;
+     private const float CardRight = .90f;
+-    private const float CardHeight = 360f;
++    // 400 rather than the 360 it was. The footer carries two rows now - the MAYA-NAV checkbox
++    // above the suppress checkbox - and the notes well below is already within a few pixels of
++    // full at five notes, so the height had to come from the card rather than from the well.
++    private const float CardHeight = 400f;
+ 
+     // The card's top edge is measured from the logo at runtime rather than fixed, because
+     // the branding sits on the START SCREEN's canvas, which is Constant Pixel Size and does
+@@ -94,7 +107,10 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
+     // 4K. Reading where the artwork actually ends solves it at any size or aspect.
+     private const float LogoGap = 26f;
+     private const float FallbackCardTop = .62f;
+-    private const float MinCardTop = .34f;
++    // Raised with CardHeight, and for the same 40 pixels. This clamp is what stops a very low
++    // logo pushing the card off the bottom of the screen; at .34 with a 400-tall card the bottom
++    // edge would have gone under it, where at .34 with the old 360 it cleared by a few pixels.
++    private const float MinCardTop = .38f;
+     private const float MaxCardTop = .95f;
+ 
+     private const float Pad = 22f;
+@@ -110,6 +126,13 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
+     private const float FooterHeight = 34f;
+     private const float StartButtonPadX = 22f;
+     private const float SuppressWidth = 380f;
++
++    // The MAYA-NAV caption spells the three drags out rather than saying "Maya-style camera" and
++    // leaving the user to find out which button does what, so its row is wider. The card is 80%
++    // of the screen - about 1530px at the 1920 reference - so there is room to spare, and nothing
++    // else sits on this row.
++    private const float MayaNavWidth = 760f;
++    private const float FooterRowGap = 6f;
+     private const float BoxSize = 22f;
+ 
+     private const float TitleFont = 25f;
+@@ -163,67 +186,16 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
+     }
+ 
+     // -------------------------------------------------------------------------- settings
+-
+-    static string SettingsPath()
+-    {
+-        return Path.Combine(Application.persistentDataPath, SettingsFileName);
+-    }
+-
+-    static Dictionary<string, string> ReadSettings()
+-    {
+-        Dictionary<string, string> values = new Dictionary<string, string>();
+-
+-        try
+-        {
+-            string path = SettingsPath();
+-            if (!File.Exists(path)) return values;
+-
+-            foreach (string line in File.ReadAllLines(path))
+-            {
+-                string trimmed = line.Trim();
+-                if (trimmed.Length == 0) continue;
+-                if (trimmed.StartsWith(";") || trimmed.StartsWith("#") || trimmed.StartsWith("[")) continue;
+-
+-                int split = trimmed.IndexOf('=');
+-                if (split <= 0) continue;
+-
+-                values[trimmed.Substring(0, split).Trim()] = trimmed.Substring(split + 1).Trim();
+-            }
+-        }
+-        catch (Exception error)
+-        {
+-            // A settings file that cannot be read is not worth failing a launch over.
+-            Debug.LogWarning("HairBrush: could not read " + SettingsFileName + " - " + error.Message);
+-        }
+-
+-        return values;
+-    }
+-
+-    static void WriteSetting(string key, string value)
+-    {
+-        Dictionary<string, string> values = ReadSettings();
+-        values[key] = value;
+-
+-        StringBuilder builder = new StringBuilder();
+-        builder.AppendLine("; HairBrush settings. Safe to delete - it will be rebuilt.");
+-        builder.AppendLine("[HairBrush]");
+-        foreach (KeyValuePair<string, string> pair in values)
+-            builder.AppendLine(pair.Key + "=" + pair.Value);
+-
+-        try
+-        {
+-            File.WriteAllText(SettingsPath(), builder.ToString());
+-        }
+-        catch (Exception error)
+-        {
+-            Debug.LogWarning("HairBrush: could not write " + SettingsFileName + " - " + error.Message);
+-        }
+-    }
++    //
++    // These used to be private helpers right here, reading and writing the ini directly. They
++    // moved to HairBrushSettings when MAYA-NAV gained a preference that is written from two
++    // places and read before either exists; two independent read-modify-writes of the same file
++    // is how a setting gets silently dropped. See that file.
+ 
+     static bool IsSuppressedForThisVersion()
+     {
+         string stored;
+-        if (!ReadSettings().TryGetValue(SuppressKey, out stored)) return false;
++        if (!HairBrushSettings.ReadSettings().TryGetValue(SuppressKey, out stored)) return false;
+         return string.Equals(stored, Application.version, StringComparison.OrdinalIgnoreCase);
+     }
+ 
+@@ -381,6 +353,7 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
+         StyleLine(updateLabel, "Checking for updates...", LineFont, FontStyles.Bold, UITheme.TextMuted);
+ 
+         BuildNotes(card.transform);
++        BuildMayaNavToggle(card.transform);
+         BuildSuppressToggle(card.transform);
+         BuildStartButton(card.transform);
+ 
+@@ -431,7 +404,9 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
+         RectTransform rect = well.GetComponent<RectTransform>();
+         rect.anchorMin = Vector2.zero;
+         rect.anchorMax = Vector2.one;
+-        rect.offsetMin = new Vector2(Pad, FooterHeight + Pad + 10f);
++        // Clears BOTH footer rows plus the gap between them - MAYA-NAV sits directly above the
++        // suppress checkbox, and the notes well would otherwise draw over it.
++        rect.offsetMin = new Vector2(Pad, (FooterHeight * 2f) + FooterRowGap + Pad + 10f);
+         rect.offsetMax = new Vector2(-Pad, -NotesTop);
+         // Deliberately a flat fill, not a second FineEdge: two nested 9-slice borders
+         // read as boxes clipping each other rather than as one panel.
+@@ -512,12 +487,48 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
+         button.spriteState = state;
+     }
+ 
++    // MAYA-NAV's DISCOVERY, not its control. The control is the left-panel button, which is
++    // reachable at any time - this box exists because nobody finds a left-panel button they are
++    // not already looking for, and a navigation scheme is exactly the kind of thing a Maya user
++    // wants in the first thirty seconds or never.
++    //
++    // It writes through on change rather than on Close, so it agrees with the left-panel button
++    // the instant it is clicked - both go through MayaNavigationAuthority.SetEnabled, which is the
++    // single writer. Reading its starting state from Enabled rather than from false matters too:
++    // this panel reappears on every version bump, and a box that showed unticked while MAYA-NAV
++    // was on would invite the user to "turn it on" and silently turn it off.
++    void BuildMayaNavToggle(Transform parent)
++    {
++        Toggle toggle = BuildCheckbox(parent, "MayaNavToggle", new Vector2(Pad, Pad + FooterHeight + FooterRowGap),
++            MayaNavWidth, "Maya-style camera - ALT + drag: LEFT tumbles, MIDDLE tracks, RIGHT dollies");
++
++        // isOn BEFORE the listener, deliberately. Wired the other way round, setting the initial
++        // state would fire onValueChanged and write the value straight back - harmless while the
++        // value matches, and a silent rewrite of the user's preference the moment it does not.
++        toggle.isOn = MayaNavigationAuthority.Enabled;
++        toggle.onValueChanged.AddListener(MayaNavigationAuthority.SetEnabled);
++    }
++
+     void BuildSuppressToggle(Transform parent)
+     {
+-        GameObject toggleGO = new GameObject("SuppressToggle", typeof(RectTransform), typeof(Toggle));
++        suppressToggle = BuildCheckbox(parent, "SuppressToggle", new Vector2(Pad, Pad),
++            SuppressWidth, "Don't show this again for v" + Application.version);
++        suppressToggle.isOn = false;
++    }
++
++    // The two footer checkboxes are identical apart from where they sit, how wide they are and
++    // what they say, so the second one is not a second copy of this. offset is from the card's
++    // bottom-LEFT corner.
++    //
++    // width is not cosmetic. StyleLine sets NoWrap with Ellipsis, so a caption wider than the row
++    // is not wrapped or shrunk - it is silently cut off with a "...", which is how a checkbox ends
++    // up shipping as "Maya-style camera - ALT + drag: LEFT tumbles, MID...".
++    Toggle BuildCheckbox(Transform parent, string name, Vector2 offset, float width, string caption)
++    {
++        GameObject toggleGO = new GameObject(name, typeof(RectTransform), typeof(Toggle));
+         toggleGO.transform.SetParent(parent, false);
+         PinToCorner(toggleGO.GetComponent<RectTransform>(), new Vector2(0f, 0f),
+-            new Vector2(Pad, Pad), new Vector2(SuppressWidth, FooterHeight));
++            offset, new Vector2(width, FooterHeight));
+ 
+         GameObject boxGO = new GameObject("Box", typeof(RectTransform), typeof(Image));
+         boxGO.transform.SetParent(toggleGO.transform, false);
+@@ -540,19 +551,19 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
+ 
+         GameObject captionGO = new GameObject("Caption", typeof(RectTransform), typeof(TextMeshProUGUI));
+         captionGO.transform.SetParent(toggleGO.transform, false);
+-        RectTransform caption = captionGO.GetComponent<RectTransform>();
+-        caption.anchorMin = Vector2.zero;
+-        caption.anchorMax = Vector2.one;
+-        caption.offsetMin = new Vector2(BoxSize + 10f, 0f);
+-        caption.offsetMax = Vector2.zero;
++        RectTransform captionRect = captionGO.GetComponent<RectTransform>();
++        captionRect.anchorMin = Vector2.zero;
++        captionRect.anchorMax = Vector2.one;
++        captionRect.offsetMin = new Vector2(BoxSize + 10f, 0f);
++        captionRect.offsetMax = Vector2.zero;
+ 
+         StyleLine(captionGO.GetComponent<TextMeshProUGUI>(),
+-            "Don't show this again for v" + Application.version, LineFont, FontStyles.Normal, UITheme.TextMuted);
++            caption, LineFont, FontStyles.Normal, UITheme.TextMuted);
+ 
+-        suppressToggle = toggleGO.GetComponent<Toggle>();
+-        suppressToggle.targetGraphic = boxGO.GetComponent<Image>();
+-        suppressToggle.graphic = tickGO.GetComponent<Image>();
+-        suppressToggle.isOn = false;
++        Toggle toggle = toggleGO.GetComponent<Toggle>();
++        toggle.targetGraphic = boxGO.GetComponent<Image>();
++        toggle.graphic = tickGO.GetComponent<Image>();
++        return toggle;
+     }
+ 
+     // ------------------------------------------------------------------- menu visibility
+@@ -585,7 +596,7 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
+         // Only records anything if the box is ticked. Left unticked, the panel comes back
+         // next launch - and either way a version bump makes the stored value stop matching.
+         if (suppressToggle != null && suppressToggle.isOn)
+-            WriteSetting(SuppressKey, Application.version);
++            HairBrushSettings.WriteSetting(SuppressKey, Application.version);
+ 
+         RestoreMenuButtons();
+ 

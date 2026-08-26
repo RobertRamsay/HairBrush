@@ -104,8 +104,14 @@ public class InfluenceRingPreviewAuthority : MonoBehaviour
         // TAB in Spray mode used to leave a stray cyan ring on the cursor. Harmless when it was
         // the only thing on screen - actively misleading now that the clumper aim ring draws
         // there too, since the two describe different sizes and only one is what the click makes.
+        // ALT belongs in this list as much as TAB and SPACE do. PlacementBrushModeAuthority hides
+        // its own brush ring and places nothing while ALT is held, so without it the cyan falloff
+        // ring went on drawing on the cursor for the whole of a tumble - the same "ring you aim
+        // with over a click that does nothing" this file already guards against for the clumper.
         bool modifierGesture = Keyboard.current != null &&
-                               (Keyboard.current.tabKey.isPressed || Keyboard.current.spaceKey.isPressed);
+                               (Keyboard.current.tabKey.isPressed ||
+                                Keyboard.current.spaceKey.isPressed ||
+                                MayaNavigationAuthority.AltReserved);
 
         // The !groomingEnabled half of PlacementBrushModeAuthority's own hide condition, which
         // this ring never mirrored. It matters now: a +CLUMPER placement holds grooming off for
@@ -218,20 +224,32 @@ public class InfluenceRingPreviewAuthority : MonoBehaviour
         bool armedForClumper = GroupAddButtonPlacementAuthority.ArmedKind ==
                                GroupAddButtonPlacementAuthority.AddKind.Clumper;
         bool tabHeld = Keyboard.current != null && Keyboard.current.tabKey.isPressed;
-        bool ctrlOrSpaceHeld = Keyboard.current != null &&
-                               (Keyboard.current.ctrlKey.isPressed || Keyboard.current.spaceKey.isPressed);
+        bool blockedModifierHeld = MayaNavigationAuthority.AltReserved ||
+                               (Keyboard.current != null &&
+                                (Keyboard.current.ctrlKey.isPressed ||
+                                 Keyboard.current.spaceKey.isPressed));
 
         // TAB always aims: GroupClumperInteractionAuthority creates a clumper on TAB+click at
         // exactly these defaults, and it does so even while a +POST or +GUIDE placement is
         // armed, so the ring is telling the truth in all of those combinations.
         //
         // The armed +CLUMPER button only aims while no OTHER modifier is down, because
-        // GroupAddButtonPlacementAuthority refuses its own placement whenever CTRL, TAB or
-        // SPACE is held. With SPACE resting under a hand the click does not create anything -
-        // it repositions the SELECTED clumper, at that clumper's own radius - so a ring
-        // promising a new 0.04 clump would be a straight lie. TAB is excluded from that test
+        // GroupAddButtonPlacementAuthority.IsShortcutModifierHeld refuses its own placement
+        // whenever CTRL, ALT, TAB or SPACE is held. With SPACE resting under a hand the click
+        // does not create anything - it repositions the SELECTED clumper, at that clumper's own
+        // radius - so a ring promising a new 0.04 clump would be a straight lie. ALT is in that
+        // set because under MAYA-NAV it is a camera gesture. TAB is excluded from this test
         // because the TAB path picks the click up and does create one.
-        bool aiming = tabHeld || (armedForClumper && !ctrlOrSpaceHeld);
+        //
+        // This list has to keep matching IsShortcutModifierHeld. It is not shared with it because
+        // TAB is treated differently on the two sides.
+        // tabHeld is qualified by ALT rather than standing alone. TAB "always aims" because
+        // TAB+click always creates a clumper - except that it no longer does while ALT is held,
+        // since both TAB+click handlers now stand down for the camera. Left as a bare disjunct it
+        // short-circuited the ALT that was just added to blockedModifierHeld, and drew the green
+        // 0.04 ring under an ALT+TAB the click would ignore.
+        bool aiming = (tabHeld && !MayaNavigationAuthority.AltReserved) ||
+                      (armedForClumper && !blockedModifierHeld);
         if (!aiming)
         {
             HideClumperAim();
