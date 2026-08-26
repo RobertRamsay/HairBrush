@@ -49,19 +49,26 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         }
     }
 
-    // Five at most, one line each - the panel does not scroll.
+    // Five at most, one line each - the panel does not scroll, and anything past about eighty
+    // characters is silently ellipsised.
     //
-    // This release REBINDS two gestures that have been on ALT since the tool shipped, and does it
-    // unconditionally. Three of the five lines are spent saying so, which is not generosity: this
-    // panel is the only place the change is announced, and a user who finds ALT+click has stopped
-    // picking groups with nothing on screen to explain it will read it as a broken build.
+    // 0.2.1 carries more than five things worth saying, so these are ranked by what a user cannot
+    // work out for themselves. The REBIND gets its own line and is not negotiable: two gestures
+    // that have been on ALT since the tool shipped have moved, unconditionally, and this panel is
+    // the only place in the product that says so. Somebody who finds ALT+click has stopped picking
+    // groups, with nothing on screen to explain it, reads that as a broken build.
+    //
+    // What did not make the cut, and why: the dolly sensitivity fix and the guide-point drift fix
+    // are repairs to things that were wrong, and a release note is a poor place to advertise that
+    // they ever were. The drift one is mentioned anyway, in the last line, because the shape of the
+    // fix changed how the handles FEEL and somebody who had learned to fight it should know.
     private static readonly string[] ReleaseNotes =
     {
-        "MAYA-NAV: ALT + drag to tumble, track and dolly. Remembered between runs.",
-        "Turn it on with the MAYA-NAV button, or the tick box on this card.",
-        "Group pick has moved: CTRL + SHIFT + CLICK selects a hair's group.",
-        "Guide points have moved: CTRL + SHIFT + CLICK adds, + RIGHT CLICK removes.",
-        "ALT is the camera key now - it no longer picks groups or edits guides.",
+        "MAYA-NAV: ALT + drag to tumble, track and dolly. Off unless you switch it on.",
+        "ALT is the camera key now - group pick and guide points moved to CTRL + SHIFT.",
+        "DEL button on every group row, and right click on the name works again.",
+        "Give each GUIDE its own colour, and GUIDES ON TOP draws them through the hair.",
+        "Guide handles no longer drift at awkward angles, and points move freely.",
     };
 
     // ---------------------------------------------------------------------------------
