@@ -45,11 +45,11 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
     // Five at most, one line each - the panel does not scroll.
     private static readonly string[] ReleaseNotes =
     {
-        "COPY and PASTE PARAMS carries a group's settings across.",
-        "ALT + CLICK adds points to a GUIDE, up to twenty one. Alt+ RIGHT CLICK to REMOVE",
-        "GUIDE points draw over the hair, and are bigger to grab.",
-        "RIGHT CLICK a UV rect, or its row, to delete it.",
-        "POSTs are much faster to edit on a heavy groom.",
+        "EVEN placement - fills the brush to a spacing you set, never closer.",
+        "Card Spacing slider, with a green ring showing the exclusion radius.",
+        "Drag a GUIDE's green ROOT ring to re-aim it from a new spot.",
+        "GUIDEs now lay hair ON the curve, and the roots stay planted.",
+        "Guided hair keeps its Length, whatever the guide is doing.",
     };
 
     // ---------------------------------------------------------------------------------
