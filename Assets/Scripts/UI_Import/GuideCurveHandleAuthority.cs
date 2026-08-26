@@ -345,9 +345,8 @@ public class GuideCurveHandleAuthority : MonoBehaviour
 
         // A camera gesture mid-drag drops the drag. DragTo solves against a plane captured at the
         // press and fixed in the world, so while the camera swings the cursor goes on hitting that
-        // same plane from a new direction - the handle is dragged sideways across it, the height
-        // clamp then slides it along the surface, and the guide is left arbitrarily deformed by a
-        // gesture that was only meant to change the view.
+        // same plane from a new direction - the handle is dragged sideways across it, and the guide
+        // is left arbitrarily deformed by a gesture that was only meant to change the view.
         //
         // The plane used to be rebuilt every frame instead, and this test was needed then too for
         // a slightly different reason: the handle was carried rigidly around the model. The test
@@ -451,19 +450,13 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         Vector3 world = ray.GetPoint(distance);
         Vector3 local = GuideCurveManager.ToLocal(guide, world);
 
-        // Reach first, then height, and the order is deliberate: whichever runs last is the one
-        // whose limit is guaranteed to hold. Height last means a node can never end up below the
-        // surface, which is the limit that matters - a guide pointing into the scalp drives cards
-        // through it. Reach last would guarantee the distance instead and could push a floored
-        // point back under.
-        //
-        // The height clamp's own displacement is NOT small, incidentally: drag a point down
-        // through the scalp and the plane solution lands well below it, so the clamp lifts it by
-        // a real fraction of the guide's length. That is exactly why it goes second.
+        // The only limit left is reach. A height floor used to follow it and no longer exists -
+        // see GuideCurveManager, where the constant was, for what it did and why a flat plane was
+        // the wrong shape for the job. A control point may now go anywhere the cursor puts it,
+        // including below the root and back towards the head, because on a curved skull most of
+        // what that forbade was hair falling perfectly normally.
         if (dragReachLimit > 0f && local.magnitude > dragReachLimit)
             local = local.normalized * dragReachLimit;
-
-        if (local.y < GuideCurveManager.MinNodeHeight) local.y = GuideCurveManager.MinNodeHeight;
 
         GuideCurveManager.SetNode(guide, dragging, local);
     }
@@ -490,11 +483,15 @@ public class GuideCurveHandleAuthority : MonoBehaviour
     // Everything a NODE drag has to remember from the moment of the press.
     //
     // THE PLANE. DragTo used to rebuild it every frame from the node's CURRENT position, which is
-    // fine right up until something moves the node off that plane - and the height clamp does
-    // exactly that, on every frame it engages. The node is pushed along the guide's up axis, the
-    // plane is rebuilt at wherever it landed, and at any angle where that axis has a component
-    // along the view the pair walk each other away from the camera a little per frame. Captured
-    // once, the plane cannot be pushed, so the clamp slides the node ALONG it and stops.
+    // fine right up until something moves the node off that plane - and a clamp does exactly that,
+    // on every frame it engages. The node is pushed, the plane is rebuilt at wherever it landed,
+    // and at any angle where the push has a component along the view the pair walk each other away
+    // from the camera a little per frame. Captured once, the plane cannot be pushed, so a clamp
+    // slides the node ALONG it and stops.
+    //
+    // The clamp this was written against was the height floor, which is gone. The reach clamp
+    // below does the same thing - it rescales the offset, which moves the node off the plane just
+    // as surely - so the capture is still what stops the walk.
     //
     // Captured as a world point and a world normal rather than as a distance from the camera, so
     // that a wheel zoom mid-drag - the one camera move that does NOT drop the drag - moves the
@@ -699,11 +696,12 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         int span = Mathf.Clamp(Mathf.FloorToInt(bestT * spans), 0, spans - 1);
         Vector3 point = GuideCurveManager.EvaluatePoints(control, bestT);
 
-        // Clamped exactly as a drag is. The curve can bow below the contact plane between two
-        // points that are both legally above it, and a node planted down there would be one the
-        // drag handles could never reproduce.
+        // Unclamped, exactly as a drag is. This used to lift the point to the contact plane so an
+        // inserted node could never sit somewhere the drag handles were unable to reproduce - a
+        // curve can bow below the plane between two points that are both above it. Now that a drag
+        // can reach anywhere, the point simply lands where the curve was clicked, which is what
+        // the gesture says it does.
         Vector3 local = GuideCurveManager.ToLocal(guide, point);
-        if (local.y < GuideCurveManager.MinNodeHeight) local.y = GuideCurveManager.MinNodeHeight;
 
         int index = GuideCurveManager.InsertNode(guide, span, local);
         if (index < 0) return;
