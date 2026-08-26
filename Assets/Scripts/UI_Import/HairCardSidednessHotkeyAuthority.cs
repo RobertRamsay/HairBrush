@@ -31,6 +31,11 @@ public class HairCardSidednessHotkeyAuthority : MonoBehaviour
         // in a name.
         if (GroupNameInlineEditAuthority.IsEnteringText) return;
 
+        // Nor underneath the demo's buy card. This one flips EVERY card in the scene, so a
+        // stray keypress while reading a modal is an edit to the whole groom with nothing on
+        // screen to connect the two. Always false in a PRO build.
+        if (DemoUpgradePrompt.IsOpen) return;
+
         bool wantSingleSided = Keyboard.current.digit1Key.wasPressedThisFrame || Keyboard.current.numpad1Key.wasPressedThisFrame;
         bool wantDoubleSided = Keyboard.current.digit2Key.wasPressedThisFrame || Keyboard.current.numpad2Key.wasPressedThisFrame;
         if (!wantSingleSided && !wantDoubleSided) return;

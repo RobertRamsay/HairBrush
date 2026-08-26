@@ -200,6 +200,15 @@ public class PlacementBrushModeAuthority : MonoBehaviour
             return;
         }
 
+        // Nor underneath the demo's buy card. SHIFT is read below before the over-UI test, so
+        // without this it cycles the brush mode behind a modal - and the mode strip the user is
+        // not looking at changes under them. Always false in a PRO build.
+        if (DemoUpgradePrompt.IsOpen)
+        {
+            HideBrushPreview();
+            return;
+        }
+
         bool shiftPressed = Keyboard.current.leftShiftKey.wasPressedThisFrame || Keyboard.current.rightShiftKey.wasPressedThisFrame;
         if (shiftPressed)
         {

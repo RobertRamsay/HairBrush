@@ -30,6 +30,26 @@ public static class HairObjExporter
 
     public static void ExportInteractive()
     {
+        // THE DEMO LOCK, and it lives here rather than on the button for a reason. This is the
+        // only public entry point on the exporter, so gating it gates every route to a written
+        // OBJ - the groom panel button, the texture mode button, and anything added later that
+        // reaches for the exporter without knowing a demo build exists. A check bolted onto the
+        // two onClick listeners instead would leave the next caller to remember, and that is
+        // exactly the kind of thing nobody remembers.
+        //
+        // FIRST, before the file dialog and before the cooldown below, and both of those matter.
+        // Before the dialog, so a demo user is never asked where to save something that was never
+        // going to be written. Before the cooldown, because that exists to stop a double-click
+        // opening two save dialogs - spend it here and a demo user who double-clicks EXPORT gets
+        // the card on the first click, dismisses it with the second, and then finds the button
+        // ignores them for three quarters of a second, which reads as a broken button on the one
+        // screen trying to sell them something. Raising a card is idempotent and needs no cooldown.
+        if (BuildEdition.IsDemo)
+        {
+            DemoUpgradePrompt.Show();
+            return;
+        }
+
         double now = Time.realtimeSinceStartupAsDouble;
         if (now < nextAllowedExportDialogTime) return;
         nextAllowedExportDialogTime = now + 0.75;

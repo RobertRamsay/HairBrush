@@ -1360,6 +1360,12 @@ public class ModelViewer : MonoBehaviour
     {
         if (Mouse.current == null) return;
 
+        // A modal card is up. The backdrop stops clicks reaching the panels and the brush, but
+        // orbit and pan below read the mouse directly and never ask whether the pointer is over
+        // UI, so without this the head spins behind the card while it is being read.
+        // Always false in a PRO build - nothing there ever raises one.
+        if (DemoUpgradePrompt.IsOpen) return;
+
         // Guide point editing needs ALT plus right click to mean "remove this point", and orbiting
         // is on the right button and would otherwise run at the same moment - the point would go
         // and the view would swing while it went. So an orbit REFUSES TO START on a right press

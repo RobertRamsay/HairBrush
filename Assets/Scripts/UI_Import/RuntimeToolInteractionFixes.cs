@@ -26,6 +26,14 @@ public class RuntimeToolInteractionFixes : MonoBehaviour
     void HandleSeedControls()
     {
         if (Mouse.current == null) return;
+
+        // This is the one mouse authority in the project that hit-tests with its own screen-rect
+        // maths instead of asking the EventSystem, which is what lets it drive the seed controls
+        // through the layers that sit over them. The cost is that a modal's backdrop means nothing
+        // to it: a click aimed at dismissing the demo's buy card, landing over the groom panel
+        // behind it, would reroll that group's variance seed or drop a caret in a hidden text
+        // field. Always false in a PRO build.
+        if (DemoUpgradePrompt.IsOpen) return;
         Vector2 mouse = Mouse.current.position.ReadValue();
         bool pressed = Mouse.current.leftButton.wasPressedThisFrame;
 

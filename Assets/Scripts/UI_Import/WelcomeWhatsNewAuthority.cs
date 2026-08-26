@@ -38,7 +38,11 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         {
             string version = Application.version;
             if (string.IsNullOrWhiteSpace(version)) version = "0.0.0";
-            return "BETA " + version;
+
+            // A demo build says so on the first screen the user sees, so nobody gets as far as
+            // the export button believing they are running the full version. BuildEdition
+            // returns an empty suffix in a PRO build, so this line is unchanged there.
+            return "BETA " + version + BuildEdition.EditionSuffix;
         }
     }
 
@@ -360,7 +364,10 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         ApplyNineSlice(card.GetComponent<Image>(), UITheme.FineEdgeSprite, UITheme.PanelDark);
 
         TextMeshProUGUI title = AddBand(card.transform, "Title", TitleTop, TitleHeight);
-        StyleLine(title, "WELCOME TO HAIRBRUSH BETA", TitleFont, FontStyles.Bold, UITheme.TextBright);
+        // The suffix lands on both lines in a demo build, and this is the larger of the two.
+        // Empty in a PRO build, so this reads exactly as it does today.
+        StyleLine(title, "WELCOME TO HAIRBRUSH BETA" + BuildEdition.EditionSuffix,
+                  TitleFont, FontStyles.Bold, UITheme.TextBright);
 
         AddDivider(card.transform);
 

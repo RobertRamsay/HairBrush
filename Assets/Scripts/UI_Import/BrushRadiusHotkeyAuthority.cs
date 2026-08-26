@@ -55,6 +55,15 @@ public class BrushRadiusHotkeyAuthority : MonoBehaviour
         Resolve();
         if (viewer == null || Keyboard.current == null) return;
 
+        // Same reasoning as the sidedness hotkeys: a modal is up, and [ ] are global. Always
+        // false in a PRO build.
+        if (DemoUpgradePrompt.IsOpen)
+        {
+            leftHeldSince = -1f;
+            rightHeldSince = -1f;
+            return;
+        }
+
         if (IsTypingInField())
         {
             leftHeldSince = -1f;

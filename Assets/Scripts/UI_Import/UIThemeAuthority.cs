@@ -56,6 +56,12 @@ public class UIThemeAuthority : MonoBehaviour
             // would blow up into a giant square on the start screen's 5.43x canvas.
             if (goName == "RANDOMIZEButton" || goName == "RButton" || goName == "GroupUVRandomSeedButton") continue;
             if (goName == WelcomeWhatsNewAuthority.StartButtonName) continue;
+            // The demo buy card's backdrop is a Button so that clicking away dismisses it, but
+            // the Graphic it points at is the full-screen dimmer. Skinning that would repaint the
+            // whole screen white with a button sprite on it, and ClampButtonSize would drag the
+            // stretched rect off by 32 units on the way past. The three buttons INSIDE the card
+            // are not named here and are skinned normally, which is the point of them.
+            if (goName == DemoUpgradePromptAuthority.DismissLayerName) continue;
 
             if (!styledButtons.Contains(button))
             {

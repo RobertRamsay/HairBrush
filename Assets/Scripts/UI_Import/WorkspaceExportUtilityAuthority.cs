@@ -58,7 +58,7 @@ public class WorkspaceExportUtilityAuthority : MonoBehaviour
         Transform export = top.Find("ExportOBJButton");
         if (export == null)
         {
-            GameObject button = CreateButton(top, "ExportOBJButton", "EXPORT OBJ", new Color(.20f, .38f, .62f));
+            GameObject button = CreateButton(top, "ExportOBJButton", BuildEdition.ExportLabel, new Color(.20f, .38f, .62f));
             button.GetComponent<Button>().onClick.AddListener(HairObjExporter.ExportInteractive);
         }
         else if (!export.gameObject.activeSelf) export.gameObject.SetActive(true);
@@ -81,17 +81,25 @@ public class WorkspaceExportUtilityAuthority : MonoBehaviour
         Transform row = panel.Find("ModeRow");
         if (row == null) return;
 
-        Transform save = FindButtonByLabel(row, "SAVE PROJ");
+        Transform save = row.Find("SAVEPROJButton");
+        if (save == null) save = FindButtonByLabel(row, "SAVE PROJ");
         if (save == null)
         {
             GameObject button = CreateButton(row, "SAVEPROJButton", "SAVE PROJ", new Color(.20f, .50f, .30f), true);
             button.GetComponent<Button>().onClick.AddListener(InvokeSaveProject);
         }
 
-        Transform export = FindButtonByLabel(row, "EXPORT OBJ");
+        // BY NAME FIRST, label only as a fallback, and the demo label has to be in that
+        // fallback too. This scan runs every .1s and creates the button whenever it fails to
+        // find one: keying the search on a literal "EXPORT OBJ" while the button that was
+        // created reads "EXPORT OBJ (PRO)" would miss it ten times a second and stack up a new
+        // export button on every tick. The name never changes, so it is the reliable half.
+        Transform export = row.Find("EXPORTOBJButton");
+        if (export == null) export = FindButtonByLabel(row, BuildEdition.ExportProLabel);
+        if (export == null) export = FindButtonByLabel(row, BuildEdition.ExportDemoLabel);
         if (export == null)
         {
-            GameObject button = CreateButton(row, "EXPORTOBJButton", "EXPORT OBJ", new Color(.20f, .38f, .62f), true);
+            GameObject button = CreateButton(row, "EXPORTOBJButton", BuildEdition.ExportLabel, new Color(.20f, .38f, .62f), true);
             button.GetComponent<Button>().onClick.AddListener(HairObjExporter.ExportInteractive);
         }
 

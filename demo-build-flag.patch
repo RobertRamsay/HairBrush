@@ -1,0 +1,817 @@
+diff --git a/Assets/Scripts/UI_Import/BrushRadiusHotkeyAuthority.cs b/Assets/Scripts/UI_Import/BrushRadiusHotkeyAuthority.cs
+index a0f0452..f0b039e 100644
+--- a/Assets/Scripts/UI_Import/BrushRadiusHotkeyAuthority.cs
++++ b/Assets/Scripts/UI_Import/BrushRadiusHotkeyAuthority.cs
+@@ -55,6 +55,15 @@ public class BrushRadiusHotkeyAuthority : MonoBehaviour
+         Resolve();
+         if (viewer == null || Keyboard.current == null) return;
+ 
++        // Same reasoning as the sidedness hotkeys: a modal is up, and [ ] are global. Always
++        // false in a PRO build.
++        if (DemoUpgradePrompt.IsOpen)
++        {
++            leftHeldSince = -1f;
++            rightHeldSince = -1f;
++            return;
++        }
++
+         if (IsTypingInField())
+         {
+             leftHeldSince = -1f;
+diff --git a/Assets/Scripts/UI_Import/BuildEdition.cs b/Assets/Scripts/UI_Import/BuildEdition.cs
+new file mode 100644
+index 0000000..a48e837
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/BuildEdition.cs
+@@ -0,0 +1,65 @@
++// WHICH BUILD THIS IS. One line changes between a PRO build and a DEMO build.
++//
++//     DEMO = 0   ship as PRO
++//     DEMO = 1   ship as DEMO
++//
++// Set it, build, rename the output to _DEMO. Nothing else in the project needs touching.
++//
++// COMPILED IN, on purpose. hairbrush_version.txt sits beside the executable because every
++// running copy has to be able to read it. This is the opposite case: a plain text file next to
++// the exe saying DEMO=1 is an invitation to change it to 0, and a PlayerPrefs key is worse
++// again. A const in a script becomes a literal in the assembly and there is nothing on disk to
++// edit.
++//
++// Nothing here is secret in the cryptographic sense - anyone determined enough can patch a
++// binary - but the bar is now "open a hex editor", not "open Notepad", which is the whole of
++// what a demo lock is for.
++public static class BuildEdition
++{
++    // 0 = PRO, 1 = DEMO.
++    public const int DEMO = 0;
++
++    // readonly rather than const, and this is deliberate. A const bool makes every
++    // `if (BuildEdition.IsDemo)` branch statically known, so the compiler flags the other side
++    // as unreachable and Unity fills the console with CS0162 on every build. A static readonly
++    // is resolved at type initialisation instead: same single literal to edit above, same
++    // compiled-in value, no warnings, and both sides of every branch still compile - which also
++    // means a PRO build cannot silently rot the demo path.
++    public static readonly bool IsDemo = DEMO == 1;
++
++    // ------------------------------------------------------------------------ where to buy
++    public const string ArtStationUrl =
++        "https://polytricity.artstation.com/store/3LAg5/hairbrush-3d-card-placement-grooming-windows-pc-tool-v020-beta";
++    public const string ItchUrl = "https://polytricity.itch.io/hairbrush";
++
++    // ------------------------------------------------------------------------ what it says
++    //
++    // The EXPORT OBJ button keeps its name and its place in the row; only the label changes, so
++    // a demo user can see the feature exists and what they would be buying. A button that is
++    // simply missing teaches them nothing, and one that is greyed out reads as broken.
++    //
++    // Both spellings live here because WorkspaceExportUtilityAuthority has to be able to FIND an
++    // export button it may have created under either of them - see the note at its lookup.
++    public const string ExportProLabel = "EXPORT OBJ";
++    public const string ExportDemoLabel = "EXPORT OBJ (PRO)";
++
++    public static string ExportLabel
++    {
++        get
++        {
++            if (IsDemo) return ExportDemoLabel;
++            return ExportProLabel;
++        }
++    }
++
++    // Appended to the Welcome panel heading and the window title. Empty in a PRO build, so both
++    // of those read exactly as they do today.
++    public static string EditionSuffix
++    {
++        get
++        {
++            if (IsDemo) return " DEMO";
++            return "";
++        }
++    }
++}
+diff --git a/Assets/Scripts/UI_Import/BuildEdition.cs.meta b/Assets/Scripts/UI_Import/BuildEdition.cs.meta
+new file mode 100644
+index 0000000..964fa22
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/BuildEdition.cs.meta
+@@ -0,0 +1,2 @@
++fileFormatVersion: 2
++guid: 80e361aac9424c63bd18e56c58ada6a4
+diff --git a/Assets/Scripts/UI_Import/DemoUpgradePrompt.cs b/Assets/Scripts/UI_Import/DemoUpgradePrompt.cs
+new file mode 100644
+index 0000000..44d50c4
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/DemoUpgradePrompt.cs
+@@ -0,0 +1,387 @@
++using TMPro;
++using UnityEngine;
++using UnityEngine.UI;
++
++// The card a DEMO build shows when somebody reaches for a PRO feature.
++//
++// Static front, MonoBehaviour behind, the same split StatusToast uses: callers say
++// DemoUpgradePrompt.Show() without having to know whether anything has been built yet, and the
++// object that owns the UI spawns itself on first use.
++//
++// The card is built as a ROOT object rather than a child of any panel, and that is what keeps it
++// alive: the right panel is destroyed and rebuilt on every model and project load, so a prompt
++// parented into it would vanish mid-read. DontDestroyOnLoad on top of that is belt and braces -
++// nothing in this project ever loads a scene.
++public static class DemoUpgradePrompt
++{
++    private static DemoUpgradePromptAuthority instance;
++
++    // Read by the handful of things that keep working underneath a modal otherwise - the camera
++    // rig and the two global hotkey authorities. Derived from whether the panel object is
++    // actually alive rather than tracked in a bool of its own, so if anything ever destroys the
++    // panel without going through Close, this answers false on the next frame instead of leaving
++    // the app permanently convinced a card is up.
++    //
++    // Always false in a PRO build: nothing ever spawns the authority.
++    public static bool IsOpen
++    {
++        get
++        {
++            if (instance == null) return false;
++            return instance.HasPanel;
++        }
++    }
++
++    public static void Show()
++    {
++        // Cheap insurance rather than a real guard: nothing should call this in a PRO build,
++        // but if a future feature gets gated and the gate is written the wrong way round, a PRO
++        // user seeing a buy card is a much worse bug than a demo user seeing nothing.
++        if (!BuildEdition.IsDemo) return;
++
++        Ensure();
++        instance.Open();
++    }
++
++    private static void Ensure()
++    {
++        if (instance != null) return;
++        instance = Object.FindFirstObjectByType<DemoUpgradePromptAuthority>();
++        if (instance != null) return;
++
++        GameObject go = new GameObject("DemoUpgradePromptAuthority");
++        Object.DontDestroyOnLoad(go);
++        instance = go.AddComponent<DemoUpgradePromptAuthority>();
++    }
++}
++
++public class DemoUpgradePromptAuthority : MonoBehaviour
++{
++    private const string PanelName = "DemoUpgradePanel";
++
++    // Public because UIThemeAuthority is told to leave it alone by name. It is a Button whose
++    // Graphic is the full-screen dimmer, and the shared button skin would repaint that white,
++    // hand it a button sprite, and then have ClampButtonSize collapse a stretched rect to 32
++    // units. See the exemption there.
++    public const string DismissLayerName = "DemoPromptDismissLayer";
++
++    // Above the Welcome panel's 200 and every nested panel canvas in the project, which top out
++    // around 12. StatusToast sits higher again at 5000, and is left there on purpose: an I/O
++    // error has to stay readable even over this.
++    private const int PanelSortingOrder = 400;
++
++    private static readonly Vector2 ReferenceResolution = new Vector2(1920f, 1080f);
++
++    private const float CardWidth = 720f;
++    private const float CardHeight = 300f;
++    private const float Pad = 26f;
++
++    private const float TitleTop = 24f;
++    private const float TitleHeight = 32f;
++    private const float DividerTop = 66f;
++    private const float DividerHeight = 2f;
++    private const float BodyTop = 84f;
++    // Deliberately taller than the copy needs. Overflow is Truncate, which drops a line without
++    // drawing an ellipsis, so a font-asset swap or a copy edit that pushed the paragraph one line
++    // longer would silently eat the last sentence - and the last sentence is the one that says
++    // saved projects open straight up. The buttons start 242 units down, so this costs nothing.
++    private const float BodyHeight = 140f;
++
++    // UITheme.ClampButtonSize pins every button in the project into a 26-32 band, and these are
++    // deliberately not exempt from it - a buy button that is a different size from every other
++    // button in the app reads as a different app. 32 is the top of that band.
++    private const float ButtonHeight = 32f;
++    private const float StoreButtonWidth = 240f;
++    private const float CloseButtonWidth = 150f;
++    private const float ButtonGap = 12f;
++
++    private const float TitleFont = 24f;
++    private const float BodyFont = 17f;
++    private const float ButtonFont = 15f;
++
++    private GameObject panel;
++    private float dismissArmedAt;
++
++    // A click that lands on the dimmer within this of the card appearing is the second half of a
++    // double-click on EXPORT OBJ, not a decision to dismiss. Without it the natural response to a
++    // button that seems slow - clicking it again - opens the card and closes it in the same
++    // gesture, and the card looks like a flicker.
++    private const float DismissArmDelay = .35f;
++
++    public bool HasPanel
++    {
++        get { return panel != null; }
++    }
++
++    // NO ESC HANDLER, and that is a decision rather than an omission.
++    //
++    // ESC in this app is not consumed by whoever reads it first - GuideCurveManager,
++    // GroupAddButtonPlacementAuthority and TextureUVRectWorkspace all read the same press and
++    // each decides for itself whether to act, guarding against each other by hand. A fourth
++    // reader that none of them know about means dismissing this card while a GUIDE is selected
++    // would close the card AND drop the guide selection on the same press.
++    //
++    // Joining that protocol properly would mean editing all three to say "unless the buy card is
++    // up". Clicking the dimmed backdrop closes it instead, which is what a modal is expected to
++    // do anyway, and it collides with nothing.
++    public void Open()
++    {
++        // Already up. Raising a second copy over the first would leave the first one stranded
++        // underneath with nothing able to close it.
++        if (panel != null) return;
++
++        GameObject stale = GameObject.Find(PanelName);
++        if (stale != null) Destroy(stale);
++
++        Build();
++    }
++
++    void DismissFromBackdrop()
++    {
++        if (Time.unscaledTime < dismissArmedAt) return;
++        Close();
++    }
++
++    void Close()
++    {
++        if (panel != null) Destroy(panel);
++        panel = null;
++    }
++
++    void OpenStore(string url)
++    {
++        Application.OpenURL(url);
++
++        // Left up on purpose. The browser opens in front, and closing the card would mean that
++        // coming back to HairBrush lands on a screen with no sign of what just happened - and no
++        // second chance at the other store.
++    }
++
++    void Build()
++    {
++        // Built into a local and only published to the field at the very end. `panel` non-null is
++        // what IsOpen reports, and IsOpen is what switches off the camera and the global hotkeys -
++        // so a half-built card that threw before it grew a close button would leave the app with
++        // no way to orbit, no way to dismiss, and no ESC by design. Either the whole card exists
++        // or none of it does.
++        GameObject root = new GameObject(PanelName, typeof(RectTransform), typeof(Canvas),
++                                         typeof(CanvasScaler), typeof(GraphicRaycaster));
++        DontDestroyOnLoad(root);
++
++        // Its own ROOT canvas: a CanvasScaler only does anything on a root, so borrowing an
++        // existing canvas would inherit whatever scale mode that one was built with. Same
++        // reasoning, and the same settings, as the Welcome panel.
++        Canvas canvas = root.GetComponent<Canvas>();
++        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
++        canvas.sortingOrder = PanelSortingOrder;
++
++        CanvasScaler scaler = root.GetComponent<CanvasScaler>();
++        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
++        scaler.referenceResolution = ReferenceResolution;
++        scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
++        scaler.matchWidthOrHeight = 1f;
++
++        Stretch(root.GetComponent<RectTransform>());
++
++        // ------------------------------------------------------------------ the dimmer
++        //
++        // A SEPARATE CHILD, sitting behind the card, and that is the whole point of it. Unity
++        // resolves a click by walking UP from whatever was hit to the first object that handles
++        // one, so a dismiss Button on the panel ROOT catches clicks on the card as well: the
++        // card's own Image has no handler, so the click bubbles past it to the root and the card
++        // closes when you click its own body text. As a sibling underneath, it only ever sees the
++        // clicks that miss the card.
++        //
++        // Also a raycast target, which is what stops a click aimed at BUY but landing slightly
++        // wide from dropping a hair card on the head.
++        //
++        // It does NOT stop everything on its own. HandleCameraControls, the 1/2 and [ ] hotkeys,
++        // SHIFT to cycle brush mode and the variance seed buttons all read the mouse or keyboard
++        // directly without asking whether the pointer is over UI. Those are handled at the other
++        // end, by each of them checking DemoUpgradePrompt.IsOpen.
++        GameObject dimmer = new GameObject(DismissLayerName, typeof(RectTransform), typeof(Image), typeof(Button));
++        dimmer.transform.SetParent(root.transform, false);
++        Stretch(dimmer.GetComponent<RectTransform>());
++
++        Image backdrop = dimmer.GetComponent<Image>();
++        backdrop.color = new Color(0f, 0f, 0f, .6f);
++        backdrop.raycastTarget = true;
++
++        // Transition None keeps it invisible as a button, but that is presentation only - what
++        // actually protects the dimmer from the shared button skin is the name exemption in
++        // UIThemeAuthority. Without it StyleButton would repaint this white, hand it a button
++        // sprite, and ClampButtonSize would collapse the stretched rect to 32 units.
++        Button dismiss = dimmer.GetComponent<Button>();
++        dismiss.transition = Selectable.Transition.None;
++        dismiss.targetGraphic = backdrop;
++        dismiss.onClick.AddListener(DismissFromBackdrop);
++
++        // ------------------------------------------------------------------ the card
++        GameObject card = new GameObject("Card", typeof(RectTransform), typeof(Image));
++        card.transform.SetParent(root.transform, false);
++        RectTransform cardRect = card.GetComponent<RectTransform>();
++        cardRect.anchorMin = new Vector2(.5f, .5f);
++        cardRect.anchorMax = new Vector2(.5f, .5f);
++        cardRect.pivot = new Vector2(.5f, .5f);
++        cardRect.anchoredPosition = Vector2.zero;
++        cardRect.sizeDelta = new Vector2(CardWidth, CardHeight);
++        ApplyNineSlice(card.GetComponent<Image>(), UITheme.FineEdgeSprite, UITheme.PanelDark);
++
++        TextMeshProUGUI title = AddBand(card.transform, "Title", TitleTop, TitleHeight);
++        StyleLine(title, "EXPORT IS IN THE FULL VERSION", TitleFont, FontStyles.Bold, UITheme.TextBright);
++
++        AddDivider(card.transform);
++
++        TextMeshProUGUI body = AddBand(card.transform, "Body", BodyTop, BodyHeight);
++        StyleLine(body,
++            "This is the HairBrush demo. Everything else works - place and groom the hair, use " +
++            "every modifier, save and load your project. Writing the cards out as an OBJ is the " +
++            "one thing kept for the full version.\n\n" +
++            "Buy it and your saved projects open straight up, ready to export.",
++            BodyFont, FontStyles.Normal, UITheme.TextMuted);
++
++        // Wrapped and top-aligned, unlike StyleLine's single-line default: this is the only
++        // paragraph of prose in the card and it has to be readable, not truncated.
++        body.textWrappingMode = TextWrappingModes.Normal;
++        body.overflowMode = TextOverflowModes.Truncate;
++        body.alignment = TextAlignmentOptions.TopLeft;
++
++        AddButton(card.transform, "BuyArtStationButton", "BUY ON ARTSTATION",
++                  new Vector2(Pad, Pad), new Vector2(StoreButtonWidth, ButtonHeight),
++                  delegate { OpenStore(BuildEdition.ArtStationUrl); });
++
++        AddButton(card.transform, "BuyItchButton", "BUY ON ITCH.IO",
++                  new Vector2(Pad + StoreButtonWidth + ButtonGap, Pad),
++                  new Vector2(StoreButtonWidth, ButtonHeight),
++                  delegate { OpenStore(BuildEdition.ItchUrl); });
++
++        AddCloseButton(card.transform);
++
++        dismissArmedAt = Time.unscaledTime + DismissArmDelay;
++        panel = root;
++    }
++
++    // ------------------------------------------------------------------------- UI helpers
++    //
++    // Deliberately local copies rather than shared with the Welcome panel. They are eight lines
++    // each, and the alternative - making that panel's private helpers public so this one can
++    // borrow them - would tie two unrelated cards together for no saving worth having.
++
++    void AddButton(Transform parent, string name, string label, Vector2 inset, Vector2 size,
++                   UnityEngine.Events.UnityAction action)
++    {
++        GameObject go = new GameObject(name, typeof(RectTransform), typeof(Image), typeof(Button));
++        go.transform.SetParent(parent, false);
++
++        RectTransform rect = go.GetComponent<RectTransform>();
++        rect.anchorMin = new Vector2(0f, 0f);
++        rect.anchorMax = new Vector2(0f, 0f);
++        rect.pivot = new Vector2(0f, 0f);
++        rect.anchoredPosition = inset;
++        rect.sizeDelta = size;
++
++        Button button = go.GetComponent<Button>();
++        button.onClick.AddListener(action);
++
++        // Skinned by UIThemeAuthority's next pass, which is what keeps these looking like every
++        // other button in the app. This is only the fallback for the frame or two before it runs.
++        ApplyNineSlice(go.GetComponent<Image>(), UITheme.ButtonNormalSprite, Color.white);
++
++        TextMeshProUGUI text = AddStretchedText(go.transform, "Text");
++        StyleLine(text, label, ButtonFont, FontStyles.Bold, UITheme.TextBright);
++        text.alignment = TextAlignmentOptions.Center;
++    }
++
++    void AddCloseButton(Transform parent)
++    {
++        GameObject go = new GameObject("DemoPromptCloseButton", typeof(RectTransform), typeof(Image), typeof(Button));
++        go.transform.SetParent(parent, false);
++
++        RectTransform rect = go.GetComponent<RectTransform>();
++        rect.anchorMin = new Vector2(1f, 0f);
++        rect.anchorMax = new Vector2(1f, 0f);
++        rect.pivot = new Vector2(1f, 0f);
++        rect.anchoredPosition = new Vector2(-Pad, Pad);
++        rect.sizeDelta = new Vector2(CloseButtonWidth, ButtonHeight);
++
++        go.GetComponent<Button>().onClick.AddListener(Close);
++        ApplyNineSlice(go.GetComponent<Image>(), UITheme.ButtonNormalSprite, Color.white);
++
++        TextMeshProUGUI text = AddStretchedText(go.transform, "Text");
++        StyleLine(text, "NOT NOW", ButtonFont, FontStyles.Bold, UITheme.TextBright);
++        text.alignment = TextAlignmentOptions.Center;
++    }
++
++    static TextMeshProUGUI AddBand(Transform parent, string name, float top, float height)
++    {
++        GameObject go = new GameObject(name, typeof(RectTransform), typeof(TextMeshProUGUI));
++        go.transform.SetParent(parent, false);
++
++        RectTransform rect = go.GetComponent<RectTransform>();
++        rect.anchorMin = new Vector2(0f, 1f);
++        rect.anchorMax = new Vector2(1f, 1f);
++        rect.pivot = new Vector2(.5f, 1f);
++        rect.offsetMin = new Vector2(Pad, -(top + height));
++        rect.offsetMax = new Vector2(-Pad, -top);
++
++        return go.GetComponent<TextMeshProUGUI>();
++    }
++
++    static void AddDivider(Transform parent)
++    {
++        GameObject go = new GameObject("Divider", typeof(RectTransform), typeof(Image));
++        go.transform.SetParent(parent, false);
++
++        RectTransform rect = go.GetComponent<RectTransform>();
++        rect.anchorMin = new Vector2(0f, 1f);
++        rect.anchorMax = new Vector2(1f, 1f);
++        rect.pivot = new Vector2(.5f, 1f);
++        rect.offsetMin = new Vector2(Pad, -DividerTop + DividerHeight);
++        rect.offsetMax = new Vector2(-Pad, -DividerTop);
++
++        Image image = go.GetComponent<Image>();
++        ApplyNineSlice(image, UITheme.DividerSprite, Color.white);
++        image.raycastTarget = false;
++    }
++
++    static TextMeshProUGUI AddStretchedText(Transform parent, string name)
++    {
++        GameObject go = new GameObject(name, typeof(RectTransform), typeof(TextMeshProUGUI));
++        go.transform.SetParent(parent, false);
++        Stretch(go.GetComponent<RectTransform>());
++        return go.GetComponent<TextMeshProUGUI>();
++    }
++
++    static void Stretch(RectTransform rect)
++    {
++        rect.anchorMin = Vector2.zero;
++        rect.anchorMax = Vector2.one;
++        rect.offsetMin = Vector2.zero;
++        rect.offsetMax = Vector2.zero;
++    }
++
++    static void ApplyNineSlice(Image image, Sprite sprite, Color colour)
++    {
++        if (image == null) return;
++        image.color = colour;
++
++        // Falls back to a flat fill if the sprites are missing, exactly as UITheme does.
++        if (sprite == null) return;
++        image.sprite = sprite;
++        image.type = Image.Type.Sliced;
++    }
++
++    static void StyleLine(TextMeshProUGUI label, string text, float size, FontStyles style, Color colour)
++    {
++        if (label == null) return;
++        label.text = text;
++        label.fontSize = size;
++        label.fontStyle = style;
++        label.color = colour;
++        label.alignment = TextAlignmentOptions.MidlineLeft;
++        label.textWrappingMode = TextWrappingModes.NoWrap;
++        label.overflowMode = TextOverflowModes.Ellipsis;
++        label.enableAutoSizing = false;
++        label.raycastTarget = false;
++    }
++}
+diff --git a/Assets/Scripts/UI_Import/DemoUpgradePrompt.cs.meta b/Assets/Scripts/UI_Import/DemoUpgradePrompt.cs.meta
+new file mode 100644
+index 0000000..0a062bd
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/DemoUpgradePrompt.cs.meta
+@@ -0,0 +1,2 @@
++fileFormatVersion: 2
++guid: 57e2a5c3317d48359e038300ffb78ce9
+diff --git a/Assets/Scripts/UI_Import/DemoWindowTitleAuthority.cs b/Assets/Scripts/UI_Import/DemoWindowTitleAuthority.cs
+new file mode 100644
+index 0000000..d2e37f3
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/DemoWindowTitleAuthority.cs
+@@ -0,0 +1,112 @@
++using System;
++using System.Runtime.InteropServices;
++using UnityEngine;
++
++// Puts DEMO in the Windows title bar of a demo build, and does nothing at all in a PRO one.
++//
++// Unity has no runtime API for this. Application.productName is what the player uses to title
++// its window and it is read-only once built, so the only way to change it is to ask Windows
++// directly - which this project already does for file dialogs, so user32 is not a new dependency
++// here. RuntimeFileDialog calls the same GetActiveWindow, though with a guarantee this does not
++// have: it asks inside a click, when the app is by definition in the foreground, while this asks
++// on a timer and can legitimately be handed nothing. See the two clocks below.
++//
++// Why bother, when the file itself is renamed _DEMO: the file name stops being visible the
++// moment the thing is running. Somebody with both builds installed, or reporting a problem from
++// a screenshot, has nothing else on screen to say which one they are looking at. The title bar
++// is always there.
++[DefaultExecutionOrder(9800)]
++public class DemoWindowTitleAuthority : MonoBehaviour
++{
++    // Unity writes the window title itself during startup, and not on a frame this can predict -
++    // it has been observed both before and after the first Update depending on display setup and
++    // resolution changes. So the title is re-asserted for a while rather than set once and hoped
++    // for, and then the component switches itself off: a permanent every-frame P/Invoke to hold a
++    // string nothing else writes is a poll with no reason to exist once startup has settled.
++    //
++    // TWO clocks, and the difference matters. GetActiveWindow returns NULL whenever this thread
++    // has no active window - which includes every frame the app is not in the foreground. Somebody
++    // who launches the demo and alt-tabs away while Unity loads, then comes back, would have had
++    // every attempt in a fixed ten-second window return NULL, and the title bar would say nothing
++    // about DEMO for the rest of the session. So the short clock only starts counting once the
++    // title has actually been written at least once; until then the long one applies.
++    private const float ReassertAfterFirstWrite = 10f;
++    private const float GiveUpAfterSeconds = 600f;
++    private const float ReassertInterval = 1f;
++
++    private float nextAssert;
++    private float firstWriteAt = -1f;
++
++#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
++    [DllImport("user32.dll")]
++    private static extern IntPtr GetActiveWindow();
++
++    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SetWindowTextW")]
++    private static extern bool SetWindowText(IntPtr hwnd, string text);
++#endif
++
++    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
++    static void Spawn()
++    {
++        // A PRO build spawns nothing: no object, no Update, no call into user32, and the title
++        // bar is left exactly as Unity wrote it. The two DllImports below are still compiled into
++        // a Windows PRO build - they are guarded by platform, not by edition - but nothing on any
++        // path reaches them, and RuntimeFileDialog imports user32 regardless.
++        if (!BuildEdition.IsDemo) return;
++        if (FindFirstObjectByType<DemoWindowTitleAuthority>() != null) return;
++
++        GameObject go = new GameObject("DemoWindowTitleAuthority");
++        DontDestroyOnLoad(go);
++        go.AddComponent<DemoWindowTitleAuthority>();
++    }
++
++    void Update()
++    {
++        bool written = firstWriteAt >= 0f;
++        if (written && Time.unscaledTime > firstWriteAt + ReassertAfterFirstWrite)
++        {
++            enabled = false;
++            return;
++        }
++
++        // Never wrote it, and long past the point where anything is still starting up. The window
++        // handle is not coming, and something about this machine is not what this expected.
++        if (!written && Time.unscaledTime > GiveUpAfterSeconds)
++        {
++            enabled = false;
++            return;
++        }
++
++        if (Time.unscaledTime < nextAssert) return;
++        nextAssert = Time.unscaledTime + ReassertInterval;
++
++        // First write only. Re-stamping on every success would keep pushing the deadline out by
++        // a second at a time and the component would never stand down.
++        if (Apply() && firstWriteAt < 0f) firstWriteAt = Time.unscaledTime;
++    }
++
++    // True when the title was actually handed to Windows.
++    bool Apply()
++    {
++#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
++        // A null handle is the normal answer while the window is still coming up, and on any
++        // frame where this process is not the foreground one. Nothing to do about either except
++        // try again on the next tick, which is what the re-assert window above is for.
++        IntPtr window = GetActiveWindow();
++        if (window == IntPtr.Zero) return false;
++
++        // Built here rather than cached in a field: outside a Windows player the whole body of
++        // this method is compiled out, and a field only ever read in here would be assigned and
++        // never used, which is a warning in every editor build.
++        string version = Application.version;
++        if (string.IsNullOrWhiteSpace(version)) version = "0.0.0";
++
++        return SetWindowText(window, Application.productName + " " + version + BuildEdition.EditionSuffix);
++#else
++        // Nothing to do off Windows or in the editor, and saying so as "never written" keeps the
++        // caller on its long clock instead of switching this off ten seconds in. It stands down
++        // either way; this just picks the honest reason.
++        return false;
++#endif
++    }
++}
+diff --git a/Assets/Scripts/UI_Import/DemoWindowTitleAuthority.cs.meta b/Assets/Scripts/UI_Import/DemoWindowTitleAuthority.cs.meta
+new file mode 100644
+index 0000000..3c2f9f5
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/DemoWindowTitleAuthority.cs.meta
+@@ -0,0 +1,2 @@
++fileFormatVersion: 2
++guid: 8062f31a22b44ba89efbe7a6cd484ba9
+diff --git a/Assets/Scripts/UI_Import/HairCardSidednessHotkeyAuthority.cs b/Assets/Scripts/UI_Import/HairCardSidednessHotkeyAuthority.cs
+index a896768..2cd30ac 100644
+--- a/Assets/Scripts/UI_Import/HairCardSidednessHotkeyAuthority.cs
++++ b/Assets/Scripts/UI_Import/HairCardSidednessHotkeyAuthority.cs
+@@ -31,6 +31,11 @@ public class HairCardSidednessHotkeyAuthority : MonoBehaviour
+         // in a name.
+         if (GroupNameInlineEditAuthority.IsEnteringText) return;
+ 
++        // Nor underneath the demo's buy card. This one flips EVERY card in the scene, so a
++        // stray keypress while reading a modal is an edit to the whole groom with nothing on
++        // screen to connect the two. Always false in a PRO build.
++        if (DemoUpgradePrompt.IsOpen) return;
++
+         bool wantSingleSided = Keyboard.current.digit1Key.wasPressedThisFrame || Keyboard.current.numpad1Key.wasPressedThisFrame;
+         bool wantDoubleSided = Keyboard.current.digit2Key.wasPressedThisFrame || Keyboard.current.numpad2Key.wasPressedThisFrame;
+         if (!wantSingleSided && !wantDoubleSided) return;
+diff --git a/Assets/Scripts/UI_Import/HairObjExporter.cs b/Assets/Scripts/UI_Import/HairObjExporter.cs
+index 754f146..5546dc9 100644
+--- a/Assets/Scripts/UI_Import/HairObjExporter.cs
++++ b/Assets/Scripts/UI_Import/HairObjExporter.cs
+@@ -30,6 +30,26 @@ public static class HairObjExporter
+ 
+     public static void ExportInteractive()
+     {
++        // THE DEMO LOCK, and it lives here rather than on the button for a reason. This is the
++        // only public entry point on the exporter, so gating it gates every route to a written
++        // OBJ - the groom panel button, the texture mode button, and anything added later that
++        // reaches for the exporter without knowing a demo build exists. A check bolted onto the
++        // two onClick listeners instead would leave the next caller to remember, and that is
++        // exactly the kind of thing nobody remembers.
++        //
++        // FIRST, before the file dialog and before the cooldown below, and both of those matter.
++        // Before the dialog, so a demo user is never asked where to save something that was never
++        // going to be written. Before the cooldown, because that exists to stop a double-click
++        // opening two save dialogs - spend it here and a demo user who double-clicks EXPORT gets
++        // the card on the first click, dismisses it with the second, and then finds the button
++        // ignores them for three quarters of a second, which reads as a broken button on the one
++        // screen trying to sell them something. Raising a card is idempotent and needs no cooldown.
++        if (BuildEdition.IsDemo)
++        {
++            DemoUpgradePrompt.Show();
++            return;
++        }
++
+         double now = Time.realtimeSinceStartupAsDouble;
+         if (now < nextAllowedExportDialogTime) return;
+         nextAllowedExportDialogTime = now + 0.75;
+diff --git a/Assets/Scripts/UI_Import/ModelViewer.cs b/Assets/Scripts/UI_Import/ModelViewer.cs
+index 6ac1d7a..01b2d9c 100644
+--- a/Assets/Scripts/UI_Import/ModelViewer.cs
++++ b/Assets/Scripts/UI_Import/ModelViewer.cs
+@@ -1360,6 +1360,12 @@ public class ModelViewer : MonoBehaviour
+     {
+         if (Mouse.current == null) return;
+ 
++        // A modal card is up. The backdrop stops clicks reaching the panels and the brush, but
++        // orbit and pan below read the mouse directly and never ask whether the pointer is over
++        // UI, so without this the head spins behind the card while it is being read.
++        // Always false in a PRO build - nothing there ever raises one.
++        if (DemoUpgradePrompt.IsOpen) return;
++
+         // Guide point editing needs ALT plus right click to mean "remove this point", and orbiting
+         // is on the right button and would otherwise run at the same moment - the point would go
+         // and the view would swing while it went. So an orbit REFUSES TO START on a right press
+diff --git a/Assets/Scripts/UI_Import/PlacementBrushModeAuthority.cs b/Assets/Scripts/UI_Import/PlacementBrushModeAuthority.cs
+index ab7a26c..270a3a4 100644
+--- a/Assets/Scripts/UI_Import/PlacementBrushModeAuthority.cs
++++ b/Assets/Scripts/UI_Import/PlacementBrushModeAuthority.cs
+@@ -200,6 +200,15 @@ public class PlacementBrushModeAuthority : MonoBehaviour
+             return;
+         }
+ 
++        // Nor underneath the demo's buy card. SHIFT is read below before the over-UI test, so
++        // without this it cycles the brush mode behind a modal - and the mode strip the user is
++        // not looking at changes under them. Always false in a PRO build.
++        if (DemoUpgradePrompt.IsOpen)
++        {
++            HideBrushPreview();
++            return;
++        }
++
+         bool shiftPressed = Keyboard.current.leftShiftKey.wasPressedThisFrame || Keyboard.current.rightShiftKey.wasPressedThisFrame;
+         if (shiftPressed)
+         {
+diff --git a/Assets/Scripts/UI_Import/RuntimeToolInteractionFixes.cs b/Assets/Scripts/UI_Import/RuntimeToolInteractionFixes.cs
+index dfb876d..3e4aa27 100644
+--- a/Assets/Scripts/UI_Import/RuntimeToolInteractionFixes.cs
++++ b/Assets/Scripts/UI_Import/RuntimeToolInteractionFixes.cs
+@@ -26,6 +26,14 @@ public class RuntimeToolInteractionFixes : MonoBehaviour
+     void HandleSeedControls()
+     {
+         if (Mouse.current == null) return;
++
++        // This is the one mouse authority in the project that hit-tests with its own screen-rect
++        // maths instead of asking the EventSystem, which is what lets it drive the seed controls
++        // through the layers that sit over them. The cost is that a modal's backdrop means nothing
++        // to it: a click aimed at dismissing the demo's buy card, landing over the groom panel
++        // behind it, would reroll that group's variance seed or drop a caret in a hidden text
++        // field. Always false in a PRO build.
++        if (DemoUpgradePrompt.IsOpen) return;
+         Vector2 mouse = Mouse.current.position.ReadValue();
+         bool pressed = Mouse.current.leftButton.wasPressedThisFrame;
+ 
+diff --git a/Assets/Scripts/UI_Import/UIThemeAuthority.cs b/Assets/Scripts/UI_Import/UIThemeAuthority.cs
+index 11a42f7..97acf59 100644
+--- a/Assets/Scripts/UI_Import/UIThemeAuthority.cs
++++ b/Assets/Scripts/UI_Import/UIThemeAuthority.cs
+@@ -56,6 +56,12 @@ public class UIThemeAuthority : MonoBehaviour
+             // would blow up into a giant square on the start screen's 5.43x canvas.
+             if (goName == "RANDOMIZEButton" || goName == "RButton" || goName == "GroupUVRandomSeedButton") continue;
+             if (goName == WelcomeWhatsNewAuthority.StartButtonName) continue;
++            // The demo buy card's backdrop is a Button so that clicking away dismisses it, but
++            // the Graphic it points at is the full-screen dimmer. Skinning that would repaint the
++            // whole screen white with a button sprite on it, and ClampButtonSize would drag the
++            // stretched rect off by 32 units on the way past. The three buttons INSIDE the card
++            // are not named here and are skinned normally, which is the point of them.
++            if (goName == DemoUpgradePromptAuthority.DismissLayerName) continue;
+ 
+             if (!styledButtons.Contains(button))
+             {
+diff --git a/Assets/Scripts/UI_Import/WelcomeWhatsNewAuthority.cs b/Assets/Scripts/UI_Import/WelcomeWhatsNewAuthority.cs
+index c661d0c..ef0f355 100644
+--- a/Assets/Scripts/UI_Import/WelcomeWhatsNewAuthority.cs
++++ b/Assets/Scripts/UI_Import/WelcomeWhatsNewAuthority.cs
+@@ -38,7 +38,11 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
+         {
+             string version = Application.version;
+             if (string.IsNullOrWhiteSpace(version)) version = "0.0.0";
+-            return "BETA " + version;
++
++            // A demo build says so on the first screen the user sees, so nobody gets as far as
++            // the export button believing they are running the full version. BuildEdition
++            // returns an empty suffix in a PRO build, so this line is unchanged there.
++            return "BETA " + version + BuildEdition.EditionSuffix;
+         }
+     }
+ 
+@@ -360,7 +364,10 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
+         ApplyNineSlice(card.GetComponent<Image>(), UITheme.FineEdgeSprite, UITheme.PanelDark);
+ 
+         TextMeshProUGUI title = AddBand(card.transform, "Title", TitleTop, TitleHeight);
+-        StyleLine(title, "WELCOME TO HAIRBRUSH BETA", TitleFont, FontStyles.Bold, UITheme.TextBright);
++        // The suffix lands on both lines in a demo build, and this is the larger of the two.
++        // Empty in a PRO build, so this reads exactly as it does today.
++        StyleLine(title, "WELCOME TO HAIRBRUSH BETA" + BuildEdition.EditionSuffix,
++                  TitleFont, FontStyles.Bold, UITheme.TextBright);
+ 
+         AddDivider(card.transform);
+ 
+diff --git a/Assets/Scripts/UI_Import/WorkspaceExportUtilityAuthority.cs b/Assets/Scripts/UI_Import/WorkspaceExportUtilityAuthority.cs
+index f74c905..5da2385 100644
+--- a/Assets/Scripts/UI_Import/WorkspaceExportUtilityAuthority.cs
++++ b/Assets/Scripts/UI_Import/WorkspaceExportUtilityAuthority.cs
+@@ -58,7 +58,7 @@ public class WorkspaceExportUtilityAuthority : MonoBehaviour
+         Transform export = top.Find("ExportOBJButton");
+         if (export == null)
+         {
+-            GameObject button = CreateButton(top, "ExportOBJButton", "EXPORT OBJ", new Color(.20f, .38f, .62f));
++            GameObject button = CreateButton(top, "ExportOBJButton", BuildEdition.ExportLabel, new Color(.20f, .38f, .62f));
+             button.GetComponent<Button>().onClick.AddListener(HairObjExporter.ExportInteractive);
+         }
+         else if (!export.gameObject.activeSelf) export.gameObject.SetActive(true);
+@@ -81,17 +81,25 @@ public class WorkspaceExportUtilityAuthority : MonoBehaviour
+         Transform row = panel.Find("ModeRow");
+         if (row == null) return;
+ 
+-        Transform save = FindButtonByLabel(row, "SAVE PROJ");
++        Transform save = row.Find("SAVEPROJButton");
++        if (save == null) save = FindButtonByLabel(row, "SAVE PROJ");
+         if (save == null)
+         {
+             GameObject button = CreateButton(row, "SAVEPROJButton", "SAVE PROJ", new Color(.20f, .50f, .30f), true);
+             button.GetComponent<Button>().onClick.AddListener(InvokeSaveProject);
+         }
+ 
+-        Transform export = FindButtonByLabel(row, "EXPORT OBJ");
++        // BY NAME FIRST, label only as a fallback, and the demo label has to be in that
++        // fallback too. This scan runs every .1s and creates the button whenever it fails to
++        // find one: keying the search on a literal "EXPORT OBJ" while the button that was
++        // created reads "EXPORT OBJ (PRO)" would miss it ten times a second and stack up a new
++        // export button on every tick. The name never changes, so it is the reliable half.
++        Transform export = row.Find("EXPORTOBJButton");
++        if (export == null) export = FindButtonByLabel(row, BuildEdition.ExportProLabel);
++        if (export == null) export = FindButtonByLabel(row, BuildEdition.ExportDemoLabel);
+         if (export == null)
+         {
+-            GameObject button = CreateButton(row, "EXPORTOBJButton", "EXPORT OBJ", new Color(.20f, .38f, .62f), true);
++            GameObject button = CreateButton(row, "EXPORTOBJButton", BuildEdition.ExportLabel, new Color(.20f, .38f, .62f), true);
+             button.GetComponent<Button>().onClick.AddListener(HairObjExporter.ExportInteractive);
+         }
+ 
