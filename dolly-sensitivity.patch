@@ -1,0 +1,107 @@
+diff --git a/Assets/Scripts/UI_Import/ModelViewer.cs b/Assets/Scripts/UI_Import/ModelViewer.cs
+index 3b6ded9..22b3584 100644
+--- a/Assets/Scripts/UI_Import/ModelViewer.cs
++++ b/Assets/Scripts/UI_Import/ModelViewer.cs
+@@ -29,6 +29,33 @@ public class ModelViewer : MonoBehaviour
+     [Header("Controls Settings")]
+     public float rotateSpeed = 5f;
+     public float zoomSpeed = 500f;
++
++    // MAYA-NAV dolly. Deliberately NOT in world units and deliberately not scaled by zoomSpeed -
++    // see the dolly block in HandleCameraControls for why a fixed step cannot be sized correctly.
++    //
++    // Fraction of the distance to the pivot, per pixel of drag. THIS is the tuning knob: it means
++    // something you can reason about without knowing the scene scale. Simulated: a 100px drag
++    // closes about 15% of the distance, a 600px sweep leaves about 40% of it.
++    private const float DollyFractionPerPixel = 0.0015f;
++
++    // Caps what one frame can take, so a fast flick cannot swallow the whole distance at once.
++    // Insurance, not tuning - 0.5 needs 333px inside a single frame before it engages at all.
++    private const float DollyMaxFractionPerFrame = 0.5f;
++
++    // The camera is NOT aimed exactly at the pivot (see the dolly block), so the straight-line
++    // distance never reaches zero however far in you go. These two keep that from mattering:
++    // the first caps how much of the remaining distance one frame may close, so approaching stays
++    // asymptotic and the camera can never reach the pivot plane, let alone cross it; the second
++    // is the fallback magnitude used when the pivot is level with or behind the camera, so the
++    // dolly still has something to be proportional to and can always back out.
++    private const float DollyMaxApproachPerFrame = 0.9f;
++    private const float DollyMinScaleFraction = 0.25f;
++
++    // How far out the pivot may be pushed, as a fraction of the camera's own far clip plane.
++    // Taken from the camera rather than written as a world distance so it cannot go stale if the
++    // rig changes. Without it a few sweeps left put the model past the far plane and it simply
++    // stopped being drawn.
++    private const float DollyMaxFarClipFraction = 0.5f;
+     public float panSpeed = 0.5f;
+ 
+     [Header("Grooming Settings")]
+@@ -1557,13 +1584,61 @@ public class ModelViewer : MonoBehaviour
+             // apart, so a dolly that also answered to Y would creep on every gesture meant to be
+             // horizontal, and the creep would be invisible until the model had drifted.
+             //
+-            // The 0.03 is DERIVED from the wheel below, not measured on a machine. The wheel moves
+-            // scroll * 0.001 * zoomSpeed and Windows reports 120 per detent, so one notch is
+-            // 0.12 * zoomSpeed. delta.x is pixels, pre-scaled by 0.1 as above, so a 100px drag at
+-            // 0.03 gives 0.3 * zoomSpeed - about two and a half notches for a gesture crossing a
+-            // third of a 1080p viewport. If it wants tuning after a real session, tune it here.
+-            float mouseX = Mouse.current.delta.x.ReadValue() * 0.1f;
+-            mainCamera.transform.Translate(Vector3.forward * (mouseX * 0.03f) * zoomSpeed, Space.Self);
++            // The step is a FRACTION OF THE REMAINING DISTANCE TO THE PIVOT, not a fixed number
++            // of world units, and deliberately does not use zoomSpeed at all.
++            //
++            // WHY NOT A FIXED STEP. The first cut used one and it was the bug this replaces. It
++            // sized a constant against the wheel below, assuming Windows reports 120 per detent -
++            // an assumption that was never verified and is very probably wrong, because if it were
++            // true the UNCHANGED wheel would move 120 * 0.001 * zoomSpeed = twelve world units per
++            // notch, which is past the far clip plane in one notch and would have been the first
++            // thing anyone complained about. What the constant actually produced, with zoomSpeed
++            // at 100 in the scene, was 0.1 * 0.03 * 100 = 0.3 WORLD UNITS PER PIXEL: a twenty
++            // pixel nudge moved the camera six units. Any constant here is a simultaneous guess
++            // about scroll units, zoomSpeed and model scale, and all three can move independently.
++            //
++            // A proportional step needs none of them, and it is what Maya does: the closer you
++            // get, the less a pixel is worth, so approaching is asymptotic instead of a cliff.
++            //
++            // MEASURED ALONG THE VIEW AXIS, not as a straight line, and that distinction is the
++            // whole reason this is a projection rather than a Vector3.Distance. The camera is a
++            // child of the pivot at a local offset of about (0.05, 0.03, -0.56) - so it sits
++            // roughly 0.058 OFF the axis it looks down, and nothing in the app ever re-centres it.
++            // Measured as a straight line the distance therefore bottoms out at 0.058 instead of
++            // decaying to nothing, the step bottoms out with it, and the camera sails through the
++            // pivot and out the far side, where the distance starts growing again and it runs away
++            // backwards. Roughly two thousand pixels of ordinary dragging - three or four sweeps -
++            // was enough, and there is no reset-view command anywhere in the app to recover with.
++            float pixels = Mouse.current.delta.x.ReadValue();
++            Vector3 toPivot = cameraPivot.position - mainCamera.transform.position;
++            float alongView = Vector3.Dot(toPivot, mainCamera.transform.forward);
++
++            // What the step is measured against. Falls back to a fraction of the straight-line
++            // distance when the pivot is level with or behind the camera, where alongView is zero
++            // or negative: only the wheel can put the camera there, but a dolly that was dead in
++            // that state would leave no way back out of it.
++            float scale = Mathf.Max(alongView, toPivot.magnitude * DollyMinScaleFraction);
++
++            float fraction = Mathf.Clamp(pixels * DollyFractionPerPixel,
++                                         -DollyMaxFractionPerFrame, DollyMaxFractionPerFrame);
++            float step = scale * fraction;
++
++            if (step > 0f)
++            {
++                // Inward. Never take more than most of what is left, so the pivot plane is
++                // approached and never reached - and, with alongView already at or below zero,
++                // never approached at all.
++                step = Mathf.Min(step, Mathf.Max(alongView, 0f) * DollyMaxApproachPerFrame);
++            }
++            else
++            {
++                // Outward. Stop pushing once the pivot is halfway to the far clip plane; past it
++                // the model stops being drawn and the viewport just goes empty.
++                float roomLeft = Mathf.Max((mainCamera.farClipPlane * DollyMaxFarClipFraction) - alongView, 0f);
++                step = -Mathf.Min(-step, roomLeft);
++            }
++
++            mainCamera.transform.Translate(Vector3.forward * step, Space.Self);
+         }
+ 
+         // The wheel zooms in BOTH schemes. Maya has a wheel zoom of its own, so keeping it costs
