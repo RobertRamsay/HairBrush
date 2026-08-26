@@ -629,6 +629,15 @@ public class ModelViewer : MonoBehaviour
         panelRect.pivot = new Vector2(0, 0.5f);
         // 300 could not fit a POST row's five columns once the remove button became "DEL":
         // the row overflowed and the last column was clipped by the panel edge.
+        //
+        // Left at 360 on purpose, and the DEL button did not change it. A group row does NOT
+        // lay out with the HorizontalLayoutGroup its children are sized for -
+        // GroupPanelPostHintStats.ApplyHeaderLayout switches that off and anchors every child by
+        // name into a top name lane and a bottom-right utility strip - so adding to the row costs
+        // no width and the child widths below are only what they hold until that runs.
+        //
+        // Widening this is also not local: CompactRightPanelAuthority mirrors this panel's width
+        // onto the grooming panel AND the texture editor, so every 10px here is 30px of viewport.
         panelRect.sizeDelta = new Vector2(360, 0);
         panelRect.anchoredPosition = new Vector2(15, 0);
         groupPanelGO.GetComponent<Image>().color = new Color(0.15f, 0.15f, 0.15f, 0.85f);
@@ -966,6 +975,9 @@ public class ModelViewer : MonoBehaviour
             rowLayout.childControlHeight = true;
             GameObject labelBtnGO = new GameObject("LabelButton", typeof(RectTransform), typeof(Button), typeof(CustomClickDetector));
             labelBtnGO.transform.SetParent(itemGO.transform, false);
+            // Held only until ApplyHeaderLayout stretches this to the full row - see the panel
+            // width above. Left at its original value rather than tuned, because tuning it would
+            // look like it mattered.
             labelBtnGO.GetComponent<RectTransform>().sizeDelta = new Vector2(170, 40);
             labelBtnGO.GetComponent<Button>().onClick.AddListener(() => HandleGroupItemClick(gid));
             labelBtnGO.GetComponent<CustomClickDetector>().onRightClick = () => PromptDeleteGroup(gid);
@@ -1014,6 +1026,43 @@ public class ModelViewer : MonoBehaviour
             soloTxtGO.GetComponent<RectTransform>().anchorMax = Vector2.one;
             soloTxtGO.GetComponent<RectTransform>().sizeDelta = Vector2.zero;
             soloBtn.onClick.AddListener(() => ToggleGroupSolo(gid));
+
+            // DEL, at the right-hand end of the row. Right-click on the group name still deletes
+            // and now routes through this same button - see PromptDeleteGroup - so the two
+            // gestures cannot get out of step with each other.
+            GameObject delBtnGO = new GameObject("DeleteButton", typeof(RectTransform), typeof(Image), typeof(Button), typeof(GroupDeleteButton));
+            delBtnGO.transform.SetParent(itemGO.transform, false);
+            // Placeholder only. GroupPanelPostHintStats.ApplyHeaderLayout anchors this into the
+            // row's top-right corner and sets its real size; see DeleteButtonWidth there.
+            delBtnGO.GetComponent<RectTransform>().sizeDelta = new Vector2(56, 20);
+            GameObject delTxtGO = new GameObject("Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
+            delTxtGO.transform.SetParent(delBtnGO.transform, false);
+            TMPro.TextMeshProUGUI delTmp = delTxtGO.GetComponent<TMPro.TextMeshProUGUI>();
+
+            // Sized HERE and nowhere else. A TMP label with no fontSize takes the project default,
+            // which is 36 - so leaving it out does not give a small button, it gives "DEL" at 36pt
+            // wrapped across a 56x20 rect and spilling over the group name. And it cannot be set
+            // later either: PanelTypographyScale caches the first size it sees and force-writes it
+            // every LateUpdate, so construction time is the only moment that counts. 13 matches
+            // SOLO beside it.
+            delTmp.fontSize = 13;
+
+            // NoWrap so that if this ever gets out of step again it fails by being clipped, which
+            // is obvious, rather than by wrapping into the rows above and below, which reads as a
+            // layout bug somewhere else entirely.
+            delTmp.textWrappingMode = TMPro.TextWrappingModes.NoWrap;
+            delTmp.overflowMode = TMPro.TextOverflowModes.Overflow;
+            delTmp.fontStyle = TMPro.FontStyles.Bold;
+            delTmp.alignment = TMPro.TextAlignmentOptions.Center;
+            delTmp.color = Color.white;
+            delTmp.raycastTarget = false;
+            delTxtGO.GetComponent<RectTransform>().anchorMin = Vector2.zero;
+            delTxtGO.GetComponent<RectTransform>().anchorMax = Vector2.one;
+            delTxtGO.GetComponent<RectTransform>().sizeDelta = Vector2.zero;
+
+            GroupDeleteButton delState = delBtnGO.GetComponent<GroupDeleteButton>();
+            delState.Bind(this, gid, delBtnGO.GetComponent<Image>(), delTmp);
+            delBtnGO.GetComponent<Button>().onClick.AddListener(delState.Press);
         }
     }
 
@@ -1066,11 +1115,103 @@ public class ModelViewer : MonoBehaviour
         GroupNameInlineEditAuthority.BeginEdit(gid);
     }
 
+    // Right-click on a group's name. Routed into that row's DEL button rather than doing
+    // anything itself, so the right-click and the button are one gesture with one confirmation
+    // and one armed state, and neither can be armed while the other thinks it is not.
+    //
+    // This used to be an EditorUtility.DisplayDialog inside #if UNITY_EDITOR, which meant the
+    // whole method compiled to nothing in a player build: right-clicking a group in the shipped
+    // tool did not delete it, did not refuse, and said nothing. It worked in the editor, which is
+    // exactly why nobody caught it. Anything that asks the user a question has to be built out of
+    // runtime UI - GroupNameInlineEditAuthority made the same move for renaming.
     void PromptDeleteGroup(int gid)
     {
-#if UNITY_EDITOR
-        if (EditorUtility.DisplayDialog("Delete Group", "Are you sure you want to delete this group and all its hair cards?", "Yes", "No")) DeleteGroupAndCards(gid);
-#endif
+        GroupDeleteButton target = null;
+        foreach (GroupDeleteButton candidate in FindObjectsByType<GroupDeleteButton>(FindObjectsSortMode.None))
+        {
+            if (candidate == null || candidate.GroupId != gid) continue;
+            target = candidate;
+            break;
+        }
+
+        // No row to arm - the panel is mid-rebuild, or this group has no row yet. Deleting
+        // anyway, with no visible confirmation anywhere on screen, is the one outcome worth
+        // avoiding outright.
+        if (target == null) return;
+
+        target.Press();
+    }
+
+    // Whether this group may be deleted at all. False for the last one standing, and false for a
+    // group that is not there.
+    //
+    // A groom has to have somewhere to put a card. Delete the only group and allGroupIds empties,
+    // currentGroupId falls to FirstOrDefault() - which is 0, a group that no longer exists -
+    // SelectGroup does not re-add it, and the panel shows no rows while placement still aims at
+    // it. Nothing repairs that: GroupRegistryFromCardsAuthority rebuilds the registry FROM the
+    // cards and the delete has just destroyed every one of them.
+    //
+    // The quieter half is worse. GuideCurveManager.PurgeDeletedGroups reads an empty group list as
+    // "the panel has not been built yet" and returns without purging - it has to, or it would wipe
+    // every guide during startup - so the dead group's guides survive in byGroup. The next
+    // + GROUP is handed the same id back by GetNextAvailableGroupId, and those guides silently
+    // reattach to it and start deforming its cards. That is verbatim the failure PurgeDeletedGroups
+    // exists to prevent.
+    //
+    // Refusing is the whole fix, and it costs nothing: emptying a group is what the ERASE brush is
+    // for, and the last group can still be renamed and reused.
+    public bool CanDeleteGroup(int gid)
+    {
+        if (!allGroupIds.Contains(gid)) return false;
+        return allGroupIds.Count > 1;
+    }
+
+    // What the DEL button calls once the user has confirmed. Public because the button is its own
+    // component; the delete itself is unchanged and is an ordinary undoable change.
+    public void DeleteGroupAndCardsConfirmed(int gid)
+    {
+        if (!allGroupIds.Contains(gid))
+        {
+            // A row that outlived its group - mid project load, or a rebuild this click raced.
+            // Saying "this is the only group" here would be the opposite of the truth.
+            StatusToast.Show("That group is no longer there.", true);
+            return;
+        }
+
+        if (!CanDeleteGroup(gid))
+        {
+            StatusToast.Show(OnlyGroupRefusal, true);
+            return;
+        }
+
+        // Told explicitly, because UndoHistoryAuthority cannot see this one for itself. It arms on
+        // a LEFT release, on a key, and on a right release only under CTRL+SHIFT - and the
+        // right-click route into this method is a plain right click, which matches none of them.
+        // The button route happens to arm on its own left release; without this the two routes
+        // would differ in whether the delete got an undo step of its own, and the right-click one
+        // would be folded silently into whatever the user did next.
+        UndoHistoryAuthority.NotifyEdit();
+
+        DeleteGroupAndCards(gid);
+    }
+
+    // The refusal, in one place, because the button says it before arming and this says it again
+    // if anything gets past that.
+    public const string OnlyGroupRefusal =
+        "This is the only group - a groom always keeps one. Rename it, or erase its hair.";
+
+    // The group's name AS THE ROW SHOWS IT.
+    //
+    // Deliberately not `groupNames[gid]`. That store is not the displayed name: it holds only the
+    // friendly suffix, GroomSessionResetCoordinator and GroupRegistryFromCardsAuthority both write
+    // the EMPTY STRING into it for a default group, and clearing the inline rename field stores
+    // empty too - so a toast built from it reads "Delete ?" in the state a fresh session starts in.
+    // GroupPanelPostHintStats owns the "GROUP n" fallback the row is rendered with; ask it.
+    public string GroupDisplayName(int gid)
+    {
+        string stored = null;
+        if (groupNames.ContainsKey(gid)) stored = groupNames[gid];
+        return GroupPanelPostHintStats.DisplayName(gid, stored);
     }
 
     void DeleteGroupAndCards(int gid)

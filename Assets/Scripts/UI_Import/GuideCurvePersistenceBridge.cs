@@ -183,7 +183,8 @@ public class GuideCurvePersistenceBridge : MonoBehaviour
             nodes = CloneNodes(s.nodes),
             amount = s.amount,
             radius = s.radius,
-            falloff = s.falloff
+            falloff = s.falloff,
+            hue = s.hue
         };
     }
 
@@ -243,7 +244,8 @@ public class GuideCurvePersistenceBridge : MonoBehaviour
             nodes = ToNodes(guide),
             amount = guide.amount,
             radius = guide.radius,
-            falloff = guide.falloff
+            falloff = guide.falloff,
+            hue = guide.hue
         };
     }
 
@@ -380,7 +382,11 @@ public class GuideCurvePersistenceBridge : MonoBehaviour
             nodesLocal = FromNodes(saved),
             amount = Mathf.Clamp01(saved.amount),
             radius = Mathf.Max(.001f, saved.radius),
-            falloff = Mathf.Max(0f, saved.falloff)
+            falloff = Mathf.Max(0f, saved.falloff),
+
+            // Repeat rather than Clamp01. Hue is a wheel, so a hand-edited 1.2 means the same
+            // place as .2; clamping would silently pin it to magenta instead.
+            hue = Mathf.Repeat(saved.hue, 1f)
         };
     }
 

@@ -34,6 +34,27 @@ public class GroupPanelPostHintStats : MonoBehaviour
     private const float SoloButtonWidth = 52f;
     private const float SidednessButtonWidth = 40f;
     private const float NormalFlipButtonWidth = 36f;
+
+    // DEL, in the row's TOP-right corner rather than in the bottom-right utility strip with
+    // SOLO/UV/SS/N.
+    //
+    // Not for want of room - those four take 225px of a 330px row, so a fifth at 56 plus a gap
+    // would fit with space to spare. It is that a delete sitting in the middle of a run of
+    // harmless toggles is the one you hit by accident: SOLO, UV, SS and N± are all one click to
+    // set and one click to put back, and this one is not. The top lane is otherwise just the group
+    // name, which is left aligned, so there is a corner going spare that nothing reversible wants.
+    private const float DeleteButtonWidth = 56f;
+    private const float DeleteButtonHeight = 20f;
+    private const float DeleteTopInset = 3f;
+
+    // What the name has to give up so the two never overlap: the button, its right inset, and a
+    // gap. The name ellipsises rather than wrapping, so this shortens a long name instead of
+    // pushing it under the button.
+    //
+    // The inline RENAME field shortens with it, and that is wanted rather than incidental:
+    // GroupNameInlineEditAuthority builds its field by copying this label's rect, so without the
+    // reserve the caret and the text being typed would run under a live delete button.
+    private const float NameRightReserve = UtilityRightInset + DeleteButtonWidth + 6f;
     // Bump this whenever a line is added to ApplyHintStyle, or the last one gets clipped.
     // 113 carried nine lines at font 11, so about 12.6 each. Ten lines since the group pick got
     // a line of its own - it used to be ALT + CLICK and was not listed here at all, which was
@@ -159,7 +180,7 @@ public class GroupPanelPostHintStats : MonoBehaviour
                     "Click UV:ADJ/PRE for UV Mode\n" +
                     "Double Click Group name to rename it.\n" +
                     "Click in space to come out of mode\n" +
-                    "Right Click to remove a group\n" +
+                    "DEL or right click removes a group\n" +
                     "SPACE + Click to reposition Modifier\n" +
                     "SYMMETRY mirrors painting and erasing";
         hint.fontSize = 11f;
@@ -205,6 +226,7 @@ public class GroupPanelPostHintStats : MonoBehaviour
         // front block and put it underneath. It is deliberately absent.
         AddIfPresent(panel, GroomSymmetryAuthority.ButtonName);
         AddIfPresent(panel, MayaNavigationAuthority.ButtonName);
+        AddIfPresent(panel, GuideOverlayAuthority.ButtonName);
         AddIfPresent(panel, "TitleText");
         AddIfPresent(panel, "NewGroupButton");
         AddIfPresent(panel, "GroupScrollView");
@@ -305,6 +327,16 @@ public class GroupPanelPostHintStats : MonoBehaviour
             : null;
     }
 
+    // The name the row actually shows, from whatever is in the store. Public so nothing else has
+    // to guess at it: ModelViewer.GroupDisplayName asks this rather than reading groupNames, which
+    // is NOT the displayed name and is routinely the empty string.
+    public static string DisplayName(int gid, string stored)
+    {
+        string friendly = NormalizeFriendlyName(gid, stored);
+        if (string.IsNullOrWhiteSpace(friendly)) return "GROUP " + gid;
+        return friendly;
+    }
+
     static string NormalizeFriendlyName(int gid, string stored)
     {
         string value = (stored ?? string.Empty).Trim();
@@ -376,7 +408,7 @@ public class GroupPanelPostHintStats : MonoBehaviour
         titleRect.anchorMax = new Vector2(1f, 1f);
         titleRect.pivot = new Vector2(.5f, 1f);
         titleRect.offsetMin = new Vector2(2f, -23f);
-        titleRect.offsetMax = new Vector2(-2f, -2f);
+        titleRect.offsetMax = new Vector2(-NameRightReserve, -2f);
         nameText.fontSize = 14f;
         nameText.fontStyle = FontStyles.Bold;
         nameText.alignment = TextAlignmentOptions.TopLeft;
@@ -446,6 +478,21 @@ public class GroupPanelPostHintStats : MonoBehaviour
                   + SidednessButtonWidth + UtilityButtonGap),
                 UtilityBottomInset);
             normalFlipRect.sizeDelta = new Vector2(NormalFlipButtonWidth, UtilityButtonHeight);
+        }
+
+        // DEL, top right. This method owns the geometry of every child of a group row - the
+        // HorizontalLayoutGroup is switched off at the top of it - so a child WITHOUT a case here
+        // is not merely mispositioned, it keeps whatever RectTransform it was constructed with and
+        // lands wherever that happens to put it. ModelViewer builds this button; this is what
+        // places it.
+        Transform del = item.Find("DeleteButton");
+        if (del is RectTransform delRect)
+        {
+            delRect.anchorMin = new Vector2(1f, 1f);
+            delRect.anchorMax = new Vector2(1f, 1f);
+            delRect.pivot = new Vector2(1f, 1f);
+            delRect.anchoredPosition = new Vector2(-UtilityRightInset, -DeleteTopInset);
+            delRect.sizeDelta = new Vector2(DeleteButtonWidth, DeleteButtonHeight);
         }
     }
 }

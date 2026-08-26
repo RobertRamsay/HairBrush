@@ -56,14 +56,25 @@ public class GuideCurvePreviewAuthority : MonoBehaviour
     // the tube exists to stop.
     private const float MinTubeWorldRadius = .0005f;
 
-    private static readonly Color SelectedCurve = new Color(.72f, .45f, 1f, .95f);
-    private static readonly Color ZoneInner = new Color(.72f, .45f, 1f, .80f);
-    private static readonly Color ZoneOuter = new Color(.72f, .45f, 1f, .32f);
+    // The three strengths a guide is drawn at. The COLOUR is the guide's own now - see
+    // GuideCurveManager.CurveColor - and these are only the alphas it is used at, so a recoloured
+    // guide keeps the same reading of solid curve, firm inner ring, faint outer ring.
+    //
+    // The purple these replace lives on as GuideCurveManager.DefaultGuideHue, so an untouched
+    // guide still draws in exactly the colour it always did.
+    private const float CurveAlpha = .95f;
+    private const float ZoneInnerAlpha = .80f;
+    private const float ZoneOuterAlpha = .32f;
 
     private GuideCurveManager manager;
     private ModelViewer viewer;
     private Material lineMaterial;
     private Material tubeMaterial;
+
+    // The GUIDES ON TOP generation both materials were built against. Initialised to a value the
+    // authority can never report, so the first frame always rebuilds and nothing depends on the
+    // order this component and the toggle happen to wake up in.
+    private int overlayGeneration = -1;
 
     // One, not a pool. Only the selected guide is ever drawn, and a pool sized to the group
     // would be permanently all-but-empty with nothing left to explain what it was for.
@@ -99,6 +110,7 @@ public class GuideCurvePreviewAuthority : MonoBehaviour
         viewer = null;
         lineMaterial = null;
         tubeMaterial = null;
+        overlayGeneration = -1;
         control = null;
         samples = null;
         tubeVertices = null;
@@ -117,7 +129,7 @@ public class GuideCurvePreviewAuthority : MonoBehaviour
         if (viewer == null) viewer = FindFirstObjectByType<ModelViewer>();
 
         // The texture workspace parks the camera front-on against an opaque preview plane, and a
-        // curve still drawn there would be a purple stroke across a UV atlas. Nothing in this
+        // curve still drawn there would be a stroke across a UV atlas. Nothing in this
         // authority means anything in that mode, so it draws nothing at all.
         if (manager == null || viewer == null || TextureModeProbe.Active)
         {
@@ -137,15 +149,25 @@ public class GuideCurvePreviewAuthority : MonoBehaviour
             return;
         }
 
+        // Both materials are rebuilt when GUIDES ON TOP flips, because the difference between
+        // the two states is which SHADER they carry and a material's shader cannot be swapped
+        // after the fact. Keyed on a generation counter rather than on the bool so this runs once
+        // per change instead of testing - and rebuilding - every frame.
+        ReleaseMaterialsIfOverlayChanged();
+
         EnsureTube();
+        ApplyCurveColor(selected);
         DrawCurve(selected);
 
         EnsureZoneLines();
         float radius = Mathf.Max(.001f, selected.radius);
         float falloff = Mathf.Max(0f, selected.falloff);
 
-        DrawRing(zoneInner, selected.contact, selected.normal, radius, ZoneInner, .0022f);
-        if (falloff > .0001f) DrawRing(zoneOuter, selected.contact, selected.normal, radius + falloff, ZoneOuter, .0014f);
+        Color zoneInnerColor = GuideCurveManager.CurveColor(selected, ZoneInnerAlpha);
+        Color zoneOuterColor = GuideCurveManager.CurveColor(selected, ZoneOuterAlpha);
+
+        DrawRing(zoneInner, selected.contact, selected.normal, radius, zoneInnerColor, .0022f);
+        if (falloff > .0001f) DrawRing(zoneOuter, selected.contact, selected.normal, radius + falloff, zoneOuterColor, .0014f);
         else SetEnabled(zoneOuter, false);
     }
 
@@ -401,20 +423,109 @@ public class GuideCurvePreviewAuthority : MonoBehaviour
     // Its own material instance rather than the one the rings share, because the colour has to
     // live ON the material here. The rings carry theirs as LineRenderer vertex colours, which a
     // mesh would have to supply itself - and supplying both would multiply them together and
-    // give the curve a darker, more saturated purple than the rings it is meant to match. Both
+    // give the curve a darker, more saturated colour than the rings it is meant to match. Both
     // property names are set because which of the three shaders is found depends on the pipeline.
     void EnsureTubeMaterial()
     {
         if (tubeMaterial != null) return;
 
-        Shader shader = Shader.Find("Sprites/Default");
-        if (shader == null) shader = Shader.Find("Universal Render Pipeline/Unlit");
-        if (shader == null) shader = Shader.Find("Unlit/Color");
+        bool isOverlay;
+        Shader shader = ResolveShader(out isOverlay);
         if (shader == null) return;
 
         tubeMaterial = new Material(shader) { name = "HairBrushGuideCurveTube" };
-        if (tubeMaterial.HasProperty("_BaseColor")) tubeMaterial.SetColor("_BaseColor", SelectedCurve);
-        if (tubeMaterial.HasProperty("_Color")) tubeMaterial.SetColor("_Color", SelectedCurve);
+        PushBelowHandles(tubeMaterial, isOverlay);
+    }
+
+    // On the GUIDES ON TOP path the curve, the zone rings and the guide's HANDLE points all end
+    // up on HairBrush/Overlay - same queue, same ZTest Always. The curve passes exactly through
+    // every handle centre, so the transparent queue's distance sort has nothing to separate them
+    // and which one draws last is undefined frame to frame: the handles would flicker in and out
+    // from behind the curve.
+    //
+    // One below the queue the handles use puts the curve first for certain. The handle rings are
+    // what you reach for, and HairBrushOverlay.shader's own header says the Overlay queue exists
+    // so a point sits on top of the guide curve - this is what keeps that true once the curve is
+    // in that queue too.
+    //
+    // Does nothing on the depth-tested path. With the toggle off the handles are on the overlay
+    // queue and the curve is not, so they are already above it; with the toggle on but the overlay
+    // shader missing, the handles have fallen back to the SAME queue as the curve, which is a tie
+    // rather than an inversion - and stamping a number on one side of that tie is what would
+    // create the inversion.
+    static void PushBelowHandles(Material material, bool isOverlay)
+    {
+        if (material == null) return;
+
+        // Keyed on the shader that was actually RESOLVED, not on the toggle. On a build where
+        // HairBrush/Overlay is missing, ResolveShader falls back to the depth-tested shader with
+        // the toggle still on - and the handle rings fall back with it, to queue 3000. Stamping
+        // 3999 on the curve there would put it ABOVE the handles, inverting the very ordering this
+        // method exists to guarantee.
+        if (!isOverlay) return;
+
+        material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Overlay - 1;
+    }
+
+    // The colour is pushed every frame rather than at creation, because the hue slider moves it
+    // while the guide is selected and a material built once would hold the colour it was born in.
+    // Cheap: SetColor on an already-correct material is a no-op comparison away, and this runs
+    // only while a guide is actually selected.
+    void ApplyCurveColor(GuideCurveManager.GuideCurve guide)
+    {
+        if (tubeMaterial == null) return;
+
+        Color colour = GuideCurveManager.CurveColor(guide, CurveAlpha);
+        if (tubeMaterial.HasProperty("_BaseColor")) tubeMaterial.SetColor("_BaseColor", colour);
+        if (tubeMaterial.HasProperty("_Color")) tubeMaterial.SetColor("_Color", colour);
+    }
+
+    // Which shader the curve and its rings draw with, and therefore whether they are hidden by
+    // the hair and the head.
+    //
+    // HairBrush/Overlay is ZTest Always at queue Overlay. It used to carry a note saying it was
+    // deliberately NOT for the curve tube or the influence rings - written when depth-testing them
+    // was the only behaviour there was. GUIDES ON TOP is the case that note did not anticipate,
+    // and the shader's header now says so. The handle points it was originally written for are
+    // unaffected either way: they are not routed through here, and PushBelowHandles keeps them on
+    // top of the curve once the curve joins them in that queue.
+    static Shader ResolveShader(out bool isOverlay)
+    {
+        isOverlay = false;
+
+        if (GuideOverlayAuthority.Enabled)
+        {
+            Shader overlay = Shader.Find("HairBrush/Overlay");
+            if (overlay != null)
+            {
+                isOverlay = true;
+                return overlay;
+            }
+
+            // Missing overlay shader falls through to the depth-tested path rather than drawing
+            // nothing. GuideCurveHandleAuthority already warns about this exact shader being
+            // absent, so a second warning here would be noise on the same broken build.
+        }
+
+        Shader shader = Shader.Find("Sprites/Default");
+        if (shader == null) shader = Shader.Find("Universal Render Pipeline/Unlit");
+        if (shader == null) shader = Shader.Find("Unlit/Color");
+        return shader;
+    }
+
+    // A material's shader is fixed once it is created, so flipping GUIDES ON TOP means throwing
+    // both materials away and letting Ensure* build them again against the other shader. The
+    // LineRenderers keep their own references, so they are re-pointed in EnsureZoneLines.
+    void ReleaseMaterialsIfOverlayChanged()
+    {
+        int generation = GuideOverlayAuthority.Generation;
+        if (generation == overlayGeneration) return;
+        overlayGeneration = generation;
+
+        if (tubeMaterial != null) Destroy(tubeMaterial);
+        tubeMaterial = null;
+        if (lineMaterial != null) Destroy(lineMaterial);
+        lineMaterial = null;
     }
 
     void EnsureZoneLines()
@@ -422,16 +533,23 @@ public class GuideCurvePreviewAuthority : MonoBehaviour
         EnsureMaterial();
         if (zoneInner == null) zoneInner = CreateLine("GuideZoneRadiusRing", true);
         if (zoneOuter == null) zoneOuter = CreateLine("GuideZoneFalloffRing", true);
+
+        // Re-pointed every time rather than only at creation. The rings outlive the material when
+        // GUIDES ON TOP flips - ReleaseMaterialsIfOverlayChanged destroys it and EnsureMaterial
+        // builds a new one - and a LineRenderer left holding the destroyed one draws as magenta.
+        if (lineMaterial == null) return;
+        if (zoneInner != null && zoneInner.sharedMaterial != lineMaterial) zoneInner.sharedMaterial = lineMaterial;
+        if (zoneOuter != null && zoneOuter.sharedMaterial != lineMaterial) zoneOuter.sharedMaterial = lineMaterial;
     }
 
     void EnsureMaterial()
     {
         if (lineMaterial != null) return;
-        Shader shader = Shader.Find("Sprites/Default");
-        if (shader == null) shader = Shader.Find("Universal Render Pipeline/Unlit");
-        if (shader == null) shader = Shader.Find("Unlit/Color");
+        bool isOverlay;
+        Shader shader = ResolveShader(out isOverlay);
         if (shader == null) return;
         lineMaterial = new Material(shader) { name = "HairBrushGuideCurvePreview" };
+        PushBelowHandles(lineMaterial, isOverlay);
     }
 
     LineRenderer CreateLine(string name, bool loop)
@@ -445,7 +563,12 @@ public class GuideCurvePreviewAuthority : MonoBehaviour
         line.numCapVertices = 2;
         line.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
         line.receiveShadows = false;
-        if (lineMaterial != null) line.material = lineMaterial;
+        // sharedMaterial, NOT material. Assigning .material makes Unity clone the material into
+        // a per-renderer instance, so the two rings would hold two copies of it and neither would
+        // be the one OnDestroy cleans up - and, since GUIDES ON TOP now swaps the material out,
+        // the ring would go on drawing with a shader the toggle has already moved off. They carry
+        // their colour as vertex colours, so there is nothing per-ring for an instance to hold.
+        if (lineMaterial != null) line.sharedMaterial = lineMaterial;
         line.enabled = false;
         return line;
     }

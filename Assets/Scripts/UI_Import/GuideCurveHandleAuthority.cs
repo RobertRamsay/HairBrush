@@ -64,6 +64,17 @@ public class GuideCurveHandleAuthority : MonoBehaviour
     // How far a press has to travel before it counts as a root drag rather than a click.
     private const float DragStartPixels = 3f;
 
+    // How close to the nearest handle another one has to project before the two count as tied and
+    // depth decides between them. Four pixels: wide enough to catch the end-on case, where the
+    // whole guide collapses to a smudge, and narrow enough that two handles a comfortable
+    // distance apart on screen are still picked by pointing at one of them.
+    private const float PickTieBandPixels = 4f;
+
+    // How far a node may be dragged from the contact, as a multiple of the guide's own extent at
+    // the moment of the press, and the floor that multiple is taken against. See CaptureNodeDrag.
+    private const float DragReachFactor = 3f;
+    private const float MinDragReach = .01f;
+
     // The ROOT, as a value dragging can hold alongside a node index.
     //
     // Not an index because the root is not a node: it is guide.contact, which lives outside
@@ -76,11 +87,19 @@ public class GuideCurveHandleAuthority : MonoBehaviour
     // curve becomes hard to hit at a shallow angle.
     private const float CurvePixelRadius = 14f;
 
-    // Green, and deliberately nowhere near the purple used by the curve tube and the two
-    // influence rings - all three of which are drawn at or from this exact point. While the
-    // contact was a marker, matching them was the right call; now that it is the handle that
+    // Green, and deliberately nowhere near the purple the curve tube and the two influence rings
+    // are drawn in BY DEFAULT - all three of which are drawn at or from this exact point. While
+    // the contact was a marker, matching them was the right call; now that it is the handle that
     // moves the whole guide it has to read as a handle, and the other handles are all off that
     // palette for the same reason.
+    //
+    // "By default" is doing real work in that sentence now. A guide's colour is the user's, and
+    // this green's own hue is .375 - so a Colour slider dialled to about there returns
+    // (.45, 1, .59) against this (.40, 1, .55), and the root handle stops standing out from the
+    // curve it sits on. These stay fixed rather than being pushed off the
+    // chosen hue: the handle colours mean POSITION - root, middle, tip - and a set that shifted
+    // with the guide would stop meaning that. Two guides coloured to collide with their own
+    // handles is a thing the user can see and undo; handles that changed colour per guide is not.
     private static readonly Color ContactColor = new Color(.40f, 1f, .55f, .95f);
     private static readonly Color MidColor = new Color(1f, .78f, .30f, .95f);
     private static readonly Color EndColor = new Color(.40f, .85f, 1f, .95f);
@@ -131,6 +150,12 @@ public class GuideCurveHandleAuthority : MonoBehaviour
     private Vector2 rootDragOrigin;
     private bool rootDragArmed;
 
+    // The plane a NODE drag solves against, captured at the press, and how far from the contact
+    // that drag may take the node. All initialised here. See CaptureNodeDrag.
+    private Vector3 dragPlanePoint = Vector3.zero;
+    private Vector3 dragPlaneNormal = Vector3.back;
+    private float dragReachLimit = 0f;
+
     private const string LockOwner = "GuideHandleEditing";
     private bool restorePending;
     private int restoreRequestedFrame;
@@ -157,6 +182,9 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         rootDragCount = 0;
         rootDragOrigin = Vector2.zero;
         rootDragArmed = false;
+        dragPlanePoint = Vector3.zero;
+        dragPlaneNormal = Vector3.back;
+        dragReachLimit = 0f;
         restorePending = false;
         restoreRequestedFrame = -1;
     }
@@ -315,11 +343,15 @@ public class GuideCurveHandleAuthority : MonoBehaviour
             }
         }
 
-        // A camera gesture mid-drag drops the drag. DragTo solves against a plane rebuilt from
-        // the CURRENT camera forward through the handle's CURRENT position, so while the camera
-        // swings the solution keeps the same screen position and depth - the handle is carried
-        // rigidly around the model and the height clamp then slides it along the surface, leaving
-        // the guide arbitrarily deformed by a gesture that was only meant to change the view.
+        // A camera gesture mid-drag drops the drag. DragTo solves against a plane captured at the
+        // press and fixed in the world, so while the camera swings the cursor goes on hitting that
+        // same plane from a new direction - the handle is dragged sideways across it, the height
+        // clamp then slides it along the surface, and the guide is left arbitrarily deformed by a
+        // gesture that was only meant to change the view.
+        //
+        // The plane used to be rebuilt every frame instead, and this test was needed then too for
+        // a slightly different reason: the handle was carried rigidly around the model. The test
+        // predates the capture and survives it unchanged.
         //
         // Under MAYA-NAV a bare right or middle press moves no camera at all, and this still drops
         // the drag. Deliberate: what the test really means is "the user has started doing
@@ -340,9 +372,10 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         // CTRL, TAB and SPACE all mean "this click belongs to another gesture". SPACE+click in
         // particular repositions the guide, and GuideCurveManager has already moved its contact by
         // the time this LateUpdate runs - so without this test the same click would ALSO grab a
-        // handle (END wins ties, and viewed end-on all three points project within a few pixels
-        // of each other) and drag it for the rest of the hold. The gesture that promises to keep
-        // the guide's form would be the one destroying it.
+        // handle (viewed end-on the points project within a few pixels of each other, and
+        // PickHandle hands that click to whichever NODE is nearest the camera - the root is
+        // settled on screen distance before depth is consulted) and drag it for the rest of the
+        // hold. The gesture that promises to keep the guide's form would be the one destroying it.
         bool modifierHeld = Keyboard.current != null &&
                             (Keyboard.current.ctrlKey.isPressed ||
                              Keyboard.current.tabKey.isPressed ||
@@ -357,6 +390,7 @@ public class GuideCurveHandleAuthority : MonoBehaviour
                 dragging = hit;
                 draggingGuideId = guide.id;
                 if (hit == RootHandle) CaptureRootDrag(guide, mouse);
+                else CaptureNodeDrag(guide, hit);
             }
             else
             {
@@ -394,7 +428,7 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         }
         else if (dragging >= 0 && Mouse.current.leftButton.isPressed)
         {
-            DragTo(guide, GuideCurveManager.WorldNode(guide, dragging), mouse);
+            DragTo(guide, mouse);
         }
 
         int hot = dragging;
@@ -402,12 +436,13 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         DrawHandles(guide, hot);
     }
 
-    // Drags in the plane through the handle that faces the camera. No axis gizmo, by design:
-    // the handle simply goes where the cursor goes, at the depth it already had.
-    void DragTo(GuideCurveManager.GuideCurve guide, Vector3 anchor, Vector2 mouse)
+    // Drags in the plane that faced the camera AT THE PRESS. No axis gizmo, by design: the
+    // handle simply goes where the cursor goes, at the depth it already had. See CaptureNodeDrag
+    // for why the plane is captured rather than rebuilt each frame.
+    void DragTo(GuideCurveManager.GuideCurve guide, Vector2 mouse)
     {
         Camera cam = viewer.mainCamera;
-        Plane plane = new Plane(-cam.transform.forward, anchor);
+        Plane plane = new Plane(dragPlaneNormal, dragPlanePoint);
         Ray ray = cam.ScreenPointToRay(mouse);
 
         float distance;
@@ -415,6 +450,19 @@ public class GuideCurveHandleAuthority : MonoBehaviour
 
         Vector3 world = ray.GetPoint(distance);
         Vector3 local = GuideCurveManager.ToLocal(guide, world);
+
+        // Reach first, then height, and the order is deliberate: whichever runs last is the one
+        // whose limit is guaranteed to hold. Height last means a node can never end up below the
+        // surface, which is the limit that matters - a guide pointing into the scalp drives cards
+        // through it. Reach last would guarantee the distance instead and could push a floored
+        // point back under.
+        //
+        // The height clamp's own displacement is NOT small, incidentally: drag a point down
+        // through the scalp and the plane solution lands well below it, so the clamp lifts it by
+        // a real fraction of the guide's length. That is exactly why it goes second.
+        if (dragReachLimit > 0f && local.magnitude > dragReachLimit)
+            local = local.normalized * dragReachLimit;
+
         if (local.y < GuideCurveManager.MinNodeHeight) local.y = GuideCurveManager.MinNodeHeight;
 
         GuideCurveManager.SetNode(guide, dragging, local);
@@ -437,6 +485,43 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         if (!Physics.Raycast(ray, out hit)) return;
 
         manager.MoveGuideRoot(guide, hit.point, hit.normal, rootDragWorld, rootDragCount);
+    }
+
+    // Everything a NODE drag has to remember from the moment of the press.
+    //
+    // THE PLANE. DragTo used to rebuild it every frame from the node's CURRENT position, which is
+    // fine right up until something moves the node off that plane - and the height clamp does
+    // exactly that, on every frame it engages. The node is pushed along the guide's up axis, the
+    // plane is rebuilt at wherever it landed, and at any angle where that axis has a component
+    // along the view the pair walk each other away from the camera a little per frame. Captured
+    // once, the plane cannot be pushed, so the clamp slides the node ALONG it and stops.
+    //
+    // Captured as a world point and a world normal rather than as a distance from the camera, so
+    // that a wheel zoom mid-drag - the one camera move that does NOT drop the drag - moves the
+    // view without moving the plane the node is being solved against.
+    //
+    // THE REACH. How far this node may end up from the contact. A camera-facing plane is a plane:
+    // it extends forever, so the arithmetic is perfectly happy to put a control point a hundred
+    // units out in space, and at a shallow angle a small cursor movement is a large world one.
+    // Three times the guide's current extent is enough to lengthen a guide substantially in one
+    // drag and nowhere near enough to lose it.
+    void CaptureNodeDrag(GuideCurveManager.GuideCurve guide, int index)
+    {
+        dragPlanePoint = GuideCurveManager.WorldNode(guide, index);
+        dragPlaneNormal = -viewer.mainCamera.transform.forward;
+
+        float reach = 0f;
+        int count = GuideCurveManager.NodeCount(guide);
+        for (int i = 0; i < count; i++)
+        {
+            float length = guide.nodesLocal[i].magnitude;
+            if (length > reach) reach = length;
+        }
+
+        // The floor matters for a guide that has been dragged almost flat: without it the reach
+        // limit collapses to nothing and the node cannot be pulled back OUT again.
+        if (reach < MinDragReach) reach = MinDragReach;
+        dragReachLimit = reach * DragReachFactor;
     }
 
     // Taken the instant the root is grabbed, and read unchanged for the rest of the drag.
@@ -469,39 +554,89 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         // the first place - only the imported head has one. It spoke about the skull and nothing
         // else, and a point drawn through the skull is one you have gone looking at deliberately.
         //
-        // The handle FURTHEST out wins a tie, which is what the two point version did and for the
-        // same reason: viewed end-on the points project within a few pixels of each other, and
-        // the one being reached for is the one nearest the tip. The comparison is strictly nearer,
-        // so walking backwards is what settles an exact tie in the tip's favour.
+        // TWO PASSES, and the second one is the whole point.
+        //
+        // Screen distance alone cannot separate these handles at the angle it matters most.
+        // Viewed end-on - which is the view you aim a guide FROM - every node projects within a
+        // few pixels of the contact and of each other, so whichever happened to be a fraction of
+        // a pixel nearer won. The one that won was usually not the one being reached for, and
+        // because each handle sits at its own depth the drag then solved in that handle's plane:
+        // the point jumped to a depth the user never asked for and the guide appeared to fling
+        // itself into space. That is the "sometimes it drifts backwards" report, and it is a PICK
+        // bug wearing a drag bug's clothes.
+        //
+        // So: pass one finds the nearest on screen, pass two treats everything within a few pixels
+        // of that as tied and hands the tie to the handle NEAREST THE CAMERA - the one drawn on
+        // top, and therefore the one the user is looking at when they click. Every handle draws
+        // with ZTest Always, so "on top" is the only reading of the picture there is.
         int best = -1;
-        float bestDistance = float.MaxValue;
-        for (int i = count - 1; i >= 0; i--)
-        {
-            Vector3 world = GuideCurveManager.WorldNode(guide, i);
-            float distance = ScreenDistance(mouse, world);
-            if (distance > GrabPixelRadius) continue;
-            if (distance >= bestDistance) continue;
+        float bestNodeDistance = float.MaxValue;
 
-            bestDistance = distance;
-            best = i;
+        for (int i = 0; i < count; i++)
+        {
+            float distance = ScreenDistance(mouse, GuideCurveManager.WorldNode(guide, i));
+            if (distance > GrabPixelRadius) continue;
+            if (distance < bestNodeDistance) bestNodeDistance = distance;
         }
 
         // The ROOT competes on distance like everything else rather than being consulted only
-        // after every node has refused.
-        //
-        // Last-resort ordering sounded like the safe choice and made the handle unreachable from
-        // the one view you actually aim a guide from. Looking down a guide's axis, every node
-        // projects within a few pixels of the contact - this file says so itself, twenty lines
-        // up - so a node always answered first and the ring directly under the cursor simply
-        // refused to move.
-        //
-        // Strictly nearer, so an exact tie still goes to a node. Every handle here shares one
-        // grab radius regardless of the size it is drawn at, so this is a comparison of centres
-        // and nothing else.
+        // after every node has refused. Last-resort ordering sounded like the safe choice and made
+        // the handle unreachable from the one view you actually aim a guide from.
         float rootDistance = ScreenDistance(mouse, guide.contact);
-        if (rootDistance <= GrabPixelRadius && rootDistance < bestDistance) return RootHandle;
+        bool rootInRange = rootDistance <= GrabPixelRadius;
+
+        // Settled on SCREEN DISTANCE, before depth is consulted at all, and on exactly the rule it
+        // has always had: strictly nearer than every node wins.
+        //
+        // It must NOT go into the depth contest below, and that is not a preference. A guide is
+        // born standing straight out along the surface normal, so looking down that axis - the
+        // view the depth rule exists for - the contact is by construction the FURTHEST point of
+        // the guide from the camera. Depth would hand every one of those clicks to the tip, and
+        // the root ring would stop responding from the one view you aim a guide from: the exact
+        // complaint the paragraph above records fixing.
+        if (rootInRange && rootDistance < bestNodeDistance) return RootHandle;
+
+        if (bestNodeDistance > GrabPixelRadius) return -1;
+
+        // Among the NODES, everything within a few pixels of the nearest counts as tied and the
+        // one nearest the camera - the one drawn on top - takes it.
+        //
+        // Clamped to the grab radius, so a near-miss at the edge cannot pull in a handle that was
+        // never grabbable in the first place: unclamped, a best of 16 would consider handles out
+        // to 20 and the effective radius would drift with the arrangement.
+        // The trade this makes, stated so nobody has to rediscover it: depth is consulted on
+        // EVERY pick, not only the end-on one, so on a guide crowded enough that consecutive nodes
+        // project three or four pixels apart, a click dead on one of them can still go to its
+        // neighbour if that neighbour is nearer the camera. Pre-patch an exact hit always won.
+        // Four pixels against inner handles drawn nineteen across - the tip and the contact are
+        // drawn larger still - is a small window to lose, and the
+        // alternative - trusting screen distance when it is precise - is what produced the
+        // original complaint, because end-on EVERY hit is precise and they are all on top of
+        // each other.
+        float band = Mathf.Min(bestNodeDistance + PickTieBandPixels, GrabPixelRadius);
+        float bestDepth = float.MaxValue;
+
+        for (int i = 0; i < count; i++)
+        {
+            Vector3 world = GuideCurveManager.WorldNode(guide, i);
+            if (ScreenDistance(mouse, world) > band) continue;
+
+            float depth = CameraDepth(world);
+            if (depth >= bestDepth) continue;
+
+            bestDepth = depth;
+            best = i;
+        }
 
         return best;
+    }
+
+    // Distance along the camera's view axis. Only ever compared against another of these, so the
+    // sign convention matters and the units do not.
+    float CameraDepth(Vector3 world)
+    {
+        Camera cam = viewer.mainCamera;
+        return Vector3.Dot(world - cam.transform.position, cam.transform.forward);
     }
 
     // ---------------------------------------------------------------------------------

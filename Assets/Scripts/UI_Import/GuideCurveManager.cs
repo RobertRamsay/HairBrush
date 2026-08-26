@@ -52,6 +52,30 @@ public class GuideCurveManager : MonoBehaviour
     public const float DefaultGuideRadius = .04f;
     public const float DefaultGuideFalloff = .04f;
 
+    // Guide colour is carried as a HUE and nothing else. Saturation and value are fixed, so
+    // every guide reads as the same KIND of thing however it is coloured - a recolour tells two
+    // overlapping guides apart, it does not let one be drawn muddy brown or washed-out grey.
+    //
+    // .7485 is not a round number on purpose: it is the exact hue of the purple every guide has
+    // been drawn in since guides existed. Color.HSVToRGB(.7485, .55, 1) returns (.72, .45, 1),
+    // which is the constant it replaces, so a project saved before this existed - and a guide
+    // created after it and never touched - looks exactly as it always did.
+    public const float DefaultGuideHue = .7485f;
+    public const float GuideSaturation = .55f;
+    public const float GuideValue = 1f;
+
+    // The one place a guide's hue becomes a colour. Alpha is the caller's business: the curve,
+    // the inner zone ring and the outer zone ring are the same colour at three strengths.
+    public static Color CurveColor(GuideCurve guide, float alpha)
+    {
+        float hue = DefaultGuideHue;
+        if (guide != null) hue = Mathf.Repeat(guide.hue, 1f);
+
+        Color rgb = Color.HSVToRGB(hue, GuideSaturation, GuideValue);
+        rgb.a = alpha;
+        return rgb;
+    }
+
     // How many points the arc-length table holds. The curve is a quadratic, so it is smooth
     // between samples; this only has to be fine enough that the cumulative-length approximation
     // does not visibly shorten the curve.
@@ -97,6 +121,11 @@ public class GuideCurveManager : MonoBehaviour
         [Range(0f, 1f)] public float amount = 0f;
         public float radius = DefaultGuideRadius;
         public float falloff = DefaultGuideFalloff;
+
+        // What colour this guide draws in. See DefaultGuideHue - initialised to the purple every
+        // guide used to be, so an untouched guide is indistinguishable from one made before
+        // guides could be recoloured.
+        [Range(0f, 1f)] public float hue = DefaultGuideHue;
     }
 
     private readonly Dictionary<int, List<GuideCurve>> byGroup = new Dictionary<int, List<GuideCurve>>();
@@ -475,6 +504,14 @@ public class GuideCurveManager : MonoBehaviour
     {
         if (selectedGuideId < 0) return null;
         return FindGuide(selectedGuideId);
+    }
+
+    // The same lookup, reachable from outside. GuideRowSwatch holds an ID rather than a guide
+    // because a project load replaces every guide object wholesale, and a captured reference
+    // would then point at one the manager no longer owns.
+    public GuideCurve FindGuidePublic(int id)
+    {
+        return FindGuide(id);
     }
 
     GuideCurve FindGuide(int id)
@@ -973,7 +1010,26 @@ public class GuideCurveManager : MonoBehaviour
         GameObject select = AddButton(row.transform, "GUIDE " + guide.id, 118f);
         select.GetComponent<Button>().onClick.AddListener(delegate { SelectGuide(capturedGroup, capturedId); });
 
-        AddText(row.transform, "CURVE", 10, 88f);
+        // The swatch replaces a "CURVE" label that said the same thing about every row. With
+        // several guides on one group the useful thing to show here is which one is which, and
+        // the colour is the only per-guide thing there is room for.
+        //
+        // A plain Image, no Button: the hue is set from the slider in the right panel, where it
+        // sits with the guide's other properties. Making the swatch itself cycle a palette was
+        // the alternative and gives up the full range for a shorter path to eight fixed colours.
+        // No LayoutElement: this row's HorizontalLayoutGroup has childControlWidth false, so it
+        // reads each child's own rect and ignores LayoutElement entirely - the AddButton siblings
+        // carry none either.
+        GameObject swatchGO = new GameObject("ColourSwatch", typeof(RectTransform), typeof(Image), typeof(GuideRowSwatch));
+        swatchGO.transform.SetParent(row.transform, false);
+        swatchGO.GetComponent<RectTransform>().sizeDelta = new Vector2(88f, 18f);
+        Image swatchImage = swatchGO.GetComponent<Image>();
+        swatchImage.raycastTarget = false;
+
+        // Painted here as well as by the component, or the row flashes white for the one frame
+        // between building it and GuideRowSwatch's first Update.
+        swatchImage.color = CurveColor(guide, 1f);
+        swatchGO.GetComponent<GuideRowSwatch>().Bind(this, capturedId);
 
         GameObject remove = AddButton(row.transform, "DEL", 40f);
         remove.GetComponent<Button>().onClick.AddListener(delegate { RemoveGuide(FindGuide(capturedId)); });
@@ -1006,6 +1062,11 @@ public class GuideCurveManager : MonoBehaviour
         AddSlider(controlsRoot.transform, "Radius", .001f, .25f, guide.radius, v => guide.radius = v);
         AddSlider(controlsRoot.transform, "Falloff", 0f, .25f, guide.falloff, v => guide.falloff = v);
 
+        // Colour, as a hue. One slider rather than three because saturation and value are fixed -
+        // see DefaultGuideHue - so there is exactly one degree of freedom to expose. The row's
+        // swatch follows it live, and the curve and its rings repaint the same frame.
+        AddSlider(controlsRoot.transform, "Colour", 0f, 1f, guide.hue, v => guide.hue = v);
+
         GameObject done = AddButton(controlsRoot.transform, "DONE", 120f);
         done.GetComponent<Button>().onClick.AddListener(ClearSelection);
 
@@ -1016,6 +1077,7 @@ public class GuideCurveManager : MonoBehaviour
         AddHint(controlsRoot.transform, "CTRL + SHIFT + RIGHT CLICK a point removes it (not the tip)");
         AddHint(controlsRoot.transform, "SPACE + CLICK moves this guide, keeping its shape");
         AddHint(controlsRoot.transform, "Card placing is OFF while a guide is selected");
+        AddHint(controlsRoot.transform, "Colour tells overlapping guides apart - it is saved");
         AddHint(controlsRoot.transform, "DONE, ESC, empty space or another group closes this");
     }
 
@@ -1644,5 +1706,46 @@ public static class GuideDeformation
         if (d <= radius) return 1f;
         if (guide.falloff <= .000001f || d >= outer) return 0f;
         return Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(outer, radius, d));
+    }
+}
+
+// The colour chip on a guide's row in the left panel.
+//
+// Repaints itself rather than being repainted by EnsureRows, because the hue slider moves while
+// the row is already built and EnsureRows only touches a row's background when the SELECTION
+// changes. A row rebuilt for any other reason would otherwise carry the colour it was born with
+// until something unrelated happened.
+//
+// Holds the guide's ID and looks the guide up, rather than holding the guide itself: guides are
+// replaced wholesale by a project load (GuideCurveManager.ReplaceAll), so a captured reference
+// would be to an object that is no longer in the manager and the chip would freeze.
+public class GuideRowSwatch : MonoBehaviour
+{
+    private GuideCurveManager manager;
+    private int guideId = -1;
+    private Image image;
+    private float lastHue = float.MinValue;
+
+    public void Bind(GuideCurveManager owner, int id)
+    {
+        manager = owner;
+        guideId = id;
+        image = GetComponent<Image>();
+        lastHue = float.MinValue;
+    }
+
+    private void Update()
+    {
+        if (manager == null || image == null) return;
+
+        GuideCurveManager.GuideCurve guide = manager.FindGuidePublic(guideId);
+        if (guide == null) return;
+
+        // Only write when it actually moved. This runs every frame for every guide row on screen,
+        // and assigning Image.color dirties the canvas whether or not the value differs.
+        if (Mathf.Approximately(guide.hue, lastHue)) return;
+        lastHue = guide.hue;
+
+        image.color = GuideCurveManager.CurveColor(guide, 1f);
     }
 }

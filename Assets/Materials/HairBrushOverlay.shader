@@ -10,7 +10,10 @@
 // Sprites/Default cannot be told to skip it - it has no _ZTest property and its pass hardcodes
 // the default - which is why this is a shader rather than three lines of C#.
 //
-// Kept to exactly what the LineRenderers it serves need, and no more:
+// Kept to exactly what its clients need, and no more. Those are the LineRenderers below, plus -
+// only while GUIDES ON TOP is on - the guide curve's TUBE, which is a MeshRenderer. The tube's
+// mesh carries no colour stream at all, so its COLOR attribute defaults to white and its colour
+// arrives through _Color instead; both paths work because the fragment multiplies the two.
 //
 //   Cull Off       - the rings are flat circles seen from either side.
 //   ZWrite Off     - nothing behind an overlay should be occluded BY it.
@@ -22,9 +25,16 @@
 //   _Color         - a plain tint on top, left white by default, so a caller that carries its
 //                    colour on the material instead of per vertex still works.
 //
-// Deliberately NOT used for the guide curve tube or the influence rings. The curve keeps its
-// depth test so you can still read where it passes behind the head, and the influence rings sit
-// ON the surface, where drawing through the skull would look like a bug rather than a feature.
+// The guide curve tube and the influence rings use this too, but ONLY while GUIDES ON TOP is
+// switched on - see GuideOverlayAuthority. Off, which is the default, they keep their depth test,
+// because reading where a curve passes behind the head is worth having and the influence rings
+// sit ON the surface, where drawing through the skull looks like a bug rather than a feature. On
+// a full head the curve is buried in the very hair it steers, which is the case that toggle is
+// for.
+//
+// When they do come in here they are pinned one queue BELOW this one, so the handle points still
+// sit on top of the curve as the Queue note above promises. Same depth, same queue and no sort
+// between them is not a tie this file can win.
 Shader "HairBrush/Overlay"
 {
     Properties

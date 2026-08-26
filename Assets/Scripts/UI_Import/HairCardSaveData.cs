@@ -159,6 +159,11 @@ public class GuideCurveSaveData
     public float amount;
     public float radius=GuideCurveManager.DefaultGuideRadius;
     public float falloff=GuideCurveManager.DefaultGuideFalloff;
+
+    // Colour, as a hue. Defaulted rather than left at zero, and that matters: JsonUtility leaves
+    // a field at its initialiser when the key is absent, so every project saved before guides
+    // could be recoloured loads at the original purple. Zero would have loaded them all as RED.
+    public float hue=GuideCurveManager.DefaultGuideHue;
 }
 
 // One point on a guide, in the guide's own contact frame.

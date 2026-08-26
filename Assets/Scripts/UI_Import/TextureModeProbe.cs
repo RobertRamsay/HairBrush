@@ -8,7 +8,7 @@ using UnityEngine;
 // to itself, and it does not get it for free: the plane sits at z = 1.5 while the model and every
 // ring and curve hanging off it sit at the origin, with the camera at z = -3 looking down +z. So
 // the previews are all IN FRONT of the plane. Nothing is hidden by it, depth test or no depth test
-// - a guide left drawing there lays a purple curve straight across the atlas.
+// - a guide left drawing there lays its curve straight across the atlas.
 //
 // Seven previews needed this test. Three had written their own copy of it and four had none.
 //
