@@ -24,6 +24,7 @@ public class RemapPhaseBar : MonoBehaviour
     private GameObject mirrorButton;
     private GameObject processButton;
     private GameObject revertButton;
+    private GameObject confirmButton;
     private TextMeshProUGUI toneLabel;
     private Image toneFill;
 
@@ -110,7 +111,7 @@ public class RemapPhaseBar : MonoBehaviour
             RemapProjectionReport report = session.PreviewReport;
             string detail = "";
             if (report != null) detail = report.ToString();
-            status.text = "Nothing has been saved. REVERT puts it back on the original head; CANCEL leaves the whole session with your groom untouched.   " + detail;
+            status.text = "CONFIRM saves this as a new project and makes the new head the current model. REVERT puts it back; CANCEL leaves your groom untouched.   " + detail;
         }
         if (!ready)
         {
@@ -126,6 +127,7 @@ public class RemapPhaseBar : MonoBehaviour
         mirrorButton.SetActive(!auto && !ready);
         processButton.SetActive(!auto && !ready);
         revertButton.SetActive(ready);
+        confirmButton.SetActive(ready);
 
         // Dead rather than hidden. A button that vanishes reads as a bug; one that is visibly
         // disabled next to a status line naming what is missing reads as an instruction.
@@ -273,6 +275,19 @@ public class RemapPhaseBar : MonoBehaviour
         StatusToast.Show("Put back on the original head. Adjust the markers and process again.");
     }
 
+    void OnConfirm()
+    {
+        string failure;
+        if (!RemapCommit.Confirm(session, out failure))
+        {
+            // An empty reason is a cancelled save dialog, which is not a failure and gets no
+            // complaint - the session is still up and still revertable.
+            if (!string.IsNullOrEmpty(failure)) StatusToast.Show("Could not confirm the remap: " + failure + ".", true);
+            return;
+        }
+        StatusToast.Show("Remapped groom saved and loaded. The new head is now the current model.");
+    }
+
     void OnCancel()
     {
         session.End(true);
@@ -347,6 +362,7 @@ public class RemapPhaseBar : MonoBehaviour
         nextButton = AddButton(bar.transform, "RemapPhaseNext", "NEXT: EAR MARKERS", new Color(.20f, .44f, .34f), OnNext);
         processButton = AddButton(bar.transform, "RemapPhaseProcess", "PROCESS", new Color(.20f, .44f, .34f), OnProcess);
         revertButton = AddButton(bar.transform, "RemapPhaseRevert", "REVERT", new Color(.40f, .34f, .22f), OnRevert);
+        confirmButton = AddButton(bar.transform, "RemapPhaseConfirm", "CONFIRM + SAVE AS", new Color(.20f, .48f, .36f), OnConfirm);
         AddButton(bar.transform, "RemapPhaseCancel", "CANCEL", new Color(.44f, .26f, .22f), OnCancel);
     }
 

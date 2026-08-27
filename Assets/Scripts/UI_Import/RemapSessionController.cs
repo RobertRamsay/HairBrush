@@ -390,6 +390,43 @@ public class RemapSessionController : MonoBehaviour
         return true;
     }
 
+    // Where the new head came from, and what it was imported as. Both go into the project CONFIRM
+    // writes, so the saved file points at the new OBJ and records the scale it was normalised to.
+    public string TargetSourcePath
+    {
+        get
+        {
+            if (targetModel == null) return string.Empty;
+            ImportedOBJMetadata metadata = targetModel.GetComponent<ImportedOBJMetadata>();
+            if (metadata == null) return string.Empty;
+            return metadata.sourcePath;
+        }
+    }
+
+    public ImportMetadataSaveData TargetImportMetadata()
+    {
+        ImportMetadataSaveData captured = new ImportMetadataSaveData();
+        if (targetModel == null) return captured;
+        ImportedOBJMetadata metadata = targetModel.GetComponent<ImportedOBJMetadata>();
+        if (metadata == null) return captured;
+
+        captured.appliedScale = metadata.appliedScale;
+        captured.normalisationMode = metadata.normalisationMode;
+        captured.normalisationTarget = metadata.normalisationTarget;
+        captured.measuredExtent = metadata.measuredExtent;
+        captured.meshHash = metadata.meshHash;
+        return captured;
+    }
+
+    // Keep the preview instead of undoing it. Dropping the snapshot is the whole of it: End()
+    // reverts only while one exists, so letting go of it turns the preview into the session's
+    // actual state.
+    public void CommitPreview()
+    {
+        previewSnapshot = null;
+        previewReport = null;
+    }
+
     public void RevertPreview()
     {
         if (previewSnapshot == null) return;

@@ -1,0 +1,272 @@
+diff --git a/Assets/Scripts/UI_Import/RemapCommit.cs b/Assets/Scripts/UI_Import/RemapCommit.cs
+new file mode 100644
+index 0000000..993f121
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/RemapCommit.cs
+@@ -0,0 +1,108 @@
++using System.IO;
++using UnityEngine;
++#if UNITY_EDITOR
++using UnityEditor;
++#endif
++
++// CONFIRM: make the remapped groom, on the new head, the session.
++//
++// The obvious implementation is the wrong one. Swapping ModelViewer.loadedModel for the target
++// head by hand would take about four lines and destroy the groom in the process: fifteen
++// authorities poll that field for reference identity and treat a change as "new session, clear my
++// state". SessionModifierFreshStartAuthority would delete the very clumpers the remap just moved;
++// GroupPredeterminedUVLifecycle would clear the UV settings; PostLoadSelectionReset, the shape
++// curve bridges and TextureUVRectWorkspace would all follow.
++//
++// The one route where every one of them behaves is a real project load, because that is the path
++// their pending-restore guards were written for. So CONFIRM writes a project file describing the
++// remapped groom against the NEW model, and then loads it. The swap is a side effect of the load
++// rather than something this code has to arrange.
++//
++// It saves rather than saving-in-place on purpose - Bob's own framing: a new file, so the new
++// model is the current one and the old is forgotten, with the original project still on disk
++// untouched if the remap turns out to have been a mistake.
++public static class RemapCommit
++{
++    public static bool Confirm(RemapSessionController session, out string failure)
++    {
++        failure = string.Empty;
++        if (session == null || !session.SessionActive)
++        {
++            failure = "no REMAP session is running";
++            return false;
++        }
++        if (!session.PreviewApplied)
++        {
++            failure = "nothing has been processed yet";
++            return false;
++        }
++
++        string modelPath = session.TargetSourcePath;
++        if (string.IsNullOrEmpty(modelPath))
++        {
++            failure = "the new head has no source path recorded";
++            return false;
++        }
++
++        RuntimeNavigationProjectIO io = Object.FindFirstObjectByType<RuntimeNavigationProjectIO>();
++        if (io == null)
++        {
++            failure = "the project save/load service is not available";
++            return false;
++        }
++
++        string savePath = ChooseSavePath();
++        // A cancelled save leaves the session exactly as it was, still previewing, still
++        // revertable. Cancelling a file dialog should never be the thing that commits or discards
++        // an edit.
++        if (string.IsNullOrEmpty(savePath)) return false;
++
++        HairProjectSaveData data = io.BuildSaveData();
++        if (data == null)
++        {
++            failure = "the session could not be captured";
++            return false;
++        }
++
++        // Built from the live scene, which is already remapped - so the cards, guides, clumpers
++        // and POSTs in this payload are at their NEW positions. Only the model identity has to be
++        // corrected, because BuildSaveData read it from the head still installed in the viewer.
++        //
++        // Every card also carries its frozen identity in this payload, so the variance, the
++        // predetermined UV rectangles and the clump leaders all come back on load exactly as they
++        // were authored on the original head. That is the whole point of the identity fields.
++        data.modelPath = modelPath;
++        data.importMetadata = session.TargetImportMetadata();
++
++        try
++        {
++            File.WriteAllText(savePath, JsonUtility.ToJson(data, true));
++        }
++        catch (System.Exception exception)
++        {
++            Debug.LogException(exception);
++            failure = "the project could not be written";
++            return false;
++        }
++
++        // Order matters. CommitPreview first, so End stops treating the remap as something to undo;
++        // End second, to put the layers, the culling masks, the camera rect and the input lock back
++        // and to destroy the session's copy of the new head; the load last, which imports that head
++        // again cleanly and rebuilds the whole session around it.
++        session.CommitPreview();
++        session.End(true);
++        io.LoadProjectFromPath(savePath);
++
++        Debug.Log("HairBrush REMAP: confirmed onto " + Path.GetFileName(modelPath) + ", saved as " + savePath);
++        return true;
++    }
++
++    static string ChooseSavePath()
++    {
++#if UNITY_EDITOR
++        return EditorUtility.SaveFilePanel("Save Remapped Project", "", "HairProject_remapped", "json");
++#else
++        return RuntimeFileDialog.SaveFile("Save Remapped Project", "HairBrush Projects\0*.json\0All Files\0*.*\0\0", "HairProject_remapped", "json");
++#endif
++    }
++}
+diff --git a/Assets/Scripts/UI_Import/RemapCommit.cs.meta b/Assets/Scripts/UI_Import/RemapCommit.cs.meta
+new file mode 100644
+index 0000000..2dd8c82
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/RemapCommit.cs.meta
+@@ -0,0 +1,2 @@
++fileFormatVersion: 2
++guid: 1a760864b78b48099a18444f958d1e72
+diff --git a/Assets/Scripts/UI_Import/RemapMarkers.cs b/Assets/Scripts/UI_Import/RemapMarkers.cs
+index 8467c89..5ceab4d 100644
+--- a/Assets/Scripts/UI_Import/RemapMarkers.cs
++++ b/Assets/Scripts/UI_Import/RemapMarkers.cs
+@@ -71,7 +71,15 @@ public class RemapMarker
+ 
+ public static class RemapMarkerSet
+ {
+-    public const int AutoMarkerCount = 10;
++    // Thirty rather than ten. Ten spreads well over a scalp, but a groom that also carries a
++    // beard is two regions with a face between them, and the farthest-point pass spends its first
++    // handful of picks on the outer extremes of the whole cloud - which left the jaw and chin
++    // under-constrained, so the warp there was interpolating across a gap instead of following
++    // markers. The solve is a (N+4) square system either way; thirty is 34x34, still nothing.
++    //
++    // They are estimated onto the new head automatically now, so the cost of raising this is
++    // review rather than placement.
++    public const int AutoMarkerCount = 30;
+ 
+     // Named rather than free points. A triangle of three per ear pins the region's position,
+     // scale AND rotation, where a single crease point pins position only - and named slots are
+diff --git a/Assets/Scripts/UI_Import/RemapPhaseBar.cs b/Assets/Scripts/UI_Import/RemapPhaseBar.cs
+index dabcdee..207e4a1 100644
+--- a/Assets/Scripts/UI_Import/RemapPhaseBar.cs
++++ b/Assets/Scripts/UI_Import/RemapPhaseBar.cs
+@@ -24,6 +24,7 @@ public class RemapPhaseBar : MonoBehaviour
+     private GameObject mirrorButton;
+     private GameObject processButton;
+     private GameObject revertButton;
++    private GameObject confirmButton;
+     private TextMeshProUGUI toneLabel;
+     private Image toneFill;
+ 
+@@ -110,7 +111,7 @@ public class RemapPhaseBar : MonoBehaviour
+             RemapProjectionReport report = session.PreviewReport;
+             string detail = "";
+             if (report != null) detail = report.ToString();
+-            status.text = "Nothing has been saved. REVERT puts it back on the original head; CANCEL leaves the whole session with your groom untouched.   " + detail;
++            status.text = "CONFIRM saves this as a new project and makes the new head the current model. REVERT puts it back; CANCEL leaves your groom untouched.   " + detail;
+         }
+         if (!ready)
+         {
+@@ -126,6 +127,7 @@ public class RemapPhaseBar : MonoBehaviour
+         mirrorButton.SetActive(!auto && !ready);
+         processButton.SetActive(!auto && !ready);
+         revertButton.SetActive(ready);
++        confirmButton.SetActive(ready);
+ 
+         // Dead rather than hidden. A button that vanishes reads as a bug; one that is visibly
+         // disabled next to a status line naming what is missing reads as an instruction.
+@@ -273,6 +275,19 @@ public class RemapPhaseBar : MonoBehaviour
+         StatusToast.Show("Put back on the original head. Adjust the markers and process again.");
+     }
+ 
++    void OnConfirm()
++    {
++        string failure;
++        if (!RemapCommit.Confirm(session, out failure))
++        {
++            // An empty reason is a cancelled save dialog, which is not a failure and gets no
++            // complaint - the session is still up and still revertable.
++            if (!string.IsNullOrEmpty(failure)) StatusToast.Show("Could not confirm the remap: " + failure + ".", true);
++            return;
++        }
++        StatusToast.Show("Remapped groom saved and loaded. The new head is now the current model.");
++    }
++
+     void OnCancel()
+     {
+         session.End(true);
+@@ -347,6 +362,7 @@ public class RemapPhaseBar : MonoBehaviour
+         nextButton = AddButton(bar.transform, "RemapPhaseNext", "NEXT: EAR MARKERS", new Color(.20f, .44f, .34f), OnNext);
+         processButton = AddButton(bar.transform, "RemapPhaseProcess", "PROCESS", new Color(.20f, .44f, .34f), OnProcess);
+         revertButton = AddButton(bar.transform, "RemapPhaseRevert", "REVERT", new Color(.40f, .34f, .22f), OnRevert);
++        confirmButton = AddButton(bar.transform, "RemapPhaseConfirm", "CONFIRM + SAVE AS", new Color(.20f, .48f, .36f), OnConfirm);
+         AddButton(bar.transform, "RemapPhaseCancel", "CANCEL", new Color(.44f, .26f, .22f), OnCancel);
+     }
+ 
+diff --git a/Assets/Scripts/UI_Import/RemapSessionController.cs b/Assets/Scripts/UI_Import/RemapSessionController.cs
+index 14e0d19..867d650 100644
+--- a/Assets/Scripts/UI_Import/RemapSessionController.cs
++++ b/Assets/Scripts/UI_Import/RemapSessionController.cs
+@@ -390,6 +390,43 @@ public class RemapSessionController : MonoBehaviour
+         return true;
+     }
+ 
++    // Where the new head came from, and what it was imported as. Both go into the project CONFIRM
++    // writes, so the saved file points at the new OBJ and records the scale it was normalised to.
++    public string TargetSourcePath
++    {
++        get
++        {
++            if (targetModel == null) return string.Empty;
++            ImportedOBJMetadata metadata = targetModel.GetComponent<ImportedOBJMetadata>();
++            if (metadata == null) return string.Empty;
++            return metadata.sourcePath;
++        }
++    }
++
++    public ImportMetadataSaveData TargetImportMetadata()
++    {
++        ImportMetadataSaveData captured = new ImportMetadataSaveData();
++        if (targetModel == null) return captured;
++        ImportedOBJMetadata metadata = targetModel.GetComponent<ImportedOBJMetadata>();
++        if (metadata == null) return captured;
++
++        captured.appliedScale = metadata.appliedScale;
++        captured.normalisationMode = metadata.normalisationMode;
++        captured.normalisationTarget = metadata.normalisationTarget;
++        captured.measuredExtent = metadata.measuredExtent;
++        captured.meshHash = metadata.meshHash;
++        return captured;
++    }
++
++    // Keep the preview instead of undoing it. Dropping the snapshot is the whole of it: End()
++    // reverts only while one exists, so letting go of it turns the preview into the session's
++    // actual state.
++    public void CommitPreview()
++    {
++        previewSnapshot = null;
++        previewReport = null;
++    }
++
+     public void RevertPreview()
+     {
+         if (previewSnapshot == null) return;
+diff --git a/Assets/Scripts/UI_Import/RuntimeNavigationProjectIO.cs b/Assets/Scripts/UI_Import/RuntimeNavigationProjectIO.cs
+index 7788f8e..dbf72ea 100644
+--- a/Assets/Scripts/UI_Import/RuntimeNavigationProjectIO.cs
++++ b/Assets/Scripts/UI_Import/RuntimeNavigationProjectIO.cs
+@@ -185,6 +185,19 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
+ #else
+         path = RuntimeFileDialog.OpenFile("Open Hair Project", "HairBrush Projects\0*.json\0All Files\0*.*\0\0", "json");
+ #endif
++        LoadProjectFromPath(path);
++    }
++
++    // The load itself, with the picker split off.
++    //
++    // REMAP's CONFIRM writes a project against the new head and then has to make that project the
++    // session - which means going through this path rather than swapping ModelViewer.loadedModel
++    // by hand. Fifteen authorities watch that field for reference identity and treat a change as
++    // "new session, clear my state"; SessionModifierFreshStartAuthority would destroy the very
++    // clumpers the remap just moved. A real project load is the one route where every one of them
++    // sees the pending-restore guards it expects.
++    public void LoadProjectFromPath(string path)
++    {
+         if(string.IsNullOrEmpty(path))return;
+         HairProjectSaveData data=JsonUtility.FromJson<HairProjectSaveData>(File.ReadAllText(path)); if(data==null)return;
+         UndoHistoryAuthority.NotifySessionReplaced();

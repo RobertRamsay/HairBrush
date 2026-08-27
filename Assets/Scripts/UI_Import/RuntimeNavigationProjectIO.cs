@@ -185,6 +185,19 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
 #else
         path = RuntimeFileDialog.OpenFile("Open Hair Project", "HairBrush Projects\0*.json\0All Files\0*.*\0\0", "json");
 #endif
+        LoadProjectFromPath(path);
+    }
+
+    // The load itself, with the picker split off.
+    //
+    // REMAP's CONFIRM writes a project against the new head and then has to make that project the
+    // session - which means going through this path rather than swapping ModelViewer.loadedModel
+    // by hand. Fifteen authorities watch that field for reference identity and treat a change as
+    // "new session, clear my state"; SessionModifierFreshStartAuthority would destroy the very
+    // clumpers the remap just moved. A real project load is the one route where every one of them
+    // sees the pending-restore guards it expects.
+    public void LoadProjectFromPath(string path)
+    {
         if(string.IsNullOrEmpty(path))return;
         HairProjectSaveData data=JsonUtility.FromJson<HairProjectSaveData>(File.ReadAllText(path)); if(data==null)return;
         UndoHistoryAuthority.NotifySessionReplaced();

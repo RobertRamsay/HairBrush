@@ -71,7 +71,15 @@ public class RemapMarker
 
 public static class RemapMarkerSet
 {
-    public const int AutoMarkerCount = 10;
+    // Thirty rather than ten. Ten spreads well over a scalp, but a groom that also carries a
+    // beard is two regions with a face between them, and the farthest-point pass spends its first
+    // handful of picks on the outer extremes of the whole cloud - which left the jaw and chin
+    // under-constrained, so the warp there was interpolating across a gap instead of following
+    // markers. The solve is a (N+4) square system either way; thirty is 34x34, still nothing.
+    //
+    // They are estimated onto the new head automatically now, so the cost of raising this is
+    // review rather than placement.
+    public const int AutoMarkerCount = 30;
 
     // Named rather than free points. A triangle of three per ear pins the region's position,
     // scale AND rotation, where a single crease point pins position only - and named slots are
