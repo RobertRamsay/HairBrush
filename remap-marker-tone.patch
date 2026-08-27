@@ -1,0 +1,217 @@
+diff --git a/Assets/Scripts/UI_Import/RemapMarkerAuthority.cs b/Assets/Scripts/UI_Import/RemapMarkerAuthority.cs
+index 532d877..f3fc8be 100644
+--- a/Assets/Scripts/UI_Import/RemapMarkerAuthority.cs
++++ b/Assets/Scripts/UI_Import/RemapMarkerAuthority.cs
+@@ -34,11 +34,50 @@ public class RemapMarkerAuthority : MonoBehaviour
+     private const float PickPixelRadius = 26f;
+     private const float MinimumSeparation = .004f;
+ 
+-    // Deliberately dark. These are drawn on a pale grey head, and a bright fill on a light surface
+-    // loses its edge; the darker value reads as a drawn-on mark rather than a glow.
+-    private static readonly Color AutoColour = new Color(.144f, .288f, .40f);
+-    private static readonly Color EarColour = new Color(1f, .74f, .28f);
+-    private static readonly Color UnplacedColour = new Color(.55f, .58f, .62f);
++    // Markers are drawn in greyscale, driven by MARKER TONE on the phase bar.
++    //
++    // A fixed hue was the wrong call. Heads arrive in every shade - a pale grey default material,
++    // a dark scanned albedo, anything the user maps on - and no single colour reads on all of
++    // them. One tone control the user can slide is both simpler and strictly more capable than
++    // picking a better constant.
++    //
++    // State keeps its colour, though, because state is not decoration: the marker you are placing
++    // right now and a marker whose sides disagree both have to be findable at a glance whatever
++    // the tone is set to.
++    public const string ToneSettingKey = "remapMarkerTone";
++    private static float markerTone = 1f;
++    private static bool toneLoaded;
++
++    public static float MarkerTone
++    {
++        get
++        {
++            LoadTone();
++            return markerTone;
++        }
++        set
++        {
++            markerTone = Mathf.Clamp01(value);
++            toneLoaded = true;
++            HairBrushSettings.WriteSetting(ToneSettingKey, markerTone.ToString("F3"));
++        }
++    }
++
++    // Read once, lazily. Same ini HairBrushSettings keeps the MAYA-NAV preference in, so the tone
++    // survives a restart rather than resetting to white every session.
++    static void LoadTone()
++    {
++        if (toneLoaded) return;
++        toneLoaded = true;
++        System.Collections.Generic.Dictionary<string, string> settings = HairBrushSettings.ReadSettings();
++        if (settings == null) return;
++        string raw;
++        if (!settings.TryGetValue(ToneSettingKey, out raw)) return;
++        float parsed;
++        if (!float.TryParse(raw, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out parsed)) return;
++        markerTone = Mathf.Clamp01(parsed);
++    }
++
+     private static readonly Color ActiveColour = new Color(.42f, 1f, .55f);
+     private static readonly Color MismatchColour = new Color(1f, .38f, .32f);
+ 
+@@ -414,7 +453,7 @@ public class RemapMarkerAuthority : MonoBehaviour
+ 
+         Color colour = ColourFor(marker, interactive, isActive, mismatchedId);
+         bool hovered = hoveredIndex == index && hoveredIsTarget == isTarget;
+-        if (hovered) colour = Color.Lerp(colour, Color.white, .45f);
++        if (hovered) colour = Highlight(colour);
+ 
+         DrawRing(ring, point, normal, radius, colour, worldPerPixel, hovered);
+         DrawStub(stub, point, normal, radius, colour, worldPerPixel);
+@@ -424,10 +463,23 @@ public class RemapMarkerAuthority : MonoBehaviour
+     static Color ColourFor(RemapMarker marker, bool interactive, bool isActive, int mismatchedId)
+     {
+         if (marker.id == mismatchedId) return MismatchColour;
+-        if (!interactive) return UnplacedColour;
+         if (isActive) return ActiveColour;
+-        if (marker.kind == RemapMarkerKind.Ear) return EarColour;
+-        return AutoColour;
++
++        float tone = MarkerTone;
++        // Markers belonging to the other phase are dimmed rather than hidden - they are still
++        // useful context for where you are on the head, just not what you are editing.
++        if (!interactive) tone = tone * .45f;
++        return new Color(tone, tone, tone, 1f);
++    }
++
++    // Hover has to read at BOTH ends of the slider, so it moves toward whichever extreme the
++    // current tone is furthest from rather than always toward white. A white marker highlighted
++    // white is not a highlight.
++    static Color Highlight(Color colour)
++    {
++        float opposite = 0f;
++        if (MarkerTone < .5f) opposite = 1f;
++        return Color.Lerp(colour, new Color(opposite, opposite, opposite, 1f), .5f);
+     }
+ 
+     // Constant apparent size. A marker sized in world units vanishes exactly when the user pulls
+diff --git a/Assets/Scripts/UI_Import/RemapPhaseBar.cs b/Assets/Scripts/UI_Import/RemapPhaseBar.cs
+index bc0c7e0..c467968 100644
+--- a/Assets/Scripts/UI_Import/RemapPhaseBar.cs
++++ b/Assets/Scripts/UI_Import/RemapPhaseBar.cs
+@@ -24,6 +24,8 @@ public class RemapPhaseBar : MonoBehaviour
+     private GameObject mirrorButton;
+     private GameObject processButton;
+     private GameObject revertButton;
++    private TextMeshProUGUI toneLabel;
++    private Image toneFill;
+ 
+     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+     static void Spawn()
+@@ -232,7 +234,7 @@ public class RemapPhaseBar : MonoBehaviour
+ 
+         GameObject textColumn = new GameObject("TextColumn", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
+         textColumn.transform.SetParent(bar.transform, false);
+-        textColumn.GetComponent<LayoutElement>().preferredWidth = 760f;
++        textColumn.GetComponent<LayoutElement>().preferredWidth = 620f;
+         VerticalLayoutGroup column = textColumn.GetComponent<VerticalLayoutGroup>();
+         column.childControlHeight = false;
+         column.childForceExpandHeight = false;
+@@ -245,6 +247,8 @@ public class RemapPhaseBar : MonoBehaviour
+         // it was added to say.
+         status.textWrappingMode = TextWrappingModes.Normal;
+ 
++        BuildToneControl(bar.transform);
++
+         backButton = AddButton(bar.transform, "RemapPhaseBack", "BACK", new Color(.24f, .30f, .38f), OnBack);
+         mirrorButton = AddButton(bar.transform, "RemapPhaseMirror", "MIRROR L TO R", new Color(.28f, .36f, .46f), OnMirror);
+         nextButton = AddButton(bar.transform, "RemapPhaseNext", "NEXT: EAR MARKERS", new Color(.20f, .44f, .34f), OnNext);
+@@ -253,6 +257,89 @@ public class RemapPhaseBar : MonoBehaviour
+         AddButton(bar.transform, "RemapPhaseCancel", "CANCEL", new Color(.44f, .26f, .22f), OnCancel);
+     }
+ 
++    // MARKER TONE: pure greyscale, white at one end and black at the other.
++    //
++    // Built the way every other runtime slider in the project is (see
++    // PlacementBrushModeAuthority's row builder) - background, fill area, handle - rather than
++    // from a prefab, because there is no prefab. The fill is drawn in the tone itself, so the
++    // control previews what it is about to do to the markers.
++    //
++    // Present in every phase. Whichever head is loaded decides what reads, and the user finds that
++    // out while placing, not before starting.
++    void BuildToneControl(Transform parent)
++    {
++        GameObject column = new GameObject("ToneColumn", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
++        column.transform.SetParent(parent, false);
++        column.GetComponent<LayoutElement>().preferredWidth = 186f;
++        VerticalLayoutGroup layout = column.GetComponent<VerticalLayoutGroup>();
++        layout.childControlHeight = false;
++        layout.childForceExpandHeight = false;
++        layout.spacing = 3f;
++        layout.padding = new RectOffset(0, 8, 6, 0);
++
++        toneLabel = AddText(column.transform, "ToneLabel", 13, FontStyles.Bold, new Color(.72f, .78f, .84f), 18f);
++
++        GameObject sliderObject = new GameObject("RemapMarkerToneSlider", typeof(RectTransform), typeof(Slider), typeof(LayoutElement));
++        sliderObject.transform.SetParent(column.transform, false);
++        sliderObject.GetComponent<LayoutElement>().preferredHeight = 18f;
++        Slider slider = sliderObject.GetComponent<Slider>();
++        slider.minValue = 0f;
++        slider.maxValue = 1f;
++
++        GameObject background = new GameObject("Background", typeof(RectTransform), typeof(Image));
++        background.transform.SetParent(sliderObject.transform, false);
++        background.GetComponent<Image>().color = new Color(.28f, .28f, .28f);
++        RectTransform backgroundRect = background.GetComponent<RectTransform>();
++        backgroundRect.anchorMin = new Vector2(0f, .3f);
++        backgroundRect.anchorMax = new Vector2(1f, .7f);
++        backgroundRect.offsetMin = Vector2.zero;
++        backgroundRect.offsetMax = Vector2.zero;
++
++        GameObject fillArea = new GameObject("Fill Area", typeof(RectTransform));
++        fillArea.transform.SetParent(sliderObject.transform, false);
++        RectTransform fillAreaRect = fillArea.GetComponent<RectTransform>();
++        fillAreaRect.anchorMin = new Vector2(0f, .3f);
++        fillAreaRect.anchorMax = new Vector2(1f, .7f);
++        fillAreaRect.offsetMin = Vector2.zero;
++        fillAreaRect.offsetMax = Vector2.zero;
++
++        GameObject fill = new GameObject("Fill", typeof(RectTransform), typeof(Image));
++        fill.transform.SetParent(fillArea.transform, false);
++        toneFill = fill.GetComponent<Image>();
++        slider.fillRect = fill.GetComponent<RectTransform>();
++        slider.fillRect.anchorMin = Vector2.zero;
++        slider.fillRect.anchorMax = Vector2.zero;
++        slider.fillRect.sizeDelta = Vector2.zero;
++
++        GameObject handleArea = new GameObject("Handle Slide Area", typeof(RectTransform));
++        handleArea.transform.SetParent(sliderObject.transform, false);
++        RectTransform handleAreaRect = handleArea.GetComponent<RectTransform>();
++        handleAreaRect.anchorMin = Vector2.zero;
++        handleAreaRect.anchorMax = Vector2.one;
++        handleAreaRect.offsetMin = Vector2.zero;
++        handleAreaRect.offsetMax = Vector2.zero;
++
++        GameObject handle = new GameObject("Handle", typeof(RectTransform), typeof(Image));
++        handle.transform.SetParent(handleArea.transform, false);
++        handle.GetComponent<Image>().color = new Color(.86f, .88f, .92f);
++        slider.handleRect = handle.GetComponent<RectTransform>();
++        slider.handleRect.sizeDelta = new Vector2(16f, 0f);
++
++        // Set AFTER the parts are wired, so the first assignment lays the fill out properly, and
++        // the listener is attached afterwards so restoring the saved value does not write it
++        // straight back to disk.
++        slider.value = RemapMarkerAuthority.MarkerTone;
++        ApplyTone(slider.value);
++        slider.onValueChanged.AddListener(ApplyTone);
++    }
++
++    void ApplyTone(float value)
++    {
++        RemapMarkerAuthority.MarkerTone = value;
++        if (toneFill != null) toneFill.color = new Color(value, value, value, 1f);
++        if (toneLabel != null) toneLabel.text = "MARKER TONE  " + Mathf.RoundToInt(value * 100f) + "%";
++    }
++
+     static TextMeshProUGUI AddText(Transform parent, string name, int size, FontStyles style, Color colour, float height)
+     {
+         GameObject go = new GameObject(name, typeof(RectTransform), typeof(TextMeshProUGUI), typeof(LayoutElement));

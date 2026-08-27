@@ -24,6 +24,8 @@ public class RemapPhaseBar : MonoBehaviour
     private GameObject mirrorButton;
     private GameObject processButton;
     private GameObject revertButton;
+    private TextMeshProUGUI toneLabel;
+    private Image toneFill;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
@@ -232,7 +234,7 @@ public class RemapPhaseBar : MonoBehaviour
 
         GameObject textColumn = new GameObject("TextColumn", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
         textColumn.transform.SetParent(bar.transform, false);
-        textColumn.GetComponent<LayoutElement>().preferredWidth = 760f;
+        textColumn.GetComponent<LayoutElement>().preferredWidth = 620f;
         VerticalLayoutGroup column = textColumn.GetComponent<VerticalLayoutGroup>();
         column.childControlHeight = false;
         column.childForceExpandHeight = false;
@@ -245,12 +247,97 @@ public class RemapPhaseBar : MonoBehaviour
         // it was added to say.
         status.textWrappingMode = TextWrappingModes.Normal;
 
+        BuildToneControl(bar.transform);
+
         backButton = AddButton(bar.transform, "RemapPhaseBack", "BACK", new Color(.24f, .30f, .38f), OnBack);
         mirrorButton = AddButton(bar.transform, "RemapPhaseMirror", "MIRROR L TO R", new Color(.28f, .36f, .46f), OnMirror);
         nextButton = AddButton(bar.transform, "RemapPhaseNext", "NEXT: EAR MARKERS", new Color(.20f, .44f, .34f), OnNext);
         processButton = AddButton(bar.transform, "RemapPhaseProcess", "PROCESS", new Color(.20f, .44f, .34f), OnProcess);
         revertButton = AddButton(bar.transform, "RemapPhaseRevert", "REVERT", new Color(.40f, .34f, .22f), OnRevert);
         AddButton(bar.transform, "RemapPhaseCancel", "CANCEL", new Color(.44f, .26f, .22f), OnCancel);
+    }
+
+    // MARKER TONE: pure greyscale, white at one end and black at the other.
+    //
+    // Built the way every other runtime slider in the project is (see
+    // PlacementBrushModeAuthority's row builder) - background, fill area, handle - rather than
+    // from a prefab, because there is no prefab. The fill is drawn in the tone itself, so the
+    // control previews what it is about to do to the markers.
+    //
+    // Present in every phase. Whichever head is loaded decides what reads, and the user finds that
+    // out while placing, not before starting.
+    void BuildToneControl(Transform parent)
+    {
+        GameObject column = new GameObject("ToneColumn", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
+        column.transform.SetParent(parent, false);
+        column.GetComponent<LayoutElement>().preferredWidth = 186f;
+        VerticalLayoutGroup layout = column.GetComponent<VerticalLayoutGroup>();
+        layout.childControlHeight = false;
+        layout.childForceExpandHeight = false;
+        layout.spacing = 3f;
+        layout.padding = new RectOffset(0, 8, 6, 0);
+
+        toneLabel = AddText(column.transform, "ToneLabel", 13, FontStyles.Bold, new Color(.72f, .78f, .84f), 18f);
+
+        GameObject sliderObject = new GameObject("RemapMarkerToneSlider", typeof(RectTransform), typeof(Slider), typeof(LayoutElement));
+        sliderObject.transform.SetParent(column.transform, false);
+        sliderObject.GetComponent<LayoutElement>().preferredHeight = 18f;
+        Slider slider = sliderObject.GetComponent<Slider>();
+        slider.minValue = 0f;
+        slider.maxValue = 1f;
+
+        GameObject background = new GameObject("Background", typeof(RectTransform), typeof(Image));
+        background.transform.SetParent(sliderObject.transform, false);
+        background.GetComponent<Image>().color = new Color(.28f, .28f, .28f);
+        RectTransform backgroundRect = background.GetComponent<RectTransform>();
+        backgroundRect.anchorMin = new Vector2(0f, .3f);
+        backgroundRect.anchorMax = new Vector2(1f, .7f);
+        backgroundRect.offsetMin = Vector2.zero;
+        backgroundRect.offsetMax = Vector2.zero;
+
+        GameObject fillArea = new GameObject("Fill Area", typeof(RectTransform));
+        fillArea.transform.SetParent(sliderObject.transform, false);
+        RectTransform fillAreaRect = fillArea.GetComponent<RectTransform>();
+        fillAreaRect.anchorMin = new Vector2(0f, .3f);
+        fillAreaRect.anchorMax = new Vector2(1f, .7f);
+        fillAreaRect.offsetMin = Vector2.zero;
+        fillAreaRect.offsetMax = Vector2.zero;
+
+        GameObject fill = new GameObject("Fill", typeof(RectTransform), typeof(Image));
+        fill.transform.SetParent(fillArea.transform, false);
+        toneFill = fill.GetComponent<Image>();
+        slider.fillRect = fill.GetComponent<RectTransform>();
+        slider.fillRect.anchorMin = Vector2.zero;
+        slider.fillRect.anchorMax = Vector2.zero;
+        slider.fillRect.sizeDelta = Vector2.zero;
+
+        GameObject handleArea = new GameObject("Handle Slide Area", typeof(RectTransform));
+        handleArea.transform.SetParent(sliderObject.transform, false);
+        RectTransform handleAreaRect = handleArea.GetComponent<RectTransform>();
+        handleAreaRect.anchorMin = Vector2.zero;
+        handleAreaRect.anchorMax = Vector2.one;
+        handleAreaRect.offsetMin = Vector2.zero;
+        handleAreaRect.offsetMax = Vector2.zero;
+
+        GameObject handle = new GameObject("Handle", typeof(RectTransform), typeof(Image));
+        handle.transform.SetParent(handleArea.transform, false);
+        handle.GetComponent<Image>().color = new Color(.86f, .88f, .92f);
+        slider.handleRect = handle.GetComponent<RectTransform>();
+        slider.handleRect.sizeDelta = new Vector2(16f, 0f);
+
+        // Set AFTER the parts are wired, so the first assignment lays the fill out properly, and
+        // the listener is attached afterwards so restoring the saved value does not write it
+        // straight back to disk.
+        slider.value = RemapMarkerAuthority.MarkerTone;
+        ApplyTone(slider.value);
+        slider.onValueChanged.AddListener(ApplyTone);
+    }
+
+    void ApplyTone(float value)
+    {
+        RemapMarkerAuthority.MarkerTone = value;
+        if (toneFill != null) toneFill.color = new Color(value, value, value, 1f);
+        if (toneLabel != null) toneLabel.text = "MARKER TONE  " + Mathf.RoundToInt(value * 100f) + "%";
     }
 
     static TextMeshProUGUI AddText(Transform parent, string name, int size, FontStyles style, Color colour, float height)

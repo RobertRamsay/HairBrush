@@ -34,11 +34,50 @@ public class RemapMarkerAuthority : MonoBehaviour
     private const float PickPixelRadius = 26f;
     private const float MinimumSeparation = .004f;
 
-    // Deliberately dark. These are drawn on a pale grey head, and a bright fill on a light surface
-    // loses its edge; the darker value reads as a drawn-on mark rather than a glow.
-    private static readonly Color AutoColour = new Color(.144f, .288f, .40f);
-    private static readonly Color EarColour = new Color(1f, .74f, .28f);
-    private static readonly Color UnplacedColour = new Color(.55f, .58f, .62f);
+    // Markers are drawn in greyscale, driven by MARKER TONE on the phase bar.
+    //
+    // A fixed hue was the wrong call. Heads arrive in every shade - a pale grey default material,
+    // a dark scanned albedo, anything the user maps on - and no single colour reads on all of
+    // them. One tone control the user can slide is both simpler and strictly more capable than
+    // picking a better constant.
+    //
+    // State keeps its colour, though, because state is not decoration: the marker you are placing
+    // right now and a marker whose sides disagree both have to be findable at a glance whatever
+    // the tone is set to.
+    public const string ToneSettingKey = "remapMarkerTone";
+    private static float markerTone = 1f;
+    private static bool toneLoaded;
+
+    public static float MarkerTone
+    {
+        get
+        {
+            LoadTone();
+            return markerTone;
+        }
+        set
+        {
+            markerTone = Mathf.Clamp01(value);
+            toneLoaded = true;
+            HairBrushSettings.WriteSetting(ToneSettingKey, markerTone.ToString("F3"));
+        }
+    }
+
+    // Read once, lazily. Same ini HairBrushSettings keeps the MAYA-NAV preference in, so the tone
+    // survives a restart rather than resetting to white every session.
+    static void LoadTone()
+    {
+        if (toneLoaded) return;
+        toneLoaded = true;
+        System.Collections.Generic.Dictionary<string, string> settings = HairBrushSettings.ReadSettings();
+        if (settings == null) return;
+        string raw;
+        if (!settings.TryGetValue(ToneSettingKey, out raw)) return;
+        float parsed;
+        if (!float.TryParse(raw, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out parsed)) return;
+        markerTone = Mathf.Clamp01(parsed);
+    }
+
     private static readonly Color ActiveColour = new Color(.42f, 1f, .55f);
     private static readonly Color MismatchColour = new Color(1f, .38f, .32f);
 
@@ -414,7 +453,7 @@ public class RemapMarkerAuthority : MonoBehaviour
 
         Color colour = ColourFor(marker, interactive, isActive, mismatchedId);
         bool hovered = hoveredIndex == index && hoveredIsTarget == isTarget;
-        if (hovered) colour = Color.Lerp(colour, Color.white, .45f);
+        if (hovered) colour = Highlight(colour);
 
         DrawRing(ring, point, normal, radius, colour, worldPerPixel, hovered);
         DrawStub(stub, point, normal, radius, colour, worldPerPixel);
@@ -424,10 +463,23 @@ public class RemapMarkerAuthority : MonoBehaviour
     static Color ColourFor(RemapMarker marker, bool interactive, bool isActive, int mismatchedId)
     {
         if (marker.id == mismatchedId) return MismatchColour;
-        if (!interactive) return UnplacedColour;
         if (isActive) return ActiveColour;
-        if (marker.kind == RemapMarkerKind.Ear) return EarColour;
-        return AutoColour;
+
+        float tone = MarkerTone;
+        // Markers belonging to the other phase are dimmed rather than hidden - they are still
+        // useful context for where you are on the head, just not what you are editing.
+        if (!interactive) tone = tone * .45f;
+        return new Color(tone, tone, tone, 1f);
+    }
+
+    // Hover has to read at BOTH ends of the slider, so it moves toward whichever extreme the
+    // current tone is furthest from rather than always toward white. A white marker highlighted
+    // white is not a highlight.
+    static Color Highlight(Color colour)
+    {
+        float opposite = 0f;
+        if (MarkerTone < .5f) opposite = 1f;
+        return Color.Lerp(colour, new Color(opposite, opposite, opposite, 1f), .5f);
     }
 
     // Constant apparent size. A marker sized in world units vanishes exactly when the user pulls
