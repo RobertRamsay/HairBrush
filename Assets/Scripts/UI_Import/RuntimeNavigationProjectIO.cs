@@ -98,12 +98,29 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
         load?.Invoke(viewer, null);
     }
 
+    // INACTIVE INCLUDED, on purpose, and this is not a tidy-up.
+    //
+    // GameObject.Find only ever returns ACTIVE objects, and ReturnToMenu deactivates the two groom
+    // panels rather than destroying them. So a load started from the start screen - which is where
+    // the menu buttons are, and where REMAP's CONFIRM lands - found neither panel, destroyed
+    // neither, and then had BuildRuntimeGroomingUI build a second set on top. Two GroomingPanels
+    // then exist: the frozen-header authority pins its rows on one while the live sliders belong to
+    // the other, which is why the scrolling content ends up drawn over the frozen header and every
+    // control in it is dead.
+    //
+    // Older than REMAP - LOAD PROJECT from the start menu after grooming does the same thing - and
+    // only visible now because CONFIRM makes that route ordinary rather than unusual.
     public void CleanupEditorUIAndCards()
     {
-        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None)) Destroy(card.gameObject);
-        foreach (string name in new[] { "GroomingPanel", "GroupManagerPanel" })
+        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsInactive.Include, FindObjectsSortMode.None))
         {
-            GameObject go = GameObject.Find(name); if (go != null) Destroy(go);
+            if (card != null) Destroy(card.gameObject);
+        }
+        foreach (RectTransform rect in FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            if (rect == null) continue;
+            if (rect.name != "GroomingPanel" && rect.name != "GroupManagerPanel") continue;
+            Destroy(rect.gameObject);
         }
         SetField("activeSliderPanel", null);
         viewer.groomingSliderPanelGO = null;

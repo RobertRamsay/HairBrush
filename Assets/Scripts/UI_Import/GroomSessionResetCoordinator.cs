@@ -74,6 +74,11 @@ public class GroomSessionResetCoordinator : MonoBehaviour
             // for a moment and then vanished, which is this line firing one poll later.
             if (!projectLoadJustCompleted && !CanonicalProjectStateBridge.ProjectRestorePending())
                 ResetEntireSessionForNewModel();
+            else
+                // The full reset is wrong on a project load - it would destroy the groom that load
+                // just restored - but one thing it did is still wanted here: reaping a duplicate
+                // panel. Kept as the narrow half of what the reset used to do for this path.
+                CleanupDuplicateRuntimePanels();
         }
         else if (currentLoaded == null)
         {
