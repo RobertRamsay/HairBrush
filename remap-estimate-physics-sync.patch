@@ -1,0 +1,77 @@
+diff --git a/Assets/Scripts/UI_Import/RemapSessionController.cs b/Assets/Scripts/UI_Import/RemapSessionController.cs
+index 597b7ac..14e0d19 100644
+--- a/Assets/Scripts/UI_Import/RemapSessionController.cs
++++ b/Assets/Scripts/UI_Import/RemapSessionController.cs
+@@ -157,6 +157,14 @@ public class RemapSessionController : MonoBehaviour
+         targetModel.transform.localEulerAngles = new Vector3(0f, 180f, 0f);
+         targetOffset.position = new Vector3(SourceHeadWidth() * SeparationInHeadWidths, 0f, 0f);
+ 
++        // The collider does NOT move with the transform until physics is told to look.
++        // Physics.autoSyncTransforms has defaulted to false since Unity 2018, so a MeshCollider
++        // re-parented and offset in script is still answering raycasts from where it used to be
++        // until the next fixed step. Everything below raycasts the target head in the same frame
++        // it was just moved - the marker estimates, and any probe before the first FixedUpdate -
++        // and without this they all quietly find nothing.
++        Physics.SyncTransforms();
++
+         AssignLayers();
+         BuildRightView();
+         BuildMarkers();
+@@ -240,6 +248,12 @@ public class RemapSessionController : MonoBehaviour
+ 
+         float headSize = TargetHeadSize();
+         int layerMask = 1 << targetLayer;
++        int placed = 0;
++        int missed = 0;
++
++        // Belt and braces alongside the sync in Begin: this runs immediately after the target head
++        // is moved, and a stale collider position turns every estimate below into a miss.
++        Physics.SyncTransforms();
+ 
+         bool previousBackfaces = Physics.queriesHitBackfaces;
+         Physics.queriesHitBackfaces = true;
+@@ -266,9 +280,21 @@ public class RemapSessionController : MonoBehaviour
+                 {
+                     if (!TpsAnchorMapping.ProjectByThickness(world, outward, layerMask, headSize, out point, out normal))
+                     {
+-                        // No surface either way. Left unplaced rather than parked in mid-air:
+-                        // an empty marker asks to be placed, a floating one has to be noticed first.
+-                        continue;
++                        // Third try, from well outside and pointing back at the head. The two above
++                        // both need the estimate to start at or inside the surface; an estimate that
++                        // lands proud of a head narrower than the original starts outside it.
++                        Vector3 origin = world + outward * headSize;
++                        RaycastHit hit;
++                        if (!Physics.Raycast(origin, -outward, out hit, headSize * 3f, layerMask))
++                        {
++                            // No surface any way round. Left unplaced rather than parked in
++                            // mid-air: an empty marker asks to be placed, a floating one has to be
++                            // noticed first.
++                            missed++;
++                            continue;
++                        }
++                        point = hit.point;
++                        normal = hit.normal;
+                     }
+                 }
+ 
+@@ -276,12 +302,19 @@ public class RemapSessionController : MonoBehaviour
+                 marker.targetNormal = normal;
+                 marker.targetPlaced = true;
+                 marker.targetIsEstimate = true;
++                placed++;
+             }
+         }
+         finally
+         {
+             Physics.queriesHitBackfaces = previousBackfaces;
+         }
++
++        // Said out loud. A silent estimate pass that places nothing looks identical to one that was
++        // never written, which is exactly how the first version of this went unnoticed.
++        if (missed > 0)
++            Debug.LogWarning("HairBrush REMAP: " + missed + " of " + (placed + missed) + " automatic markers found no surface on the new head and were left for manual placement.");
++        Debug.Log("HairBrush REMAP: estimated " + placed + " marker placements on the new head, " + missed + " left unplaced.");
+     }
+ 
+     static bool TryLocalBounds(Transform root, out Bounds bounds)
