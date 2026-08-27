@@ -116,7 +116,7 @@ public class RemapPhaseBar : MonoBehaviour
         if (!ready)
         {
             if (auto) title.text = "REMAP  -  STEP 1 OF 2:  MATCH THE NUMBERED MARKERS";
-            if (!auto) title.text = "REMAP  -  STEP 2 OF 2:  PIN BOTH EARS";
+            if (!auto) title.text = "REMAP  -  STEP 2 OF 2:  PIN THE LANDMARKS";
             status.text = NextInstruction(auto, covered, reason);
         }
 

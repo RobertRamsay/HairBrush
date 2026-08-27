@@ -27,7 +27,14 @@ public enum RemapMarkerKind
     // of the correspondence and the one place the sampler cannot be trusted to cover: a groom
     // with no hair behind the ears puts no anchors there, and the warp then interpolates through
     // the region as though it were smooth.
-    Ear
+    Ear,
+    // The same argument, applied to the lower face - added only when the groom actually reaches
+    // it. A beard's roots run along the jawline, under the chin and down the neck, and those are
+    // the parts of two heads that agree least: chins differ in length, jaws in width and angle,
+    // and the automatic sampler treats all three as ordinary surface. Without pinned landmarks
+    // the warp interpolates the whole lower face from markers around it, which is how a scalp
+    // lands perfectly and a beard sprays.
+    Jaw
 }
 
 public class RemapMarker
@@ -119,6 +126,37 @@ public static class RemapMarkerSet
                 markers.Add(marker);
                 id++;
             }
+        }
+        return markers;
+    }
+
+    // The lower-face landmarks, for grooms that reach the jaw. Same reasoning as the ear slots,
+    // same shape: named positions rather than free points, so both heads are answering the same
+    // question and the left/right check has something to compare.
+    public static List<RemapMarker> BuildJawMarkers(int startingId)
+    {
+        List<RemapMarker> markers = new List<RemapMarker>();
+        string[] slots = new string[] { "CHIN TIP", "UNDER CHIN", "L JAW ANGLE", "R JAW ANGLE" };
+        string[] hints = new string[]
+        {
+            "front point of the chin",
+            "underneath the chin, on the soft edge",
+            "left corner of the jaw, below the ear",
+            "right corner of the jaw, below the ear"
+        };
+
+        int id = startingId;
+        for (int i = 0; i < slots.Length; i++)
+        {
+            RemapMarker marker = new RemapMarker();
+            marker.id = id;
+            marker.kind = RemapMarkerKind.Jaw;
+            marker.isLeftSide = i == 2;
+            marker.isRightSide = i == 3;
+            marker.label = id.ToString();
+            marker.description = slots[i] + " - " + hints[i];
+            markers.Add(marker);
+            id++;
         }
         return markers;
     }
@@ -257,7 +295,11 @@ public static class RemapMarkerSet
     {
         if (marker == null) return false;
         if (phase == RemapPhase.AutoMarkers) return marker.kind == RemapMarkerKind.Auto;
-        if (phase == RemapPhase.EarMarkers) return marker.kind == RemapMarkerKind.Ear;
+        if (phase == RemapPhase.EarMarkers)
+        {
+            if (marker.kind == RemapMarkerKind.Ear) return true;
+            return marker.kind == RemapMarkerKind.Jaw;
+        }
         return true;
     }
 
@@ -370,10 +412,17 @@ public static class RemapMarkerSet
         int autoUnpaired = 0;
         int leftEar = 0;
         int rightEar = 0;
+        int jawTotal = 0;
+        int jawPaired = 0;
         foreach (RemapMarker marker in markers)
         {
             if (marker == null) continue;
             if (marker.kind == RemapMarkerKind.Auto && !marker.Paired) autoUnpaired++;
+            if (marker.kind == RemapMarkerKind.Jaw)
+            {
+                jawTotal++;
+                if (marker.Paired) jawPaired++;
+            }
             if (marker.kind != RemapMarkerKind.Ear || !marker.Paired) continue;
             if (marker.isLeftSide) leftEar++;
             if (marker.isRightSide) rightEar++;
@@ -392,6 +441,13 @@ public static class RemapMarkerSet
         if (rightEar == 0)
         {
             reason = "the right ear has no pinned marker";
+            return false;
+        }
+        // Only demanded when the set contains them at all, which is only when the groom reaches
+        // the lower face. A scalp-only groom is never asked to point at a chin.
+        if (jawTotal > 0 && jawPaired < jawTotal)
+        {
+            reason = (jawTotal - jawPaired) + " jaw marker(s) still unpinned";
             return false;
         }
         return true;

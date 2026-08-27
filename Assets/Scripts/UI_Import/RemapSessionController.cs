@@ -31,10 +31,6 @@ public class RemapSessionController : MonoBehaviour
 {
     public static RemapSessionController Instance { get; private set; }
 
-    // Where the target head sits relative to the source, as a fraction of the source head's
-    // width. Far enough apart that the two never overlap at any orbit angle.
-    private const float SeparationInHeadWidths = 1.6f;
-
     // Kept in step with the bar RemapPhaseBar builds. Its canvas scales with screen size against a
     // 1920x1080 reference, so this is the right figure at that height and close enough elsewhere;
     // the cost of being a few pixels out is a few pixels of gap, not a broken viewport.
@@ -147,15 +143,26 @@ public class RemapSessionController : MonoBehaviour
             viewer.uiContainer.SetActive(false);
         }
 
-        // A root of our own so the offset can be undone in one step, and so the head can be
-        // handed to a solver later in a known space.
+        // The two heads occupy the SAME place, both at the origin, and are told apart by layer
+        // rather than by position. Each camera culls to one of them, so they never appear in the
+        // same view and never overlap on screen.
+        //
+        // The obvious arrangement - push the new head to one side so both are visible at once -
+        // is what produced a groom that loaded a head's width away from its model. The projection
+        // lands every anchor on the new head's surface wherever that surface happens to be, so an
+        // offset head means offset anchors, and CONFIRM writes those world positions into a
+        // project that then re-imports its model at the origin. Undoing the offset in the payload
+        // is not enough either: HairProjectSaveData.OnBeforeSerialize re-reads guides, clumpers
+        // and POSTs from the live scene at ToJson time and would put the offset straight back.
+        //
+        // Coincident and layer-separated has no offset to undo anywhere. The root is kept purely
+        // so the head and anything parented to it can be destroyed in one step.
         GameObject rootObject = new GameObject("RemapTargetRoot");
         targetOffset = rootObject.transform;
         targetOffset.position = Vector3.zero;
         targetModel.transform.SetParent(targetOffset, true);
         targetModel.transform.localPosition = Vector3.zero;
         targetModel.transform.localEulerAngles = new Vector3(0f, 180f, 0f);
-        targetOffset.position = new Vector3(SourceHeadWidth() * SeparationInHeadWidths, 0f, 0f);
 
         // The collider does NOT move with the transform until physics is told to look.
         // Physics.autoSyncTransforms has defaulted to false since Unity 2018, so a MeshCollider
@@ -218,6 +225,13 @@ public class RemapSessionController : MonoBehaviour
         }
 
         markers.AddRange(RemapMarkerSet.BuildEarMarkers(markers.Count + 1));
+
+        // Jaw landmarks only when the groom actually reaches the lower face. A scalp-only groom
+        // has no business being asked to point at a chin; a beard cannot be remapped without it.
+        // Decided from the anchors themselves rather than from a setting: whether the hair goes
+        // down there is a fact about the groom, not a preference.
+        if (GroomReachesLowerFace(anchors)) markers.AddRange(RemapMarkerSet.BuildJawMarkers(markers.Count + 1));
+
         EstimateAutoTargets();
     }
 
@@ -357,6 +371,29 @@ public class RemapSessionController : MonoBehaviour
     static Vector3 Multiply(Vector3 a, Vector3 b)
     {
         return new Vector3(a.x * b.x, a.y * b.y, a.z * b.z);
+    }
+
+    // Does the groom have roots on the lower face - jaw, chin, neck?
+    //
+    // Measured against the head's own bounds in its local space, so it holds whatever size or
+    // proportion the model is. Below the vertical midpoint of the head is the jawline and down;
+    // a few stray anchors are not enough, so it takes a real share of them before deciding.
+    bool GroomReachesLowerFace(System.Collections.Generic.List<Vector3> anchors)
+    {
+        if (anchors == null || anchors.Count == 0) return false;
+        Transform source = SourceRoot;
+        if (source == null) return false;
+
+        Bounds bounds;
+        if (!TryLocalBounds(source, out bounds)) return false;
+
+        int low = 0;
+        foreach (Vector3 anchor in anchors)
+        {
+            float y = source.InverseTransformPoint(anchor).y;
+            if (y < bounds.center.y) low++;
+        }
+        return low >= Mathf.Max(8, anchors.Count / 20);
     }
 
     public void GoToPhase(RemapPhase next)
@@ -616,17 +653,6 @@ public class RemapSessionController : MonoBehaviour
         ApplyViewportRects();
     }
 
-    float SourceHeadWidth()
-    {
-        GameObject source = SourceModel();
-        if (source == null) return 1f;
-        MeshRenderer[] renderers = source.GetComponentsInChildren<MeshRenderer>();
-        if (renderers.Length == 0) return 1f;
-        Bounds bounds = renderers[0].bounds;
-        for (int i = 1; i < renderers.Length; i++) bounds.Encapsulate(renderers[i].bounds);
-        if (bounds.size.x < .000001f) return 1f;
-        return bounds.size.x;
-    }
 
     GameObject SourceModel()
     {
@@ -722,9 +748,9 @@ public class RemapSessionController : MonoBehaviour
     void SyncRightView()
     {
         if (rightPivot == null || viewer == null || viewer.cameraPivot == null) return;
-        Vector3 offset = Vector3.zero;
-        if (targetOffset != null) offset = targetOffset.position;
-        rightPivot.position = viewer.cameraPivot.position + offset;
+        // No offset term: the target head sits at the origin exactly like the source, so the
+        // right view is the left view with a different culling mask.
+        rightPivot.position = viewer.cameraPivot.position;
         rightPivot.rotation = viewer.cameraPivot.rotation;
         rightPivot.localScale = viewer.cameraPivot.localScale;
         if (rightCamera == null || viewer.mainCamera == null) return;

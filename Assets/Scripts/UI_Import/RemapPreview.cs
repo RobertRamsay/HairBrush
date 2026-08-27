@@ -54,6 +54,7 @@ public class TpsAnchorMapping : GroomAnchorMapping
 
     private bool hasCache;
     private Vector3 cacheKey;
+    private Vector3 cacheNormalKey;
     private Vector3 cachePoint;
     private Vector3 cacheNormal;
 
@@ -67,15 +68,26 @@ public class TpsAnchorMapping : GroomAnchorMapping
         if (headSize < .000001f) headSize = 1f;
     }
 
+    // The pair every caller in this file uses. One resolve, one raycast, both answers.
+    public override void MapAnchor(Vector3 worldPoint, Vector3 worldNormal, out Vector3 movedPoint, out Vector3 movedNormal)
+    {
+        Resolve(worldPoint, worldNormal);
+        movedPoint = cachePoint;
+        movedNormal = cacheNormal;
+    }
+
+    // Point-only entry points, kept because the base class defines them. They have to guess a
+    // normal, and world up is the guess - which is close enough on a scalp and badly wrong on a
+    // jaw. Nothing in the remap path calls these; MapAnchor exists so nothing has to.
     public override Vector3 MapPoint(Vector3 worldPoint)
     {
-        Resolve(worldPoint);
+        Resolve(worldPoint, Vector3.up);
         return cachePoint;
     }
 
     public override Vector3 MapNormal(Vector3 worldPoint, Vector3 worldNormal)
     {
-        Resolve(worldPoint);
+        Resolve(worldPoint, worldNormal);
         return cacheNormal;
     }
 
@@ -84,15 +96,21 @@ public class TpsAnchorMapping : GroomAnchorMapping
         return spline.LocalScale(worldPoint);
     }
 
-    void Resolve(Vector3 worldPoint)
+    void Resolve(Vector3 worldPoint, Vector3 worldNormal)
     {
-        if (hasCache && (cacheKey - worldPoint).sqrMagnitude < 1e-12f) return;
+        if (hasCache && (cacheKey - worldPoint).sqrMagnitude < 1e-12f && (cacheNormalKey - worldNormal).sqrMagnitude < 1e-12f) return;
 
         Vector3 warped = spline.Map(worldPoint);
         // Through the Jacobian, not through Map. A normal is a covector and the warp is
         // nonlinear; carried the wrong way it tilts off the surface under any shear, and a
         // head-to-head warp is mostly shear.
-        Vector3 warpedNormal = spline.MapNormal(worldPoint, Vector3.up);
+        //
+        // And it is the ANCHOR'S OWN normal, not a fixed axis. This used to pass Vector3.up,
+        // which is very nearly right on a scalp - up IS roughly the scalp normal - and completely
+        // wrong on a jaw, a cheek or under a chin, where the surface faces sideways or down. The
+        // projection below casts along this direction, so a groom's scalp landed correctly while
+        // its beard was projected along a ray pointing at nothing in particular.
+        Vector3 warpedNormal = spline.MapNormal(worldPoint, worldNormal);
 
         Vector3 point;
         Vector3 normal;
@@ -118,6 +136,7 @@ public class TpsAnchorMapping : GroomAnchorMapping
 
         hasCache = true;
         cacheKey = worldPoint;
+        cacheNormalKey = worldNormal;
         cachePoint = point;
         cacheNormal = normal;
     }
@@ -136,6 +155,16 @@ public class TpsAnchorMapping : GroomAnchorMapping
         if (n.sqrMagnitude < .000001f) n = Vector3.up;
         n = n.normalized;
 
+        // Cast-from-inside cannot land on an ear, because an ear is further out along the ray
+        // than the scalp is. It CAN land on the wrong surface where "inside" stops being
+        // unambiguous - the neck-to-jaw junction, under a chin - and a beard lives exactly there.
+        // So a landing whose surface faces nothing like the direction it was sought in is kept as
+        // a candidate rather than accepted, and the search carries on for a better one.
+        float bestAgreement = -2f;
+        Vector3 bestPoint = point;
+        Vector3 bestNormal = n;
+        bool found = false;
+
         float push = headSize * .02f;
         for (int attempt = 0; attempt < 7; attempt++)
         {
@@ -146,12 +175,33 @@ public class TpsAnchorMapping : GroomAnchorMapping
                 // Hit from behind: the triangle's outward normal runs with the ray.
                 if (Vector3.Dot(hit.normal, n) > 0f)
                 {
-                    hitPoint = hit.point;
-                    hitNormal = hit.normal;
-                    return true;
+                    float agreement = Vector3.Dot(hit.normal.normalized, n);
+                    if (agreement > bestAgreement)
+                    {
+                        bestAgreement = agreement;
+                        bestPoint = hit.point;
+                        bestNormal = hit.normal;
+                        found = true;
+                    }
+                    // Within about 75 degrees is a surface genuinely facing the way the anchor
+                    // was pointing. Anything shallower is a grazing hit on a fold and is worth
+                    // one more push to try to beat.
+                    if (agreement > .26f)
+                    {
+                        hitPoint = hit.point;
+                        hitNormal = hit.normal;
+                        return true;
+                    }
                 }
             }
             push = push * 2f;
+        }
+
+        if (found)
+        {
+            hitPoint = bestPoint;
+            hitNormal = bestNormal;
+            return true;
         }
         return false;
     }
@@ -329,8 +379,9 @@ public static class RemapPreview
             // randomisation of every card in the project.
             card.SetIdentity(point, normal, 1f);
 
-            Vector3 moved = mapping.MapPoint(point);
-            Vector3 movedNormal = mapping.MapNormal(point, normal);
+            Vector3 moved;
+            Vector3 movedNormal;
+            mapping.MapAnchor(point, normal, out moved, out movedNormal);
 
             // Embed depth and the card's own length and width are deliberately NOT scaled. They
             // are authored intent rather than a consequence of where the head is, and scaling
@@ -371,8 +422,9 @@ public static class RemapPreview
 
             Vector3 oldNormal = guide.normal;
             float scale = mapping.LocalScale(guide.contact);
-            Vector3 moved = mapping.MapPoint(guide.contact);
-            Vector3 movedNormal = mapping.MapNormal(guide.contact, guide.normal);
+            Vector3 moved;
+            Vector3 movedNormal;
+            mapping.MapAnchor(guide.contact, guide.normal, out moved, out movedNormal);
 
             guide.contact = moved;
             guide.normal = movedNormal;
@@ -433,8 +485,9 @@ public static class RemapPreview
             snapshot.clumperFalloffs.Add(clumper.falloff);
 
             float scale = mapping.LocalScale(clumper.center);
-            Vector3 moved = mapping.MapPoint(clumper.center);
-            Vector3 movedNormal = mapping.MapNormal(clumper.center, clumper.normal);
+            Vector3 moved;
+            Vector3 movedNormal;
+            mapping.MapAnchor(clumper.center, clumper.normal, out moved, out movedNormal);
 
             clumper.center = moved;
             clumper.normal = movedNormal;
@@ -475,8 +528,9 @@ public static class RemapPreview
                 Vector3 normal = new Vector3(post.normalX, post.normalY, post.normalZ);
 
                 float scale = mapping.LocalScale(centre);
-                Vector3 moved = mapping.MapPoint(centre);
-                Vector3 movedNormal = mapping.MapNormal(centre, normal);
+                Vector3 moved;
+                Vector3 movedNormal;
+                mapping.MapAnchor(centre, normal, out moved, out movedNormal);
 
                 post.centerX = moved.x;
                 post.centerY = moved.y;

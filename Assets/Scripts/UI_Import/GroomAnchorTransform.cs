@@ -26,6 +26,19 @@ public abstract class GroomAnchorMapping
     // lengths and depths are all raw world distances compared against Vector3.Distance, so a
     // mapping that changes scale without this would quietly change every modifier's reach.
     public abstract float LocalScale(Vector3 worldPoint);
+
+    // Both halves of an anchor at once, and the form every caller should prefer.
+    //
+    // MapPoint takes only a position, which is fine for a mapping that ignores orientation and a
+    // trap for one that does not: a landmark warp needs the anchor's own normal to know which way
+    // to project it onto the new surface, and a point-only call has no way to hand that over. The
+    // split pair stays for the save-data pass, where the mapping is a uniform scale and the
+    // question does not arise.
+    public virtual void MapAnchor(Vector3 worldPoint, Vector3 worldNormal, out Vector3 movedPoint, out Vector3 movedNormal)
+    {
+        movedPoint = MapPoint(worldPoint);
+        movedNormal = MapNormal(worldPoint, worldNormal);
+    }
 }
 
 // The import-rescale mapping: one uniform factor about the origin.
