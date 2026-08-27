@@ -333,7 +333,8 @@ public class MaterialUVRectAuthority : MonoBehaviour
             uMin = item.uMin,
             vMin = item.vMin,
             uMax = item.uMax,
-            vMax = item.vMax
+            vMax = item.vMax,
+            flipV = item.flipV
         }).ToList();
     }
 
@@ -350,6 +351,19 @@ public class MaterialUVRectAuthority : MonoBehaviour
                 hash = hash * 31 + Mathf.RoundToInt(rect.vMin * 100000f);
                 hash = hash * 31 + Mathf.RoundToInt(rect.uMax * 100000f);
                 hash = hash * 31 + Mathf.RoundToInt(rect.vMax * 100000f);
+
+                // FLIP V moves no edge, so a set that differs only by which strips are turned
+                // over hashes identically without this line - and this hash is what
+                // SyncWorkspaceSelection uses to decide whether the workspace has anything worth
+                // writing back. Toggling from the row commits itself directly and would survive
+                // either way; a flip arriving any other route - an ImportDefinitions from an undo
+                // or a project restore - is seen only by the poll, and would be dropped.
+                //
+                // It also keeps lastWorkspaceSignature honest, which is what stops the NEXT
+                // genuine edit being compared against a value that was already wrong.
+                int flipBit = 0;
+                if (rect.flipV) flipBit = 1;
+                hash = hash * 31 + flipBit;
             }
             return hash;
         }

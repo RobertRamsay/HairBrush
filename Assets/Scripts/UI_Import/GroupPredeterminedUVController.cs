@@ -21,6 +21,11 @@ public class GroupPredeterminedUVController : MonoBehaviour
         public int minId = 1;
         public int maxId = 1;
         public int seed;
+
+        // PREDETERMINED only - see GroupSaveData.uvFlipV for why there are two levels of flip.
+        // XORed with each rectangle's own flipV, so turning a group over does not reach into
+        // strips that other groups are sharing.
+        public bool flipV;
     }
 
     private readonly Dictionary<int, GroupUVSettings> settingsByGroup = new();
@@ -46,6 +51,10 @@ public class GroupPredeterminedUVController : MonoBehaviour
     private TMP_InputField maxInput;
     private TMP_InputField seedInput;
     private Button randomButton;
+    private GameObject flipRow;
+    private Button flipButton;
+    private TextMeshProUGUI flipButtonText;
+    private Image flipButtonImage;
     private GameObject uScaleRow;
     private GameObject vScaleRow;
     private GameObject uOffsetRow;
@@ -129,6 +138,7 @@ public class GroupPredeterminedUVController : MonoBehaviour
         group.uvRectMinId = settings.minId;
         group.uvRectMaxId = settings.maxId;
         group.uvRectSeed = settings.seed;
+        group.uvFlipV = settings.flipV;
     }
 
     public void ClearAllSettings()
@@ -166,6 +176,7 @@ public class GroupPredeterminedUVController : MonoBehaviour
                 settings.minId = group.uvRectMinId > 0 ? group.uvRectMinId : 1;
                 settings.maxId = group.uvRectMaxId > 0 ? group.uvRectMaxId : settings.minId;
                 settings.seed = group.uvRectSeed;
+                settings.flipV = group.uvFlipV;
 
                 // Ordered and floored, but NOT clamped to the rectangles that happen to exist
                 // right now. A range can legitimately be saved pointing outside the current set -
@@ -225,6 +236,7 @@ public class GroupPredeterminedUVController : MonoBehaviour
         SetRowActive(uOffsetRow, !settings.predetermined);
         SetRowActive(vOffsetRow, !settings.predetermined);
         if (predeterminedRow != null) predeterminedRow.SetActive(settings.predetermined);
+        MaintainFlipRow(settings, rects, haveRects, editingPost);
 
         Image buttonImage = modeButton != null ? modeButton.GetComponent<Image>() : null;
         if (buttonImage != null)
@@ -233,6 +245,188 @@ public class GroupPredeterminedUVController : MonoBehaviour
                 : new Color(.25f, .25f, .25f, 1f);
 
         MaintainRightPanelOrder();
+    }
+
+    // The FLIP V button's whole visible state: shown or not, on or off, live or dead.
+    // rects is handed in rather than fetched. GetRectsForGroup is not a getter: it runs a
+    // FindFirstObjectByType, a material-generation sync and a full Clone of the atlas, and
+    // MaintainRightPanelUI has already paid for all of that a few lines above. Asking again
+    // would double it, sixteen times a second, forever, for a label.
+    void MaintainFlipRow(GroupUVSettings settings, List<UVRectSaveData> rects, bool haveRects, bool editingPost)
+    {
+        if (flipRow == null) return;
+
+        // Hidden while a POST is selected. In that state the panel's sliders are editing the
+        // POST, not the group, and a button that says FLIP V while everything around it means
+        // something else is worse than no button.
+        //
+        // Hidden from HERE, on this authority's own IsEditingPost, rather than by the arrangement
+        // that hides the PREDETERMINED row - that one is PostPredeterminedUVUIAuthority reaching
+        // in and calling SetActive(false) on a row it does not own, under a narrower predicate
+        // that also requires the POST's group to resolve and to be in PREDETERMINED. Two owners
+        // for one row's visibility is how the row ends up flickering between them.
+        bool visible = !editingPost;
+        if (flipRow.activeSelf != visible) flipRow.SetActive(visible);
+        if (!visible) return;
+
+        bool on = FlipIsOn(settings);
+
+        string label = "FLIP V: OFF";
+        if (on) label = "FLIP V: ON";
+
+        if (settings.predetermined)
+        {
+            // How many of the strips this group can actually draw are already turned over in the
+            // texture editor. Without it the button is the only flip you can see, and a group
+            // whose sheet is half one way and half the other looks like a bug rather than like
+            // three strips waiting to be marked.
+            int flipped = CountFlippedInRange(settings, rects, out int total);
+            if (flipped > 0) label += "  (" + flipped + "/" + total + " STRIPS FLIPPED)";
+        }
+        if (flipButtonText != null && flipButtonText.text != label) flipButtonText.text = label;
+
+        if (flipButtonImage != null)
+        {
+            Color colour = new Color(.25f, .25f, .25f, 1f);
+            if (on) colour = new Color(.20f, .58f, .45f, 1f);
+            if (flipButtonImage.color != colour) flipButtonImage.color = colour;
+        }
+
+        if (flipButton == null) return;
+
+        bool live;
+        if (settings.predetermined)
+        {
+            // Same rule as the rest of the PREDETERMINED controls, and it stays live under GROOM
+            // LOCKED for the same reason they do: which part of a texture a card samples is group
+            // metadata, not groom geometry.
+            //
+            // Note HOW it stays live, because it is not the way the neighbouring rows manage it.
+            // They are on ModifierCoreLock's IsInsideUVRouting list; this row is NOT, and cannot
+            // be, because that list would also exempt it in ADJUSTABLE where it must lock. It
+            // survives instead because that authority's button pass only touches buttons under a
+            // *_VarianceRow. So this line is the only thing deciding it, in both modes - if a
+            // slider or an input field is ever added to this row, it will NOT get the same
+            // treatment, and IsInsideUVRouting will lock it in both modes rather than one.
+            live = haveRects;
+        }
+        else
+        {
+            // ADJUSTABLE, where this button IS the V Scale slider. Read the lock off that slider
+            // rather than working it out again, so the two cannot disagree about a state
+            // ModifierCoreLock owns. In this mode the flip IS groom geometry, so it locks.
+            Slider vScale = null;
+            if (vScaleRow != null) vScale = vScaleRow.GetComponentInChildren<Slider>(true);
+
+            live = true;
+            if (vScale != null) live = vScale.interactable;
+        }
+        flipButton.interactable = live;
+
+        // The row's own dim, because ModifierCoreLock cannot do it for us. Its dim pass gives a
+        // row one alpha, and this row needs two: full brightness in PREDETERMINED, where it stays
+        // usable under the lock alongside the UV RECTS row, and the same 0.48 as its neighbours
+        // in ADJUSTABLE, where it locks with them. That is why the row is on that pass's skip
+        // list - so the alpha is ours to set here, from the same `live` the button just took.
+        // Left alone it would have been a bright, dead, full-width button in a dimmed column.
+        CanvasGroup group = flipRow.GetComponent<CanvasGroup>();
+        if (group == null) group = flipRow.AddComponent<CanvasGroup>();
+        float alpha = 1f;
+        if (!live) alpha = .48f;
+        if (!Mathf.Approximately(group.alpha, alpha)) group.alpha = alpha;
+    }
+
+    // What the button reads as ON, per mode. PREDETERMINED has its own flag; ADJUSTABLE has only
+    // ever had the sign of V Scale.
+    bool FlipIsOn(GroupUVSettings settings)
+    {
+        if (settings.predetermined) return settings.flipV;
+        return CurrentGroupVScale() < 0f;
+    }
+
+    // Counted over ResolveRange, the same range ApplyGroup draws from, so the number on the
+    // button is the number of strips this group can actually land on - including when the
+    // authored range has fallen outside the live rectangles and ApplyGroup is running on its
+    // clamped fallback. Filtering by minId/maxId here would report 0/0 in exactly that case.
+    //
+    // A plain loop rather than BuildAllowed's list, because this runs on the 16Hz panel scan
+    // and BuildAllowed allocates a Where, an OrderBy and a List every time it is called.
+    static int CountFlippedInRange(GroupUVSettings settings, List<UVRectSaveData> rects, out int total)
+    {
+        total = 0;
+        if (!ResolveRange(settings, rects, out int lo, out int hi)) return 0;
+
+        int flipped = 0;
+        foreach (UVRectSaveData rect in rects)
+        {
+            if (rect == null || rect.id < lo || rect.id > hi) continue;
+            total++;
+            if (rect.flipV) flipped++;
+        }
+        return flipped;
+    }
+
+    float CurrentGroupVScale()
+    {
+        return GroupFloat(groupVScalesField, viewer.currentGroupId, 1f);
+    }
+
+    void ToggleFlipV(int groupId)
+    {
+        if (IsEditingPost()) return;
+        GroupUVSettings settings = GetSettings(groupId);
+
+        if (settings.predetermined)
+        {
+            settings.flipV = !settings.flipV;
+            ClearAppliedForGroup(groupId);
+            ForceApplyGroup(groupId);
+        }
+        else
+        {
+            // ADJUSTABLE: negate the group's V Scale, which is the flip this mode has always had.
+            //
+            // Refused for any group but the current one, and that is not defensiveness. There is
+            // no per-group setter for V Scale: ModelViewer.OnSliderVScaleChanged writes
+            // currentVScale and groupVScales[currentGroupId], and ApplyGroupUpdate walks
+            // currentGroupId's cards. Running it for another id would edit the wrong group while
+            // reporting success - so the parameter has to be honoured by refusing, rather than
+            // by quietly meaning something else here than it means in the branch above.
+            if (viewer == null || viewer.currentGroupId != groupId) return;
+            //
+            // The zero case is not a no-op. V Scale's range is -1..1 and a card at 0 draws a
+            // single line of the texture, so -0 would leave the button looking dead. Falling to
+            // -1 is the same choice HairCardSaveData.FlipLegacyAbsoluteV makes for exactly the
+            // same reason, and lands on the mirrored form of the default.
+            //
+            // It is the one input this button does not round-trip: 0 goes to -1 and comes back
+            // as +1, so a group parked at 0 cannot be returned to 0 with the button. Restoring a
+            // degenerate value is not worth a second special case - the slider is right there.
+            float current = CurrentGroupVScale();
+            float flipped = -current;
+            if (Mathf.Approximately(current, 0f)) flipped = -1f;
+
+            viewer.OnSliderVScaleChanged(flipped);
+
+            // OnSliderVScaleChanged writes the value and the cards but not the slider widget -
+            // it is normally CALLED BY the widget. Without this the handle stays where it was
+            // and the next drag snaps the hair back from wherever it was left.
+            PushGroomSliders();
+        }
+
+        nextUIScan = 0f;
+        MaintainRightPanelUI();
+    }
+
+    // ModelViewer.PushAllGroomSliders is private and there is no public equivalent. Reflected
+    // rather than duplicated: re-implementing it here would be a second list of every slider in
+    // the panel, silently going stale the first time one was added.
+    void PushGroomSliders()
+    {
+        if (viewer == null) return;
+        MethodInfo push = typeof(ModelViewer).GetMethod("PushAllGroomSliders",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        if (push != null) push.Invoke(viewer, null);
     }
 
     void BindRightPanel(GameObject panel)
@@ -247,6 +441,10 @@ public class GroupPredeterminedUVController : MonoBehaviour
         maxInput = null;
         seedInput = null;
         randomButton = null;
+        flipRow = null;
+        flipButton = null;
+        flipButtonText = null;
+        flipButtonImage = null;
 
         if (panel == null) return;
         Transform root = panel.transform;
@@ -260,9 +458,12 @@ public class GroupPredeterminedUVController : MonoBehaviour
         if (oldMode != null) Destroy(oldMode.gameObject);
         Transform oldPred = root.Find("GroupUVPredetermined_Row");
         if (oldPred != null) Destroy(oldPred.gameObject);
+        Transform oldFlip = root.Find("GroupUVFlip_Row");
+        if (oldFlip != null) Destroy(oldFlip.gameObject);
 
         BuildModeRow(root);
         BuildPredeterminedRow(root);
+        BuildFlipRow(root);
         MaintainRightPanelOrder();
     }
 
@@ -324,6 +525,60 @@ public class GroupPredeterminedUVController : MonoBehaviour
         randomButton.onClick.AddListener(() => RandomizeSeed(viewer.currentGroupId));
     }
 
+    // FLIP V, in BOTH modes, and it means the same thing in both: this group's hair is coming
+    // out root-end-first against the texture.
+    //
+    // What it writes is not the same in both, and it cannot be. In PREDETERMINED there is a real
+    // group flag to turn over (settings.flipV). In ADJUSTABLE there has never been one, because
+    // the sign of the group's own V Scale has always been the flip - so there the button negates
+    // that slider rather than inventing a second store that would then have to be reconciled
+    // with it. See ToggleFlipV.
+    //
+    // Named "GroupUVFlip_Row" and NOT "GroupUV_Flip_Row": RemoveLegacyLeftRows destroys every
+    // RectTransform whose name starts with "GroupUV_" bar two whitelisted ones, so the
+    // underscore would delete this row on the next scan after it was built.
+    void BuildFlipRow(Transform parent)
+    {
+        flipRow = new GameObject("GroupUVFlip_Row", typeof(RectTransform), typeof(HorizontalLayoutGroup));
+        flipRow.transform.SetParent(parent, false);
+        flipRow.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 34f);
+
+        HorizontalLayoutGroup layout = flipRow.GetComponent<HorizontalLayoutGroup>();
+        layout.padding = new RectOffset(0, 0, 2, 2);
+        layout.spacing = 0f;
+        layout.childControlWidth = true;
+        layout.childControlHeight = true;
+        layout.childForceExpandWidth = true;
+        layout.childForceExpandHeight = false;
+
+        GameObject buttonGO = AddButton(flipRow.transform, "FLIP V: OFF", 0f, 28f);
+        buttonGO.name = "GroupUVFlipButton";
+        flipButton = buttonGO.GetComponent<Button>();
+        flipButtonText = buttonGO.GetComponentInChildren<TextMeshProUGUI>(true);
+        flipButtonImage = buttonGO.GetComponent<Image>();
+
+        // The strip count makes this the longest label in the panel, and PanelTypographyScale
+        // takes the 12 AddButton set up to 14 the first frame it sees it.
+        //
+        // Belt and braces rather than the mechanism: CompactRightPanelAuthority already forces
+        // NoWrap and autosizing down to 9pt on every button label under GroomingPanel, so the
+        // count shrinks to fit rather than wrapping or clipping. This says the same thing
+        // locally, so that a row read on its own does not look like it is relying on TMP's
+        // wrapping default - which would put a second line half outside a 28px button.
+        if (flipButtonText != null)
+        {
+            flipButtonText.textWrappingMode = TMPro.TextWrappingModes.NoWrap;
+            flipButtonText.overflowMode = TMPro.TextOverflowModes.Ellipsis;
+        }
+
+        LayoutElement element = buttonGO.AddComponent<LayoutElement>();
+        element.minHeight = 28f;
+        element.preferredHeight = 28f;
+        element.flexibleWidth = 1f;
+
+        flipButton.onClick.AddListener(() => ToggleFlipV(viewer.currentGroupId));
+    }
+
     void MaintainRightPanelOrder()
     {
         if (modeRow == null || uScaleRow == null || modeRow.transform.parent != uScaleRow.transform.parent) return;
@@ -340,7 +595,18 @@ public class GroupPredeterminedUVController : MonoBehaviour
             uScaleRow.transform.SetSiblingIndex(Mathf.Min(insert++, parent.childCount - 1));
             vScaleRow.transform.SetSiblingIndex(Mathf.Min(insert++, parent.childCount - 1));
             uOffsetRow.transform.SetSiblingIndex(Mathf.Min(insert++, parent.childCount - 1));
-            vOffsetRow.transform.SetSiblingIndex(Mathf.Min(insert, parent.childCount - 1));
+            vOffsetRow.transform.SetSiblingIndex(Mathf.Min(insert++, parent.childCount - 1));
+
+            // Under the four sliders rather than between V Scale and U Offset. It belongs with
+            // them, but breaking up U Scale / V Scale / U Offset / V Offset would cost more in
+            // scannability than the adjacency is worth.
+            if (flipRow != null)
+                flipRow.transform.SetSiblingIndex(Mathf.Min(insert, parent.childCount - 1));
+        }
+        else if (flipRow != null && predeterminedRow != null)
+        {
+            flipRow.transform.SetSiblingIndex(
+                Mathf.Min(predeterminedRow.transform.GetSiblingIndex() + 1, parent.childCount - 1));
         }
     }
 
@@ -488,14 +754,42 @@ public class GroupPredeterminedUVController : MonoBehaviour
         nextApplyScan = Time.unscaledTime + .10f;
     }
 
-    void ApplyGroup(int groupId, GroupUVSettings settings, List<UVRectSaveData> allRects)
+    // The rect-id range a group is ACTUALLY drawing from right now: its authored range, or the
+    // clamped view of it explained below when that range currently selects nothing. False when
+    // there is nothing to draw from at all.
+    //
+    // Split out so that ApplyGroup and the FLIP V button's "n/N STRIPS FLIPPED" count agree on
+    // which strips are in play. Worked out separately, the count went quiet in exactly the case
+    // it is most wanted - a range pointing outside the live set, where ApplyGroup is quietly
+    // running on a fallback the panel knew nothing about.
+    //
+    // Deliberately allocation-free, and that is not premature: the panel asks this 16 times a
+    // second for a label, forever, and it is the reason the count does not simply reuse
+    // BuildAllowed's list.
+    static bool ResolveRange(GroupUVSettings settings, List<UVRectSaveData> allRects, out int lo, out int hi)
     {
-        if (settings == null || !settings.predetermined || allRects == null || allRects.Count == 0) return;
+        lo = 0;
+        hi = -1;
+        if (settings == null || allRects == null || allRects.Count == 0) return false;
 
-        List<UVRectSaveData> allowed = allRects
-            .Where(rect => rect != null && rect.id >= settings.minId && rect.id <= settings.maxId)
-            .OrderBy(rect => rect.id)
-            .ToList();
+        int lowest = int.MaxValue;
+        int highest = int.MinValue;
+        int live = 0;
+        int inRange = 0;
+
+        foreach (UVRectSaveData rect in allRects)
+        {
+            if (rect == null) continue;
+            live++;
+            if (rect.id < lowest) lowest = rect.id;
+            if (rect.id > highest) highest = rect.id;
+            if (rect.id >= settings.minId && rect.id <= settings.maxId) inRange++;
+        }
+        if (live == 0) return false;
+
+        lo = settings.minId;
+        hi = settings.maxId;
+        if (inRange > 0) return true;
 
         // The rectangle set can shrink underneath a stored range at any time: a rect deleted with
         // a right click, AUTO replacing five hand-drawn rects with three of its own, a group
@@ -509,25 +803,32 @@ public class GroupPredeterminedUVController : MonoBehaviour
         // they came from - and the authored range has to still be there when it does. A clamp
         // stored in settings would have thrown it away a tenth of a second after it went out of
         // range, permanently, in response to something the user was about to reverse.
-        if (allowed.Count == 0)
+        lo = Mathf.Clamp(settings.minId, lowest, highest);
+        hi = Mathf.Clamp(settings.maxId, lowest, highest);
+        if (lo > hi)
         {
-            List<UVRectSaveData> live = allRects.Where(rect => rect != null).ToList();
-            if (live.Count == 0) return;
-
-            int lowest = live.Min(rect => rect.id);
-            int highest = live.Max(rect => rect.id);
-            int lo = Mathf.Clamp(settings.minId, lowest, highest);
-            int hi = Mathf.Clamp(settings.maxId, lowest, highest);
-            if (lo > hi)
-            {
-                int swap = lo;
-                lo = hi;
-                hi = swap;
-            }
-
-            allowed = live.Where(rect => rect.id >= lo && rect.id <= hi).OrderBy(rect => rect.id).ToList();
+            int swap = lo;
+            lo = hi;
+            hi = swap;
         }
+        return true;
+    }
 
+    static List<UVRectSaveData> BuildAllowed(GroupUVSettings settings, List<UVRectSaveData> allRects)
+    {
+        if (!ResolveRange(settings, allRects, out int lo, out int hi)) return new List<UVRectSaveData>();
+
+        return allRects
+            .Where(rect => rect != null && rect.id >= lo && rect.id <= hi)
+            .OrderBy(rect => rect.id)
+            .ToList();
+    }
+
+    void ApplyGroup(int groupId, GroupUVSettings settings, List<UVRectSaveData> allRects)
+    {
+        if (settings == null || !settings.predetermined || allRects == null || allRects.Count == 0) return;
+
+        List<UVRectSaveData> allowed = BuildAllowed(settings, allRects);
         if (allowed.Count == 0) return;
 
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
@@ -536,13 +837,13 @@ public class GroupPredeterminedUVController : MonoBehaviour
 
             int pick = PositiveMod(StableCardHash(card, groupId, settings.seed), allowed.Count);
             UVRectSaveData rect = allowed[pick];
-            int signature = RectSignature(rect, settings.seed, allowed.Count);
+            int signature = RectSignature(rect, settings.seed, allowed.Count, settings.flipV);
             int cardId = card.GetInstanceID();
             if (appliedSignatureByCard.TryGetValue(cardId, out int previous) && previous == signature) continue;
 
             HairCard.GroomState canonical = card.GetCanonicalState();
             canonical.uScale = Mathf.Max(.000001f, rect.uMax - rect.uMin);
-            canonical.vScale = Mathf.Max(.000001f, rect.vMax - rect.vMin);
+            canonical.vScale = SignedVScale(rect, settings.flipV);
             canonical.uOffset = rect.uMin;
             canonical.vOffset = rect.vMin;
             card.SetCanonicalState(canonical, true);
@@ -647,7 +948,30 @@ public class GroupPredeterminedUVController : MonoBehaviour
         }
     }
 
-    static int RectSignature(UVRectSaveData rect, int seed, int allowedCount)
+    // The one place a rectangle plus the two flips become a card's V ramp, so the group path and
+    // the POST override cannot drift apart. PostPredeterminedUVAuthority calls this too.
+    //
+    // The sign IS the flip. HairCard.GenerateMesh reads a negative vScale as "run the ramp the
+    // other way" (see the baseV lines there): positive puts the root at vMax and the tip at vMin,
+    // negative puts the root at vMin and the tip at vMax. Magnitude is the rectangle's height
+    // either way, and vOffset stays vMin either way, so nothing but the direction changes.
+    //
+    // Clamped away from zero for the same reason the old expression was: a rectangle that has
+    // been squashed to nothing must not produce a degenerate UV span, and Mathf.Max cannot be
+    // applied after the negation without throwing the sign away.
+    public static float SignedVScale(UVRectSaveData rect, bool groupFlip)
+    {
+        if (rect == null) return 1f;
+        float span = Mathf.Max(.000001f, rect.vMax - rect.vMin);
+
+        // XOR, not OR. A strip already marked as root-at-the-bottom in the texture editor and a
+        // group told to turn over cancel each other out, which is the only answer that lets the
+        // two controls be used together rather than one having to know about the other.
+        if (rect.flipV != groupFlip) return -span;
+        return span;
+    }
+
+    static int RectSignature(UVRectSaveData rect, int seed, int allowedCount, bool groupFlip)
     {
         unchecked
         {
@@ -659,6 +983,18 @@ public class GroupPredeterminedUVController : MonoBehaviour
             hash = hash * 31 + Mathf.RoundToInt(rect.uMax * 100000f);
             hash = hash * 31 + Mathf.RoundToInt(rect.vMin * 100000f);
             hash = hash * 31 + Mathf.RoundToInt(rect.vMax * 100000f);
+
+            // Both flips. This hash is what stops a card being rewritten every tenth of a second,
+            // so anything that changes the UVs a card ends up with has to be in it - a flip moves
+            // no edge, so without these two lines toggling one would repaint the button and leave
+            // the hair exactly as it was.
+            int rectFlipBit = 0;
+            if (rect.flipV) rectFlipBit = 1;
+            hash = hash * 31 + rectFlipBit;
+
+            int groupFlipBit = 0;
+            if (groupFlip) groupFlipBit = 1;
+            hash = hash * 31 + groupFlipBit;
             return hash;
         }
     }

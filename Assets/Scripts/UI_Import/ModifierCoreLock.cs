@@ -112,8 +112,20 @@ public class ModifierCoreLock : MonoBehaviour
 
         foreach (Transform child in boundPanel.transform)
         {
+            // GroupUVFlip_Row sets its own alpha instead of taking this one, because it needs a
+            // different answer in each of the two UV modes and this loop only has one to give.
+            // In PREDETERMINED that button is UV routing and stays live and bright like the rows
+            // either side of it; in ADJUSTABLE it negates V Scale, which is groom geometry, so it
+            // locks and dims with the sliders. GroupPredeterminedUVController.MaintainFlipRow
+            // reads the ADJUSTABLE half of that straight off the V Scale slider the loop above
+            // has just set, and applies the matching alpha - so the two agree without either
+            // having to work the other's answer out again.
+            //
+            // Note it is NOT on IsInsideUVRouting, and must not be: that list exempts a control
+            // in both modes, which would leave the ADJUSTABLE flip editable under the lock.
             if (child == null || child.name == "ClumperScrollHost" || child.name == "ClumperControls" ||
-                child.name == "GroupUVMode_Row" || child.name == "GroupUVPredetermined_Row") continue;
+                child.name == "GroupUVMode_Row" || child.name == "GroupUVPredetermined_Row" ||
+                child.name == "GroupUVFlip_Row") continue;
             bool editableRow = child.name.EndsWith("_Row", StringComparison.Ordinal) ||
                                child.name.EndsWith("_VarianceRow", StringComparison.Ordinal);
             if (!editableRow) continue;

@@ -73,6 +73,23 @@ public class UVRectSaveData
     public float vMin;
     public float uMax;
     public float vMax;
+
+    // Which end of this strip the ROOT of a card lands on.
+    //
+    // A card always runs t=0 at the root to t=1 at the tip, and the UV ramp in
+    // HairCard.GenerateMesh puts the root at the TOP of the rectangle (V = vMax) unless vScale
+    // is negative. That is a coin flip against any given hair texture: a sheet drawn with its
+    // strands hanging down and one drawn with them growing up are both perfectly ordinary, and
+    // one sheet can carry some of each.
+    //
+    // So this is a property of the STRIP, not of the card and not of the group - which is why it
+    // lives here rather than as a card field. Set it once in the texture editor and every card
+    // that ever draws this rectangle comes out the right way up, in every group and every
+    // project that uses the material.
+    //
+    // Absent in a project written before this existed, which JsonUtility leaves at false: the
+    // historical root-at-top mapping. No formatVersion bump is needed for that.
+    public bool flipV;
 }
 
 [Serializable]
@@ -276,6 +293,18 @@ public class PostPredeterminedUVSaveData
     public int uvRectMinId=1;
     public int uvRectMaxId=1;
     public int uvRectSeed;
+
+    // The group's own V flip, XORed on top of each rectangle's UVRectSaveData.flipV.
+    //
+    // Two levels rather than one because they answer different questions. The rectangle's flag
+    // says which way round that STRIP is drawn, and is shared by everything that uses the
+    // material. This one says "this group is coming out upside down", which is the answer when
+    // the whole sheet is the other way up, or when a group is deliberately combed against the
+    // grain - and it must not reach across into other groups sharing the same strips.
+    //
+    // PREDETERMINED mode only. In ADJUSTABLE the flip is the sign of the group's own V Scale,
+    // which has always been there and needs no second store.
+    public bool uvFlipV;
 
     public List<VarianceChannelSaveData> variances=new();
     public List<PostAffectorSaveData> postAffectors=new();

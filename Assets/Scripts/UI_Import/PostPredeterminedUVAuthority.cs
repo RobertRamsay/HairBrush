@@ -248,7 +248,13 @@ public class PostPredeterminedUVAuthority : MonoBehaviour
             if (!TryResolveRect(card, chosenSettings, allowed, out UVRectSaveData rect)) continue;
 
             card.uScale = Mathf.Max(.000001f, rect.uMax - rect.uMin);
-            card.vScale = Mathf.Max(.000001f, rect.vMax - rect.vMin);
+
+            // Both flips, through the same helper the group path uses. The strip's own flipV is
+            // plainly the POST's business - it is the same strip. The GROUP's flip is too, and
+            // that is the less obvious half: a POST overrides which rectangle a card draws, not
+            // which way up the group's hair sits, so without group.uvFlipV here a POST patch
+            // would come out inverted against the hair immediately around it.
+            card.vScale = GroupPredeterminedUVController.SignedVScale(rect, group.uvFlipV);
             card.uOffset = rect.uMin;
             card.vOffset = rect.vMin;
             card.GenerateMesh();

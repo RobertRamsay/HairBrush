@@ -1,15 +1,24 @@
+using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
-// One draggable row in the Texture UV Rect Workspace's list. Dropping this row onto another
-// row asks the owning TextureUVRectWorkspace to move it into that row's slot; the workspace
+// One draggable row in the Texture UV Rect Workspace's list. Dropping this row onto another row
+// asks the owning TextureUVRectWorkspace to move it into that row's slot; the workspace
 // renumbers everything to match the new order and rebuilds both this list and the on-texture
-// outlines/labels from scratch, so this component only ever deals with a single drag gesture
-// at a time and never has to reconcile its own state against a stale id afterward.
+// outlines/labels from scratch, so this component only ever deals with one drag at a time.
+//
+// It does NOT get to assume its id survives that. A renumber invalidates every live row through
+// Invalidate() - RemoveRectangle and ReorderRectangle both call RetireSummaryRows before the
+// rebuild that follows a frame later - so `retired` is the test every entry point makes before
+// acting on rectId, including the OnEndDrag branch that destroys this row rather than putting a
+// dead duplicate back into a list that has moved on without it.
 //
 // Right clicking the row deletes its rectangle. Same gesture as right clicking the rectangle
-// itself on the texture, so there is one thing to remember rather than two.
+// itself on the texture, so there is one thing to remember rather than two - with one gap: the
+// FLIP V square at the row's right-hand end takes the press first and does not pass it on, so
+// deleting needs the cursor anywhere else along the row. See UVRectFlipToggle for why that
+// trade is worth making.
 public class UVRectSummaryRow : MonoBehaviour, IPointerEnterHandler, IPointerExitHandler,
     IBeginDragHandler, IDragHandler, IEndDragHandler, IDropHandler, IPointerDownHandler
 {
@@ -29,6 +38,12 @@ public class UVRectSummaryRow : MonoBehaviour, IPointerEnterHandler, IPointerExi
     private bool externallyHighlighted;
     private bool retired;
 
+    // The two things a FLIP V toggle repaints. Held here rather than looked up by name on demand
+    // so that a retired row cannot be repainted through a reference the workspace still holds -
+    // Invalidate drops both.
+    private TextMeshProUGUI summaryLabel;
+    private Image flipImage;
+
     public void Bind(TextureUVRectWorkspace owner, int id, Image backgroundImage, CanvasGroup group)
     {
         workspace = owner;
@@ -39,6 +54,33 @@ public class UVRectSummaryRow : MonoBehaviour, IPointerEnterHandler, IPointerExi
         externallyHighlighted = false;
         retired = false;
         ApplyNormalSkin();
+    }
+
+    // Separate from Bind because the flip button is built after the row is, and Bind is the call
+    // that marks the row live. Both are made from CreateSummaryRow, one after the other.
+    public void BindFlip(TextMeshProUGUI label, Image flipButtonImage)
+    {
+        summaryLabel = label;
+        flipImage = flipButtonImage;
+    }
+
+    // The flip toggle sitting on this row asks HERE rather than calling the workspace itself, so
+    // that there is exactly one place holding this row's rectangle id. Ids renumber on every
+    // delete and reorder, and Invalidate is what says this row has stopped standing for one -
+    // a toggle with its own captured copy would go on flipping a strip that had moved.
+    public void RequestFlip()
+    {
+        if (retired || workspace == null) return;
+        workspace.ToggleRectFlipV(rectId);
+    }
+
+    // A flip changes no row's existence and no row's order, so the workspace repaints the one
+    // row that changed instead of rebuilding the list underneath the press that caused it.
+    public void SetFlipVisual(bool flipped, string labelText)
+    {
+        if (retired) return;
+        if (summaryLabel != null && summaryLabel.text != labelText) summaryLabel.text = labelText;
+        if (flipImage != null) flipImage.color = TextureUVRectWorkspace.FlipButtonColour(flipped);
     }
 
     void ApplyNormalSkin()
@@ -96,9 +138,10 @@ public class UVRectSummaryRow : MonoBehaviour, IPointerEnterHandler, IPointerExi
         workspace?.ClearHoveredRect(rectId);
     }
 
-    // Right click deletes this row's rectangle. The left button is deliberately left alone: a
-    // row is draggable for re-ordering, and a left press here is the start of that gesture at
-    // least as often as it is a click.
+    // Right click deletes this row's rectangle - anywhere on the row except the FLIP V square at
+    // its right-hand end, which carries its own IPointerDownHandler and so takes the press before
+    // this ever sees it. The left button is deliberately left alone here: a row is draggable for
+    // re-ordering, and a left press is the start of that gesture at least as often as a click.
     //
     // On the DOWN edge, not on click. A click needs the pointer to stay within the input
     // module's drag threshold between press and release, and a right press that drifts past it
@@ -141,6 +184,13 @@ public class UVRectSummaryRow : MonoBehaviour, IPointerEnterHandler, IPointerExi
         retired = true;
         pointerHovered = false;
         externallyHighlighted = false;
+
+        // Dropped for the same reason the id is: after a delete or a reorder this row's number
+        // belongs to a different rectangle, so repainting it would put another strip's FLIPPED
+        // on it. RequestFlip above is already refusing by then - `retired` is the one test, and
+        // blocksRaycasts=false below is the belt to its braces.
+        summaryLabel = null;
+        flipImage = null;
         if (canvasGroup != null) canvasGroup.blocksRaycasts = false;
     }
 

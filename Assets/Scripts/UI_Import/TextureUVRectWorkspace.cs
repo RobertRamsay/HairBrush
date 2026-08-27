@@ -1087,7 +1087,8 @@ public class TextureUVRectWorkspace : MonoBehaviour
                 uMin = r.uMin,
                 vMin = r.vMin,
                 uMax = r.uMax,
-                vMax = r.vMax
+                vMax = r.vMax,
+                flipV = r.flipV
             })
             .ToList();
     }
@@ -1115,7 +1116,13 @@ public class TextureUVRectWorkspace : MonoBehaviour
                     uMin = uMin,
                     vMin = vMin,
                     uMax = uMax,
-                    vMax = vMax
+                    vMax = vMax,
+
+                    // Carried straight through. The min/max shuffling above exists because an
+                    // edge pair can arrive in either order and means the same rectangle either
+                    // way; the flip is not an edge and has no such normal form, so ordering it
+                    // would be inventing a fact rather than repairing one.
+                    flipV = item.flipV
                 });
                 nextRectId = Mathf.Max(nextRectId, id + 1);
             }
@@ -1197,14 +1204,58 @@ public class TextureUVRectWorkspace : MonoBehaviour
 
         List<UVRectSaveData> ordered = rectangles.OrderBy(r => r.id).ToList();
         foreach (UVRectSaveData r in ordered)
-        {
-            string text = "#" + r.id + "  U " + r.uMin.ToString("F3") + "–" + r.uMax.ToString("F3") +
-                "  V " + r.vMin.ToString("F3") + "–" + r.vMax.ToString("F3");
-            CreateSummaryRow(r.id, text);
-        }
+            CreateSummaryRow(r.id, SummaryRowText(r), r.flipV);
     }
 
-    void CreateSummaryRow(int id, string text)
+    // One place, because ToggleRectFlipV rewrites a single row's label in place rather than
+    // rebuilding the list, and two copies of this string would drift the moment either changed.
+    static string SummaryRowText(UVRectSaveData r)
+    {
+        string text = "#" + r.id + "  U " + r.uMin.ToString("F3") + "–" + r.uMax.ToString("F3") +
+            "  V " + r.vMin.ToString("F3") + "–" + r.vMax.ToString("F3");
+
+        // Spelled out as well as shown on the button. The button is 18px of colour at the far
+        // right of an 18px row, which is easy to miss and impossible to be sure of at a glance;
+        // the word is what makes a scan down the list readable. It is last so that the ellipsis
+        // eats it before it eats the numbers, on the narrowest panel.
+        if (r.flipV) text += "   FLIPPED";
+        return text;
+    }
+
+    // Turns one strip's root end over. See UVRectSaveData.flipV.
+    //
+    // The row list is deliberately NOT rebuilt here, and the constraint has nothing to do with
+    // which kind of control calls it. This is reached from UVRectFlipToggle.OnPointerDown, by
+    // way of UVRectSummaryRow.RequestFlip - a pointer event the input module dispatches from
+    // inside the very hierarchy RebuildSummaryList destroys, which is the same trap
+    // ReorderRectangle and RemoveRectangle both have to defer around.
+    //
+    // Nothing about a flip changes which rows exist or what order they are in, so there is
+    // nothing to rebuild: the one row that changed repaints itself. Do not "simplify" this to a
+    // RefreshSummary call.
+    public void ToggleRectFlipV(int id)
+    {
+        UVRectSaveData rect = null;
+        foreach (UVRectSaveData candidate in rectangles)
+        {
+            if (candidate == null || candidate.id != id) continue;
+            rect = candidate;
+            break;
+        }
+        if (rect == null) return;
+
+        rect.flipV = !rect.flipV;
+
+        if (summaryRows.TryGetValue(id, out UVRectSummaryRow row) && row != null)
+            row.SetFlipVisual(rect.flipV, SummaryRowText(rect));
+
+        // Same immediate commit a delete makes. MaterialUVRectAuthority would notice a frame
+        // later through its signature poll, but only while a material is selected.
+        MaterialUVRectAuthority.StoreSelectedWorkspaceNow();
+        UndoHistoryAuthority.NotifyEdit();
+    }
+
+    void CreateSummaryRow(int id, string text, bool flipped)
     {
         GameObject rowGO = new GameObject("Row_" + id, typeof(RectTransform), typeof(Image), typeof(CanvasGroup), typeof(LayoutElement), typeof(UVRectSummaryRow));
         rowGO.transform.SetParent(summaryListRoot, false);
@@ -1221,7 +1272,11 @@ public class TextureUVRectWorkspace : MonoBehaviour
         textRect.anchorMin = Vector2.zero;
         textRect.anchorMax = Vector2.one;
         textRect.offsetMin = new Vector2(8f, 0f);
-        textRect.offsetMax = new Vector2(-6f, 0f);
+
+        // -26 rather than -6: the extra 20 is the flip button's lane. The label is already
+        // ellipsised, so this costs a few characters off the end of the longest rows and
+        // nothing else.
+        textRect.offsetMax = new Vector2(-26f, 0f);
         TextMeshProUGUI label = textGO.GetComponent<TextMeshProUGUI>();
         label.text = text;
         label.fontSize = 11.5f;
@@ -1233,7 +1288,64 @@ public class TextureUVRectWorkspace : MonoBehaviour
 
         UVRectSummaryRow row = rowGO.GetComponent<UVRectSummaryRow>();
         row.Bind(this, id, rowImage, rowGO.GetComponent<CanvasGroup>());
+
+        // Built after the row is bound, because the toggle is handed the row rather than an id.
+        Image flipImage = BuildRowFlipToggle(rowGO.transform, row, flipped);
+        row.BindFlip(label, flipImage);
         summaryRows[id] = row;
+    }
+
+    // The per-strip FLIP V toggle, pinned to the right edge of a row. UVRectFlipToggle carries
+    // the reasoning for why it is an Image with pointer handlers rather than a Button.
+    //
+    // 14 high inside an 18 high row, so it reads as a control sitting ON the row rather than as
+    // the row itself being a control. Do not make it taller: the list has a fixed 600px budget
+    // inside a section whose 781 is already exact (see UpdateSummary), so row height is not free.
+    Image BuildRowFlipToggle(Transform parent, UVRectSummaryRow row, bool flipped)
+    {
+        GameObject go = new GameObject("FlipV", typeof(RectTransform), typeof(Image), typeof(UVRectFlipToggle));
+        go.transform.SetParent(parent, false);
+
+        RectTransform rect = go.GetComponent<RectTransform>();
+        rect.anchorMin = new Vector2(1f, .5f);
+        rect.anchorMax = new Vector2(1f, .5f);
+        rect.pivot = new Vector2(1f, .5f);
+        rect.anchoredPosition = new Vector2(-4f, 0f);
+        rect.sizeDelta = new Vector2(18f, 14f);
+
+        Image image = go.GetComponent<Image>();
+        image.color = FlipButtonColour(flipped);
+        image.raycastTarget = true;
+
+        GameObject textGO = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
+        textGO.transform.SetParent(go.transform, false);
+        RectTransform textRect = textGO.GetComponent<RectTransform>();
+        textRect.anchorMin = Vector2.zero;
+        textRect.anchorMax = Vector2.one;
+        textRect.offsetMin = Vector2.zero;
+        textRect.offsetMax = Vector2.zero;
+
+        // "V", not an up/down arrow. The arrows block is only partly present in this font -
+        // the panel's existing → is there, ↕ is not guaranteed - and a missing glyph draws as a
+        // hollow box, which would read as a broken button rather than as a flip.
+        TextMeshProUGUI text = textGO.GetComponent<TextMeshProUGUI>();
+        text.text = "V";
+        text.fontSize = 10f;
+        text.fontStyle = FontStyles.Bold;
+        text.alignment = TextAlignmentOptions.Center;
+        text.color = Color.white;
+        text.raycastTarget = false;
+
+        go.GetComponent<UVRectFlipToggle>().Bind(row);
+        return image;
+    }
+
+    // Shared so the build and the in-place repaint cannot disagree. Same teal the other
+    // on/off toggles in this tool use.
+    public static Color FlipButtonColour(bool flipped)
+    {
+        if (flipped) return new Color(.20f, .58f, .45f, 1f);
+        return new Color(.28f, .28f, .28f, 1f);
     }
 
     // Called by UVRectSummaryRow.OnDrop. Moves the dragged rectangle into the dropped-on
@@ -1264,6 +1376,16 @@ public class TextureUVRectWorkspace : MonoBehaviour
         // GameObject currently mid-dispatch for this very OnDrop callback.
         RefreshRectangleVisuals();
         UpdateSummary();
+
+        // Every id above just changed meaning, and the rows still standing were built under the
+        // old numbering. RemoveRectangle retires them for exactly this reason and this half of
+        // the pair was missing it - which mattered less while a row's only gestures were its own
+        // drag and delete, and matters now that each row carries a FLIP V toggle that a press in
+        // this same frame could aim at the strip that used to be in that slot.
+        //
+        // RetireSummaryRows is also what makes the dragged row destroy itself in OnEndDrag rather
+        // than reinsert itself into a list that has moved on - see UVRectSummaryRow.OnEndDrag.
+        RetireSummaryRows();
 
         // The row list itself IS the GameObject hierarchy this callback is executing under, so
         // destroying and recreating it here would kill the dragged row before OnEndDrag finishes

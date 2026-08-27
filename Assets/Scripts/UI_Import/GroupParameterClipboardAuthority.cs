@@ -38,6 +38,15 @@ public static class GroupParameterClipboardAuthority
         public int uvMinId;
         public int uvMaxId;
         public int uvSeed;
+
+        // PREDETERMINED's group-level V flip. It travels with the range and the seed because it
+        // is the same kind of thing: which pixels a card ends up drawing. Leaving it out would
+        // land a paste upside down against the group it was copied from, and only for groups
+        // whose flip happened to be on - so it would read as an intermittent fault rather than
+        // as a missing field.
+        //
+        // ADJUSTABLE's flip is the sign of V Scale, which already rides along inside `shape`.
+        public bool uvFlipV;
         public int sourceGroupId;
     }
 
@@ -337,6 +346,7 @@ public static class GroupParameterClipboardAuthority
         into.uvMinId = probe.uvRectMinId;
         into.uvMaxId = probe.uvRectMaxId;
         into.uvSeed = probe.uvRectSeed;
+        into.uvFlipV = probe.uvFlipV;
     }
 
     static void WriteGroupUV(int groupId, Clip from)
@@ -378,6 +388,24 @@ public static class GroupParameterClipboardAuthority
 
         MethodInfo setSeed = typeof(GroupPredeterminedUVController).GetMethod("SetSeed", flags);
         if (setSeed != null) setSeed.Invoke(controller, new object[] { groupId, from.uvSeed.ToString() });
+
+        // FLIP V, and only in PREDETERMINED. ToggleFlipV is a toggle like ToggleMode, so it is
+        // called only when the two disagree.
+        //
+        // BOTH halves of the comparison are read AFTER the mode write, not from the `current`
+        // probe above and not from the clip. ToggleMode's turn-on branch gives up without
+        // changing anything when the target group has no rectangles to choose from, so a
+        // PREDETERMINED clip can leave the target sitting in ADJUSTABLE - and in ADJUSTABLE the
+        // same method negates the group's V Scale, which `shape` has already pasted. Trusting
+        // the clip's mode here would turn a correctly pasted group straight back over, and only
+        // for targets whose atlas happened to be empty.
+        GroupSaveData afterMode = new GroupSaveData { groupId = groupId };
+        controller.PopulateGroupSave(afterMode);
+        if (afterMode.usePredeterminedUVs && afterMode.uvFlipV != from.uvFlipV)
+        {
+            MethodInfo toggleFlip = typeof(GroupPredeterminedUVController).GetMethod("ToggleFlipV", flags);
+            if (toggleFlip != null) toggleFlip.Invoke(controller, new object[] { groupId });
+        }
 
         // The controller skips re-applying a card whose assignment signature is unchanged, so
         // without clearing that the cards keep the rectangles they already had.
