@@ -157,7 +157,7 @@ public class RemapPhaseBar : MonoBehaviour
                 if (unchecked_ > 0) return "Placed automatically on the new head - " + unchecked_ + " still faded, meaning unchecked. Drag each one onto the matching spot; it draws solid once you have.";
                 return "All matched and checked. Drag any marker to adjust, then go on to the ears.";
             }
-            if (covered) return "Both ears pinned. Ready to process.";
+            if (covered) return "All landmarks pinned. Ready to process.";
             return "Still needed: " + reason + ".";
         }
 
@@ -226,7 +226,7 @@ public class RemapPhaseBar : MonoBehaviour
     void OnNext()
     {
         session.GoToPhase(RemapPhase.EarMarkers);
-        StatusToast.Show("Now pin the ear markers - three per side, on the head behind the ear.");
+        StatusToast.Show("Now pin the landmarks - ears first, then the jaw and mouth if the groom reaches them.");
     }
 
     void OnBack()
@@ -236,10 +236,10 @@ public class RemapPhaseBar : MonoBehaviour
 
     void OnMirror()
     {
-        int moved = session.MirrorEarMarkers();
+        int moved = session.MirrorLandmarks();
         if (moved == 0)
         {
-            StatusToast.Show("Place the LEFT ear markers first, then mirror them across.", true);
+            StatusToast.Show("Place the LEFT-side landmarks first, then mirror them across.", true);
             return;
         }
         StatusToast.Show("Mirrored " + moved + " placement(s) to the right side. Nudge any that do not sit right - a scanned head is never quite symmetric.");

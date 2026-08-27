@@ -1,0 +1,234 @@
+diff --git a/Assets/Scripts/UI_Import/RemapMarkers.cs b/Assets/Scripts/UI_Import/RemapMarkers.cs
+index 9ffc0d5..6f681f5 100644
+--- a/Assets/Scripts/UI_Import/RemapMarkers.cs
++++ b/Assets/Scripts/UI_Import/RemapMarkers.cs
+@@ -44,10 +44,17 @@ public class RemapMarker
+     public string description = string.Empty;
+     public RemapMarkerKind kind = RemapMarkerKind.Auto;
+ 
+-    // Ear slots only. Drives the one-shot MIRROR and the left/right agreement check.
++    // Sided slots only. Drives the one-shot MIRROR and the left/right agreement check. A centre
++    // slot - a chin tip, an upper lip - is its own mirror and claims neither.
+     public bool isLeftSide;
+     public bool isRightSide;
+ 
++    // The slot's name without its side, e.g. "MOUTH CORNER" for both the left and right one.
++    // MIRROR pairs on this rather than on position within a list: with three landmark families of
++    // different lengths, an index-based pairing is one inserted slot away from mirroring a cheek
++    // onto an earlobe.
++    public string slotKey = string.Empty;
++
+     public bool sourcePlaced;
+     public Vector3 sourcePoint = Vector3.zero;
+     public Vector3 sourceNormal = Vector3.up;
+@@ -122,6 +129,7 @@ public static class RemapMarkerSet
+                 marker.isLeftSide = left;
+                 marker.isRightSide = !left;
+                 marker.label = id.ToString();
++                marker.slotKey = slots[i];
+                 marker.description = sideLabel + " " + slots[i] + " - " + hints[i];
+                 markers.Add(marker);
+                 id++;
+@@ -130,33 +138,74 @@ public static class RemapMarkerSet
+         return markers;
+     }
+ 
+-    // The lower-face landmarks, for grooms that reach the jaw. Same reasoning as the ear slots,
+-    // same shape: named positions rather than free points, so both heads are answering the same
+-    // question and the left/right check has something to compare.
+-    public static List<RemapMarker> BuildJawMarkers(int startingId)
++    // The lower-face landmarks, for grooms that reach the jaw.
++    //
++    // Same reasoning as the ear slots and the same shape: named positions rather than free points,
++    // so both heads are answering the same question and the left/right check has something to
++    // compare. There are fourteen because a beard needs them - the jawline alone pins where the
++    // beard ENDS, and everything above it, the moustache boundary, the cheek line, the crease
++    // beside the mouth, is where the beard's shape actually lives. Two heads differ more across
++    // that band than anywhere except the ear.
++    //
++    // Five of the seven pairs are sided, so MIRROR does half the work: place the centres and the
++    // left of each pair, then mirror.
++    public static List<RemapMarker> BuildLowerFaceMarkers(int startingId)
+     {
+         List<RemapMarker> markers = new List<RemapMarker>();
+-        string[] slots = new string[] { "CHIN TIP", "UNDER CHIN", "L JAW ANGLE", "R JAW ANGLE" };
++        int id = startingId;
++
++        // side: 0 = centre, 1 = left and right as a pair.
++        string[] slots = new string[]
++        {
++            "CHIN TIP", "UNDER CHIN", "UPPER LIP CENTRE", "LOWER LIP CENTRE",
++            "JAW ANGLE", "MOUTH CORNER", "NASOLABIAL", "CHEEK", "CHEEKBONE"
++        };
+         string[] hints = new string[]
+         {
+             "front point of the chin",
+             "underneath the chin, on the soft edge",
+-            "left corner of the jaw, below the ear",
+-            "right corner of the jaw, below the ear"
++            "centre of the top lip, under the nose",
++            "centre of the bottom lip",
++            "corner of the jaw, below the ear",
++            "corner of the mouth",
++            "the crease running from the nose to the mouth corner",
++            "the flat of the cheek, on the dimple if there is one",
++            "the ridge of the cheekbone, below the outer eye"
+         };
++        bool[] sided = new bool[] { false, false, false, false, true, true, true, true, true };
+ 
+-        int id = startingId;
+         for (int i = 0; i < slots.Length; i++)
+         {
+-            RemapMarker marker = new RemapMarker();
+-            marker.id = id;
+-            marker.kind = RemapMarkerKind.Jaw;
+-            marker.isLeftSide = i == 2;
+-            marker.isRightSide = i == 3;
+-            marker.label = id.ToString();
+-            marker.description = slots[i] + " - " + hints[i];
+-            markers.Add(marker);
+-            id++;
++            if (!sided[i])
++            {
++                RemapMarker centre = new RemapMarker();
++                centre.id = id;
++                centre.kind = RemapMarkerKind.Jaw;
++                centre.label = id.ToString();
++                centre.slotKey = slots[i];
++                centre.description = slots[i] + " - " + hints[i];
++                markers.Add(centre);
++                id++;
++                continue;
++            }
++
++            for (int side = 0; side < 2; side++)
++            {
++                bool left = side == 0;
++                string sideLabel = "R";
++                if (left) sideLabel = "L";
++
++                RemapMarker marker = new RemapMarker();
++                marker.id = id;
++                marker.kind = RemapMarkerKind.Jaw;
++                marker.isLeftSide = left;
++                marker.isRightSide = !left;
++                marker.label = id.ToString();
++                marker.slotKey = slots[i];
++                marker.description = sideLabel + " " + slots[i] + " - " + hints[i];
++                markers.Add(marker);
++                id++;
++            }
+         }
+         return markers;
+     }
+@@ -447,7 +496,7 @@ public static class RemapMarkerSet
+         // the lower face. A scalp-only groom is never asked to point at a chin.
+         if (jawTotal > 0 && jawPaired < jawTotal)
+         {
+-            reason = (jawTotal - jawPaired) + " jaw marker(s) still unpinned";
++            reason = (jawTotal - jawPaired) + " lower-face marker(s) still unpinned";
+             return false;
+         }
+         return true;
+diff --git a/Assets/Scripts/UI_Import/RemapPhaseBar.cs b/Assets/Scripts/UI_Import/RemapPhaseBar.cs
+index 87a49d6..d134f2e 100644
+--- a/Assets/Scripts/UI_Import/RemapPhaseBar.cs
++++ b/Assets/Scripts/UI_Import/RemapPhaseBar.cs
+@@ -157,7 +157,7 @@ public class RemapPhaseBar : MonoBehaviour
+                 if (unchecked_ > 0) return "Placed automatically on the new head - " + unchecked_ + " still faded, meaning unchecked. Drag each one onto the matching spot; it draws solid once you have.";
+                 return "All matched and checked. Drag any marker to adjust, then go on to the ears.";
+             }
+-            if (covered) return "Both ears pinned. Ready to process.";
++            if (covered) return "All landmarks pinned. Ready to process.";
+             return "Still needed: " + reason + ".";
+         }
+ 
+@@ -226,7 +226,7 @@ public class RemapPhaseBar : MonoBehaviour
+     void OnNext()
+     {
+         session.GoToPhase(RemapPhase.EarMarkers);
+-        StatusToast.Show("Now pin the ear markers - three per side, on the head behind the ear.");
++        StatusToast.Show("Now pin the landmarks - ears first, then the jaw and mouth if the groom reaches them.");
+     }
+ 
+     void OnBack()
+@@ -236,10 +236,10 @@ public class RemapPhaseBar : MonoBehaviour
+ 
+     void OnMirror()
+     {
+-        int moved = session.MirrorEarMarkers();
++        int moved = session.MirrorLandmarks();
+         if (moved == 0)
+         {
+-            StatusToast.Show("Place the LEFT ear markers first, then mirror them across.", true);
++            StatusToast.Show("Place the LEFT-side landmarks first, then mirror them across.", true);
+             return;
+         }
+         StatusToast.Show("Mirrored " + moved + " placement(s) to the right side. Nudge any that do not sit right - a scanned head is never quite symmetric.");
+diff --git a/Assets/Scripts/UI_Import/RemapSessionController.cs b/Assets/Scripts/UI_Import/RemapSessionController.cs
+index ff05e0b..fd6cd3b 100644
+--- a/Assets/Scripts/UI_Import/RemapSessionController.cs
++++ b/Assets/Scripts/UI_Import/RemapSessionController.cs
+@@ -231,7 +231,7 @@ public class RemapSessionController : MonoBehaviour
+         // has no business being asked to point at a chin; a beard cannot be remapped without it.
+         // Decided from the anchors themselves rather than from a setting: whether the hair goes
+         // down there is a fact about the groom, not a preference.
+-        if (GroomReachesLowerFace(anchors)) markers.AddRange(RemapMarkerSet.BuildJawMarkers(markers.Count + 1));
++        if (GroomReachesLowerFace(anchors)) markers.AddRange(RemapMarkerSet.BuildLowerFaceMarkers(markers.Count + 1));
+ 
+         EstimateAutoTargets();
+     }
+@@ -550,16 +550,16 @@ public class RemapSessionController : MonoBehaviour
+     // A one-shot action rather than a live constraint: a live link immediately raises "which side
+     // is master" and fights the user the moment they nudge for real asymmetry. This places the
+     // twin and leaves both independent.
+-    public int MirrorEarMarkers()
++    public int MirrorLandmarks()
+     {
+         if (!sessionActive) return 0;
+ 
+         int moved = 0;
+         foreach (RemapMarker marker in markers)
+         {
+-            if (marker == null || marker.kind != RemapMarkerKind.Ear || !marker.isRightSide) continue;
++            if (marker == null || marker.kind == RemapMarkerKind.Auto || !marker.isRightSide) continue;
+ 
+-            RemapMarker twin = FindEarTwin(marker);
++            RemapMarker twin = FindLeftTwin(marker);
+             if (twin == null) continue;
+ 
+             if (twin.sourcePlaced && MirrorOnto(SourceRoot, 1 << sourceLayer, twin.sourcePoint, twin.sourceNormal, out Vector3 sp, out Vector3 sn))
+@@ -580,23 +580,19 @@ public class RemapSessionController : MonoBehaviour
+         return moved;
+     }
+ 
+-    // Slots pair up by their position within a side: the Nth left slot mirrors to the Nth right.
+-    RemapMarker FindEarTwin(RemapMarker rightSide)
++    // Paired by slot NAME within the same family - a right CHEEK mirrors from the left CHEEK.
++    //
++    // This used to count position within a side, which worked while ears were the only sided
++    // family and breaks the moment there are three of different lengths: one inserted slot and a
++    // cheek mirrors onto an earlobe, silently, with both markers looking perfectly placed.
++    RemapMarker FindLeftTwin(RemapMarker rightSide)
+     {
+-        int indexWithinSide = 0;
+-        foreach (RemapMarker marker in markers)
+-        {
+-            if (marker == null || marker.kind != RemapMarkerKind.Ear || !marker.isRightSide) continue;
+-            if (marker == rightSide) break;
+-            indexWithinSide++;
+-        }
+-
+-        int seen = 0;
+         foreach (RemapMarker marker in markers)
+         {
+-            if (marker == null || marker.kind != RemapMarkerKind.Ear || !marker.isLeftSide) continue;
+-            if (seen == indexWithinSide) return marker;
+-            seen++;
++            if (marker == null || !marker.isLeftSide) continue;
++            if (marker.kind != rightSide.kind) continue;
++            if (marker.slotKey != rightSide.slotKey) continue;
++            return marker;
+         }
+         return null;
+     }

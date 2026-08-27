@@ -231,7 +231,7 @@ public class RemapSessionController : MonoBehaviour
         // has no business being asked to point at a chin; a beard cannot be remapped without it.
         // Decided from the anchors themselves rather than from a setting: whether the hair goes
         // down there is a fact about the groom, not a preference.
-        if (GroomReachesLowerFace(anchors)) markers.AddRange(RemapMarkerSet.BuildJawMarkers(markers.Count + 1));
+        if (GroomReachesLowerFace(anchors)) markers.AddRange(RemapMarkerSet.BuildLowerFaceMarkers(markers.Count + 1));
 
         EstimateAutoTargets();
     }
@@ -550,16 +550,16 @@ public class RemapSessionController : MonoBehaviour
     // A one-shot action rather than a live constraint: a live link immediately raises "which side
     // is master" and fights the user the moment they nudge for real asymmetry. This places the
     // twin and leaves both independent.
-    public int MirrorEarMarkers()
+    public int MirrorLandmarks()
     {
         if (!sessionActive) return 0;
 
         int moved = 0;
         foreach (RemapMarker marker in markers)
         {
-            if (marker == null || marker.kind != RemapMarkerKind.Ear || !marker.isRightSide) continue;
+            if (marker == null || marker.kind == RemapMarkerKind.Auto || !marker.isRightSide) continue;
 
-            RemapMarker twin = FindEarTwin(marker);
+            RemapMarker twin = FindLeftTwin(marker);
             if (twin == null) continue;
 
             if (twin.sourcePlaced && MirrorOnto(SourceRoot, 1 << sourceLayer, twin.sourcePoint, twin.sourceNormal, out Vector3 sp, out Vector3 sn))
@@ -580,23 +580,19 @@ public class RemapSessionController : MonoBehaviour
         return moved;
     }
 
-    // Slots pair up by their position within a side: the Nth left slot mirrors to the Nth right.
-    RemapMarker FindEarTwin(RemapMarker rightSide)
+    // Paired by slot NAME within the same family - a right CHEEK mirrors from the left CHEEK.
+    //
+    // This used to count position within a side, which worked while ears were the only sided
+    // family and breaks the moment there are three of different lengths: one inserted slot and a
+    // cheek mirrors onto an earlobe, silently, with both markers looking perfectly placed.
+    RemapMarker FindLeftTwin(RemapMarker rightSide)
     {
-        int indexWithinSide = 0;
         foreach (RemapMarker marker in markers)
         {
-            if (marker == null || marker.kind != RemapMarkerKind.Ear || !marker.isRightSide) continue;
-            if (marker == rightSide) break;
-            indexWithinSide++;
-        }
-
-        int seen = 0;
-        foreach (RemapMarker marker in markers)
-        {
-            if (marker == null || marker.kind != RemapMarkerKind.Ear || !marker.isLeftSide) continue;
-            if (seen == indexWithinSide) return marker;
-            seen++;
+            if (marker == null || !marker.isLeftSide) continue;
+            if (marker.kind != rightSide.kind) continue;
+            if (marker.slotKey != rightSide.slotKey) continue;
+            return marker;
         }
         return null;
     }
