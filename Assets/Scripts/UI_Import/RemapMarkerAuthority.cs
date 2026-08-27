@@ -33,11 +33,14 @@ public class RemapMarkerAuthority : MonoBehaviour
     private const float MarkerPixelRadius = 18f;
     private const float PickPixelRadius = 26f;
 
-    // The numbers are larger on the ORIGINAL head than on the new one, on purpose. The left view
-    // has a full groom drawn over it and the right is bare geometry, so the same size that reads
-    // cleanly against an empty head disappears into hair.
+    // Each side is sized independently, because the two views are not showing the same thing.
+    // The left has a full groom drawn over it, so its numbers have to compete with hair; the
+    // right is bare geometry being matched by eye, where a bolder ring is what makes a placement
+    // easy to judge against the one opposite it. Same reason the ring line is heavier there.
     private const float LabelPointSize = 17f;
     private const float SourceLabelScale = 1.6f;
+    private const float TargetMarkerScale = 1.5f;
+    private const float TargetRingWidthScale = 2f;
     private const float MinimumSeparation = .004f;
 
     // Markers are drawn in greyscale, driven by MARKER TONE on the phase bar.
@@ -207,7 +210,11 @@ public class RemapMarkerAuthority : MonoBehaviour
         if (!ResolveSide(mouse, out camera, out layerMask, out isTarget)) return;
 
         List<RemapMarker> markers = session.Markers;
-        float best = PickPixelRadius * PickPixelRadius;
+        // The grab area follows whatever is actually drawn on that side. A ring that looks 1.5x
+        // bigger but still picks from the old radius reads as a marker that will not take a drag.
+        float pickRadius = PickPixelRadius;
+        if (isTarget) pickRadius = PickPixelRadius * TargetMarkerScale;
+        float best = pickRadius * pickRadius;
         for (int i = 0; i < markers.Count; i++)
         {
             RemapMarker marker = markers[i];
@@ -348,7 +355,7 @@ public class RemapMarkerAuthority : MonoBehaviour
             sourceStubs.Add(CreateLine("RemapMarkerSourceStub", session.SourceLayer, false));
             targetStubs.Add(CreateLine("RemapMarkerTargetStub", session.TargetLayer, false));
             sourceLabels.Add(CreateLabel("RemapMarkerSourceLabel", LabelPointSize * SourceLabelScale));
-            targetLabels.Add(CreateLabel("RemapMarkerTargetLabel", LabelPointSize));
+            targetLabels.Add(CreateLabel("RemapMarkerTargetLabel", LabelPointSize * TargetMarkerScale));
         }
     }
 
@@ -456,15 +463,23 @@ public class RemapMarkerAuthority : MonoBehaviour
             return;
         }
 
+        float sizeScale = 1f;
+        float widthScale = 1f;
+        if (isTarget)
+        {
+            sizeScale = TargetMarkerScale;
+            widthScale = TargetRingWidthScale;
+        }
+
         float worldPerPixel = WorldPerPixel(camera, point);
-        float radius = MarkerPixelRadius * worldPerPixel;
+        float radius = MarkerPixelRadius * sizeScale * worldPerPixel;
 
         Color colour = ColourFor(marker, interactive, isActive, mismatchedId);
         bool hovered = hoveredIndex == index && hoveredIsTarget == isTarget;
         if (hovered) colour = Highlight(colour);
 
-        DrawRing(ring, point, normal, radius, colour, worldPerPixel, hovered);
-        DrawStub(stub, point, normal, radius, colour, worldPerPixel);
+        DrawRing(ring, point, normal, radius, colour, worldPerPixel, hovered, widthScale);
+        DrawStub(stub, point, normal, radius, colour, worldPerPixel, widthScale);
         DrawLabel(label, camera, point, normal, marker.label, colour);
     }
 
@@ -501,7 +516,7 @@ public class RemapMarkerAuthority : MonoBehaviour
         return height / pixels;
     }
 
-    static void DrawRing(LineRenderer line, Vector3 point, Vector3 normal, float radius, Color colour, float worldPerPixel, bool hovered)
+    static void DrawRing(LineRenderer line, Vector3 point, Vector3 normal, float radius, Color colour, float worldPerPixel, bool hovered, float widthScale)
     {
         Vector3 n = normal;
         if (n.sqrMagnitude < .000001f) n = Vector3.up;
@@ -523,15 +538,15 @@ public class RemapMarkerAuthority : MonoBehaviour
             line.SetPosition(i, centre + (tangent * Mathf.Cos(a) + bitangent * Mathf.Sin(a)) * radius);
         }
 
-        float width = worldPerPixel * 2f;
-        if (hovered) width = worldPerPixel * 3.2f;
+        float width = worldPerPixel * 2f * widthScale;
+        if (hovered) width = worldPerPixel * 3.2f * widthScale;
         line.widthMultiplier = width;
         line.startColor = colour;
         line.endColor = colour;
         line.enabled = true;
     }
 
-    static void DrawStub(LineRenderer line, Vector3 point, Vector3 normal, float radius, Color colour, float worldPerPixel)
+    static void DrawStub(LineRenderer line, Vector3 point, Vector3 normal, float radius, Color colour, float worldPerPixel, float widthScale)
     {
         Vector3 n = normal;
         if (n.sqrMagnitude < .000001f) n = Vector3.up;
@@ -540,7 +555,7 @@ public class RemapMarkerAuthority : MonoBehaviour
         line.positionCount = 2;
         line.SetPosition(0, point);
         line.SetPosition(1, point + n * radius * 1.6f);
-        line.widthMultiplier = worldPerPixel * 1.6f;
+        line.widthMultiplier = worldPerPixel * 1.6f * widthScale;
         line.startColor = colour;
         line.endColor = colour;
         line.enabled = true;
