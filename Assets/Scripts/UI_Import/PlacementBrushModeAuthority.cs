@@ -79,6 +79,18 @@ public class PlacementBrushModeAuthority : MonoBehaviour
 
     private GameObject modeRow;
     private GameObject radiusRow;
+
+    // How far BEHIND the surface the erase brush reaches, along the line of sight.
+    //
+    // Zero by default, which is exactly the old sphere-at-the-surface behaviour. It exists because
+    // a projection can land cards on interior geometry - the inside of a mouth bag is the one that
+    // turned up - and those roots are further from any reachable outer surface point than any
+    // brush radius, so no amount of brushing could touch them. With a depth the brush erases along
+    // the view ray rather than at a point, which reaches inside a cavity without also reaching the
+    // far side of the head.
+    private GameObject eraseDepthRow;
+    private Slider eraseDepthSlider;
+    private float eraseDepth;
     private GameObject falloffRow;
     private GameObject spacingRow;
     private Button modeButton;
@@ -766,6 +778,16 @@ public class PlacementBrushModeAuthority : MonoBehaviour
 
     bool EraseAtPoint(Vector3 center)
     {
+        // The brush is a sphere at the surface when depth is zero, and a capsule running back
+        // along the line of sight when it is not. Same radius either way; the depth only decides
+        // how far in it reaches.
+        Vector3 farEnd = center;
+        if (eraseDepth > .0001f && viewer.mainCamera != null)
+        {
+            Vector3 direction = center - viewer.mainCamera.transform.position;
+            if (direction.sqrMagnitude > .000001f) farEnd = center + direction.normalized * eraseDepth;
+        }
+
         HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
         bool removed = false;
         for (int i = 0; i < cards.Length; i++)
@@ -774,13 +796,22 @@ public class PlacementBrushModeAuthority : MonoBehaviour
             if (card == null || card.groupId != viewer.currentGroupId) continue;
             Vector3 root = card.GetSpawnHitPoint();
             if (root == Vector3.zero) root = card.transform.position;
-            if (Vector3.Distance(root, center) > brushRadius) continue;
+            if (DistanceToSegment(root, center, farEnd) > brushRadius) continue;
 
             if (viewer.lastPlacedCard == card) viewer.lastPlacedCard = null;
             Destroy(card.gameObject);
             removed = true;
         }
         return removed;
+    }
+
+    static float DistanceToSegment(Vector3 point, Vector3 start, Vector3 end)
+    {
+        Vector3 span = end - start;
+        float lengthSquared = span.sqrMagnitude;
+        if (lengthSquared < .000001f) return Vector3.Distance(point, start);
+        float t = Mathf.Clamp01(Vector3.Dot(point - start, span) / lengthSquared);
+        return Vector3.Distance(point, start + span * t);
     }
 
     void SelectNearestGroup(Vector3 point)
@@ -912,6 +943,7 @@ public class PlacementBrushModeAuthority : MonoBehaviour
         if (top != null) modeRow.transform.SetSiblingIndex(Mathf.Min(top.GetSiblingIndex() + 1, panel.childCount - 1));
 
         radiusRow = CreateBrushSlider(panel, "PlacementRadius_Row", "Brush Radius", .002f, .20f, brushRadius, v => brushRadius = v, out radiusSlider);
+        eraseDepthRow = CreateBrushSlider(panel, "PlacementEraseDepth_Row", "Erase Depth", 0f, .25f, eraseDepth, v => eraseDepth = v, out eraseDepthSlider);
         falloffRow = CreateBrushSlider(panel, "SprayFalloff_Row", "Spray Falloff", 0f, 1f, sprayFalloff, v => sprayFalloff = v, out falloffSlider);
         spacingRow = CreateBrushSlider(panel, "PlacementSpacing_Row", "Card Spacing", .001f, .05f, cardSpacing, v => cardSpacing = v, out spacingSlider);
 
@@ -1005,6 +1037,8 @@ public class PlacementBrushModeAuthority : MonoBehaviour
         }
         if (radiusRow != null)
             radiusRow.SetActive(mode == PlacementMode.Spray || mode == PlacementMode.Even || mode == PlacementMode.Erase);
+        if (eraseDepthRow != null)
+            eraseDepthRow.SetActive(mode == PlacementMode.Erase);
         if (falloffRow != null) falloffRow.SetActive(mode == PlacementMode.Spray);
         if (spacingRow != null) spacingRow.SetActive(mode == PlacementMode.Even);
     }

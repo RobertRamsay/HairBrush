@@ -43,7 +43,10 @@ public class SessionModifierFreshStartAuthority : MonoBehaviour
         if (current != null && current != lastModel)
         {
             lastModel = current;
-            if (projectLoadRequested)
+            // Same correction as GroomSessionResetCoordinator: projectLoadRequested is set only by
+            // the Load Project button, so a project load started any other way took the fresh-OBJ
+            // branch and cleared the clumpers the load had just restored.
+            if (projectLoadRequested || CanonicalProjectStateBridge.ProjectRestorePending())
                 ResetTransientEditorState();
             else
             {

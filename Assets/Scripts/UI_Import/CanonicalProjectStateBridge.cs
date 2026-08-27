@@ -46,6 +46,28 @@ public class CanonicalProjectStateBridge : MonoBehaviour
         go.AddComponent<CanonicalProjectStateBridge>();
     }
 
+    // Is a project restore in flight?
+    //
+    // The authoritative answer to "this model changed because a project is loading, not because
+    // the user picked a new OBJ". GroupPredeterminedUVLifecycle and TextureUVRectWorkspace already
+    // asked it this way and behaved correctly; GroomSessionResetCoordinator and
+    // SessionModifierFreshStartAuthority instead each kept their own bool, set from the Load
+    // Project BUTTON's onClick - so a load that did not come from that button read as a fresh OBJ
+    // and wiped the session. REMAP's CONFIRM is exactly such a load.
+    //
+    // Set by HairProjectSaveData.OnAfterDeserialize, so it is true from the moment the JSON is
+    // parsed until each bridge has taken its own copy - which spans the model swap either way the
+    // load was started. It also cannot be left stale by a cancelled file dialog, which the button
+    // flags' own comments admit they can.
+    public static bool ProjectRestorePending()
+    {
+        if (HairProjectSaveData.PendingModifierRestore != null) return true;
+        if (HairProjectSaveData.PendingUVRectRestore != null) return true;
+        if (HairProjectSaveData.PendingGroupUVRestore != null) return true;
+        if (PendingCanonicalRestore != null) return true;
+        return false;
+    }
+
     public static void CanonicalizeForSave(HairProjectSaveData data)
     {
         if (data == null) return;

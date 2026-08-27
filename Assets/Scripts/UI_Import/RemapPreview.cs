@@ -186,7 +186,16 @@ public class TpsAnchorMapping : GroomAnchorMapping
                     // Within about 75 degrees is a surface genuinely facing the way the anchor
                     // was pointing. Anything shallower is a grazing hit on a fold and is worth
                     // one more push to try to beat.
-                    if (agreement > .26f)
+                    // Facing the right way is necessary and not sufficient: the inside wall of a
+                    // mouth bag faces outward from its own cavity perfectly well. A landing that
+                    // cannot see daylight along its own normal is enclosed - there is more model
+                    // in front of it - and a card placed there is unreachable by any brush, which
+                    // is how a groom ends up with strands sealed inside a head.
+                    //
+                    // Preferred against, never refused outright. If nothing better turns up the
+                    // enclosed landing is still returned, because a card somewhere wrong beats a
+                    // card at the origin.
+                    if (agreement > .26f && !IsEnclosed(hit.point, hit.normal, layerMask, headSize))
                     {
                         hitPoint = hit.point;
                         hitNormal = hit.normal;
@@ -204,6 +213,17 @@ public class TpsAnchorMapping : GroomAnchorMapping
             return true;
         }
         return false;
+    }
+
+    // Is there more model in front of this landing, along its own normal?
+    static bool IsEnclosed(Vector3 point, Vector3 normal, int layerMask, float headSize)
+    {
+        Vector3 n = normal;
+        if (n.sqrMagnitude < .000001f) return false;
+        n = n.normalized;
+        // Started just clear of the surface it belongs to, or the very triangle it landed on
+        // answers the question.
+        return Physics.Raycast(point + n * (headSize * .001f), n, headSize, layerMask);
     }
 
     // The general form of "the face before the last inner one", anchored on thickness rather than

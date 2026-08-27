@@ -67,7 +67,12 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         if (currentLoaded != null && currentLoaded != lastKnownLoadedModel)
         {
             lastKnownLoadedModel = currentLoaded;
-            if (!projectLoadJustCompleted)
+            // The button flag OR a restore genuinely in flight. projectLoadJustCompleted is only
+            // ever set by the Load Project button's listener, so a project loaded any other way -
+            // REMAP's CONFIRM, for one - looked like a brand new OBJ and had its entire session
+            // reset: every card destroyed, groups back to default. The groom appeared correctly
+            // for a moment and then vanished, which is this line firing one poll later.
+            if (!projectLoadJustCompleted && !CanonicalProjectStateBridge.ProjectRestorePending())
                 ResetEntireSessionForNewModel();
         }
         else if (currentLoaded == null)
