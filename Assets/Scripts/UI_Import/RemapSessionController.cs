@@ -217,6 +217,68 @@ public class RemapSessionController : MonoBehaviour
         phase = next;
     }
 
+    private RemapPreviewSnapshot previewSnapshot;
+    private RemapProjectionReport previewReport;
+
+    public bool PreviewApplied { get { return previewSnapshot != null; } }
+    public RemapProjectionReport PreviewReport { get { return previewReport; } }
+
+    // Solve and move the groom onto the new head, keeping everything needed to put it back.
+    public bool RunPreview(out string failure)
+    {
+        failure = string.Empty;
+        if (!sessionActive) return false;
+        if (previewSnapshot != null) return true;
+
+        RemapPreviewSnapshot snapshot;
+        RemapProjectionReport report;
+        if (!RemapPreview.Run(markers, targetLayer, TargetHeadSize(), out snapshot, out report, out failure)) return false;
+
+        previewSnapshot = snapshot;
+        previewReport = report;
+        phase = RemapPhase.Ready;
+        ShowHairOnTarget(true);
+        return true;
+    }
+
+    public void RevertPreview()
+    {
+        if (previewSnapshot == null) return;
+        RemapPreview.Revert(previewSnapshot);
+        previewSnapshot = null;
+        previewReport = null;
+        ShowHairOnTarget(false);
+        phase = RemapPhase.EarMarkers;
+    }
+
+    // The hair is on its own layer precisely so it can be shown to one camera or the other per
+    // phase. While markers are being placed it belongs only to the left view, where it is still
+    // sitting on the head it was groomed on; once it has moved it belongs only to the right.
+    void ShowHairOnTarget(bool onTarget)
+    {
+        if (viewer == null || viewer.mainCamera == null || rightCamera == null) return;
+        if (onTarget)
+        {
+            viewer.mainCamera.cullingMask = 1 << sourceLayer;
+            rightCamera.cullingMask = (1 << targetLayer) | (1 << hairLayer);
+            return;
+        }
+        viewer.mainCamera.cullingMask = (1 << sourceLayer) | (1 << hairLayer);
+        rightCamera.cullingMask = 1 << targetLayer;
+    }
+
+    float TargetHeadSize()
+    {
+        if (targetModel == null) return 1f;
+        MeshRenderer[] renderers = targetModel.GetComponentsInChildren<MeshRenderer>();
+        if (renderers.Length == 0) return 1f;
+        Bounds bounds = renderers[0].bounds;
+        for (int i = 1; i < renderers.Length; i++) bounds.Encapsulate(renderers[i].bounds);
+        float size = bounds.size.magnitude;
+        if (size < .000001f) return 1f;
+        return size;
+    }
+
     // Mirror the placed left-ear markers onto the right, on BOTH heads.
     //
     // A one-shot action rather than a live constraint: a live link immediately raises "which side
@@ -306,6 +368,16 @@ public class RemapSessionController : MonoBehaviour
     public void End(bool destroyTargetModel)
     {
         if (!sessionActive) return;
+
+        // Cancelling has to mean the groom is untouched, and by this point a preview may already
+        // have moved every anchor in it. Reverted before anything else, while the cards and
+        // modifiers this snapshot points at are all still alive.
+        if (previewSnapshot != null)
+        {
+            RemapPreview.Revert(previewSnapshot);
+            previewSnapshot = null;
+            previewReport = null;
+        }
 
         RestoreLayers();
         TearDownRightView();

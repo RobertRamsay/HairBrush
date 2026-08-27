@@ -23,6 +23,7 @@ public class RemapPhaseBar : MonoBehaviour
     private GameObject backButton;
     private GameObject mirrorButton;
     private GameObject processButton;
+    private GameObject revertButton;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
@@ -73,16 +74,30 @@ public class RemapPhaseBar : MonoBehaviour
         if (done >= total && total > 0) progressColour = new Color(.42f, 1f, .55f);
         progress.color = progressColour;
 
+        bool ready = session.Phase == RemapPhase.Ready;
         bool auto = session.Phase == RemapPhase.AutoMarkers;
-        if (auto) title.text = "REMAP  -  STEP 1 OF 2:  MATCH THE NUMBERED MARKERS";
-        if (!auto) title.text = "REMAP  -  STEP 2 OF 2:  PIN BOTH EARS";
 
-        status.text = NextInstruction(auto, covered, reason);
+        if (ready)
+        {
+            title.text = "REMAP  -  PREVIEW:  YOUR GROOM IS ON THE NEW HEAD";
+            progress.text = "";
+            RemapProjectionReport report = session.PreviewReport;
+            string detail = "";
+            if (report != null) detail = report.ToString();
+            status.text = "Nothing has been saved. REVERT puts it back on the original head; CANCEL leaves the whole session with your groom untouched.   " + detail;
+        }
+        if (!ready)
+        {
+            if (auto) title.text = "REMAP  -  STEP 1 OF 2:  MATCH THE NUMBERED MARKERS";
+            if (!auto) title.text = "REMAP  -  STEP 2 OF 2:  PIN BOTH EARS";
+            status.text = NextInstruction(auto, covered, reason);
+        }
 
         nextButton.SetActive(auto);
-        backButton.SetActive(!auto);
-        mirrorButton.SetActive(!auto);
-        processButton.SetActive(!auto);
+        backButton.SetActive(!auto && !ready);
+        mirrorButton.SetActive(!auto && !ready);
+        processButton.SetActive(!auto && !ready);
+        revertButton.SetActive(ready);
 
         // Dead rather than hidden. A button that vanishes reads as a bug; one that is visibly
         // disabled next to a status line naming what is missing reads as an instruction.
@@ -150,8 +165,26 @@ public class RemapPhaseBar : MonoBehaviour
             StatusToast.Show("Marker " + mismatched + " is on the left of one head and the right of the other. Fix it before processing, or the groom will fold inside out.", true);
             return;
         }
-        session.GoToPhase(RemapPhase.Ready);
-        StatusToast.Show("Markers accepted. The solve and the projection are the next thing to build - nothing has moved yet.");
+        string failure;
+        if (!session.RunPreview(out failure))
+        {
+            StatusToast.Show("Could not solve the warp: " + failure + ".", true);
+            return;
+        }
+
+        RemapProjectionReport report = session.PreviewReport;
+        if (report != null && report.failed > 0)
+        {
+            StatusToast.Show(report.failed + " anchor(s) could not be placed on the new head and were left where the warp put them. " + report, true);
+            return;
+        }
+        StatusToast.Show("Preview applied. " + report);
+    }
+
+    void OnRevert()
+    {
+        session.RevertPreview();
+        StatusToast.Show("Put back on the original head. Adjust the markers and process again.");
     }
 
     void OnCancel()
@@ -216,6 +249,7 @@ public class RemapPhaseBar : MonoBehaviour
         mirrorButton = AddButton(bar.transform, "RemapPhaseMirror", "MIRROR L TO R", new Color(.28f, .36f, .46f), OnMirror);
         nextButton = AddButton(bar.transform, "RemapPhaseNext", "NEXT: EAR MARKERS", new Color(.20f, .44f, .34f), OnNext);
         processButton = AddButton(bar.transform, "RemapPhaseProcess", "PROCESS", new Color(.20f, .44f, .34f), OnProcess);
+        revertButton = AddButton(bar.transform, "RemapPhaseRevert", "REVERT", new Color(.40f, .34f, .22f), OnRevert);
         AddButton(bar.transform, "RemapPhaseCancel", "CANCEL", new Color(.44f, .26f, .22f), OnCancel);
     }
 
