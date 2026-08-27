@@ -262,6 +262,26 @@ public static class RemapMarkerSet
         return -1;
     }
 
+    // How many are placed on ONE side, which is not the same question as how many are paired.
+    //
+    // A marker needs both halves before it is worth anything to the solve, so the headline count
+    // is pairs - but a user who has just put three markers on the new head and sees 0/6 has been
+    // told their work did not register. Both numbers have to be visible or the honest count reads
+    // as a bug.
+    public static void PhaseSideProgress(List<RemapMarker> markers, RemapPhase phase, bool isTarget, out int done, out int total)
+    {
+        done = 0;
+        total = 0;
+        if (markers == null) return;
+        foreach (RemapMarker marker in markers)
+        {
+            if (!InteractiveInPhase(marker, phase)) continue;
+            total++;
+            if (isTarget && marker.targetPlaced) done++;
+            if (!isTarget && marker.sourcePlaced) done++;
+        }
+    }
+
     // How many of the markers this phase is responsible for are done, as a pair.
     public static void PhaseProgress(List<RemapMarker> markers, RemapPhase phase, out int done, out int total)
     {
