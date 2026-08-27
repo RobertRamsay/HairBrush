@@ -38,7 +38,7 @@ public class RemapSessionController : MonoBehaviour
     // Kept in step with the bar RemapPhaseBar builds. Its canvas scales with screen size against a
     // 1920x1080 reference, so this is the right figure at that height and close enough elsewhere;
     // the cost of being a few pixels out is a few pixels of gap, not a broken viewport.
-    private const float PhaseBarHeightPixels = 74f;
+    private const float PhaseBarHeightPixels = 88f;
 
     private ModelViewer viewer;
     private GameObject targetModel;

@@ -18,6 +18,7 @@ public class RemapPhaseBar : MonoBehaviour
     private GameObject root;
     private TextMeshProUGUI title;
     private TextMeshProUGUI status;
+    private TextMeshProUGUI progress;
     private GameObject nextButton;
     private GameObject backButton;
     private GameObject mirrorButton;
@@ -51,26 +52,32 @@ public class RemapPhaseBar : MonoBehaviour
         Refresh();
     }
 
+    // Everything the user needs to keep going lives here rather than in a toast.
+    //
+    // A StatusToast is the wrong carrier for an instruction that stays true for the next twenty
+    // clicks - it is gone before it has been read, and re-reading it is impossible. So the bar
+    // carries the running count and the name of the marker being placed right now, refreshed
+    // every frame; toasts are kept for things that actually are events, like a mirror landing or
+    // a side mismatch being refused.
     void Refresh()
     {
-        int paired = RemapMarkerSet.CountPaired(session.Markers);
         string reason;
         bool covered = RemapMarkerSet.CoverageSatisfied(session.Markers, out reason);
+
+        int done;
+        int total;
+        RemapMarkerSet.PhaseProgress(session.Markers, session.Phase, out done, out total);
+        progress.text = done + "/" + total;
+
+        Color progressColour = new Color(.98f, .84f, .36f);
+        if (done >= total && total > 0) progressColour = new Color(.42f, 1f, .55f);
+        progress.color = progressColour;
 
         bool auto = session.Phase == RemapPhase.AutoMarkers;
         if (auto) title.text = "REMAP  -  STEP 1 OF 2:  MATCH THE NUMBERED MARKERS";
         if (!auto) title.text = "REMAP  -  STEP 2 OF 2:  PIN BOTH EARS";
 
-        if (auto)
-        {
-            status.text = "Click the same spot on the new head for each number. " + paired + " of " + session.Markers.Count + " pairs matched. Drag any marker on either head to adjust it.";
-        }
-        if (!auto)
-        {
-            string detail = "Ready to process.";
-            if (!covered) detail = "Still needed: " + reason + ".";
-            status.text = "Place each ear slot on the HEAD behind the ear, not on the ear itself. " + detail;
-        }
+        status.text = NextInstruction(auto, covered, reason);
 
         nextButton.SetActive(auto);
         backButton.SetActive(!auto);
@@ -81,6 +88,36 @@ public class RemapPhaseBar : MonoBehaviour
         // disabled next to a status line naming what is missing reads as an instruction.
         Button process = processButton.GetComponent<Button>();
         process.interactable = covered;
+    }
+
+    // Names the marker being placed and which head it goes on. In the ear phase that name is the
+    // whole point: "place 13" is useless, "13: L LOBE - below the lobe attachment, on the head" is
+    // the instruction, and it has to be readable for as long as it takes to find the spot.
+    string NextInstruction(bool auto, bool covered, string reason)
+    {
+        int index = RemapMarkerSet.NextUnplaced(session.Markers, session.Phase, false);
+        bool onTarget = false;
+        if (index < 0)
+        {
+            index = RemapMarkerSet.NextUnplaced(session.Markers, session.Phase, true);
+            onTarget = true;
+        }
+
+        if (index < 0)
+        {
+            if (auto) return "All matched. Drag any marker on either head to adjust, then go on to the ears.";
+            if (covered) return "Both ears pinned. Ready to process.";
+            return "Still needed: " + reason + ".";
+        }
+
+        RemapMarker marker = session.Markers[index];
+        string head = "the ORIGINAL head, on the left";
+        if (onTarget) head = "the NEW head, on the right";
+
+        string detail = marker.description;
+        if (auto) detail = "the same spot you see marker " + marker.label + " on";
+
+        return "Place " + marker.label + " on " + head + "  -  " + detail + ".   Drag any placed marker to adjust it.";
     }
 
     void OnNext()
@@ -141,7 +178,7 @@ public class RemapPhaseBar : MonoBehaviour
         barRect.anchorMin = new Vector2(0f, 1f);
         barRect.anchorMax = new Vector2(1f, 1f);
         barRect.pivot = new Vector2(.5f, 1f);
-        barRect.offsetMin = new Vector2(0f, -74f);
+        barRect.offsetMin = new Vector2(0f, -88f);
         barRect.offsetMax = new Vector2(0f, 0f);
         bar.GetComponent<Image>().color = new Color(.11f, .13f, .16f, .94f);
         HorizontalLayoutGroup layout = bar.GetComponent<HorizontalLayoutGroup>();
@@ -153,16 +190,27 @@ public class RemapPhaseBar : MonoBehaviour
         layout.childForceExpandHeight = true;
         layout.childAlignment = TextAnchor.MiddleLeft;
 
+        // The running count, big and on its own. It sits outside the text column precisely so it
+        // can never be the thing that gets ellipsised away when the instruction runs long.
+        progress = AddText(bar.transform, "PhaseProgress", 30, FontStyles.Bold, new Color(.98f, .84f, .36f), 44f);
+        progress.alignment = TextAlignmentOptions.Center;
+        LayoutElement progressLayout = progress.gameObject.GetComponent<LayoutElement>();
+        progressLayout.preferredWidth = 116f;
+
         GameObject textColumn = new GameObject("TextColumn", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
         textColumn.transform.SetParent(bar.transform, false);
-        textColumn.GetComponent<LayoutElement>().preferredWidth = 900f;
+        textColumn.GetComponent<LayoutElement>().preferredWidth = 760f;
         VerticalLayoutGroup column = textColumn.GetComponent<VerticalLayoutGroup>();
         column.childControlHeight = false;
         column.childForceExpandHeight = false;
         column.spacing = 2f;
 
-        title = AddText(textColumn.transform, "PhaseTitle", 19, FontStyles.Bold, new Color(.94f, .96f, .98f), 24f);
-        status = AddText(textColumn.transform, "PhaseStatus", 15, FontStyles.Normal, new Color(.72f, .78f, .84f), 22f);
+        title = AddText(textColumn.transform, "PhaseTitle", 18, FontStyles.Bold, new Color(.94f, .96f, .98f), 24f);
+        status = AddText(textColumn.transform, "PhaseStatus", 15, FontStyles.Normal, new Color(.78f, .84f, .90f), 34f);
+        // The instruction is the one line allowed to wrap. Left on NoWrap it was silently
+        // ellipsised at the column edge, which is how a status line ends up hiding the very thing
+        // it was added to say.
+        status.textWrappingMode = TextWrappingModes.Normal;
 
         backButton = AddButton(bar.transform, "RemapPhaseBack", "BACK", new Color(.24f, .30f, .38f), OnBack);
         mirrorButton = AddButton(bar.transform, "RemapPhaseMirror", "MIRROR L TO R", new Color(.28f, .36f, .46f), OnMirror);

@@ -28,11 +28,15 @@ using UnityEngine.UI;
 public class RemapMarkerAuthority : MonoBehaviour
 {
     private const int CircleSegments = 40;
-    private const float MarkerPixelRadius = 13f;
-    private const float PickPixelRadius = 20f;
+    // Apparent size in pixels, so it holds at any dolly distance. The pick radius stays a little
+    // wider than the ring: a grab that only works dead centre reads as an unresponsive marker.
+    private const float MarkerPixelRadius = 18f;
+    private const float PickPixelRadius = 26f;
     private const float MinimumSeparation = .004f;
 
-    private static readonly Color AutoColour = new Color(.36f, .72f, 1f);
+    // Deliberately dark. These are drawn on a pale grey head, and a bright fill on a light surface
+    // loses its edge; the darker value reads as a drawn-on mark rather than a glow.
+    private static readonly Color AutoColour = new Color(.144f, .288f, .40f);
     private static readonly Color EarColour = new Color(1f, .74f, .28f);
     private static readonly Color UnplacedColour = new Color(.55f, .58f, .62f);
     private static readonly Color ActiveColour = new Color(.42f, 1f, .55f);
@@ -247,24 +251,16 @@ public class RemapMarkerAuthority : MonoBehaviour
         return true;
     }
 
+    // Both of these live on RemapMarkerSet so the view and the phase bar cannot disagree about
+    // which marker is next - the highlighted ring and the named instruction have to be the same one.
     int NextUnplaced(bool isTarget)
     {
-        List<RemapMarker> markers = session.Markers;
-        for (int i = 0; i < markers.Count; i++)
-        {
-            RemapMarker marker = markers[i];
-            if (marker == null || !InteractiveThisPhase(marker)) continue;
-            if (isTarget && !marker.targetPlaced) return i;
-            if (!isTarget && !marker.sourcePlaced) return i;
-        }
-        return -1;
+        return RemapMarkerSet.NextUnplaced(session.Markers, session.Phase, isTarget);
     }
 
     bool InteractiveThisPhase(RemapMarker marker)
     {
-        if (session.Phase == RemapPhase.AutoMarkers) return marker.kind == RemapMarkerKind.Auto;
-        if (session.Phase == RemapPhase.EarMarkers) return marker.kind == RemapMarkerKind.Ear;
-        return true;
+        return RemapMarkerSet.InteractiveInPhase(marker, session.Phase);
     }
 
     void WarnIfTooClose()

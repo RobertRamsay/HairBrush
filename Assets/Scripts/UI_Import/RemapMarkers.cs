@@ -236,6 +236,46 @@ public static class RemapMarkerSet
         return false;
     }
 
+    public static bool InteractiveInPhase(RemapMarker marker, RemapPhase phase)
+    {
+        if (marker == null) return false;
+        if (phase == RemapPhase.AutoMarkers) return marker.kind == RemapMarkerKind.Auto;
+        if (phase == RemapPhase.EarMarkers) return marker.kind == RemapMarkerKind.Ear;
+        return true;
+    }
+
+    // The next marker awaiting a placement on the given side, in marker order.
+    //
+    // Shared by the view (which highlights it and is where a click on bare surface lands) and by
+    // the phase bar (which names it). Two copies of "what am I placing next" is exactly the sort
+    // of thing that drifts into the highlight and the instruction disagreeing.
+    public static int NextUnplaced(List<RemapMarker> markers, RemapPhase phase, bool isTarget)
+    {
+        if (markers == null) return -1;
+        for (int i = 0; i < markers.Count; i++)
+        {
+            RemapMarker marker = markers[i];
+            if (!InteractiveInPhase(marker, phase)) continue;
+            if (isTarget && !marker.targetPlaced) return i;
+            if (!isTarget && !marker.sourcePlaced) return i;
+        }
+        return -1;
+    }
+
+    // How many of the markers this phase is responsible for are done, as a pair.
+    public static void PhaseProgress(List<RemapMarker> markers, RemapPhase phase, out int done, out int total)
+    {
+        done = 0;
+        total = 0;
+        if (markers == null) return;
+        foreach (RemapMarker marker in markers)
+        {
+            if (!InteractiveInPhase(marker, phase)) continue;
+            total++;
+            if (marker.Paired) done++;
+        }
+    }
+
     public static int CountPaired(List<RemapMarker> markers)
     {
         int total = 0;
