@@ -574,7 +574,10 @@ public class GroomVarianceController : MonoBehaviour
 
     float SignedRandom(HairCard card, Channel c, int seed, int groupId)
     {
-        Vector3 p = card.GetSpawnHitPoint();
+        // Identity, not placement. The two are the same value for every card placed normally;
+        // they differ only after an operation that moved the whole groom (import rescale, REMAP),
+        // and there this is what keeps the scatter the user authored instead of re-rolling it.
+        Vector3 p = card.GetIdentityPoint();
         unchecked
         {
             uint h = 2166136261u;

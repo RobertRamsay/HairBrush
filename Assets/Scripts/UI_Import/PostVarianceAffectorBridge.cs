@@ -272,7 +272,9 @@ public class PostVarianceAffectorBridge : MonoBehaviour
     // per frame, for an answer that does not vary across the card loop at all.
     float SignedRandom(HairCard card, int channelIndex, int seed, int groupId, int postId)
     {
-        Vector3 p = card.GetSpawnHitPoint();
+        // Identity, not placement - see HairCard.identityPoint. Same value for a normally placed
+        // card; held still through an import rescale or a REMAP so POST-local scatter survives.
+        Vector3 p = card.GetIdentityPoint();
         unchecked
         {
             uint h = 2166136261u;

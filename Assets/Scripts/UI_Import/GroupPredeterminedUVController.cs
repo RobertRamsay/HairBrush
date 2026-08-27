@@ -921,9 +921,11 @@ public class GroupPredeterminedUVController : MonoBehaviour
 
     static int StableCardHash(HairCard card, int groupId, int seed)
     {
-        Vector3 p = card.GetSpawnHitPoint();
+        // Identity, not placement - and this hash mixes the NORMAL in as well, so it re-rolls on
+        // any groom-wide move even if positions were somehow preserved. See HairCard.identityPoint.
+        Vector3 p = card.GetIdentityPoint();
         if (p == Vector3.zero) p = card.transform.position;
-        Vector3 n = card.GetSurfaceNormal();
+        Vector3 n = card.GetIdentityNormal();
         unchecked
         {
             uint hash = 2166136261u;

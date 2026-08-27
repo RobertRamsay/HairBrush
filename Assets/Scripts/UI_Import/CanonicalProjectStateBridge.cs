@@ -13,6 +13,19 @@ using UnityEngine;
 public class CanonicalProjectStateBridge : MonoBehaviour
 {
     public const int CurrentFormatVersion = 3;
+
+    // The version that introduced the root-V convention change, pinned as its own number.
+    //
+    // HairProjectSaveData.OnAfterDeserialize used to gate MigrateLegacyVConvention on
+    // "sourceVersion < CurrentFormatVersion", which reads as "older than current" but means
+    // "negate every V scale in the file". Those two agree only while CurrentFormatVersion happens
+    // to be 3. The next bump - for any reason at all, unrelated to UVs - would have re-run the V
+    // migration over every existing v3 project, flipping every card's texture upside down on
+    // load, silently, with no error and nothing in the file to show it had happened.
+    //
+    // A migration belongs to the version that introduced it, not to whatever is current. Pinning
+    // it here is what makes CurrentFormatVersion bumpable again.
+    public const int VConventionFormatVersion = 3;
     public static HairProjectSaveData PendingCanonicalRestore;
     public static int CompletedRestoreGeneration { get; private set; }
 

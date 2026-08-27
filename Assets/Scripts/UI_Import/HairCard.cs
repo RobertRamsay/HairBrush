@@ -570,6 +570,37 @@ public class HairCard : MonoBehaviour
     private Vector3[] baseVertices;
     private Vector3 spawnHitPoint;
     private Vector3 surfaceNormal;
+
+    // Where this card's RANDOMISATION is anchored, which is not always where the card is.
+    //
+    // Four hash sites key per-card randomness to the spawn point, two of them to the surface
+    // normal as well, and all of them round to a ten-thousandth: group variance
+    // (GroomVarianceController.SignedRandom), POST-local variance
+    // (PostVarianceAffectorBridge.SignedRandom), POST coverage
+    // (PostPredeterminedUVAuthority.StablePostThreshold) and the predetermined-UV pick in both
+    // PostPredeterminedUVAuthority and GroupPredeterminedUVController. Move a root a tenth of a
+    // millimetre and that card re-rolls its variance and its atlas rectangle.
+    //
+    // Nothing in ordinary use moves a placed root, so these track the spawn point exactly and the
+    // behaviour is unchanged. They exist for the operations that DO move a whole groom - the
+    // import rescale, and REMAP onto a different head - which freeze identity first and then move
+    // the anchor, so the groom keeps the randomisation it was authored with.
+    //
+    // Initialised here rather than tested for later: an unfrozen card's identity IS its placement,
+    // so there is no state where these are meaningfully absent.
+    private Vector3 identityPoint = Vector3.zero;
+    private Vector3 identityNormal = Vector3.up;
+    private bool identityFrozen = false;
+
+    // How much the card's LENGTHS have been scaled since identity was frozen.
+    //
+    // ClumperDeterministicLeaderAuthority.CardStableKey is a fifth deterministic site and the odd
+    // one out: it quantises the authored length, width and embed depth alongside the point and
+    // normal, so an operation that rescales a groom would re-pick every clump leader even with
+    // the anchor identity held still. Dividing those three back out by this factor is what keeps
+    // a rescale invisible. It stays 1 for a remap, which moves anchors without touching lengths,
+    // and an ordinary shape edit still changes the key exactly as it always did.
+    private float identityScale = 1f;
     private float currentEmbedDepth = 0.01f;
     private float storedOffsetX, storedOffsetY, storedOffsetZ;
     private float baseLength, baseWidth, baseBend, baseTwist, baseEmbedDepth;
@@ -646,6 +677,29 @@ public class HairCard : MonoBehaviour
     public float GetOffsetZ() { return storedOffsetZ; }
     public Vector3 GetSpawnHitPoint() { return spawnHitPoint; }
     public Vector3 GetSurfaceNormal() { return surfaceNormal; }
+
+    // The pair every deterministic per-card hash reads. Identical to the spawn point and surface
+    // normal unless something has frozen identity - see the fields.
+    public Vector3 GetIdentityPoint() { return identityPoint; }
+    public Vector3 GetIdentityNormal() { return identityNormal; }
+    public bool HasFrozenIdentity() { return identityFrozen; }
+    public float GetIdentityScale() { return identityScale; }
+
+    // Pin randomisation to a point and normal, and stop it following the anchor.
+    //
+    // Call this BEFORE SetPlacementData when restoring or remapping a card: placement stamps
+    // identity from itself while identity is unfrozen, so the other order loses the very values
+    // this is preserving.
+    public void SetIdentity(Vector3 point, Vector3 normal, float lengthScaleSinceFrozen)
+    {
+        identityPoint = point;
+        identityNormal = normal;
+        identityFrozen = true;
+        if (lengthScaleSinceFrozen > .000001f)
+        {
+            identityScale = lengthScaleSinceFrozen;
+        }
+    }
     public float GetCrossSectionRidgeHeight() { return Mathf.Max(.0005f, width) * flattenFactor * CrossSectionRidgeRatio; }
     public int GetGeneratedMeshSignature() { return generatedMeshSignature; }
 
@@ -912,6 +966,16 @@ public class HairCard : MonoBehaviour
     {
         spawnHitPoint = hitPoint;
         surfaceNormal = normal;
+
+        // An ordinary placement is its own identity. A card whose identity has been frozen keeps
+        // the one it was given, which is what lets a rescale or a remap move the anchor without
+        // re-rolling the card's variance and predetermined UV rectangle.
+        if (!identityFrozen)
+        {
+            identityPoint = hitPoint;
+            identityNormal = normal;
+        }
+
         currentEmbedDepth = embedDepth;
         storedOffsetX = offsetX;
         storedOffsetY = offsetY;

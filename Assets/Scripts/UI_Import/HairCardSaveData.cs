@@ -50,6 +50,60 @@ public class HairCardSaveData
     // Backward compatible: JsonUtility leaves a missing bool as false, so projects saved
     // before symmetry existed load as all-unmirrored, which is exactly what they were.
     public bool mirrored;
+
+    // The point and normal this card's RANDOMISATION is keyed to, which is not necessarily where
+    // the card sits.
+    //
+    // Four hash sites derive per-card randomness from the spawn point, and two of them mix the
+    // surface normal in as well: GroomVarianceController.SignedRandom (group variance),
+    // PostVarianceAffectorBridge.SignedRandom (POST-local variance),
+    // PostPredeterminedUVAuthority.StablePostThreshold (which cards a POST covers) and the
+    // StableCardHash in both PostPredeterminedUVAuthority and GroupPredeterminedUVController
+    // (which atlas rectangle a card draws). All of them round to a ten-thousandth, so moving a
+    // root by a tenth of a millimetre re-rolls that card's variance AND its predetermined
+    // rectangle. Any operation that moves a whole groom - the import rescale below, a REMAP onto
+    // a different head - would otherwise scramble the randomisation of every card in the project
+    // as its first visible act.
+    //
+    // So identity is separated from placement. It is stamped from the spawn point at creation and
+    // then held still while the anchor moves. Absent in a project written before this existed,
+    // which JsonUtility leaves at false: the loader then stamps identity from hit/normal, which
+    // is bit-for-bit the historical mapping. No formatVersion bump is needed for that - and see
+    // the note on VConventionFormatVersion for why a bump would be the wrong tool anyway.
+    public bool hasIdentity;
+    public float identityX,identityY,identityZ;
+    public float identityNX,identityNY,identityNZ;
+
+    // How much this card's LENGTHS have been scaled since identity was frozen. One deterministic
+    // site - ClumperDeterministicLeaderAuthority.CardStableKey, which picks clump leaders -
+    // quantises the authored length, width and depth alongside the anchor, so a rescale would
+    // re-pick every leader even with the anchor held still. Initialised to 1, not 0: a file
+    // without the key is a card that has never been rescaled, and CardStableKey divides by this.
+    public float identityScale=1f;
+}
+
+// What the model this project was authored against was imported AS.
+//
+// ImportedOBJMetadata on the model root describes the import that just happened, under today's
+// rule. This describes the one the project was written under. The two are compared on load and
+// any difference in working scale is reconciled before a card is spawned - see
+// RuntimeNavigationProjectIO.MigrateImportScale.
+//
+// A project written before this existed has no key here at all, so appliedScale stays 0, which
+// is the sentinel for "unknown, assume it matches" rather than a scale of zero. Every other
+// field is inert without it.
+[Serializable]
+public class ImportMetadataSaveData
+{
+    public float appliedScale;
+    public string normalisationMode;
+    public float normalisationTarget;
+    public float measuredExtent;
+
+    // Identity of the source geometry, from CustomOBJImporter. modelPath is a bare absolute path
+    // and nothing verifies the file behind it is the one the groom was authored on; a mismatch
+    // here is the difference between "your model moved" and "this is a different head".
+    public int meshHash;
 }
 
 [Serializable] public class VarianceChannelSaveData { public string channel; public float amount; public int seed; }
@@ -341,6 +395,10 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
     [NonSerialized] public List<HairCard> captureSourceCards;
 
     public string modelPath;
+
+    // What modelPath was imported as when this project was written. See ImportMetadataSaveData.
+    public ImportMetadataSaveData importMetadata=new();
+
     public List<GroupSaveData> groups=new();
     public List<HairCardSaveData> hairCards=new();
     // Legacy/global mirror kept for backwards compatibility with pre per-material projects.
@@ -421,7 +479,12 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
         // v3 changes the native procedural card UV convention from root V=0 / tip V=1
         // to root V=1 / tip V=0. Negating every saved absolute V scale (and POST V delta)
         // preserves the exact visual orientation of older projects under the corrected mesh.
-        if(sourceVersion < CanonicalProjectStateBridge.CurrentFormatVersion)
+        //
+        // Gated on the version that INTRODUCED the change, not on whatever is current. Those were
+        // the same number while CurrentFormatVersion was 3, and the next bump would otherwise have
+        // re-run this over every v3 file - negating every V scale a second time and turning every
+        // card's texture upside down. See CanonicalProjectStateBridge.VConventionFormatVersion.
+        if(sourceVersion < CanonicalProjectStateBridge.VConventionFormatVersion)
             MigrateLegacyVConvention();
 
         // v2 already has the canonical POST save contract. Promote it after the UV-only

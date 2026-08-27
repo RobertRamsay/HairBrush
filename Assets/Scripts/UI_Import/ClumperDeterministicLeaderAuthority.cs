@@ -174,9 +174,20 @@ public class ClumperDeterministicLeaderAuthority : MonoBehaviour
     static string CardStableKey(HairCard card)
     {
         if (card == null) return string.Empty;
-        Vector3 p = card.GetSpawnHitPoint();
-        Vector3 n = card.GetSurfaceNormal();
+        // Identity rather than placement, for the same reason as the four hash sites in the
+        // variance and predetermined-UV systems - see HairCard.identityPoint. Leader selection is
+        // a per-card dice roll, so a groom-wide move would otherwise re-pick every leader and
+        // visibly reorganise every clump in the project.
+        Vector3 p = card.GetIdentityPoint();
+        Vector3 n = card.GetIdentityNormal();
         HairCard.GroomState s = card.GetCanonicalState();
+
+        // This key is the odd one out among the deterministic sites: it quantises the authored
+        // SHAPE as well as the anchor, and length, width and depth are world distances. A rescale
+        // multiplies all three, so holding the anchor still is not enough on its own - they are
+        // divided back out by the factor applied since identity was frozen, which is 1 for every
+        // card placed normally and for any move that does not touch lengths.
+        float lengthScale = card.GetIdentityScale();
 
         // Quantized authored values intentionally mirror the stable hashing strategy used
         // by the variance systems. No instance ID, hierarchy index or creation order appears.
@@ -184,8 +195,8 @@ public class ClumperDeterministicLeaderAuthority : MonoBehaviour
             Q(p.x), Q(p.y), Q(p.z),
             Q(n.x), Q(n.y), Q(n.z),
             card.groupId,
-            Q(s.length), Q(s.width), s.segments,
-            Q(s.bend), Q(s.twist), Q(s.depth),
+            Q(s.length / lengthScale), Q(s.width / lengthScale), s.segments,
+            Q(s.bend), Q(s.twist), Q(s.depth / lengthScale),
             Q(s.x), Q(s.y), Q(s.z),
             Q(s.uScale), Q(s.vScale), Q(s.uOffset), Q(s.vOffset));
     }

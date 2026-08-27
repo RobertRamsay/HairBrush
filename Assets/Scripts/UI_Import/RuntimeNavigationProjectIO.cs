@@ -131,6 +131,7 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
     {
         HairProjectSaveData data = new HairProjectSaveData();
         data.modelPath = GetField<string>("currentModelPath");
+        data.importMetadata = CaptureImportMetadata();
         data.sliderLength=viewer.currentLength; data.sliderWidth=viewer.currentWidth; data.sliderSegments=viewer.currentSegments;
         data.sliderBend=viewer.currentBend; data.sliderTwist=viewer.currentTwist; data.sliderEmbedDepth=viewer.currentEmbedDepth;
         data.sliderOffsetX=viewer.currentOffsetX; data.sliderOffsetY=viewer.currentOffsetY; data.sliderOffsetZ=viewer.currentOffsetZ;
@@ -152,9 +153,18 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
         {
             Vector3 hit = card.GetSpawnHitPoint();
             Vector3 normal = card.GetSurfaceNormal();
+            // Only written when it differs from the placement - an unfrozen card's identity IS
+            // its spawn point, and leaving the key out means an older build, and this one's own
+            // legacy path, re-derive exactly the same value. See HairCardSaveData.hasIdentity.
+            Vector3 identity = card.GetIdentityPoint();
+            Vector3 identityNormal = card.GetIdentityNormal();
             data.captureSourceCards.Add(card);
             data.hairCards.Add(new HairCardSaveData
             {
+                hasIdentity=card.HasFrozenIdentity(),
+                identityX=identity.x,identityY=identity.y,identityZ=identity.z,
+                identityNX=identityNormal.x,identityNY=identityNormal.y,identityNZ=identityNormal.z,
+                identityScale=card.GetIdentityScale(),
                 posX=card.transform.position.x,posY=card.transform.position.y,posZ=card.transform.position.z,
                 rotX=card.transform.rotation.x,rotY=card.transform.rotation.y,rotZ=card.transform.rotation.z,rotW=card.transform.rotation.w,
                 hitX=hit.x,hitY=hit.y,hitZ=hit.z,normalX=normal.x,normalY=normal.y,normalZ=normal.z,
@@ -188,6 +198,13 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
             else Debug.LogError("HairBrush: could not load model referenced by project - file not found at: " + data.modelPath);
         }
 
+        // BEFORE the sliders, the cards and the group restore, all three of which read straight
+        // out of this payload. Deliberately here and not inside ApplyGlobalSliders/
+        // SpawnSavedCards: UndoHistoryAuthority replays a snapshot through those without ever
+        // reloading the model, and a migration living in them would rescale the session again on
+        // every undo step.
+        MigrateImportScale(data);
+
         ApplyGlobalSliders(data);
         ApplyGroupRegistry(data);
         viewer.currentGroupId=data.groups.Count>0?data.groups[0].groupId:0;
@@ -216,6 +233,83 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
         StartCoroutine(SelectLoadedGroupWhenSettled(data));
         RepairAngleControls(true);
         Debug.Log("Project loaded successfully from: "+path);
+    }
+
+    // What the currently loaded model was imported as, for the project file.
+    ImportMetadataSaveData CaptureImportMetadata()
+    {
+        ImportMetadataSaveData captured = new ImportMetadataSaveData();
+        GameObject model = GetField<GameObject>("loadedModel");
+        if (model == null) return captured;
+        ImportedOBJMetadata metadata = model.GetComponent<ImportedOBJMetadata>();
+        if (metadata == null) return captured;
+
+        captured.appliedScale = metadata.appliedScale;
+        captured.normalisationMode = metadata.normalisationMode;
+        captured.normalisationTarget = metadata.normalisationTarget;
+        captured.measuredExtent = metadata.measuredExtent;
+        captured.meshHash = metadata.meshHash;
+        return captured;
+    }
+
+    // Reconcile the working scale this project was authored at against the one the importer
+    // produces today, and move the whole groom if they differ.
+    //
+    // Import normalisation used to fire only above a source width of 2.0 and now always fires, so
+    // a project authored under the old rule against a narrow model comes back with its model a
+    // few times smaller than the world-space anchors that were placed on it - every card, guide,
+    // clumper and POST left hanging in the air around a shrunken head. Nothing in the file said
+    // what scale it was written at, which is why importMetadata now travels with it.
+    //
+    // A file written before that field existed is not guessed at: the old rule is a pure function
+    // of the source width, which the fresh import measured, so the authored scale is RECONSTRUCTED
+    // exactly rather than approximated. See LegacyImportScale.
+    void MigrateImportScale(HairProjectSaveData data)
+    {
+        if (data == null) return;
+        GameObject model = GetField<GameObject>("loadedModel");
+        if (model == null) return;
+        ImportedOBJMetadata metadata = model.GetComponent<ImportedOBJMetadata>();
+        if (metadata == null) return;
+        if (metadata.appliedScale <= 0f) return;
+
+        if (data.importMetadata == null) data.importMetadata = new ImportMetadataSaveData();
+
+        // A mesh hash that disagrees means the OBJ behind modelPath is not the geometry this
+        // groom was authored on. Reported rather than refused: the file may legitimately have been
+        // re-exported, and the anchors are still the user's work. It is the one warning that
+        // distinguishes "the model moved" from "this is a different head".
+        if (data.importMetadata.meshHash != 0 && data.importMetadata.meshHash != metadata.meshHash)
+            Debug.LogWarning("HairBrush: the model at " + data.modelPath + " is not the geometry this project was authored against (mesh hash " + data.importMetadata.meshHash + " vs " + metadata.meshHash + "). The groom has been placed anyway and may not sit correctly.");
+
+        float authoredScale = data.importMetadata.appliedScale;
+        if (authoredScale <= 0f) authoredScale = LegacyImportScale(metadata.measuredExtent);
+        if (authoredScale <= 0f) return;
+
+        float ratio = metadata.appliedScale / authoredScale;
+        if (Mathf.Abs(ratio - 1f) < .000001f)
+        {
+            data.importMetadata = CaptureImportMetadata();
+            return;
+        }
+
+        // Identity frozen and dimensions scaled: this migration must be visually invisible. Every
+        // length in the project moves by the same factor, and every card keeps hashing to the
+        // point it was authored at, so variance and predetermined UV rectangles come back
+        // unchanged rather than re-rolled. See GroomAnchorTransform.
+        GroomAnchorTransformReport report = GroomAnchorTransform.ApplyToSaveData(data, new UniformScaleAnchorMapping(ratio), true, true);
+        data.importMetadata = CaptureImportMetadata();
+        Debug.Log("HairBrush: migrated project from import scale " + authoredScale.ToString("F6") + " to " + metadata.appliedScale.ToString("F6") + " (x" + ratio.ToString("F6") + ") - " + report);
+    }
+
+    // The pre-normalisation import rule, reproduced exactly so a project that predates
+    // importMetadata can be migrated rather than guessed at: scaled to 0.33 width only when the
+    // source was wider than 2.0 units, left alone otherwise.
+    static float LegacyImportScale(float sourceWidth)
+    {
+        if (sourceWidth <= .000001f) return 1f;
+        if (sourceWidth > 2.0f) return CustomOBJImporter.NormalisedWidth / sourceWidth;
+        return 1f;
     }
 
     // The three steps below are the part of a load that rebuilds the SESSION rather than the
@@ -250,6 +344,12 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
             card.mirrored=c.mirrored;
             Vector3 hit=new Vector3(c.hitX,c.hitY,c.hitZ);
             Vector3 normal=new Vector3(c.normalX,c.normalY,c.normalZ).normalized;
+            // BEFORE SetPlacementData, which stamps identity from the placement while identity is
+            // still unfrozen - the other order would discard the value being restored. A file
+            // without the key leaves hasIdentity false and no call happens, so placement supplies
+            // the identity exactly as it always did.
+            if(c.hasIdentity)
+                card.SetIdentity(new Vector3(c.identityX,c.identityY,c.identityZ),new Vector3(c.identityNX,c.identityNY,c.identityNZ).normalized,c.identityScale);
             card.SetPlacementData(hit,normal,c.embedDepth,c.offsetX,c.offsetY,c.offsetZ,c.groupId);
             card.SetParameters(c.length,c.width,c.segments,c.bendAngle,c.twistAngle,c.offsetX,c.offsetY,c.offsetZ,c.embedDepth,1f,c.uScale,c.vScale,c.uOffset,c.vOffset,c.curlFrequency,c.curlDiameter,c.waveAmplitude,c.waveFrequency,c.waveDirection,c.arch);
             if(viewer.hairCardMaterial!=null)go.GetComponent<MeshRenderer>().sharedMaterial=viewer.hairCardMaterial;

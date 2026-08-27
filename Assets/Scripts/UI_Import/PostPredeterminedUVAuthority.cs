@@ -442,7 +442,11 @@ public class PostPredeterminedUVAuthority : MonoBehaviour
 
     static float StablePostThreshold(HairCard card, PostAffectorManager.PostAffector post)
     {
-        Vector3 p = card.GetSpawnHitPoint();
+        // Identity, not placement - see HairCard.identityPoint. Which cards a POST covers is a
+        // per-card dice roll, so it has to be as stable under a groom-wide move as the variance
+        // is; SpatialWeight above deliberately still uses the real spawn point, because coverage
+        // DISTANCE is geometry rather than randomness.
+        Vector3 p = card.GetIdentityPoint();
         if (p == Vector3.zero) p = card.transform.position;
         unchecked
         {
@@ -463,9 +467,11 @@ public class PostPredeterminedUVAuthority : MonoBehaviour
 
     static int StableCardHash(HairCard card, int groupId, int seed)
     {
-        Vector3 p = card.GetSpawnHitPoint();
+        // Identity, not placement - and this hash mixes the NORMAL in as well, so it re-rolls on
+        // any groom-wide move even if positions were somehow preserved. See HairCard.identityPoint.
+        Vector3 p = card.GetIdentityPoint();
         if (p == Vector3.zero) p = card.transform.position;
-        Vector3 n = card.GetSurfaceNormal();
+        Vector3 n = card.GetIdentityNormal();
         unchecked
         {
             uint hash = 2166136261u;
