@@ -400,8 +400,16 @@ public class RemapMarkerAuthority : MonoBehaviour
     void DrawAll()
     {
         List<RemapMarker> markers = session.Markers;
-        int activeSource = NextUnplaced(false);
-        int activeTarget = NextUnplaced(true);
+        // One active marker at a time, on one side, matching the instruction and the viewport
+        // frame exactly. Two independent "next" answers is what let the bar ask for a placement
+        // on one head while a green ring sat on the other.
+        int pendingIndex;
+        bool pendingIsTarget;
+        if (!RemapMarkerSet.NextPending(markers, session.Phase, out pendingIndex, out pendingIsTarget)) pendingIndex = -1;
+        int activeSource = -1;
+        int activeTarget = -1;
+        if (pendingIndex >= 0 && pendingIsTarget) activeTarget = pendingIndex;
+        if (pendingIndex >= 0 && !pendingIsTarget) activeSource = pendingIndex;
 
         int mismatched;
         RemapMarkerSet.TryFindSideMismatch(markers, session.SourceRoot, session.TargetRoot, out mismatched);

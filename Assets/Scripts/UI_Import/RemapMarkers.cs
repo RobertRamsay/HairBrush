@@ -262,6 +262,38 @@ public static class RemapMarkerSet
         return -1;
     }
 
+    // The next placement wanted, alternating between the two heads marker by marker.
+    //
+    // Asking for every source placement first and every target placement afterwards is what let a
+    // user put all six ear markers on one head and watch a pair counter sit at zero the whole
+    // time. Finishing each marker before starting the next means the count moves on every second
+    // click, and no marker can be six placements deep on one side with nothing opposite it.
+    public static bool NextPending(List<RemapMarker> markers, RemapPhase phase, out int index, out bool isTarget)
+    {
+        index = -1;
+        isTarget = false;
+        if (markers == null) return false;
+
+        for (int i = 0; i < markers.Count; i++)
+        {
+            RemapMarker marker = markers[i];
+            if (!InteractiveInPhase(marker, phase)) continue;
+            if (!marker.sourcePlaced)
+            {
+                index = i;
+                isTarget = false;
+                return true;
+            }
+            if (!marker.targetPlaced)
+            {
+                index = i;
+                isTarget = true;
+                return true;
+            }
+        }
+        return false;
+    }
+
     // How many are placed on ONE side, which is not the same question as how many are paired.
     //
     // A marker needs both halves before it is worth anything to the solve, so the headline count

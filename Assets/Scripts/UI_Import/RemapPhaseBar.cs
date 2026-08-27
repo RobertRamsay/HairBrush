@@ -138,13 +138,9 @@ public class RemapPhaseBar : MonoBehaviour
     // the instruction, and it has to be readable for as long as it takes to find the spot.
     string NextInstruction(bool auto, bool covered, string reason)
     {
-        int index = RemapMarkerSet.NextUnplaced(session.Markers, session.Phase, false);
-        bool onTarget = false;
-        if (index < 0)
-        {
-            index = RemapMarkerSet.NextUnplaced(session.Markers, session.Phase, true);
-            onTarget = true;
-        }
+        int index;
+        bool onTarget;
+        if (!RemapMarkerSet.NextPending(session.Markers, session.Phase, out index, out onTarget)) index = -1;
 
         if (index < 0)
         {
@@ -174,10 +170,18 @@ public class RemapPhaseBar : MonoBehaviour
         Camera camera = null;
         if (show)
         {
-            bool wantsTarget = RemapMarkerSet.NextUnplaced(session.Markers, session.Phase, false) < 0;
-            camera = session.LeftCamera;
-            if (wantsTarget) camera = session.RightCamera;
-            if (camera == null) show = false;
+            int pendingIndex;
+            bool wantsTarget;
+            if (!RemapMarkerSet.NextPending(session.Markers, session.Phase, out pendingIndex, out wantsTarget))
+            {
+                show = false;
+            }
+            else
+            {
+                camera = session.LeftCamera;
+                if (wantsTarget) camera = session.RightCamera;
+                if (camera == null) show = false;
+            }
         }
 
         if (!show)
@@ -356,37 +360,46 @@ public class RemapPhaseBar : MonoBehaviour
         layout.childControlHeight = false;
         layout.childForceExpandHeight = false;
         layout.spacing = 3f;
-        layout.padding = new RectOffset(0, 8, 6, 0);
+        layout.padding = new RectOffset(0, 8, 0, 0);
 
-        toneLabel = AddText(column.transform, "ToneLabel", 13, FontStyles.Bold, new Color(.72f, .78f, .84f), 18f);
+        toneLabel = AddText(column.transform, "ToneLabel", 13, FontStyles.Bold, new Color(.72f, .78f, .84f), 16f);
 
         GameObject sliderObject = new GameObject("RemapMarkerToneSlider", typeof(RectTransform), typeof(Slider), typeof(LayoutElement));
         sliderObject.transform.SetParent(column.transform, false);
-        sliderObject.GetComponent<LayoutElement>().preferredHeight = 18f;
+        sliderObject.GetComponent<LayoutElement>().preferredHeight = 11f;
         Slider slider = sliderObject.GetComponent<Slider>();
         slider.minValue = 0f;
         slider.maxValue = 1f;
 
+        // The track IS the range it selects from - black at one end, white at the other - so the
+        // control shows what it does instead of describing it. Drawn from a generated ramp
+        // texture; there is no gradient sprite in the project to reuse.
         GameObject background = new GameObject("Background", typeof(RectTransform), typeof(Image));
         background.transform.SetParent(sliderObject.transform, false);
-        background.GetComponent<Image>().color = new Color(.28f, .28f, .28f);
+        Image backgroundImage = background.GetComponent<Image>();
+        backgroundImage.sprite = GreyscaleRampSprite();
+        backgroundImage.type = Image.Type.Simple;
+        backgroundImage.color = Color.white;
         RectTransform backgroundRect = background.GetComponent<RectTransform>();
-        backgroundRect.anchorMin = new Vector2(0f, .3f);
-        backgroundRect.anchorMax = new Vector2(1f, .7f);
+        backgroundRect.anchorMin = new Vector2(0f, .15f);
+        backgroundRect.anchorMax = new Vector2(1f, .85f);
         backgroundRect.offsetMin = Vector2.zero;
         backgroundRect.offsetMax = Vector2.zero;
 
         GameObject fillArea = new GameObject("Fill Area", typeof(RectTransform));
         fillArea.transform.SetParent(sliderObject.transform, false);
         RectTransform fillAreaRect = fillArea.GetComponent<RectTransform>();
-        fillAreaRect.anchorMin = new Vector2(0f, .3f);
-        fillAreaRect.anchorMax = new Vector2(1f, .7f);
+        fillAreaRect.anchorMin = new Vector2(0f, .15f);
+        fillAreaRect.anchorMax = new Vector2(1f, .85f);
         fillAreaRect.offsetMin = Vector2.zero;
         fillAreaRect.offsetMax = Vector2.zero;
 
         GameObject fill = new GameObject("Fill", typeof(RectTransform), typeof(Image));
         fill.transform.SetParent(fillArea.transform, false);
         toneFill = fill.GetComponent<Image>();
+        // The ramp behind it already carries the meaning; a solid fill over the left half would
+        // only hide the part of the gradient the user is choosing from.
+        toneFill.enabled = false;
         slider.fillRect = fill.GetComponent<RectTransform>();
         slider.fillRect.anchorMin = Vector2.zero;
         slider.fillRect.anchorMax = Vector2.zero;
@@ -402,9 +415,10 @@ public class RemapPhaseBar : MonoBehaviour
 
         GameObject handle = new GameObject("Handle", typeof(RectTransform), typeof(Image));
         handle.transform.SetParent(handleArea.transform, false);
-        handle.GetComponent<Image>().color = new Color(.86f, .88f, .92f);
+        // Mid grey, so the handle stays visible against both ends of the ramp it slides over.
+        handle.GetComponent<Image>().color = new Color(.55f, .58f, .62f);
         slider.handleRect = handle.GetComponent<RectTransform>();
-        slider.handleRect.sizeDelta = new Vector2(16f, 0f);
+        slider.handleRect.sizeDelta = new Vector2(10f, 0f);
 
         // Set AFTER the parts are wired, so the first assignment lays the fill out properly, and
         // the listener is attached afterwards so restoring the saved value does not write it
@@ -442,10 +456,34 @@ public class RemapPhaseBar : MonoBehaviour
         }
     }
 
+    // Black to white across 64 pixels, built once and shared. Point filtering would band it, so
+    // the texture is left bilinear and clamped - stretched across the track it reads as a smooth
+    // ramp at any width.
+    private static Sprite greyscaleRamp;
+
+    static Sprite GreyscaleRampSprite()
+    {
+        if (greyscaleRamp != null) return greyscaleRamp;
+
+        const int width = 64;
+        Texture2D texture = new Texture2D(width, 1, TextureFormat.RGBA32, false);
+        texture.name = "HairBrushGreyscaleRamp";
+        texture.wrapMode = TextureWrapMode.Clamp;
+        texture.filterMode = FilterMode.Bilinear;
+        for (int i = 0; i < width; i++)
+        {
+            float t = i / (float)(width - 1);
+            texture.SetPixel(i, 0, new Color(t, t, t, 1f));
+        }
+        texture.Apply();
+
+        greyscaleRamp = Sprite.Create(texture, new Rect(0f, 0f, width, 1f), new Vector2(.5f, .5f));
+        return greyscaleRamp;
+    }
+
     void ApplyTone(float value)
     {
         RemapMarkerAuthority.MarkerTone = value;
-        if (toneFill != null) toneFill.color = new Color(value, value, value, 1f);
         if (toneLabel != null) toneLabel.text = "MARKER TONE  " + Mathf.RoundToInt(value * 100f) + "%";
     }
 

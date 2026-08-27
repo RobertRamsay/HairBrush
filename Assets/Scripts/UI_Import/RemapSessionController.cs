@@ -161,6 +161,7 @@ public class RemapSessionController : MonoBehaviour
         BuildRightView();
         BuildMarkers();
         phase = RemapPhase.AutoMarkers;
+        ApplyHairVisibility();
 
         // Both, deliberately. The mode flag is what makes every ring, handle and brush preview
         // stand down through GroomViewportSuppressed; the input lock is what stops the placement
@@ -215,6 +216,7 @@ public class RemapSessionController : MonoBehaviour
     {
         if (!sessionActive) return;
         phase = next;
+        ApplyHairVisibility();
     }
 
     private RemapPreviewSnapshot previewSnapshot;
@@ -237,7 +239,7 @@ public class RemapSessionController : MonoBehaviour
         previewSnapshot = snapshot;
         previewReport = report;
         phase = RemapPhase.Ready;
-        ShowHairOnTarget(true);
+        ApplyHairVisibility();
         return true;
     }
 
@@ -247,24 +249,39 @@ public class RemapSessionController : MonoBehaviour
         RemapPreview.Revert(previewSnapshot);
         previewSnapshot = null;
         previewReport = null;
-        ShowHairOnTarget(false);
         phase = RemapPhase.EarMarkers;
+        ApplyHairVisibility();
     }
 
-    // The hair is on its own layer precisely so it can be shown to one camera or the other per
-    // phase. While markers are being placed it belongs only to the left view, where it is still
-    // sitting on the head it was groomed on; once it has moved it belongs only to the right.
-    void ShowHairOnTarget(bool onTarget)
+    // The hair is on its own layer precisely so it can be shown or denied per phase, and which
+    // phase it is changes whether it is context or an obstruction.
+    //
+    // Hidden outright while the EAR markers are being placed. Every ear landmark - the helix root,
+    // the crease, the lobe attachment - is underneath the groom on the original head, so leaving
+    // the hair up asks the user to click a feature they cannot see. That is what sent six markers
+    // onto the bald head and none onto the groomed one: the instruction was pointing at geometry
+    // the view was covering.
+    void ApplyHairVisibility()
     {
         if (viewer == null || viewer.mainCamera == null || rightCamera == null) return;
-        if (onTarget)
+
+        int sourceMask = 1 << sourceLayer;
+        int targetMask = 1 << targetLayer;
+
+        if (phase == RemapPhase.EarMarkers)
         {
-            viewer.mainCamera.cullingMask = 1 << sourceLayer;
-            rightCamera.cullingMask = (1 << targetLayer) | (1 << hairLayer);
+            viewer.mainCamera.cullingMask = sourceMask;
+            rightCamera.cullingMask = targetMask;
             return;
         }
-        viewer.mainCamera.cullingMask = (1 << sourceLayer) | (1 << hairLayer);
-        rightCamera.cullingMask = 1 << targetLayer;
+        if (phase == RemapPhase.Ready)
+        {
+            viewer.mainCamera.cullingMask = sourceMask;
+            rightCamera.cullingMask = targetMask | (1 << hairLayer);
+            return;
+        }
+        viewer.mainCamera.cullingMask = sourceMask | (1 << hairLayer);
+        rightCamera.cullingMask = targetMask;
     }
 
     float TargetHeadSize()
