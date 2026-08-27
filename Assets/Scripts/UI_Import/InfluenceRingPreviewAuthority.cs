@@ -344,7 +344,7 @@ public class InfluenceRingPreviewAuthority : MonoBehaviour
     // never drawn anything at all - see the note in it.)
     bool IsTextureMode()
     {
-        return TextureModeProbe.Active;
+        return GroomViewportSuppressed.Active;
     }
 
     void EnsureRenderers()

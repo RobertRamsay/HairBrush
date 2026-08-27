@@ -260,7 +260,7 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         // draw with ZTest Always and are hidden by nothing at all.
         GuideCurveManager.GuideCurve guide = GetSelectedGuide();
         if (guide == null || viewer == null || viewer.mainCamera == null || Mouse.current == null ||
-            TextureModeProbe.Active)
+            GroomViewportSuppressed.Active)
         {
             dragging = -1;
             draggingGuideId = -1;

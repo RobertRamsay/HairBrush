@@ -1345,7 +1345,12 @@ public class ModelViewer : MonoBehaviour
 
     void HandleGrooming()
     {
-        if (!isGroomingMode || Mouse.current == null || isTextureEditorMode) return;
+        // RemapModeProbe joins the texture-mode gate rather than replacing it. REMAP halves this
+        // camera's rect and puts a second camera in the other half, and every ScreenPointToRay in
+        // the grooming path passes raw screen coordinates - a ray built from a cursor over the
+        // right-hand view would land somewhere arbitrary on the left-hand model. Suppressing the
+        // whole path is the only correct answer while a second viewport is up.
+        if (!isGroomingMode || Mouse.current == null || isTextureEditorMode || RemapModeProbe.Active) return;
         // SHIFT/ALT/CTRL are name characters and modifiers while a text box is open.
         if (GroupNameInlineEditAuthority.IsEnteringText) return;
         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;

@@ -159,7 +159,7 @@ public class PlacementBrushModeAuthority : MonoBehaviour
         if (viewer == null) return;
 
         // Above every early return below, deliberately. Grooming is held off for the whole of an
-        // armed placement, and TextureModeProbe.Active parks this method for the whole texture
+        // armed placement, and GroomViewportSuppressed.Active parks this method for the whole texture
         // workspace, so the returns further down are not rare frames - they are minutes at a time.
         // A latch maintained only on the frames this method gets all the way through is not a latch.
         //
@@ -210,7 +210,7 @@ public class PlacementBrushModeAuthority : MonoBehaviour
         restoreSelectionState = selectionWasActive;
         restorePending = false;
 
-        if (!groomingEnabled || GetLoadedModel() == null || TextureModeProbe.Active)
+        if (!groomingEnabled || GetLoadedModel() == null || GroomViewportSuppressed.Active)
         {
             HideBrushPreview();
             return;

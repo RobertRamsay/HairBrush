@@ -26,7 +26,7 @@ public class SelectedClumperRadialPreviewAuthority : MonoBehaviour
 
         // Nothing groom-related draws while the texture workspace is up - see TextureModeProbe.
         if (clumper == null || clumper.mode == GroupClumperManager.ClumpMode.DispersedEvenly ||
-            TextureModeProbe.Active)
+            GroomViewportSuppressed.Active)
         {
             SetVisible(false);
             return;

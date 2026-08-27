@@ -59,7 +59,7 @@ public class SelectionBrushVisualizer : MonoBehaviour
         // and this is active.
         bool onMenuScreen = viewer.uiContainer != null && viewer.uiContainer.activeInHierarchy;
 
-        if (onMenuScreen || (!GetBool(groomingField) && !armedForPost) || TextureModeProbe.Active ||
+        if (onMenuScreen || (!GetBool(groomingField) && !armedForPost) || GroomViewportSuppressed.Active ||
             viewer.mainCamera == null || Mouse.current == null)
         {
             Hide();

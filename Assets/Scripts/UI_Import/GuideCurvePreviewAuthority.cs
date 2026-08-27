@@ -131,7 +131,7 @@ public class GuideCurvePreviewAuthority : MonoBehaviour
         // The texture workspace parks the camera front-on against an opaque preview plane, and a
         // curve still drawn there would be a stroke across a UV atlas. Nothing in this
         // authority means anything in that mode, so it draws nothing at all.
-        if (manager == null || viewer == null || TextureModeProbe.Active)
+        if (manager == null || viewer == null || GroomViewportSuppressed.Active)
         {
             HideAll();
             return;

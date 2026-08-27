@@ -31,7 +31,7 @@ public class GroupClumperInteractionAuthority : MonoBehaviour
         // switches ON a MeshCollider for its texture preview quad so rectangles can be drawn on it.
         // A TAB and click meant for the atlas therefore landed a real clumper at a point on that
         // quad, in whichever group happened to be current, in a mode where nothing draws it.
-        if (TextureModeProbe.Active) return;
+        if (GroomViewportSuppressed.Active) return;
         if (!Mouse.current.leftButton.wasPressedThisFrame || lastHandledFrame == Time.frameCount) return;
         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
 

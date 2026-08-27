@@ -91,7 +91,7 @@ public class RuntimeBuildLoadAuthority : MonoBehaviour
         }
     }
 
-    void LoadModelAtPath(string path)
+    public void LoadModelAtPath(string path)
     {
         currentModelPathField?.SetValue(viewer, path);
         GameObject oldModel = loadedModelField?.GetValue(viewer) as GameObject;

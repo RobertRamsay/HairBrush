@@ -98,7 +98,7 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
         load?.Invoke(viewer, null);
     }
 
-    void CleanupEditorUIAndCards()
+    public void CleanupEditorUIAndCards()
     {
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None)) Destroy(card.gameObject);
         foreach (string name in new[] { "GroomingPanel", "GroupManagerPanel" })

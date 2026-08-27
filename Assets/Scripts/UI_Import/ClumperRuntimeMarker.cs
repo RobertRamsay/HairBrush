@@ -35,7 +35,7 @@ public class ClumperRuntimeMarker : MonoBehaviour
         // the cast: SelectedClumperRadialPreviewAuthority already draws these rings, at the same
         // execution order and under the same object name, so a corrected cast would double them up.
         GroupClumperManager.GroupClumper c = ActiveClumper();
-        if (c == null || TextureModeProbe.Active)
+        if (c == null || GroomViewportSuppressed.Active)
         {
             SetVisible(false);
             return;

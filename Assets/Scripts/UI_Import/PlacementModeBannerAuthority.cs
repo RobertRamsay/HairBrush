@@ -61,7 +61,7 @@ public class PlacementModeBannerAuthority : MonoBehaviour
             return;
         }
 
-        if (!ReadBool(groomingModeField) || TextureModeProbe.Active)
+        if (!ReadBool(groomingModeField) || GroomViewportSuppressed.Active)
         {
             SetVisible(false);
             return;
