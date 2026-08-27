@@ -89,9 +89,14 @@ public static class RemapCommit
         // End second, to put the layers, the culling masks, the camera rect and the input lock back
         // and to destroy the session's copy of the new head; the load last, which imports that head
         // again cleanly and rebuilds the whole session around it.
+        //
+        // And the load waits a frame. End's Destroy calls are deferred to the end of this one, so a
+        // load running immediately would rebuild the session around objects that are already
+        // condemned but still findable - which is exactly why the groom came up missing until the
+        // project was reloaded by hand.
         session.CommitPreview();
         session.End(true);
-        io.LoadProjectFromPath(savePath);
+        session.LoadProjectNextFrame(io, savePath);
 
         Debug.Log("HairBrush REMAP: confirmed onto " + Path.GetFileName(modelPath) + ", saved as " + savePath);
         return true;

@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine.UI;
 using UnityEngine;
 
@@ -462,6 +463,33 @@ public class RemapSessionController : MonoBehaviour
     {
         previewSnapshot = null;
         previewReport = null;
+        // The session was entered from the start screen, so End would normally put that menu back.
+        // On a commit it must not: the project load takes over from here, and restoring the menu
+        // only to hide it again a frame later is a visible flash of the thing the user just left.
+        menuWasActive = false;
+    }
+
+    // Load a project one frame after the session has been torn down.
+    //
+    // Not in the same frame. End() destroys the session's copy of the new head, the right camera
+    // and its pivot, and Unity's Destroy is deferred to the end of the frame - so a load running
+    // immediately afterwards rebuilds the whole session while the previous one is still standing,
+    // and every GameObject.Find in that path can still see objects that are already condemned.
+    // Reloading the saved project by hand a moment later always worked, which is the tell: the
+    // payload was right and the timing was not.
+    //
+    // Hosted here because this controller is a DontDestroyOnLoad singleton and survives its own
+    // teardown; the coroutine would die with any object the load destroys.
+    public void LoadProjectNextFrame(RuntimeNavigationProjectIO io, string path)
+    {
+        if (io == null || string.IsNullOrEmpty(path)) return;
+        StartCoroutine(LoadProjectAfterTeardown(io, path));
+    }
+
+    IEnumerator LoadProjectAfterTeardown(RuntimeNavigationProjectIO io, string path)
+    {
+        yield return null;
+        io.LoadProjectFromPath(path);
     }
 
     public void RevertPreview()
