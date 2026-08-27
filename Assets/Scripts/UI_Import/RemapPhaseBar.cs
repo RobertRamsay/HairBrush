@@ -383,19 +383,24 @@ public class RemapPhaseBar : MonoBehaviour
         VerticalLayoutGroup layout = column.GetComponent<VerticalLayoutGroup>();
         layout.childControlWidth = true;
         layout.childForceExpandWidth = true;
-        layout.childControlHeight = false;
+        // childControlHeight TRUE for the same reason childControlWidth had to be: with it false
+        // the group leaves every child at its own RectTransform height and the
+        // LayoutElement.preferredHeight below is ignored outright. The track was asking for nine
+        // units and rendering at the RectTransform default - a hundred - which is why it came out
+        // as a slab rather than a slider.
+        layout.childControlHeight = true;
         layout.childForceExpandHeight = false;
-        layout.spacing = 2f;
+        layout.spacing = 3f;
         layout.padding = new RectOffset(0, 8, 0, 0);
-        // Top-aligned, so the label and track sit at the top of the bar rather than being centred
-        // against the taller buttons beside them.
-        layout.childAlignment = TextAnchor.UpperLeft;
+        // Centred, not top-aligned: the buttons beside it fill the bar and centre their labels, so
+        // a centred label and track are what actually line up with that row.
+        layout.childAlignment = TextAnchor.MiddleLeft;
 
         toneLabel = AddText(column.transform, "ToneLabel", 12, FontStyles.Bold, new Color(.72f, .78f, .84f), 15f);
 
         GameObject sliderObject = new GameObject("RemapMarkerToneSlider", typeof(RectTransform), typeof(Slider), typeof(LayoutElement));
         sliderObject.transform.SetParent(column.transform, false);
-        sliderObject.GetComponent<LayoutElement>().preferredHeight = 9f;
+        sliderObject.GetComponent<LayoutElement>().preferredHeight = 12f;
         Slider slider = sliderObject.GetComponent<Slider>();
         slider.minValue = 0f;
         slider.maxValue = 1f;

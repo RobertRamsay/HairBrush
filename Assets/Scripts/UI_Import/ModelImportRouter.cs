@@ -45,6 +45,11 @@ public class ModelImportRouter : MonoBehaviour
     private GameObject promptRoot;
     private string pendingPath = string.Empty;
 
+    // The start screen is what the question is asked over, and it is busy - a logo and four large
+    // buttons. A dimmer alone leaves all of it legible behind the panel, so the menu is hidden for
+    // as long as the prompt is up and put back exactly as it was when the prompt goes.
+    private bool menuWasActiveBeforePrompt;
+
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
     {
@@ -92,6 +97,12 @@ public class ModelImportRouter : MonoBehaviour
         }
 
         pendingPath = path;
+        menuWasActiveBeforePrompt = false;
+        if (viewer.uiContainer != null)
+        {
+            menuWasActiveBeforePrompt = viewer.uiContainer.activeSelf;
+            viewer.uiContainer.SetActive(false);
+        }
         BuildPrompt();
     }
 
@@ -220,6 +231,13 @@ public class ModelImportRouter : MonoBehaviour
     void DismissPrompt()
     {
         pendingPath = string.Empty;
+        // Restored to exactly what it was, on every branch including the two that are about to
+        // hide it again themselves. Both of those run in this same frame - LoadModelAtPath hides
+        // it, and RemapSessionController.Begin reads its state and then hides it - so nothing is
+        // drawn in between and there is no flash. Restoring it here rather than second-guessing
+        // which branch wants it is also what keeps Begin's own record honest: cancelling out of a
+        // REMAP session has to return the user to the menu they started from.
+        if (viewer != null && viewer.uiContainer != null) viewer.uiContainer.SetActive(menuWasActiveBeforePrompt);
         if (promptRoot == null) return;
         Destroy(promptRoot);
         promptRoot = null;
