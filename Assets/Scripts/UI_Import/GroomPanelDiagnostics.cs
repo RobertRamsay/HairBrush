@@ -1,0 +1,166 @@
+using System.Text;
+using TMPro;
+using UnityEngine;
+using UnityEngine.InputSystem;
+using UnityEngine.UI;
+
+// Press F9 to have the grooming panel describe its own state.
+//
+// This exists because the frozen header failing after a project load has now survived three
+// plausible explanations - a duplicate panel, ModifierCoreLock, deferred destruction - each of
+// which was worth fixing and none of which was this. Guessing a fourth time from a screenshot is
+// not a method. Everything the frozen-header authority checks before it decides to act, and
+// everything that could make a live row look dead, is printed here in one block.
+//
+// Read the output top to bottom: the first line that is not what it should be is the answer.
+//   - more than one GroomingPanel        -> the rebuild made a second one
+//   - the bound panel is not the live one -> ModelViewer.groomingSliderPanelGO is stale
+//   - ClumperScrollHost active           -> the frozen authority is deliberately standing down
+//   - a row with no Canvas               -> Apply never reached it
+//   - a row Canvas below the root's order -> overrideSorting is losing to the canvas above it
+//   - alpha below 1 on a row or a parent -> something is dimming it, and the name says what
+[DefaultExecutionOrder(20000)]
+public class GroomPanelDiagnostics : MonoBehaviour
+{
+    private static readonly string[] Rows =
+    {
+        "PanelTabRow", "TopControlsRow", "PlacementModeRow",
+        "Radius_Row", "Falloff Dist_Row", "Falloff_Row"
+    };
+
+    private ModelViewer viewer;
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+    static void Spawn()
+    {
+        if (FindFirstObjectByType<GroomPanelDiagnostics>() != null) return;
+        GameObject go = new GameObject("GroomPanelDiagnostics");
+        DontDestroyOnLoad(go);
+        go.AddComponent<GroomPanelDiagnostics>();
+    }
+
+    void Update()
+    {
+        if (Keyboard.current == null) return;
+        if (!Keyboard.current.f9Key.wasPressedThisFrame) return;
+        Report();
+    }
+
+    void Report()
+    {
+        if (viewer == null) viewer = FindFirstObjectByType<ModelViewer>();
+        StringBuilder text = new StringBuilder();
+        text.AppendLine("=== HairBrush groom panel diagnostics ===");
+
+        if (viewer == null)
+        {
+            Debug.Log(text.AppendLine("no ModelViewer in the scene").ToString());
+            return;
+        }
+
+        GameObject bound = viewer.groomingSliderPanelGO;
+        text.AppendLine("groomingSliderPanelGO: " + Describe(bound));
+
+        int panels = 0;
+        foreach (RectTransform rect in FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            if (rect == null || rect.name != "GroomingPanel") continue;
+            panels++;
+            text.AppendLine("  GroomingPanel found: " + Describe(rect.gameObject) + (rect.gameObject == bound ? "   <- bound" : "   <- NOT the bound one"));
+        }
+        text.AppendLine("GroomingPanel count (inactive included): " + panels);
+
+        if (bound == null)
+        {
+            Debug.Log(text.ToString());
+            return;
+        }
+
+        Canvas root = bound.GetComponentInParent<Canvas>();
+        if (root != null) root = root.rootCanvas;
+        int rootOrder = 0;
+        if (root != null) rootOrder = root.sortingOrder;
+        text.AppendLine("root canvas: " + Describe(root == null ? null : root.gameObject) + "  sortingOrder " + rootOrder);
+
+        Transform clumperHost = bound.transform.Find("ClumperScrollHost");
+        text.AppendLine("ClumperScrollHost: " + (clumperHost == null ? "absent" : Describe(clumperHost.gameObject) + (clumperHost.gameObject.activeInHierarchy ? "   <- ACTIVE, frozen header stands down" : "")));
+
+        VerticalLayoutGroup layout = bound.GetComponent<VerticalLayoutGroup>();
+        text.AppendLine("panel VerticalLayoutGroup: " + (layout == null ? "MISSING - frozen header returns early" : "present, top padding " + layout.padding.top));
+
+        text.AppendLine("frozen header rows:");
+        foreach (string rowName in Rows)
+        {
+            Transform row = bound.transform.Find(rowName);
+            if (row == null)
+            {
+                text.AppendLine("  " + rowName + ": NOT FOUND as a direct child");
+                continue;
+            }
+
+            LayoutElement element = row.GetComponent<LayoutElement>();
+            Canvas canvas = row.GetComponent<Canvas>();
+            string canvasState = "no Canvas - never lifted";
+            if (canvas != null)
+            {
+                canvasState = "Canvas override=" + canvas.overrideSorting + " order=" + canvas.sortingOrder;
+                if (canvas.overrideSorting && canvas.sortingOrder <= rootOrder)
+                    canvasState += "   <- AT OR BELOW the root canvas, so it draws underneath";
+            }
+
+            text.AppendLine("  " + rowName
+                + ": sibling " + row.GetSiblingIndex()
+                + ", ignoreLayout " + (element != null && element.ignoreLayout)
+                + ", raycaster " + (row.GetComponent<GraphicRaycaster>() != null)
+                + ", " + canvasState
+                + ", " + DescribeDimming(row, bound.transform));
+        }
+
+        text.AppendLine("buttons:");
+        foreach (Button button in bound.GetComponentsInChildren<Button>(true))
+        {
+            if (button == null) continue;
+            string name = button.gameObject.name;
+            if (name.IndexOf("Tab", System.StringComparison.OrdinalIgnoreCase) < 0
+                && name.IndexOf("Menu", System.StringComparison.OrdinalIgnoreCase) < 0
+                && name.IndexOf("Save", System.StringComparison.OrdinalIgnoreCase) < 0
+                && name.IndexOf("Reset", System.StringComparison.OrdinalIgnoreCase) < 0
+                && name.IndexOf("Export", System.StringComparison.OrdinalIgnoreCase) < 0) continue;
+
+            TextMeshProUGUI label = button.GetComponentInChildren<TextMeshProUGUI>(true);
+            string caption = "";
+            if (label != null) caption = " \"" + label.text + "\"";
+            text.AppendLine("  " + name + caption
+                + ": interactable " + button.interactable
+                + ", transition " + button.transition
+                + ", " + DescribeDimming(button.transform, bound.transform));
+        }
+
+        Debug.Log(text.ToString());
+    }
+
+    // Walks up to the panel looking for anything that could be washing a control out - an alpha
+    // below one, or a CanvasGroup that has stopped taking input - and names the object doing it.
+    static string DescribeDimming(Transform from, Transform stopAt)
+    {
+        Transform walk = from;
+        while (walk != null)
+        {
+            CanvasGroup group = walk.GetComponent<CanvasGroup>();
+            if (group != null && (group.alpha < .999f || !group.interactable || !group.blocksRaycasts))
+            {
+                return "dimmed by " + walk.name + " (alpha " + group.alpha.ToString("F2")
+                    + ", interactable " + group.interactable + ", blocksRaycasts " + group.blocksRaycasts + ")";
+            }
+            if (walk == stopAt) break;
+            walk = walk.parent;
+        }
+        return "no CanvasGroup dimming";
+    }
+
+    static string Describe(GameObject go)
+    {
+        if (go == null) return "null";
+        return go.name + " #" + go.GetInstanceID() + " active=" + go.activeInHierarchy;
+    }
+}
