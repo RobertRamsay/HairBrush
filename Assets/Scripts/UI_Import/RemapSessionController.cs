@@ -35,9 +35,14 @@ public class RemapSessionController : MonoBehaviour
     // width. Far enough apart that the two never overlap at any orbit angle.
     private const float SeparationInHeadWidths = 1.6f;
 
+    // Kept in step with the bar RemapPhaseBar builds. Its canvas scales with screen size against a
+    // 1920x1080 reference, so this is the right figure at that height and close enough elsewhere;
+    // the cost of being a few pixels out is a few pixels of gap, not a broken viewport.
+    private const float PhaseBarHeightPixels = 74f;
+
     private ModelViewer viewer;
     private GameObject targetModel;
-    private Transform targetRoot;
+    private Transform targetOffset;
 
     private Camera rightCamera;
     private Transform rightPivot;
@@ -56,8 +61,41 @@ public class RemapSessionController : MonoBehaviour
     private int targetLayer = -1;
     private int hairLayer = -1;
 
+    private RemapPhase phase = RemapPhase.AutoMarkers;
+    private readonly System.Collections.Generic.List<RemapMarker> markers = new System.Collections.Generic.List<RemapMarker>();
+
     public bool SessionActive { get { return sessionActive; } }
     public GameObject TargetModel { get { return targetModel; } }
+    public RemapPhase Phase { get { return phase; } }
+    public System.Collections.Generic.List<RemapMarker> Markers { get { return markers; } }
+
+    public Camera LeftCamera { get { if (viewer == null) return null; return viewer.mainCamera; } }
+    public Camera RightCamera { get { return rightCamera; } }
+    public int SourceLayer { get { return sourceLayer; } }
+    public int TargetLayer { get { return targetLayer; } }
+    public int HairLayer { get { return hairLayer; } }
+
+    // Each model's OWN transform, not the offset root the target hangs from. Mirroring and the
+    // left/right agreement check both work in a head's local space, and the two heads deliberately
+    // sit at different world X.
+    public Transform SourceRoot
+    {
+        get
+        {
+            GameObject source = SourceModel();
+            if (source == null) return null;
+            return source.transform;
+        }
+    }
+
+    public Transform TargetRoot
+    {
+        get
+        {
+            if (targetModel == null) return null;
+            return targetModel.transform;
+        }
+    }
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
@@ -112,15 +150,17 @@ public class RemapSessionController : MonoBehaviour
         // A root of our own so the offset can be undone in one step, and so the head can be
         // handed to a solver later in a known space.
         GameObject rootObject = new GameObject("RemapTargetRoot");
-        targetRoot = rootObject.transform;
-        targetRoot.position = Vector3.zero;
-        targetModel.transform.SetParent(targetRoot, true);
+        targetOffset = rootObject.transform;
+        targetOffset.position = Vector3.zero;
+        targetModel.transform.SetParent(targetOffset, true);
         targetModel.transform.localPosition = Vector3.zero;
         targetModel.transform.localEulerAngles = new Vector3(0f, 180f, 0f);
-        targetRoot.position = new Vector3(SourceHeadWidth() * SeparationInHeadWidths, 0f, 0f);
+        targetOffset.position = new Vector3(SourceHeadWidth() * SeparationInHeadWidths, 0f, 0f);
 
         AssignLayers();
         BuildRightView();
+        BuildMarkers();
+        phase = RemapPhase.AutoMarkers;
 
         // Both, deliberately. The mode flag is what makes every ring, handle and brush preview
         // stand down through GroomViewportSuppressed; the input lock is what stops the placement
@@ -131,7 +171,133 @@ public class RemapSessionController : MonoBehaviour
         GroomingInputLock.Hold("REMAP", viewer);
 
         sessionActive = true;
-        StatusToast.Show("REMAP: your groom is on the left, the new head on the right. Markers are not built yet - press ESC to cancel.");
+        StatusToast.Show("REMAP: click the new head to match markers 1-" + RemapMarkerSet.AutoMarkerCount + ". ESC cancels.");
+        return true;
+    }
+
+    // The automatic set is sampled from the groom's own anchors so the marker hull provably
+    // contains every point the warp will move - see RemapMarkerSet.FarthestPointSample.
+    //
+    // Card spawn points only, for now. Guide contacts and clumper/POST centres are anchors too and
+    // belong in this cloud, but they live behind reflected private dictionaries and cards dominate
+    // the hull in any real groom; a modifier placed outside the card hull is the case this misses.
+    void BuildMarkers()
+    {
+        markers.Clear();
+
+        System.Collections.Generic.List<Vector3> anchors = new System.Collections.Generic.List<Vector3>();
+        System.Collections.Generic.List<Vector3> normals = new System.Collections.Generic.List<Vector3>();
+        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
+        {
+            if (card == null) continue;
+            anchors.Add(card.GetSpawnHitPoint());
+            normals.Add(card.GetSurfaceNormal());
+        }
+
+        System.Collections.Generic.List<int> picked = RemapMarkerSet.FarthestPointSample(anchors, RemapMarkerSet.AutoMarkerCount);
+        for (int i = 0; i < picked.Count; i++)
+        {
+            RemapMarker marker = new RemapMarker();
+            marker.id = i + 1;
+            marker.label = marker.id.ToString();
+            marker.kind = RemapMarkerKind.Auto;
+            marker.description = "auto marker " + marker.id;
+            marker.sourcePlaced = true;
+            marker.sourcePoint = anchors[picked[i]];
+            marker.sourceNormal = normals[picked[i]];
+            markers.Add(marker);
+        }
+
+        markers.AddRange(RemapMarkerSet.BuildEarMarkers(markers.Count + 1));
+    }
+
+    public void GoToPhase(RemapPhase next)
+    {
+        if (!sessionActive) return;
+        phase = next;
+    }
+
+    // Mirror the placed left-ear markers onto the right, on BOTH heads.
+    //
+    // A one-shot action rather than a live constraint: a live link immediately raises "which side
+    // is master" and fights the user the moment they nudge for real asymmetry. This places the
+    // twin and leaves both independent.
+    public int MirrorEarMarkers()
+    {
+        if (!sessionActive) return 0;
+
+        int moved = 0;
+        foreach (RemapMarker marker in markers)
+        {
+            if (marker == null || marker.kind != RemapMarkerKind.Ear || !marker.isRightSide) continue;
+
+            RemapMarker twin = FindEarTwin(marker);
+            if (twin == null) continue;
+
+            if (twin.sourcePlaced && MirrorOnto(SourceRoot, 1 << sourceLayer, twin.sourcePoint, twin.sourceNormal, out Vector3 sp, out Vector3 sn))
+            {
+                marker.sourcePoint = sp;
+                marker.sourceNormal = sn;
+                marker.sourcePlaced = true;
+                moved++;
+            }
+            if (twin.targetPlaced && MirrorOnto(TargetRoot, 1 << targetLayer, twin.targetPoint, twin.targetNormal, out Vector3 tp, out Vector3 tn))
+            {
+                marker.targetPoint = tp;
+                marker.targetNormal = tn;
+                marker.targetPlaced = true;
+                moved++;
+            }
+        }
+        return moved;
+    }
+
+    // Slots pair up by their position within a side: the Nth left slot mirrors to the Nth right.
+    RemapMarker FindEarTwin(RemapMarker rightSide)
+    {
+        int indexWithinSide = 0;
+        foreach (RemapMarker marker in markers)
+        {
+            if (marker == null || marker.kind != RemapMarkerKind.Ear || !marker.isRightSide) continue;
+            if (marker == rightSide) break;
+            indexWithinSide++;
+        }
+
+        int seen = 0;
+        foreach (RemapMarker marker in markers)
+        {
+            if (marker == null || marker.kind != RemapMarkerKind.Ear || !marker.isLeftSide) continue;
+            if (seen == indexWithinSide) return marker;
+            seen++;
+        }
+        return null;
+    }
+
+    // Reflect through the model's own local X, then put the result back ON the surface with an
+    // inward ray, the same shape GroomSymmetryAuthority.TryMirror uses. A scanned head is never
+    // exactly symmetric, so the reflection alone would leave the marker floating just off the
+    // mesh; when the ray misses entirely the pure reflection is kept and the user nudges it.
+    static bool MirrorOnto(Transform root, int layerMask, Vector3 point, Vector3 normal, out Vector3 mirroredPoint, out Vector3 mirroredNormal)
+    {
+        mirroredPoint = point;
+        mirroredNormal = normal;
+        if (root == null) return false;
+
+        Vector3 local = root.InverseTransformPoint(point);
+        local.x = -local.x;
+        mirroredPoint = root.TransformPoint(local);
+
+        Vector3 localNormal = root.InverseTransformDirection(normal);
+        localNormal.x = -localNormal.x;
+        mirroredNormal = root.TransformDirection(localNormal).normalized;
+
+        Ray ray = new Ray(mirroredPoint + mirroredNormal * .25f, -mirroredNormal);
+        RaycastHit hit;
+        if (Physics.Raycast(ray, out hit, .5f, layerMask))
+        {
+            mirroredPoint = hit.point;
+            mirroredNormal = hit.normal;
+        }
         return true;
     }
 
@@ -148,8 +314,8 @@ public class RemapSessionController : MonoBehaviour
         GroomingInputLock.Release("REMAP");
         GroomingInputLock.TryRestore(viewer);
 
-        if (destroyTargetModel && targetRoot != null) Destroy(targetRoot.gameObject);
-        targetRoot = null;
+        if (destroyTargetModel && targetOffset != null) Destroy(targetOffset.gameObject);
+        targetOffset = null;
         targetModel = null;
         sessionActive = false;
 
@@ -204,7 +370,7 @@ public class RemapSessionController : MonoBehaviour
     {
         GameObject source = SourceModel();
         if (source != null) SetLayerRecursive(source.transform, sourceLayer);
-        if (targetRoot != null) SetLayerRecursive(targetRoot, targetLayer);
+        if (targetOffset != null) SetLayerRecursive(targetOffset, targetLayer);
         foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
         {
             if (card == null) continue;
@@ -284,7 +450,7 @@ public class RemapSessionController : MonoBehaviour
     {
         if (rightPivot == null || viewer == null || viewer.cameraPivot == null) return;
         Vector3 offset = Vector3.zero;
-        if (targetRoot != null) offset = targetRoot.position;
+        if (targetOffset != null) offset = targetOffset.position;
         rightPivot.position = viewer.cameraPivot.position + offset;
         rightPivot.rotation = viewer.cameraPivot.rotation;
         rightPivot.localScale = viewer.cameraPivot.localScale;
@@ -313,8 +479,14 @@ public class RemapSessionController : MonoBehaviour
         float x1 = Mathf.Clamp01(right / Mathf.Max(1f, Screen.width));
         float mid = (x0 + x1) * .5f;
 
-        viewer.mainCamera.rect = new Rect(x0, 0f, Mathf.Max(.01f, mid - x0), 1f);
-        rightCamera.rect = new Rect(mid, 0f, Mathf.Max(.01f, x1 - mid), 1f);
+        // Both views stop below the phase bar. Drawn under it instead, the top of each head sits
+        // behind the buttons - and a marker placed up there could not be clicked, because every
+        // gesture over UI is refused by EventSystem.IsPointerOverGameObject.
+        float barFraction = PhaseBarHeightPixels / Mathf.Max(1f, Screen.height);
+        float height = Mathf.Clamp01(1f - barFraction);
+
+        viewer.mainCamera.rect = new Rect(x0, 0f, Mathf.Max(.01f, mid - x0), height);
+        rightCamera.rect = new Rect(mid, 0f, Mathf.Max(.01f, x1 - mid), height);
     }
 
     // Screen-space edge of a named panel, or the fallback when it is absent or hidden.
