@@ -144,7 +144,17 @@ public class RemapPhaseBar : MonoBehaviour
 
         if (index < 0)
         {
-            if (auto) return "All matched. Drag any marker on either head to adjust, then go on to the ears.";
+            if (auto)
+            {
+                int unchecked_ = 0;
+                foreach (RemapMarker candidate in session.Markers)
+                {
+                    if (candidate == null || candidate.kind != RemapMarkerKind.Auto) continue;
+                    if (candidate.targetIsEstimate) unchecked_++;
+                }
+                if (unchecked_ > 0) return "Placed automatically on the new head - " + unchecked_ + " still faded, meaning unchecked. Drag each one onto the matching spot; it draws solid once you have.";
+                return "All matched and checked. Drag any marker to adjust, then go on to the ears.";
+            }
             if (covered) return "Both ears pinned. Ready to process.";
             return "Still needed: " + reason + ".";
         }

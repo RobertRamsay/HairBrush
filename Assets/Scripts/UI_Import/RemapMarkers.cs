@@ -49,6 +49,15 @@ public class RemapMarker
     public Vector3 targetPoint = Vector3.zero;
     public Vector3 targetNormal = Vector3.up;
 
+    // True while the target placement is the machine's guess rather than the user's answer.
+    //
+    // The estimate is good enough to adjust and nowhere near good enough to trust: it assumes the
+    // two heads are proportionally similar, which is exactly the assumption the whole REMAP exists
+    // because it is false. So an estimated marker is drawn faded, and the moment it is dragged it
+    // becomes a real placement and draws solid. That difference is the user's checklist - what is
+    // still faded is what has not been looked at.
+    public bool targetIsEstimate;
+
     public bool Paired
     {
         get

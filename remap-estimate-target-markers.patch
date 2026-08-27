@@ -1,0 +1,205 @@
+diff --git a/Assets/Scripts/UI_Import/RemapMarkerAuthority.cs b/Assets/Scripts/UI_Import/RemapMarkerAuthority.cs
+index 33dd227..51182c0 100644
+--- a/Assets/Scripts/UI_Import/RemapMarkerAuthority.cs
++++ b/Assets/Scripts/UI_Import/RemapMarkerAuthority.cs
+@@ -281,6 +281,10 @@ public class RemapMarkerAuthority : MonoBehaviour
+             marker.targetPoint = point;
+             marker.targetNormal = normal;
+             marker.targetPlaced = true;
++            // The user has now answered for this one, so it stops being a guess and starts
++            // drawing solid. Touching it at all counts as confirming it - a drag that lands back
++            // where it started is still someone having looked.
++            marker.targetIsEstimate = false;
+             return;
+         }
+         marker.sourcePoint = point;
+@@ -483,6 +487,8 @@ public class RemapMarkerAuthority : MonoBehaviour
+         float radius = MarkerPixelRadius * sizeScale * worldPerPixel;
+ 
+         Color colour = ColourFor(marker, interactive, isActive, mismatchedId);
++        // Faded while it is still the machine's guess. What is faint is what has not been checked.
++        if (isTarget && marker.targetIsEstimate) colour.a = .45f;
+         bool hovered = hoveredIndex == index && hoveredIsTarget == isTarget;
+         if (hovered) colour = Highlight(colour);
+ 
+@@ -510,7 +516,11 @@ public class RemapMarkerAuthority : MonoBehaviour
+     {
+         float opposite = 0f;
+         if (MarkerTone < .5f) opposite = 1f;
+-        return Color.Lerp(colour, new Color(opposite, opposite, opposite, 1f), .5f);
++        Color highlighted = Color.Lerp(colour, new Color(opposite, opposite, opposite, 1f), .5f);
++        // Hovering brings an estimate up to full strength, so the one under the cursor is always
++        // fully legible even before it has been confirmed.
++        highlighted.a = 1f;
++        return highlighted;
+     }
+ 
+     // Constant apparent size. A marker sized in world units vanishes exactly when the user pulls
+diff --git a/Assets/Scripts/UI_Import/RemapMarkers.cs b/Assets/Scripts/UI_Import/RemapMarkers.cs
+index 0256ce0..8467c89 100644
+--- a/Assets/Scripts/UI_Import/RemapMarkers.cs
++++ b/Assets/Scripts/UI_Import/RemapMarkers.cs
+@@ -49,6 +49,15 @@ public class RemapMarker
+     public Vector3 targetPoint = Vector3.zero;
+     public Vector3 targetNormal = Vector3.up;
+ 
++    // True while the target placement is the machine's guess rather than the user's answer.
++    //
++    // The estimate is good enough to adjust and nowhere near good enough to trust: it assumes the
++    // two heads are proportionally similar, which is exactly the assumption the whole REMAP exists
++    // because it is false. So an estimated marker is drawn faded, and the moment it is dragged it
++    // becomes a real placement and draws solid. That difference is the user's checklist - what is
++    // still faded is what has not been looked at.
++    public bool targetIsEstimate;
++
+     public bool Paired
+     {
+         get
+diff --git a/Assets/Scripts/UI_Import/RemapPhaseBar.cs b/Assets/Scripts/UI_Import/RemapPhaseBar.cs
+index 30df5c7..dabcdee 100644
+--- a/Assets/Scripts/UI_Import/RemapPhaseBar.cs
++++ b/Assets/Scripts/UI_Import/RemapPhaseBar.cs
+@@ -144,7 +144,17 @@ public class RemapPhaseBar : MonoBehaviour
+ 
+         if (index < 0)
+         {
+-            if (auto) return "All matched. Drag any marker on either head to adjust, then go on to the ears.";
++            if (auto)
++            {
++                int unchecked_ = 0;
++                foreach (RemapMarker candidate in session.Markers)
++                {
++                    if (candidate == null || candidate.kind != RemapMarkerKind.Auto) continue;
++                    if (candidate.targetIsEstimate) unchecked_++;
++                }
++                if (unchecked_ > 0) return "Placed automatically on the new head - " + unchecked_ + " still faded, meaning unchecked. Drag each one onto the matching spot; it draws solid once you have.";
++                return "All matched and checked. Drag any marker to adjust, then go on to the ears.";
++            }
+             if (covered) return "Both ears pinned. Ready to process.";
+             return "Still needed: " + reason + ".";
+         }
+diff --git a/Assets/Scripts/UI_Import/RemapSessionController.cs b/Assets/Scripts/UI_Import/RemapSessionController.cs
+index 73b101a..597b7ac 100644
+--- a/Assets/Scripts/UI_Import/RemapSessionController.cs
++++ b/Assets/Scripts/UI_Import/RemapSessionController.cs
+@@ -210,6 +210,120 @@ public class RemapSessionController : MonoBehaviour
+         }
+ 
+         markers.AddRange(RemapMarkerSet.BuildEarMarkers(markers.Count + 1));
++        EstimateAutoTargets();
++    }
++
++    // A first guess at where each automatic marker lands on the new head, so the user adjusts
++    // rather than places.
++    //
++    // Both heads have been recentred on their own bounds by the importer and given the same 180
++    // degree orientation, so the one correspondence available before any markers exist is
++    // proportional position within the head. Each source marker is expressed as a fraction of the
++    // source head's extents, that fraction is applied to the target's extents, and the result is
++    // dropped onto the surface with the same cast-from-inside used by the real projection.
++    //
++    // Normalised per axis rather than by a single scale, so a long narrow head and a round one do
++    // not skew the guess along the axis they differ on. That is also why it is only a guess: the
++    // assumption is that the two heads are proportionally alike, which is precisely what REMAP
++    // exists because they are not. Ear markers get no estimate at all - the ear is where that
++    // assumption breaks worst, and a confident wrong marker there is worse than an empty one.
++    void EstimateAutoTargets()
++    {
++        Transform source = SourceRoot;
++        Transform target = TargetRoot;
++        if (source == null || target == null) return;
++
++        Bounds sourceBounds;
++        Bounds targetBounds;
++        if (!TryLocalBounds(source, out sourceBounds)) return;
++        if (!TryLocalBounds(target, out targetBounds)) return;
++
++        float headSize = TargetHeadSize();
++        int layerMask = 1 << targetLayer;
++
++        bool previousBackfaces = Physics.queriesHitBackfaces;
++        Physics.queriesHitBackfaces = true;
++        try
++        {
++            foreach (RemapMarker marker in markers)
++            {
++                if (marker == null || marker.kind != RemapMarkerKind.Auto || !marker.sourcePlaced) continue;
++
++                Vector3 local = source.InverseTransformPoint(marker.sourcePoint);
++                Vector3 fraction = SafeDivide(local - sourceBounds.center, sourceBounds.extents);
++                Vector3 targetLocal = targetBounds.center + Multiply(fraction, targetBounds.extents);
++                Vector3 world = target.TransformPoint(targetLocal);
++
++                // Outward from the head's own centre, which is the only direction available before
++                // there is a surface normal to read.
++                Vector3 outward = world - target.TransformPoint(targetBounds.center);
++                if (outward.sqrMagnitude < .000001f) outward = Vector3.up;
++                outward = outward.normalized;
++
++                Vector3 point;
++                Vector3 normal;
++                if (!TpsAnchorMapping.ProjectFromInside(world, outward, layerMask, headSize, out point, out normal))
++                {
++                    if (!TpsAnchorMapping.ProjectByThickness(world, outward, layerMask, headSize, out point, out normal))
++                    {
++                        // No surface either way. Left unplaced rather than parked in mid-air:
++                        // an empty marker asks to be placed, a floating one has to be noticed first.
++                        continue;
++                    }
++                }
++
++                marker.targetPoint = point;
++                marker.targetNormal = normal;
++                marker.targetPlaced = true;
++                marker.targetIsEstimate = true;
++            }
++        }
++        finally
++        {
++            Physics.queriesHitBackfaces = previousBackfaces;
++        }
++    }
++
++    static bool TryLocalBounds(Transform root, out Bounds bounds)
++    {
++        bounds = new Bounds(Vector3.zero, Vector3.one);
++        MeshFilter[] filters = root.GetComponentsInChildren<MeshFilter>();
++        bool any = false;
++        foreach (MeshFilter filter in filters)
++        {
++            if (filter == null || filter.sharedMesh == null) continue;
++            Bounds meshBounds = filter.sharedMesh.bounds;
++            // Into the ROOT's local space, so a head whose mesh hangs off a child transform is
++            // measured in the same frame the markers are converted into.
++            Vector3 centre = root.InverseTransformPoint(filter.transform.TransformPoint(meshBounds.center));
++            Vector3 size = meshBounds.size;
++            if (!any)
++            {
++                bounds = new Bounds(centre, size);
++                any = true;
++                continue;
++            }
++            bounds.Encapsulate(new Bounds(centre, size));
++        }
++        if (!any) return false;
++        if (bounds.extents.sqrMagnitude < .000001f) return false;
++        return true;
++    }
++
++    static Vector3 SafeDivide(Vector3 value, Vector3 extents)
++    {
++        float x = 0f;
++        float y = 0f;
++        float z = 0f;
++        if (Mathf.Abs(extents.x) > .000001f) x = value.x / extents.x;
++        if (Mathf.Abs(extents.y) > .000001f) y = value.y / extents.y;
++        if (Mathf.Abs(extents.z) > .000001f) z = value.z / extents.z;
++        return new Vector3(x, y, z);
++    }
++
++    static Vector3 Multiply(Vector3 a, Vector3 b)
++    {
++        return new Vector3(a.x * b.x, a.y * b.y, a.z * b.z);
+     }
+ 
+     public void GoToPhase(RemapPhase next)

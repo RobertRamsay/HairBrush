@@ -210,6 +210,120 @@ public class RemapSessionController : MonoBehaviour
         }
 
         markers.AddRange(RemapMarkerSet.BuildEarMarkers(markers.Count + 1));
+        EstimateAutoTargets();
+    }
+
+    // A first guess at where each automatic marker lands on the new head, so the user adjusts
+    // rather than places.
+    //
+    // Both heads have been recentred on their own bounds by the importer and given the same 180
+    // degree orientation, so the one correspondence available before any markers exist is
+    // proportional position within the head. Each source marker is expressed as a fraction of the
+    // source head's extents, that fraction is applied to the target's extents, and the result is
+    // dropped onto the surface with the same cast-from-inside used by the real projection.
+    //
+    // Normalised per axis rather than by a single scale, so a long narrow head and a round one do
+    // not skew the guess along the axis they differ on. That is also why it is only a guess: the
+    // assumption is that the two heads are proportionally alike, which is precisely what REMAP
+    // exists because they are not. Ear markers get no estimate at all - the ear is where that
+    // assumption breaks worst, and a confident wrong marker there is worse than an empty one.
+    void EstimateAutoTargets()
+    {
+        Transform source = SourceRoot;
+        Transform target = TargetRoot;
+        if (source == null || target == null) return;
+
+        Bounds sourceBounds;
+        Bounds targetBounds;
+        if (!TryLocalBounds(source, out sourceBounds)) return;
+        if (!TryLocalBounds(target, out targetBounds)) return;
+
+        float headSize = TargetHeadSize();
+        int layerMask = 1 << targetLayer;
+
+        bool previousBackfaces = Physics.queriesHitBackfaces;
+        Physics.queriesHitBackfaces = true;
+        try
+        {
+            foreach (RemapMarker marker in markers)
+            {
+                if (marker == null || marker.kind != RemapMarkerKind.Auto || !marker.sourcePlaced) continue;
+
+                Vector3 local = source.InverseTransformPoint(marker.sourcePoint);
+                Vector3 fraction = SafeDivide(local - sourceBounds.center, sourceBounds.extents);
+                Vector3 targetLocal = targetBounds.center + Multiply(fraction, targetBounds.extents);
+                Vector3 world = target.TransformPoint(targetLocal);
+
+                // Outward from the head's own centre, which is the only direction available before
+                // there is a surface normal to read.
+                Vector3 outward = world - target.TransformPoint(targetBounds.center);
+                if (outward.sqrMagnitude < .000001f) outward = Vector3.up;
+                outward = outward.normalized;
+
+                Vector3 point;
+                Vector3 normal;
+                if (!TpsAnchorMapping.ProjectFromInside(world, outward, layerMask, headSize, out point, out normal))
+                {
+                    if (!TpsAnchorMapping.ProjectByThickness(world, outward, layerMask, headSize, out point, out normal))
+                    {
+                        // No surface either way. Left unplaced rather than parked in mid-air:
+                        // an empty marker asks to be placed, a floating one has to be noticed first.
+                        continue;
+                    }
+                }
+
+                marker.targetPoint = point;
+                marker.targetNormal = normal;
+                marker.targetPlaced = true;
+                marker.targetIsEstimate = true;
+            }
+        }
+        finally
+        {
+            Physics.queriesHitBackfaces = previousBackfaces;
+        }
+    }
+
+    static bool TryLocalBounds(Transform root, out Bounds bounds)
+    {
+        bounds = new Bounds(Vector3.zero, Vector3.one);
+        MeshFilter[] filters = root.GetComponentsInChildren<MeshFilter>();
+        bool any = false;
+        foreach (MeshFilter filter in filters)
+        {
+            if (filter == null || filter.sharedMesh == null) continue;
+            Bounds meshBounds = filter.sharedMesh.bounds;
+            // Into the ROOT's local space, so a head whose mesh hangs off a child transform is
+            // measured in the same frame the markers are converted into.
+            Vector3 centre = root.InverseTransformPoint(filter.transform.TransformPoint(meshBounds.center));
+            Vector3 size = meshBounds.size;
+            if (!any)
+            {
+                bounds = new Bounds(centre, size);
+                any = true;
+                continue;
+            }
+            bounds.Encapsulate(new Bounds(centre, size));
+        }
+        if (!any) return false;
+        if (bounds.extents.sqrMagnitude < .000001f) return false;
+        return true;
+    }
+
+    static Vector3 SafeDivide(Vector3 value, Vector3 extents)
+    {
+        float x = 0f;
+        float y = 0f;
+        float z = 0f;
+        if (Mathf.Abs(extents.x) > .000001f) x = value.x / extents.x;
+        if (Mathf.Abs(extents.y) > .000001f) y = value.y / extents.y;
+        if (Mathf.Abs(extents.z) > .000001f) z = value.z / extents.z;
+        return new Vector3(x, y, z);
+    }
+
+    static Vector3 Multiply(Vector3 a, Vector3 b)
+    {
+        return new Vector3(a.x * b.x, a.y * b.y, a.z * b.z);
     }
 
     public void GoToPhase(RemapPhase next)

@@ -281,6 +281,10 @@ public class RemapMarkerAuthority : MonoBehaviour
             marker.targetPoint = point;
             marker.targetNormal = normal;
             marker.targetPlaced = true;
+            // The user has now answered for this one, so it stops being a guess and starts
+            // drawing solid. Touching it at all counts as confirming it - a drag that lands back
+            // where it started is still someone having looked.
+            marker.targetIsEstimate = false;
             return;
         }
         marker.sourcePoint = point;
@@ -483,6 +487,8 @@ public class RemapMarkerAuthority : MonoBehaviour
         float radius = MarkerPixelRadius * sizeScale * worldPerPixel;
 
         Color colour = ColourFor(marker, interactive, isActive, mismatchedId);
+        // Faded while it is still the machine's guess. What is faint is what has not been checked.
+        if (isTarget && marker.targetIsEstimate) colour.a = .45f;
         bool hovered = hoveredIndex == index && hoveredIsTarget == isTarget;
         if (hovered) colour = Highlight(colour);
 
@@ -510,7 +516,11 @@ public class RemapMarkerAuthority : MonoBehaviour
     {
         float opposite = 0f;
         if (MarkerTone < .5f) opposite = 1f;
-        return Color.Lerp(colour, new Color(opposite, opposite, opposite, 1f), .5f);
+        Color highlighted = Color.Lerp(colour, new Color(opposite, opposite, opposite, 1f), .5f);
+        // Hovering brings an estimate up to full strength, so the one under the cursor is always
+        // fully legible even before it has been confirmed.
+        highlighted.a = 1f;
+        return highlighted;
     }
 
     // Constant apparent size. A marker sized in world units vanishes exactly when the user pulls
