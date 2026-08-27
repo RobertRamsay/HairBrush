@@ -142,37 +142,26 @@ public static class RemapMarkerSet
     //
     // Same reasoning as the ear slots and the same shape: named positions rather than free points,
     // so both heads are answering the same question and the left/right check has something to
-    // compare. There are fourteen because a beard needs them - the jawline alone pins where the
-    // beard ENDS, and everything above it, the moustache boundary, the cheek line, the crease
-    // beside the mouth, is where the beard's shape actually lives. Two heads differ more across
-    // that band than anywhere except the ear.
+    // compare.
     //
-    // Five of the seven pairs are sided, so MIRROR does half the work: place the centres and the
-    // left of each pair, then mirror.
+    // Four, not fourteen. A mouth-and-cheek set was tried and measured against a bearded groom and
+    // did not visibly beat the jawline on its own - the extra ten cost twenty placements per head
+    // and bought nothing, which makes them work rather than accuracy. The chin and the jaw corners
+    // are what pin where a beard ENDS, and that is the part the automatic sampler cannot reach.
     public static List<RemapMarker> BuildLowerFaceMarkers(int startingId)
     {
         List<RemapMarker> markers = new List<RemapMarker>();
         int id = startingId;
 
         // side: 0 = centre, 1 = left and right as a pair.
-        string[] slots = new string[]
-        {
-            "CHIN TIP", "UNDER CHIN", "UPPER LIP CENTRE", "LOWER LIP CENTRE",
-            "JAW ANGLE", "MOUTH CORNER", "NASOLABIAL", "CHEEK", "CHEEKBONE"
-        };
+        string[] slots = new string[] { "CHIN TIP", "UNDER CHIN", "JAW ANGLE" };
         string[] hints = new string[]
         {
             "front point of the chin",
             "underneath the chin, on the soft edge",
-            "centre of the top lip, under the nose",
-            "centre of the bottom lip",
-            "corner of the jaw, below the ear",
-            "corner of the mouth",
-            "the crease running from the nose to the mouth corner",
-            "the flat of the cheek, on the dimple if there is one",
-            "the ridge of the cheekbone, below the outer eye"
+            "corner of the jaw, below the ear"
         };
-        bool[] sided = new bool[] { false, false, false, false, true, true, true, true, true };
+        bool[] sided = new bool[] { false, false, true };
 
         for (int i = 0; i < slots.Length; i++)
         {

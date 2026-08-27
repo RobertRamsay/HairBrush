@@ -120,6 +120,21 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
         {
             if (rect == null) continue;
             if (rect.name != "GroomingPanel" && rect.name != "GroupManagerPanel") continue;
+
+            // Renamed and deactivated BEFORE Destroy, and that is the load-bearing part.
+            //
+            // Destroy is deferred to the end of the frame, and the rebuild happens inside this one.
+            // Until then the condemned panel is still there and still called "GroomingPanel", so
+            // every GameObject.Find and transform.Find in the rebuild can pick it up and wire the
+            // new session to an object that is about to cease existing. That is what leaves the
+            // frozen-header authority holding a dead panel and the real header behaving like an
+            // ordinary scrolling row.
+            //
+            // A rename defeats find-by-name and a deactivation defeats the activeInHierarchy checks
+            // the same authorities make, so the object is unreachable the instant it is condemned
+            // rather than at the end of the frame.
+            rect.gameObject.SetActive(false);
+            rect.name = rect.name + "_Discarded";
             Destroy(rect.gameObject);
         }
         SetField("activeSliderPanel", null);
