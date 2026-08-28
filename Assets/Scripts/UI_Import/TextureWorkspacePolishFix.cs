@@ -15,7 +15,19 @@ public class TextureWorkspacePolishFix : MonoBehaviour
     private const float SliderWidth = 216f;
     private const float SliderValueWidth = 44f;
     private const float SliderHeight = 18f;
-    private const float SliderRowHeight = 54f;
+    // THE TWO KNOBS FOR THE SMOOTHNESS / METALLIC PAIR.
+    //
+    // SliderRowHeight is the whole height of one of those rows - label on top, slider under it -
+    // so it is the gap BETWEEN them: whatever is left below the slider is empty space. 48 puts
+    // the two close together; raise it to push them apart.
+    //
+    // SmoothnessTopGap is added to the first of the pair only, and moves that row's label, slider
+    // and value down together. It is the space between the master colour block and SMOOTHNESS.
+    private const float SliderRowHeight = 48f;
+    private const float SmoothnessTopGap = 12f;
+
+    // How far the slider sits below the top of its row, which is what leaves room for the label.
+    private const float SliderLabelToControl = 30f;
 
     // MASTER COLOUR. One line per channel rather than the two-line block Smoothness and Metallic
     // get: those need a full-width name above the control, but R/G/B under a heading do not, and
@@ -181,12 +193,18 @@ public class TextureWorkspacePolishFix : MonoBehaviour
             HorizontalLayoutGroup rowLayout = row.GetComponent<HorizontalLayoutGroup>();
             if (rowLayout != null) rowLayout.enabled = false;
 
-            LayoutElement rowElement = row.GetComponent<LayoutElement>();
-            if (rowElement != null)
-            {
-                rowElement.preferredHeight = SliderRowHeight;
-                rowElement.minHeight = SliderRowHeight;
-            }
+            // A LEADING gap on the first of the two, so the pair sits clear of the colour block
+            // above it rather than running straight on from B. Zero for Metallic, which wants to
+            // stay with the slider above it.
+            float topGap = 0f;
+            if (row.name == "SmoothnessRow") topGap = SmoothnessTopGap;
+
+            // Through SetRowHeight, which writes the RectTransform as well as the LayoutElement.
+            // Setting only the LayoutElement did nothing at all: the Properties container is a
+            // VerticalLayoutGroup with childControlHeight FALSE (MaterialEditorManager.
+            // CreateContainer), so it lays these rows out by their rect height and ignores what
+            // the LayoutElement asks for. That is why SliderRowHeight looked like a dead number.
+            SetRowHeight(row, SliderRowHeight + topGap);
 
             RectTransform labelRect = row.Find("Label") as RectTransform;
             if (labelRect != null)
@@ -194,7 +212,7 @@ public class TextureWorkspacePolishFix : MonoBehaviour
                 labelRect.anchorMin = new Vector2(0f, 1f);
                 labelRect.anchorMax = new Vector2(1f, 1f);
                 labelRect.pivot = new Vector2(0f, 1f);
-                labelRect.anchoredPosition = Vector2.zero;
+                labelRect.anchoredPosition = new Vector2(0f, -topGap);
                 labelRect.sizeDelta = new Vector2(0f, 22f);
 
                 LayoutElement labelLayout = labelRect.GetComponent<LayoutElement>();
@@ -221,7 +239,7 @@ public class TextureWorkspacePolishFix : MonoBehaviour
                 sliderRect.anchorMin = new Vector2(0f, 1f);
                 sliderRect.anchorMax = new Vector2(0f, 1f);
                 sliderRect.pivot = new Vector2(0f, .5f);
-                sliderRect.anchoredPosition = new Vector2(0f, -36f);
+                sliderRect.anchoredPosition = new Vector2(0f, -(SliderLabelToControl + topGap));
                 sliderRect.sizeDelta = new Vector2(SliderWidth, SliderHeight);
             }
 
@@ -231,7 +249,7 @@ public class TextureWorkspacePolishFix : MonoBehaviour
                 valueRect.anchorMin = new Vector2(0f, 1f);
                 valueRect.anchorMax = new Vector2(0f, 1f);
                 valueRect.pivot = new Vector2(0f, .5f);
-                valueRect.anchoredPosition = new Vector2(SliderWidth + 8f, -36f);
+                valueRect.anchoredPosition = new Vector2(SliderWidth + 8f, -(SliderLabelToControl + topGap));
                 valueRect.sizeDelta = new Vector2(SliderValueWidth, 22f);
 
                 LayoutElement valueLayout = valueRect.GetComponent<LayoutElement>();
