@@ -16,6 +16,24 @@ public class MaterialEditorManager : MonoBehaviour
     private const string SmoothProperty = "_Smooth";
     private const string MetalProperty = "_Metal";
 
+    // The master colour. The hair shader multiplies it straight into the albedo sample
+    // (HairShader_DithCut: _HairTint * tex2D(_Albedo, uv).rgb), so white leaves the texture
+    // exactly as authored and anything else tints it. With the albedo CLEARED it is the hair
+    // colour outright, because an unassigned texture samples as white.
+    public const string TintProperty = "_HairTint";
+
+    // What the shader itself defaults _HairTint to - a faint warm grey, not white. Captured
+    // from the template material at Init rather than written as a literal, and used for exactly
+    // one thing: a project saved before this control existed had no tint of its own, so it is
+    // restored to this and looks precisely as it did. New materials start white, as asked.
+    private Color shaderDefaultTint = Color.white;
+    private bool hasShaderDefaultTint = false;
+
+    public Color ShaderDefaultTint
+    {
+        get { return shaderDefaultTint; }
+    }
+
     // HairBrush intentionally has one active hair material for the whole session. Multiple
     // material entries are authoring presets/stages, never per-group assignments. Keeping the
     // old dictionary with one reserved key lets existing project persistence migrate cleanly.
@@ -97,6 +115,18 @@ public class MaterialEditorManager : MonoBehaviour
     private HairMaterialEntry CreateEntry(string name, Material template)
     {
         Material mat = new Material(template); mat.name = name + "_Runtime";
+
+        if (!hasShaderDefaultTint && mat.HasProperty(TintProperty))
+        {
+            shaderDefaultTint = mat.GetColor(TintProperty);
+            hasShaderDefaultTint = true;
+        }
+
+        // White by default, per the request. It is not what the shader ships with, so it is set
+        // here rather than assumed - and a project saved before this existed puts the shader's
+        // own value back on load, so nothing already authored changes appearance.
+        if (mat.HasProperty(TintProperty)) mat.SetColor(TintProperty, Color.white);
+
         return new HairMaterialEntry { name = name, material = mat };
     }
 
@@ -209,6 +239,7 @@ public class MaterialEditorManager : MonoBehaviour
             CreateTextureRow(propertiesRoot, "Albedo", AlbedoProperty, false, entry.albedoPath);
             CreateTextureRow(propertiesRoot, "Normal", NormalProperty, true, entry.normalPath);
             CreateTextureRow(propertiesRoot, "Opacity Mask", OpacityProperty, true, entry.opacityPath);
+            CreateTintRow(propertiesRoot, entry);
             CreateFloatSliderRow(propertiesRoot, "Smoothness", SmoothProperty, entry);
             CreateFloatSliderRow(propertiesRoot, "Metallic", MetalProperty, entry);
         }
@@ -218,7 +249,9 @@ public class MaterialEditorManager : MonoBehaviour
     {
         GameObject row = new GameObject(label + "Row", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
         row.transform.SetParent(parent, false);
-        row.GetComponent<LayoutElement>().preferredHeight = 54f;
+        // 54 held two stacked buttons; CLEAR is a third. TextureWorkspacePolishFix reformats
+        // the SLIDER rows and leaves these alone, so this is the only place the height is set.
+        row.GetComponent<LayoutElement>().preferredHeight = 80f;
         HorizontalLayoutGroup layout = row.GetComponent<HorizontalLayoutGroup>();
         layout.spacing = 4f;
         layout.childControlWidth = false;
@@ -255,7 +288,7 @@ public class MaterialEditorManager : MonoBehaviour
         LayoutElement columnLayout = buttonColumn.GetComponent<LayoutElement>();
         columnLayout.preferredWidth = 54f;
         columnLayout.minWidth = 54f;
-        columnLayout.preferredHeight = 54f;
+        columnLayout.preferredHeight = 80f;
         VerticalLayoutGroup columnGroup = buttonColumn.GetComponent<VerticalLayoutGroup>();
         columnGroup.spacing = 2f;
         columnGroup.childControlWidth = true;
@@ -265,6 +298,66 @@ public class MaterialEditorManager : MonoBehaviour
 
         CreateSmallButton(buttonColumn.transform, "LOAD", () => LoadTextureIntoSlot(propertyName, linear), 54f, 24f);
         CreateSmallButton(buttonColumn.transform, "LOCATE", () => LocateTextureFile(currentPath), 54f, 24f);
+        CreateSmallButton(buttonColumn.transform, "CLEAR", () => ClearTextureSlot(propertyName), 54f, 24f);
+    }
+
+    // One 0-1 slider, built the way this panel builds them. Extracted so the master-colour
+    // channels are the same widget as Smoothness and Metallic rather than a second, subtly
+    // different copy of sixty lines - the fill-rect convention below in particular is not
+    // something to re-derive twice.
+    //
+    // sliderName matters: TextureWorkspacePolishFix reformats any row containing a child called
+    // "SmoothnessSlider" or "MetallicSlider", so what a caller names this decides whether its
+    // row keeps its own layout.
+    private static Slider BuildSliderWidget(Transform parent, string sliderName, float width)
+    {
+        GameObject sliderGO = new GameObject(sliderName, typeof(RectTransform), typeof(Slider), typeof(LayoutElement));
+        sliderGO.transform.SetParent(parent, false);
+        RectTransform sliderRect = sliderGO.GetComponent<RectTransform>();
+        sliderRect.sizeDelta = new Vector2(width, 17f);
+        sliderGO.GetComponent<LayoutElement>().preferredWidth = width;
+        Slider slider = sliderGO.GetComponent<Slider>();
+        slider.minValue = 0f;
+        slider.maxValue = 1f;
+
+        GameObject bgGO = new GameObject("Background", typeof(RectTransform), typeof(Image));
+        bgGO.transform.SetParent(sliderGO.transform, false);
+        RectTransform bgRect = bgGO.GetComponent<RectTransform>();
+        bgRect.anchorMin = new Vector2(0f, .3f); bgRect.anchorMax = new Vector2(1f, .7f);
+        bgRect.offsetMin = Vector2.zero; bgRect.offsetMax = Vector2.zero;
+        bgGO.GetComponent<Image>().color = new Color(.18f, .18f, .20f);
+
+        GameObject fillAreaGO = new GameObject("Fill Area", typeof(RectTransform));
+        fillAreaGO.transform.SetParent(sliderGO.transform, false);
+        RectTransform fillAreaRect = fillAreaGO.GetComponent<RectTransform>();
+        fillAreaRect.anchorMin = new Vector2(0f, .3f); fillAreaRect.anchorMax = new Vector2(1f, .7f);
+        fillAreaRect.offsetMin = Vector2.zero; fillAreaRect.offsetMax = Vector2.zero;
+
+        GameObject fillGO = new GameObject("Fill", typeof(RectTransform), typeof(Image));
+        fillGO.transform.SetParent(fillAreaGO.transform, false);
+        fillGO.GetComponent<Image>().color = new Color(.30f, .65f, .70f);
+        // Slider drives progress by resizing this rect's anchors itself each frame - it must
+        // start as a zero-size point anchor at the origin, not a full stretch anchor. Using a
+        // stretch anchor here (the original mistake) is what silently broke drag interaction:
+        // the Slider's internal anchor math assumes this exact convention.
+        slider.fillRect = fillGO.GetComponent<RectTransform>();
+        slider.fillRect.anchorMin = Vector2.zero;
+        slider.fillRect.anchorMax = Vector2.zero;
+        slider.fillRect.sizeDelta = Vector2.zero;
+
+        GameObject handleAreaGO = new GameObject("Handle Slide Area", typeof(RectTransform));
+        handleAreaGO.transform.SetParent(sliderGO.transform, false);
+        RectTransform handleAreaRect = handleAreaGO.GetComponent<RectTransform>();
+        handleAreaRect.anchorMin = Vector2.zero; handleAreaRect.anchorMax = Vector2.one;
+        handleAreaRect.offsetMin = Vector2.zero; handleAreaRect.offsetMax = Vector2.zero;
+
+        GameObject handleGO = new GameObject("Handle", typeof(RectTransform), typeof(Image));
+        handleGO.transform.SetParent(handleAreaGO.transform, false);
+        handleGO.GetComponent<Image>().color = Color.white;
+        slider.handleRect = handleGO.GetComponent<RectTransform>();
+        slider.handleRect.sizeDelta = new Vector2(18f, 0f);
+
+        return slider;
     }
 
     // Simple 0-1 float slider bound directly to a shader property on this entry's material.
@@ -293,51 +386,7 @@ public class MaterialEditorManager : MonoBehaviour
         labelTmp.alignment = TMPro.TextAlignmentOptions.MidlineLeft;
         labelTmp.textWrappingMode = TMPro.TextWrappingModes.NoWrap;
 
-        GameObject sliderGO = new GameObject(label + "Slider", typeof(RectTransform), typeof(Slider), typeof(LayoutElement));
-        sliderGO.transform.SetParent(row.transform, false);
-        RectTransform sliderRect = sliderGO.GetComponent<RectTransform>();
-        sliderRect.sizeDelta = new Vector2(180f, 17f);
-        sliderGO.GetComponent<LayoutElement>().preferredWidth = 180f;
-        Slider slider = sliderGO.GetComponent<Slider>();
-        slider.minValue = 0f;
-        slider.maxValue = 1f;
-
-        GameObject bgGO = new GameObject("Background", typeof(RectTransform), typeof(Image));
-        bgGO.transform.SetParent(sliderGO.transform, false);
-        RectTransform bgRect = bgGO.GetComponent<RectTransform>();
-        bgRect.anchorMin = new Vector2(0f, .3f); bgRect.anchorMax = new Vector2(1f, .7f);
-        bgRect.offsetMin = Vector2.zero; bgRect.offsetMax = Vector2.zero;
-        bgGO.GetComponent<Image>().color = new Color(.18f, .18f, .20f);
-
-        GameObject fillAreaGO = new GameObject("Fill Area", typeof(RectTransform));
-        fillAreaGO.transform.SetParent(sliderGO.transform, false);
-        RectTransform fillAreaRect = fillAreaGO.GetComponent<RectTransform>();
-        fillAreaRect.anchorMin = new Vector2(0f, .3f); fillAreaRect.anchorMax = new Vector2(1f, .7f);
-        fillAreaRect.offsetMin = Vector2.zero; fillAreaRect.offsetMax = Vector2.zero;
-
-        GameObject fillGO = new GameObject("Fill", typeof(RectTransform), typeof(Image));
-        fillGO.transform.SetParent(fillAreaGO.transform, false);
-        fillGO.GetComponent<Image>().color = new Color(.30f, .65f, .70f);
-        // Slider drives progress by resizing this rect's anchors itself each frame - it must
-        // start as a zero-size point anchor at the origin, not a full stretch anchor. Using a
-        // stretch anchor here (my original mistake) is what silently broke drag interaction:
-        // the Slider's internal anchor math assumes this exact convention.
-        slider.fillRect = fillGO.GetComponent<RectTransform>();
-        slider.fillRect.anchorMin = Vector2.zero;
-        slider.fillRect.anchorMax = Vector2.zero;
-        slider.fillRect.sizeDelta = Vector2.zero;
-
-        GameObject handleAreaGO = new GameObject("Handle Slide Area", typeof(RectTransform));
-        handleAreaGO.transform.SetParent(sliderGO.transform, false);
-        RectTransform handleAreaRect = handleAreaGO.GetComponent<RectTransform>();
-        handleAreaRect.anchorMin = Vector2.zero; handleAreaRect.anchorMax = Vector2.one;
-        handleAreaRect.offsetMin = Vector2.zero; handleAreaRect.offsetMax = Vector2.zero;
-
-        GameObject handleGO = new GameObject("Handle", typeof(RectTransform), typeof(Image));
-        handleGO.transform.SetParent(handleAreaGO.transform, false);
-        handleGO.GetComponent<Image>().color = Color.white;
-        slider.handleRect = handleGO.GetComponent<RectTransform>();
-        slider.handleRect.sizeDelta = new Vector2(18f, 0f);
+        Slider slider = BuildSliderWidget(row.transform, label + "Slider", 180f);
 
         GameObject valueGO = new GameObject("Value", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI), typeof(LayoutElement));
         valueGO.transform.SetParent(row.transform, false);
@@ -366,6 +415,141 @@ public class MaterialEditorManager : MonoBehaviour
                 ApplyAssignments();
             }
         });
+    }
+
+    // MASTER COLOUR. A swatch, three channel sliders and a WHITE reset, bound straight to the
+    // material's _HairTint - the material is the single source of truth, exactly as the Smooth
+    // and Metal rows work, so there is no second copy of the value to drift out of step.
+    //
+    // Three sliders rather than a colour picker: the panel is 300px wide and a picker wants a
+    // wheel, a value ramp and a hex field. R/G/B fits, reads at a glance next to the swatch, and
+    // is built out of the same slider widget the rest of this panel already uses.
+    private void CreateTintRow(Transform parent, HairMaterialEntry entry)
+    {
+        if (entry == null || entry.material == null || !entry.material.HasProperty(TintProperty)) return;
+
+        GameObject header = new GameObject("MasterColourRow", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
+        header.transform.SetParent(parent, false);
+        header.GetComponent<LayoutElement>().preferredHeight = 30f;
+        HorizontalLayoutGroup headerLayout = header.GetComponent<HorizontalLayoutGroup>();
+        headerLayout.spacing = 6f;
+        headerLayout.childControlWidth = false;
+        headerLayout.childControlHeight = true;
+        headerLayout.childForceExpandWidth = false;
+        headerLayout.childForceExpandHeight = false;
+
+        GameObject labelGO = new GameObject("Label", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI), typeof(LayoutElement));
+        labelGO.transform.SetParent(header.transform, false);
+        labelGO.GetComponent<LayoutElement>().preferredWidth = 130f;
+        TMPro.TextMeshProUGUI labelTmp = labelGO.GetComponent<TMPro.TextMeshProUGUI>();
+        labelTmp.text = "MASTER COLOUR";
+        labelTmp.fontSize = 12f;
+        labelTmp.fontStyle = TMPro.FontStyles.Bold;
+        labelTmp.color = Color.white;
+        labelTmp.alignment = TMPro.TextAlignmentOptions.MidlineLeft;
+        labelTmp.textWrappingMode = TMPro.TextWrappingModes.NoWrap;
+
+        GameObject swatchGO = new GameObject("Swatch", typeof(RectTransform), typeof(Image), typeof(LayoutElement));
+        swatchGO.transform.SetParent(header.transform, false);
+        LayoutElement swatchLayout = swatchGO.GetComponent<LayoutElement>();
+        swatchLayout.preferredWidth = 56f;
+        swatchLayout.minWidth = 56f;
+        Image swatch = swatchGO.GetComponent<Image>();
+
+        Color current = entry.material.GetColor(TintProperty);
+
+        // Opaque in the swatch whatever the stored alpha is. The shader multiplies only the RGB
+        // (see _HairTint * tex2D(...).rgb), so alpha means nothing here - and the material ships
+        // with alpha 0, which would draw an invisible swatch that looks like a bug.
+        swatch.color = new Color(current.r, current.g, current.b, 1f);
+
+        // Rebuilds the panel rather than only setting the colour: the three sliders below hold
+        // their own handles, and a WHITE that moved the material but left them where they were
+        // would leave the row reading a value it no longer has.
+        CreateSmallButton(header.transform, "WHITE", () => { SetTint(entry, Color.white, swatch); RefreshPanel(); }, 54f, 24f);
+
+        CreateTintChannelRow(parent, entry, swatch, 0, "Red");
+        CreateTintChannelRow(parent, entry, swatch, 1, "Green");
+        CreateTintChannelRow(parent, entry, swatch, 2, "Blue");
+    }
+
+    private void CreateTintChannelRow(Transform parent, HairMaterialEntry entry, Image swatch, int channel, string label)
+    {
+        GameObject row = new GameObject(label + "TintRow", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
+        row.transform.SetParent(parent, false);
+        row.GetComponent<LayoutElement>().preferredHeight = 26f;
+        HorizontalLayoutGroup layout = row.GetComponent<HorizontalLayoutGroup>();
+        layout.spacing = 6f;
+        layout.childControlWidth = false;
+        layout.childControlHeight = true;
+        layout.childForceExpandWidth = false;
+        layout.childForceExpandHeight = false;
+
+        GameObject labelGO = new GameObject("Label", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI), typeof(LayoutElement));
+        labelGO.transform.SetParent(row.transform, false);
+        labelGO.GetComponent<LayoutElement>().preferredWidth = 46f;
+        TMPro.TextMeshProUGUI labelTmp = labelGO.GetComponent<TMPro.TextMeshProUGUI>();
+        labelTmp.text = label;
+        labelTmp.fontSize = 11f;
+        labelTmp.color = new Color(.82f, .82f, .82f);
+        labelTmp.alignment = TMPro.TextAlignmentOptions.MidlineLeft;
+        labelTmp.textWrappingMode = TMPro.TextWrappingModes.NoWrap;
+
+        // NOT named "<label>Slider". TextureWorkspacePolishFix reformats any row it finds a
+        // "SmoothnessSlider" or "MetallicSlider" in, tearing the horizontal layout off and
+        // repositioning two known children by hand. These rows want to keep their own layout.
+        Slider slider = BuildSliderWidget(row.transform, label + "TintChannel", 150f);
+
+        GameObject valueGO = new GameObject("Value", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI), typeof(LayoutElement));
+        valueGO.transform.SetParent(row.transform, false);
+        valueGO.GetComponent<LayoutElement>().preferredWidth = 40f;
+        TMPro.TextMeshProUGUI valueTmp = valueGO.GetComponent<TMPro.TextMeshProUGUI>();
+        valueTmp.fontSize = 11f;
+        valueTmp.color = new Color(.75f, .75f, .75f);
+        valueTmp.alignment = TMPro.TextAlignmentOptions.MidlineLeft;
+
+        Color start = entry.material.GetColor(TintProperty);
+        float startValue = ChannelOf(start, channel);
+        slider.SetValueWithoutNotify(startValue);
+        valueTmp.text = startValue.ToString("F2");
+
+        slider.onValueChanged.AddListener(v =>
+        {
+            valueTmp.text = v.ToString("F2");
+            if (entry.material == null || !entry.material.HasProperty(TintProperty)) return;
+
+            // Read-modify-write off the MATERIAL each time rather than off a captured Color, so
+            // the three sliders and the WHITE button cannot fight over a stale copy.
+            Color live = entry.material.GetColor(TintProperty);
+            if (channel == 0) live.r = v;
+            else if (channel == 1) live.g = v;
+            else live.b = v;
+
+            SetTint(entry, live, swatch);
+        });
+    }
+
+    private static float ChannelOf(Color c, int channel)
+    {
+        if (channel == 0) return c.r;
+        if (channel == 1) return c.g;
+        return c.b;
+    }
+
+    private void SetTint(HairMaterialEntry entry, Color colour, Image swatch)
+    {
+        if (entry == null || entry.material == null || !entry.material.HasProperty(TintProperty)) return;
+
+        entry.material.SetColor(TintProperty, colour);
+        if (swatch != null) swatch.color = new Color(colour.r, colour.g, colour.b, 1f);
+
+        if (GetGlobalMaterialIndex() == selectedMaterialIndex)
+        {
+            viewer.hairCardMaterial = entry.material;
+            ApplyAssignments();
+        }
+
+        UpdatePreviewForSelectedMaterial();
     }
 
     private void LoadTextureIntoSlot(string propertyName, bool linear)
@@ -428,6 +612,71 @@ public class MaterialEditorManager : MonoBehaviour
         // Always preview the material currently being edited, even before applying it globally.
         UpdatePreviewForSelectedMaterial();
         RefreshPanel();
+    }
+
+    // Empties one texture slot: the shader falls back to its declared default, which for all
+    // three of these is white or flat - so clearing the albedo leaves plain hair the master
+    // colour can then tint outright, rather than leaving the old texture stuck on the material
+    // with no way off it except loading another one.
+    //
+    // The stored PATH goes with it. Without that the slot would come back on the next project
+    // load, which is the version of this that would look like a bug.
+    private void ClearTextureSlot(string propertyName)
+    {
+        if (selectedMaterialIndex < 0 || selectedMaterialIndex >= materials.Count) return;
+        HairMaterialEntry entry = materials[selectedMaterialIndex];
+
+        if (entry.material == null || !entry.material.HasProperty(propertyName))
+        {
+            StatusToast.Show("Current shader has no " + propertyName + " texture slot.", true);
+            return;
+        }
+
+        // Nothing to say and nothing to do - but say so, because a button that answers a click
+        // with silence reads as broken.
+        if (entry.material.GetTexture(propertyName) == null && string.IsNullOrEmpty(PathForSlot(entry, propertyName)))
+        {
+            StatusToast.Show("That slot is already empty.");
+            return;
+        }
+
+        // The Texture2D itself is deliberately NOT destroyed. It may be the same object another
+        // material entry is still pointing at - LoadTextureIntoSlot makes one per load, but a
+        // project restore hands the same instance to more than one slot - and destroying a
+        // texture out from under a material that is still using it is a black hair card with no
+        // error to explain it. Unity collects it when the last reference goes.
+        entry.material.SetTexture(propertyName, null);
+
+        if (propertyName == AlbedoProperty) entry.albedoPath = "";
+        else if (propertyName == NormalProperty) entry.normalPath = "";
+        else if (propertyName == OpacityProperty) entry.opacityPath = "";
+
+        StatusToast.Show("Cleared the " + LabelForSlot(propertyName) + " texture.");
+
+        if (GetGlobalMaterialIndex() == selectedMaterialIndex)
+        {
+            viewer.hairCardMaterial = entry.material;
+            ApplyAssignments();
+        }
+
+        UpdatePreviewForSelectedMaterial();
+        RefreshPanel();
+    }
+
+    private static string PathForSlot(HairMaterialEntry entry, string propertyName)
+    {
+        if (propertyName == AlbedoProperty) return entry.albedoPath;
+        if (propertyName == NormalProperty) return entry.normalPath;
+        if (propertyName == OpacityProperty) return entry.opacityPath;
+        return "";
+    }
+
+    private static string LabelForSlot(string propertyName)
+    {
+        if (propertyName == AlbedoProperty) return "Albedo";
+        if (propertyName == NormalProperty) return "Normal";
+        if (propertyName == OpacityProperty) return "Opacity Mask";
+        return propertyName;
     }
 
     // Opens the containing folder for a loaded texture's source file, with the file itself

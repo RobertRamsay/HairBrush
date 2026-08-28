@@ -60,7 +60,11 @@ public class MaterialProjectPersistenceBridge : MonoBehaviour
                     normalPath = et.GetField("normalPath")?.GetValue(entry) as string,
                     opacityPath = et.GetField("opacityPath")?.GetValue(entry) as string,
                     smooth = entryMaterial != null && entryMaterial.HasProperty(SmoothProperty) ? entryMaterial.GetFloat(SmoothProperty) : 0.56f,
-                    metal = entryMaterial != null && entryMaterial.HasProperty(MetalProperty) ? entryMaterial.GetFloat(MetalProperty) : 0.33f
+                    metal = entryMaterial != null && entryMaterial.HasProperty(MetalProperty) ? entryMaterial.GetFloat(MetalProperty) : 0.33f,
+                    hasTint = entryMaterial != null && entryMaterial.HasProperty(TintProperty),
+                    tintR = ReadTintChannel(entryMaterial, 0),
+                    tintG = ReadTintChannel(entryMaterial, 1),
+                    tintB = ReadTintChannel(entryMaterial, 2)
                 });
             }
         }
@@ -143,6 +147,7 @@ public class MaterialProjectPersistenceBridge : MonoBehaviour
                 TryRestoreTexture(entry, OpacityProperty, "opacityPath", saved.opacityPath, true);
                 TryRestoreFloat(entry, SmoothProperty, saved.smooth);
                 TryRestoreFloat(entry, MetalProperty, saved.metal);
+                RestoreTint(editor, entry, saved);
             }
             materials.Add(entry);
         }
@@ -189,6 +194,41 @@ public class MaterialProjectPersistenceBridge : MonoBehaviour
                 return Mathf.Clamp(saved.materialIndex, 0, materialCount - 1);
 
         return 0;
+    }
+
+    private const string TintProperty = MaterialEditorManager.TintProperty;
+
+    private static float ReadTintChannel(Material material, int channel)
+    {
+        if (material == null || !material.HasProperty(TintProperty)) return 1f;
+
+        Color tint = material.GetColor(TintProperty);
+        if (channel == 0) return tint.r;
+        if (channel == 1) return tint.g;
+        return tint.b;
+    }
+
+    // A saved tint is restored as saved. A project written before the control existed carries
+    // hasTint false, and gets the SHADER's own default rather than the white a new material
+    // starts at - CreateEntry has already set white by the time this runs, so "leave it alone"
+    // would silently repaint every older groom. The alpha is left at 1: the shader multiplies
+    // only the RGB, so nothing reads it.
+    private static void RestoreTint(MaterialEditorManager editor, object entry, HairMaterialSaveData saved)
+    {
+        Material material = entry.GetType().GetField("material")?.GetValue(entry) as Material;
+        if (material == null || !material.HasProperty(TintProperty)) return;
+
+        Color tint = Color.white;
+        if (saved.hasTint)
+        {
+            tint = new Color(saved.tintR, saved.tintG, saved.tintB, 1f);
+        }
+        else if (editor != null)
+        {
+            tint = editor.ShaderDefaultTint;
+        }
+
+        material.SetColor(TintProperty, tint);
     }
 
     private static void TryRestoreFloat(object entry, string propertyName, float value)

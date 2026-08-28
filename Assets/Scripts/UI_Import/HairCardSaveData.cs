@@ -156,6 +156,15 @@ public class HairMaterialSaveData
     public float smooth = 0.56f;
     public float metal = 0.33f;
 
+    // MASTER COLOUR (_HairTint), which the shader multiplies into the albedo. hasTint is what
+    // separates "white" from "this project predates the control": absent in an older file it
+    // deserializes to false, and the restore then puts the shader's OWN default back rather
+    // than white, so an existing groom looks exactly as it did. New materials save true.
+    public bool hasTint = false;
+    public float tintR = 1f;
+    public float tintG = 1f;
+    public float tintB = 1f;
+
     // Predetermined card atlas cuts belong to the material/texture set, not the project
     // workspace globally. Kept here so switching materials swaps both texture and cuts.
     public List<UVRectSaveData> uvRects=new();
