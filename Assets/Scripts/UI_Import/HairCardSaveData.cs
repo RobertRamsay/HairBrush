@@ -268,6 +268,11 @@ public class GuideNodeSaveData
     public float falloff=PostGroupLifetimeAuthority.DefaultPostFalloff;
     public float weight=1f;
 
+    // false = RELATIVE, the only behaviour that existed before this field and what every older
+    // project deserializes to. true = ABSOLUTE: the POST replaces the base inside its radius
+    // rather than offsetting it. No format bump - an absent key reads as false, which is right.
+    public bool absolute=false;
+
     // Each POST owns a private snapshot of the four shape profiles. Empty lists identify a
     // legacy project; PostShapeCurveBridge then copies the restored group curve once so the
     // old project keeps its exact pre-local-curve appearance before the POST diverges.

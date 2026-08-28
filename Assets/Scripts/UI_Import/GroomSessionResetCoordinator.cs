@@ -169,11 +169,17 @@ public class GroomSessionResetCoordinator : MonoBehaviour
     {
         if (post == null) return;
 
-        // A POST is an additive downstream affector. Its neutral/default authored state is a
-        // zero delta from the baseline it captured when created, not the application's hard
-        // group defaults. Preserve position, radius, falloff and weight; only its groom effect
-        // is reset.
+        // A POST's neutral/default authored state is a zero delta from the baseline it captured
+        // when created, not the application's hard group defaults. Preserve position, radius,
+        // falloff and weight; only its groom effect is reset.
         post.delta = new PostAffectorManager.ControlState();
+
+        // And the mode with it, because a zero delta is only neutral for a RELATIVE POST. An
+        // ABSOLUTE one with no delta still overrides - with the values the panel happened to be
+        // showing when it was created - so a RESET that left it absolute would leave a POST that
+        // says it does nothing and visibly does something. RESET means "this POST is now a
+        // no-op", on both modes, and REL is what a no-op POST is.
+        post.absolute = false;
         WriteViewerControls(post.baseline);
         SyncCoreSliderUI(post.baseline);
 

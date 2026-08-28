@@ -1,0 +1,300 @@
+diff --git a/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs b/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs
+index ab7e0a8..f313f5d 100644
+--- a/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs
++++ b/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs
+@@ -169,11 +169,17 @@ public class GroomSessionResetCoordinator : MonoBehaviour
+     {
+         if (post == null) return;
+ 
+-        // A POST is an additive downstream affector. Its neutral/default authored state is a
+-        // zero delta from the baseline it captured when created, not the application's hard
+-        // group defaults. Preserve position, radius, falloff and weight; only its groom effect
+-        // is reset.
++        // A POST's neutral/default authored state is a zero delta from the baseline it captured
++        // when created, not the application's hard group defaults. Preserve position, radius,
++        // falloff and weight; only its groom effect is reset.
+         post.delta = new PostAffectorManager.ControlState();
++
++        // And the mode with it, because a zero delta is only neutral for a RELATIVE POST. An
++        // ABSOLUTE one with no delta still overrides - with the values the panel happened to be
++        // showing when it was created - so a RESET that left it absolute would leave a POST that
++        // says it does nothing and visibly does something. RESET means "this POST is now a
++        // no-op", on both modes, and REL is what a no-op POST is.
++        post.absolute = false;
+         WriteViewerControls(post.baseline);
+         SyncCoreSliderUI(post.baseline);
+ 
+diff --git a/Assets/Scripts/UI_Import/HairCardSaveData.cs b/Assets/Scripts/UI_Import/HairCardSaveData.cs
+index 9f98fc9..d8c180f 100644
+--- a/Assets/Scripts/UI_Import/HairCardSaveData.cs
++++ b/Assets/Scripts/UI_Import/HairCardSaveData.cs
+@@ -268,6 +268,11 @@ public class GuideNodeSaveData
+     public float falloff=PostGroupLifetimeAuthority.DefaultPostFalloff;
+     public float weight=1f;
+ 
++    // false = RELATIVE, the only behaviour that existed before this field and what every older
++    // project deserializes to. true = ABSOLUTE: the POST replaces the base inside its radius
++    // rather than offsetting it. No format bump - an absent key reads as false, which is right.
++    public bool absolute=false;
++
+     // Each POST owns a private snapshot of the four shape profiles. Empty lists identify a
+     // legacy project; PostShapeCurveBridge then copies the restored group curve once so the
+     // old project keeps its exact pre-local-curve appearance before the POST diverges.
+diff --git a/Assets/Scripts/UI_Import/PostAffectorManager.cs b/Assets/Scripts/UI_Import/PostAffectorManager.cs
+index aa421bf..5d5cbd4 100644
+--- a/Assets/Scripts/UI_Import/PostAffectorManager.cs
++++ b/Assets/Scripts/UI_Import/PostAffectorManager.cs
+@@ -26,6 +26,15 @@ public class PostAffectorManager : MonoBehaviour
+         public float radius = PostGroupLifetimeAuthority.DefaultPostRadius;
+         public float falloff = PostGroupLifetimeAuthority.DefaultPostFalloff;
+         [Range(0f, 1f)] public float weight = 1f;
++
++        // RELATIVE (false, the default and everything that existed before this) adds this POST's
++        // delta on top of whatever each card's own base happens to be, so per-card differences
++        // and variance survive underneath it. ABSOLUTE (true) replaces the base instead: at full
++        // weight the card takes baseline + delta exactly, and the falloff ring blends back out
++        // to the base. Cards inside an ABSOLUTE POST therefore converge on one value - flattening
++        // the spread is what an override IS, and is the reason it is not the default.
++        public bool absolute = false;
++
+         public ControlState baseline;
+         public ControlState delta;
+     }
+@@ -264,9 +273,33 @@ public class PostAffectorManager : MonoBehaviour
+             }
+ 
+             PaintWeightSlider(row, selected);
++
++            // The mode button is painted from the affector itself rather than from anything the
++            // row remembers, so a row rebuilt by a project load, or restyled by UIThemeAuthority
++            // on its one pass, comes back saying what the POST actually is.
++            PostAffector affector;
++            if (TryFindAffector(rowId, out affector)) PaintModeButton(row, affector.absolute);
+         }
+     }
+ 
++    bool TryFindAffector(int id, out PostAffector affector)
++    {
++        affector = null;
++        if (id < 0) return false;
++
++        foreach (KeyValuePair<int, List<PostAffector>> pair in groups)
++        {
++            if (pair.Value == null) continue;
++            foreach (PostAffector a in pair.Value)
++            {
++                if (a == null || a.id != id) continue;
++                affector = a;
++                return true;
++            }
++        }
++        return false;
++    }
++
+     // The WEIGHT slider stays usable whichever POST is selected - it is that POST's amount, and
+     // wanting to trim one from the group root is ordinary. It only stops LOOKING like the live
+     // control, which is the whole of the complaint: a bright blue bar under the group while the
+@@ -685,7 +718,7 @@ public class PostAffectorManager : MonoBehaviour
+ 
+             ControlState result = state.baseState;
+             if (groups.TryGetValue(card.groupId, out List<PostAffector> list))
+-                result = Add(result, EffectForCard(card, list));
++                result = EvaluateForCard(card, list, result);
+ 
+             // UV MODE is group routing, not a POST-local property. PREDETERMINED therefore
+             // hard-routes the final UVs from the card's canonical group assignment and ignores
+@@ -703,15 +736,46 @@ public class PostAffectorManager : MonoBehaviour
+         }
+     }
+ 
+-    ControlState EffectForCard(HairCard card, List<PostAffector> list)
++    // Folds every POST on the group over the card's base, in list order.
++    //
++    // The two modes differ in what they do with the base, which is why this is a fold rather
++    // than the sum it used to be:
++    //
++    //   RELATIVE  result += delta * w        the base is kept and offset. Two overlapping
++    //                                        relative POSTs both contribute; order is irrelevant
++    //                                        because addition commutes.
++    //   ABSOLUTE  result = lerp(result, baseline + delta, w)
++    //                                        the base is REPLACED, blended out across the
++    //                                        falloff. At w = 1 the card is exactly the POST's
++    //                                        authored values, which is what makes it an override:
++    //                                        every card in range converges on the same numbers
++    //                                        and whatever spread they had is gone.
++    //
++    // Order matters once an ABSOLUTE is involved, and list order is creation order: a later
++    // ABSOLUTE overrides an earlier POST's contribution in proportion to its own weight, and a
++    // RELATIVE created after an ABSOLUTE offsets the overridden value. That is the only reading
++    // that lets the two be mixed at all, and it is stable - the list is rebuilt in the same
++    // order from the save file.
++    ControlState EvaluateForCard(HairCard card, List<PostAffector> list, ControlState baseState)
+     {
+-        ControlState effect = new ControlState();
++        ControlState result = baseState;
++
+         foreach (PostAffector a in list)
+         {
+             float w = SpatialWeight(card, a) * Mathf.Clamp01(a.weight);
+-            if (w > .000001f) effect = Add(effect, Scale(a.delta, w));
++            if (w <= .000001f) continue;
++
++            if (a.absolute)
++            {
++                result = Lerp(result, Add(a.baseline, a.delta), w);
++            }
++            else
++            {
++                result = Add(result, Scale(a.delta, w));
++            }
+         }
+-        return effect;
++
++        return result;
+     }
+ 
+     float SpatialWeight(HairCard card, PostAffector a)
+@@ -845,12 +909,19 @@ public class PostAffectorManager : MonoBehaviour
+ 
+         GameObject select = AddButton(row.transform, "POST " + number, 72f);
+         select.GetComponent<Button>().onClick.AddListener(() => SelectAffector(a));
++
++        // REL / ABS. Built here with a FIXED object name rather than through AddButton, which
++        // names the object after its caption - a caption that changes is a name that changes,
++        // and the repaint pass finds this button by name.
++        BuildModeButton(row.transform, a);
+         // 8pt in 48px: "WEIGHT" measures well inside the box, so TMP never wraps it onto a
+         // second line. At 10pt/45px it did, which is what produced the "WEIG / HT" split.
+         TextMeshProUGUI wt = AddText(row.transform, "WEIGHT", 8, 48f);
+         wt.alignment = TextAlignmentOptions.Center;
+ 
+-        Slider slider = AddWeightSlider(row.transform, a.weight, 128f);
++        // 128 before the mode button existed. The 40 it gives up is exactly what that button
++        // takes, so the row is the width it always was.
++        Slider slider = AddWeightSlider(row.transform, a.weight, 88f);
+         TextMeshProUGUI value = AddText(row.transform, a.weight.ToString("F2"), 10, 30f);
+         value.alignment = TextAlignmentOptions.Center;
+         slider.onValueChanged.AddListener(v =>
+@@ -979,6 +1050,80 @@ public class PostAffectorManager : MonoBehaviour
+             slider.SetValueWithoutNotify(viewer.selectionStrength);
+     }
+ 
++    private const string ModeButtonName = "PostModeButton";
++    private const float ModeButtonWidth = 40f;
++
++    private static readonly Color ModeRelativeColour = new Color(.20f, .25f, .32f, 1f);
++    private static readonly Color ModeAbsoluteColour = new Color(.46f, .38f, .12f, 1f);
++
++    void BuildModeButton(Transform parent, PostAffector a)
++    {
++        GameObject go = new GameObject(ModeButtonName, typeof(RectTransform), typeof(Image), typeof(Button));
++        go.transform.SetParent(parent, false);
++        go.GetComponent<RectTransform>().sizeDelta = new Vector2(ModeButtonWidth, 25f);
++
++        TextMeshProUGUI label = AddText(go.transform, "REL", 10, ModeButtonWidth);
++        RectTransform labelRect = label.rectTransform;
++        labelRect.anchorMin = Vector2.zero;
++        labelRect.anchorMax = Vector2.one;
++        labelRect.offsetMin = Vector2.zero;
++        labelRect.offsetMax = Vector2.zero;
++        label.alignment = TextAlignmentOptions.Center;
++        label.raycastTarget = false;
++
++        go.GetComponent<Button>().onClick.AddListener(() => ToggleAbsolute(a));
++
++        PaintModeButton(go.transform, a.absolute);
++    }
++
++    void ToggleAbsolute(PostAffector a)
++    {
++        if (a == null) return;
++        a.absolute = !a.absolute;
++
++        // Straight away rather than on the next scan: this is a button the user is watching, and
++        // ApplyAll re-evaluates every card in the group on this same frame's LateUpdate, so the
++        // model changes now whether or not the label has caught up.
++        PaintAffectorRows();
++
++        if (a.absolute)
++        {
++            StatusToast.Show("POST set to ABSOLUTE - it replaces the group values inside its radius, blending out across the falloff.", false, 4f);
++        }
++        else
++        {
++            StatusToast.Show("POST set to RELATIVE - it offsets whatever the group values are, so per-card spread survives underneath.", false, 4f);
++        }
++    }
++
++    void PaintModeButton(Transform row, bool absolute)
++    {
++        Transform button = row.Find(ModeButtonName);
++        if (button == null) return;
++
++        Image image = button.GetComponent<Image>();
++        if (image != null)
++        {
++            Color wanted = ModeRelativeColour;
++            if (absolute)
++            {
++                wanted = ModeAbsoluteColour;
++            }
++            if (image.color != wanted) image.color = wanted;
++        }
++
++        TextMeshProUGUI label = button.GetComponentInChildren<TextMeshProUGUI>(true);
++        if (label != null)
++        {
++            string wanted = "REL";
++            if (absolute)
++            {
++                wanted = "ABS";
++            }
++            if (label.text != wanted) label.text = wanted;
++        }
++    }
++
+     GameObject AddButton(Transform parent, string text, float width)
+     {
+         GameObject go = new GameObject(text, typeof(RectTransform), typeof(Image), typeof(Button));
+@@ -1165,6 +1310,23 @@ public class PostAffectorManager : MonoBehaviour
+         waveDirection = a.waveDirection - b.waveDirection, arch = a.arch - b.arch
+     };
+ 
++    static ControlState Lerp(ControlState a, ControlState b, float t) => new ControlState
++    {
++        length = Mathf.Lerp(a.length, b.length, t), width = Mathf.Lerp(a.width, b.width, t),
++        segments = Mathf.Lerp(a.segments, b.segments, t),
++        bend = Mathf.Lerp(a.bend, b.bend, t), twist = Mathf.Lerp(a.twist, b.twist, t),
++        depth = Mathf.Lerp(a.depth, b.depth, t),
++        x = Mathf.Lerp(a.x, b.x, t), y = Mathf.Lerp(a.y, b.y, t), z = Mathf.Lerp(a.z, b.z, t),
++        uScale = Mathf.Lerp(a.uScale, b.uScale, t), vScale = Mathf.Lerp(a.vScale, b.vScale, t),
++        uOffset = Mathf.Lerp(a.uOffset, b.uOffset, t), vOffset = Mathf.Lerp(a.vOffset, b.vOffset, t),
++        curlFrequency = Mathf.Lerp(a.curlFrequency, b.curlFrequency, t),
++        curlDiameter = Mathf.Lerp(a.curlDiameter, b.curlDiameter, t),
++        waveAmplitude = Mathf.Lerp(a.waveAmplitude, b.waveAmplitude, t),
++        waveFrequency = Mathf.Lerp(a.waveFrequency, b.waveFrequency, t),
++        waveDirection = Mathf.Lerp(a.waveDirection, b.waveDirection, t),
++        arch = Mathf.Lerp(a.arch, b.arch, t)
++    };
++
+     static ControlState Scale(ControlState a, float s) => new ControlState
+     {
+         length = a.length * s, width = a.width * s, segments = a.segments * s,
+@@ -1189,6 +1351,7 @@ public class PostAffectorManager : MonoBehaviour
+                 centerX = a.center.x, centerY = a.center.y, centerZ = a.center.z,
+                 normalX = a.normal.x, normalY = a.normal.y, normalZ = a.normal.z,
+                 radius = a.radius, falloff = a.falloff, weight = a.weight,
++                absolute = a.absolute,
+                 baseline = ToSave(a.baseline), delta = ToSave(a.delta)
+             });
+         }
+@@ -1240,6 +1403,9 @@ public class PostAffectorManager : MonoBehaviour
+                 radius = d.radius,
+                 falloff = d.falloff,
+                 weight = d.weight,
++                // Absent from every project saved before this existed, and a missing bool
++                // deserializes to false - which is RELATIVE, which is what those projects were.
++                absolute = d.absolute,
+                 baseline = FromSave(d.baseline),
+                 delta = FromSave(d.delta)
+             };
