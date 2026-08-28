@@ -21,6 +21,60 @@ public class TextureEditorManager : MonoBehaviour
         if (textureSliderPanelGO == null || !textureSliderPanelGO.activeInHierarchy) return;
         ApplyMaterialWorkspaceLayout();
         CenterPreviewPlaneBetweenPanels();
+        KeepGroomHidden();
+    }
+
+    // ModelViewer.loadedModel is private, and reflection is this project's established way in -
+    // TextureModeProbe reaches isTextureEditorMode the same way, for the same reason. Cached
+    // because this runs every frame the workspace is open.
+    private System.Reflection.FieldInfo loadedModelField;
+    private ModelViewer hiddenGroomViewer;
+
+    private GameObject ResolveLoadedModel()
+    {
+        if (hiddenGroomViewer == null)
+        {
+            hiddenGroomViewer = FindFirstObjectByType<ModelViewer>();
+            loadedModelField = null;
+        }
+        if (hiddenGroomViewer == null) return null;
+
+        if (loadedModelField == null)
+        {
+            loadedModelField = typeof(ModelViewer).GetField("loadedModel",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        }
+        if (loadedModelField == null) return null;
+
+        return loadedModelField.GetValue(hiddenGroomViewer) as GameObject;
+    }
+
+    // ModelViewer.SwitchEditorMode hides the groom on the way IN: it deactivates the model and
+    // switches off the MeshRenderer of every hair card that exists at that moment. Cards created
+    // afterwards were never told.
+    //
+    // An UNDO in the texture workspace does exactly that. The restore rebuilds the session's
+    // cards from the step's payload, and the new ones arrive with their renderers on - so the
+    // groom appears in the middle of the texture, in front of the preview plane, because the
+    // plane sits at z = 1.5 and the cards sit at the origin with the camera looking down +z.
+    //
+    // Re-asserted every frame the workspace is up rather than fixed at the one call site that
+    // caused it: a project load, a REMAP commit and a group restore can all produce cards in
+    // here too, and an invariant that has to be remembered by everything that might break it is
+    // one that gets broken again. Cheap - the loop only runs while the workspace is open, and
+    // touches a renderer only when it disagrees.
+    private void KeepGroomHidden()
+    {
+        GameObject model = ResolveLoadedModel();
+        if (model != null && model.activeSelf) model.SetActive(false);
+
+        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
+        {
+            if (card == null) continue;
+
+            MeshRenderer renderer = card.GetComponent<MeshRenderer>();
+            if (renderer != null && renderer.enabled) renderer.enabled = false;
+        }
     }
 
     public void SetPanelActive(bool active, Transform parentCanvas, System.Action onSwitchToGroom)

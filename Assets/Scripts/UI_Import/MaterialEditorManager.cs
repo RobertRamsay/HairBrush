@@ -317,10 +317,12 @@ public class MaterialEditorManager : MonoBehaviour
         CreateSmallButton(buttonColumn.transform, "LOAD", () => LoadTextureIntoSlot(propertyName, linear), 54f, 24f);
         CreateSmallButton(buttonColumn.transform, "LOCATE", () => LocateTextureFile(currentPath), 54f, 24f);
 
-        // CLR, square, to the right of the stacked pair and as tall as both of them together -
-        // 24 + 24 with the column's 2px gap between. "CLEAR" does not fit that width; "CLR" does,
-        // and next to LOAD and LOCATE there is nothing else it could mean.
-        CreateSmallButton(row.transform, "CLR", () => ClearTextureSlot(propertyName), 50f, 50f);
+        // CLR: half the width of the buttons beside it, and the full height of both of them
+        // stacked - 24 + 24 with the column's 2px gap. TextureWorkspacePolishFix sets the final
+        // geometry (the row's layout group would otherwise hand it the row height and its own
+        // preferred width, which is how it came out short and wide); these are the starting
+        // values and the two agree on the numbers.
+        CreateSmallButton(row.transform, "CLR", () => ClearTextureSlot(propertyName), 27f, 50f);
     }
 
     // One 0-1 slider, built the way this panel builds them. Extracted so the master-colour

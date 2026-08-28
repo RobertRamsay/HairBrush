@@ -28,6 +28,12 @@ public class TextureWorkspacePolishFix : MonoBehaviour
     private const float TintSliderHeight = 16f;
     private const float TintSwatchWidth = 44f;
 
+    // The texture rows' right-hand controls. The column holds LOAD and LOCATE stacked, 24 each
+    // with a 2px gap; CLR stands beside it at half their width and the full height of both.
+    private const float TextureButtonColumnWidth = 54f;
+    private const float TextureButtonColumnHeight = 50f;
+    private const float TextureClearWidth = 27f;
+
     private GameObject texturePanel;
     private GameObject materialPanel;
     private GameObject previewPlane;
@@ -101,6 +107,22 @@ public class TextureWorkspacePolishFix : MonoBehaviour
             // Keep the complete texture filename on one line, but make it substantially more
             // readable than the previous tiny fit. Auto-sizing is only allowed to reduce from
             // the larger target when a particularly long basename genuinely needs it.
+            // The stacked LOAD/LOCATE column and the CLR beside it, placed rather than left to
+            // the row's HorizontalLayoutGroup - which controls its children's heights and so
+            // gave CLR the row's height and its own preferred width, coming out short and wide
+            // instead of tall and narrow.
+            Transform buttonColumn = row.Find("ButtonColumn");
+            Transform clearButton = row.Find("CLRButton");
+            if (buttonColumn != null && clearButton != null)
+            {
+                DisableRowLayout(row);
+                SetRowHeight(row, TextureButtonColumnHeight);
+
+                float columnX = TextureInfoWidth + 6f;
+                PlaceLeft(buttonColumn, columnX, TextureButtonColumnWidth, TextureButtonColumnHeight, TextureButtonColumnHeight);
+                PlaceLeft(clearButton, columnX + TextureButtonColumnWidth + 4f, TextureClearWidth, TextureButtonColumnHeight, TextureButtonColumnHeight);
+            }
+
             Transform info = row.Find("Info");
             if (info != null)
             {
@@ -110,6 +132,12 @@ public class TextureWorkspacePolishFix : MonoBehaviour
                     infoLayout.preferredWidth = TextureInfoWidth;
                     infoLayout.minWidth = TextureInfoWidth;
                 }
+
+                // Anchored explicitly as well, because the block above switches this row's
+                // layout group off - without this the Info column would keep whatever position
+                // it happened to have when the group stopped driving it.
+                if (buttonColumn != null && clearButton != null)
+                    PlaceLeft(info, 0f, TextureInfoWidth, TextureButtonColumnHeight, TextureButtonColumnHeight);
 
                 foreach (TextMeshProUGUI tmp in info.GetComponentsInChildren<TextMeshProUGUI>(true))
                 {

@@ -1,0 +1,139 @@
+diff --git a/Assets/Scripts/UI_Import/MaterialEditorManager.cs b/Assets/Scripts/UI_Import/MaterialEditorManager.cs
+index d359ee0..6476cda 100644
+--- a/Assets/Scripts/UI_Import/MaterialEditorManager.cs
++++ b/Assets/Scripts/UI_Import/MaterialEditorManager.cs
+@@ -317,10 +317,12 @@ public class MaterialEditorManager : MonoBehaviour
+         CreateSmallButton(buttonColumn.transform, "LOAD", () => LoadTextureIntoSlot(propertyName, linear), 54f, 24f);
+         CreateSmallButton(buttonColumn.transform, "LOCATE", () => LocateTextureFile(currentPath), 54f, 24f);
+ 
+-        // CLR, square, to the right of the stacked pair and as tall as both of them together -
+-        // 24 + 24 with the column's 2px gap between. "CLEAR" does not fit that width; "CLR" does,
+-        // and next to LOAD and LOCATE there is nothing else it could mean.
+-        CreateSmallButton(row.transform, "CLR", () => ClearTextureSlot(propertyName), 50f, 50f);
++        // CLR: half the width of the buttons beside it, and the full height of both of them
++        // stacked - 24 + 24 with the column's 2px gap. TextureWorkspacePolishFix sets the final
++        // geometry (the row's layout group would otherwise hand it the row height and its own
++        // preferred width, which is how it came out short and wide); these are the starting
++        // values and the two agree on the numbers.
++        CreateSmallButton(row.transform, "CLR", () => ClearTextureSlot(propertyName), 27f, 50f);
+     }
+ 
+     // One 0-1 slider, built the way this panel builds them. Extracted so the master-colour
+diff --git a/Assets/Scripts/UI_Import/TextureEditorManager.cs b/Assets/Scripts/UI_Import/TextureEditorManager.cs
+index 781859e..5f231d8 100644
+--- a/Assets/Scripts/UI_Import/TextureEditorManager.cs
++++ b/Assets/Scripts/UI_Import/TextureEditorManager.cs
+@@ -21,6 +21,60 @@ public class TextureEditorManager : MonoBehaviour
+         if (textureSliderPanelGO == null || !textureSliderPanelGO.activeInHierarchy) return;
+         ApplyMaterialWorkspaceLayout();
+         CenterPreviewPlaneBetweenPanels();
++        KeepGroomHidden();
++    }
++
++    // ModelViewer.loadedModel is private, and reflection is this project's established way in -
++    // TextureModeProbe reaches isTextureEditorMode the same way, for the same reason. Cached
++    // because this runs every frame the workspace is open.
++    private System.Reflection.FieldInfo loadedModelField;
++    private ModelViewer hiddenGroomViewer;
++
++    private GameObject ResolveLoadedModel()
++    {
++        if (hiddenGroomViewer == null)
++        {
++            hiddenGroomViewer = FindFirstObjectByType<ModelViewer>();
++            loadedModelField = null;
++        }
++        if (hiddenGroomViewer == null) return null;
++
++        if (loadedModelField == null)
++        {
++            loadedModelField = typeof(ModelViewer).GetField("loadedModel",
++                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
++        }
++        if (loadedModelField == null) return null;
++
++        return loadedModelField.GetValue(hiddenGroomViewer) as GameObject;
++    }
++
++    // ModelViewer.SwitchEditorMode hides the groom on the way IN: it deactivates the model and
++    // switches off the MeshRenderer of every hair card that exists at that moment. Cards created
++    // afterwards were never told.
++    //
++    // An UNDO in the texture workspace does exactly that. The restore rebuilds the session's
++    // cards from the step's payload, and the new ones arrive with their renderers on - so the
++    // groom appears in the middle of the texture, in front of the preview plane, because the
++    // plane sits at z = 1.5 and the cards sit at the origin with the camera looking down +z.
++    //
++    // Re-asserted every frame the workspace is up rather than fixed at the one call site that
++    // caused it: a project load, a REMAP commit and a group restore can all produce cards in
++    // here too, and an invariant that has to be remembered by everything that might break it is
++    // one that gets broken again. Cheap - the loop only runs while the workspace is open, and
++    // touches a renderer only when it disagrees.
++    private void KeepGroomHidden()
++    {
++        GameObject model = ResolveLoadedModel();
++        if (model != null && model.activeSelf) model.SetActive(false);
++
++        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
++        {
++            if (card == null) continue;
++
++            MeshRenderer renderer = card.GetComponent<MeshRenderer>();
++            if (renderer != null && renderer.enabled) renderer.enabled = false;
++        }
+     }
+ 
+     public void SetPanelActive(bool active, Transform parentCanvas, System.Action onSwitchToGroom)
+diff --git a/Assets/Scripts/UI_Import/TextureWorkspacePolishFix.cs b/Assets/Scripts/UI_Import/TextureWorkspacePolishFix.cs
+index 1bfd9fe..fe1e7c3 100644
+--- a/Assets/Scripts/UI_Import/TextureWorkspacePolishFix.cs
++++ b/Assets/Scripts/UI_Import/TextureWorkspacePolishFix.cs
+@@ -28,6 +28,12 @@ public class TextureWorkspacePolishFix : MonoBehaviour
+     private const float TintSliderHeight = 16f;
+     private const float TintSwatchWidth = 44f;
+ 
++    // The texture rows' right-hand controls. The column holds LOAD and LOCATE stacked, 24 each
++    // with a 2px gap; CLR stands beside it at half their width and the full height of both.
++    private const float TextureButtonColumnWidth = 54f;
++    private const float TextureButtonColumnHeight = 50f;
++    private const float TextureClearWidth = 27f;
++
+     private GameObject texturePanel;
+     private GameObject materialPanel;
+     private GameObject previewPlane;
+@@ -101,6 +107,22 @@ public class TextureWorkspacePolishFix : MonoBehaviour
+             // Keep the complete texture filename on one line, but make it substantially more
+             // readable than the previous tiny fit. Auto-sizing is only allowed to reduce from
+             // the larger target when a particularly long basename genuinely needs it.
++            // The stacked LOAD/LOCATE column and the CLR beside it, placed rather than left to
++            // the row's HorizontalLayoutGroup - which controls its children's heights and so
++            // gave CLR the row's height and its own preferred width, coming out short and wide
++            // instead of tall and narrow.
++            Transform buttonColumn = row.Find("ButtonColumn");
++            Transform clearButton = row.Find("CLRButton");
++            if (buttonColumn != null && clearButton != null)
++            {
++                DisableRowLayout(row);
++                SetRowHeight(row, TextureButtonColumnHeight);
++
++                float columnX = TextureInfoWidth + 6f;
++                PlaceLeft(buttonColumn, columnX, TextureButtonColumnWidth, TextureButtonColumnHeight, TextureButtonColumnHeight);
++                PlaceLeft(clearButton, columnX + TextureButtonColumnWidth + 4f, TextureClearWidth, TextureButtonColumnHeight, TextureButtonColumnHeight);
++            }
++
+             Transform info = row.Find("Info");
+             if (info != null)
+             {
+@@ -111,6 +133,12 @@ public class TextureWorkspacePolishFix : MonoBehaviour
+                     infoLayout.minWidth = TextureInfoWidth;
+                 }
+ 
++                // Anchored explicitly as well, because the block above switches this row's
++                // layout group off - without this the Info column would keep whatever position
++                // it happened to have when the group stopped driving it.
++                if (buttonColumn != null && clearButton != null)
++                    PlaceLeft(info, 0f, TextureInfoWidth, TextureButtonColumnHeight, TextureButtonColumnHeight);
++
+                 foreach (TextMeshProUGUI tmp in info.GetComponentsInChildren<TextMeshProUGUI>(true))
+                 {
+                     if (tmp == null || !tmp.text.StartsWith("Current:")) continue;
