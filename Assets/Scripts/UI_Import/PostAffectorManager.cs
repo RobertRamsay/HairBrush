@@ -162,10 +162,21 @@ public class PostAffectorManager : MonoBehaviour
         DetectCtrlClick();
         MaintainActiveAuthoring();
 
+        // Last, so it sees the selection the three calls above have settled on rather than the
+        // one this frame started with.
+        MaintainSelectionPaint();
+
         if (Time.unscaledTime >= nextUIScan)
         {
             nextUIScan = Time.unscaledTime + .12f;
             EnsureRowsAndOrder();
+
+            // Also on the scan, not only when the selection moves. UIThemeAuthority styles every
+            // Slider in the scene exactly once, the first time it sees it, and that pass repaints
+            // a WEIGHT slider's fill and handle in the shared theme colours - so a row built after
+            // the last selection change would sit there bright until the next one. It only writes
+            // once, so this pass wins from then on, and every write here is guarded by a compare.
+            PaintAffectorRows();
             RenameLegacyStrengthToWeight();
         }
     }
@@ -189,6 +200,121 @@ public class PostAffectorManager : MonoBehaviour
         hitPointField = t.GetField("selectionHitPoint", flags);
         hitNormalField = t.GetField("selectionHitNormal", flags);
         strengthRowField = t.GetField("strengthRowGO", flags);
+    }
+
+    // ---- who owns the panel, said out loud ------------------------------------------------
+    //
+    // Which POST is selected was already tracked; what was missing is that NOTHING kept the UI
+    // in step with it after the first time. The panel went yellow in ModelViewer.EnterSelectionMode
+    // - the Ctrl+click that CREATES a POST - and nowhere else, so selecting an existing POST from
+    // its row left the panel grey while that POST owned every slider on it. And a POST row was
+    // painted as selected once, in BuildRow at the moment it was created; RebuildGroupRows only
+    // ever re-parents and re-indexes existing rows, so the highlight never moved off a row again.
+    // Create three POSTs and all three rows read as selected, including while the GROUP root is
+    // the thing being edited.
+    //
+    // Two callers, one pass. The selection change drives it so the panel and the rows turn over
+    // on the frame the user clicks; the 0.12s row scan repeats it so a row built later, or a
+    // slider UIThemeAuthority has since restyled, is brought back into line. Every write is
+    // guarded by a compare, so the repeat costs a handful of colour reads and nothing else.
+    private const int NoPaintedSelection = int.MinValue;
+    private int paintedActiveId = NoPaintedSelection;
+
+    private static readonly Color RowSelectedColour = new Color(.18f, .24f, .34f, .98f);
+    private static readonly Color RowIdleColour = new Color(.12f, .14f, .18f, .98f);
+    private static readonly Color WeightFillSelectedColour = new Color(.28f, .58f, .95f, 1f);
+    private static readonly Color WeightFillIdleColour = new Color(.24f, .30f, .38f, 1f);
+    private static readonly Color WeightHandleSelectedColour = Color.white;
+    private static readonly Color WeightHandleIdleColour = new Color(.55f, .58f, .62f, 1f);
+
+    void MaintainSelectionPaint()
+    {
+        if (paintedActiveId == activeId) return;
+        paintedActiveId = activeId;
+
+        // The panel is yellow while ANY post is selected and grey the moment the group root
+        // takes it back - including via DetectGroupRootSelection above, which clears activeId
+        // by hand and is the route that left the panel yellow over a group edit.
+        if (viewer != null) viewer.SetGroomPanelModifierAccent(activeId >= 0);
+
+        PaintAffectorRows();
+    }
+
+    // Repaints every POST row in the left panel to match the current selection.
+    void PaintAffectorRows()
+    {
+        foreach (RectTransform row in FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            if (row == null || !row.name.StartsWith("PostAffector_", StringComparison.Ordinal)) continue;
+
+            int rowId;
+            if (!TryReadRowAffectorId(row.name, out rowId)) continue;
+
+            bool selected = rowId == activeId && activeId >= 0;
+
+            Image background = row.GetComponent<Image>();
+            if (background != null)
+            {
+                Color wanted = RowIdleColour;
+                if (selected)
+                {
+                    wanted = RowSelectedColour;
+                }
+                if (background.color != wanted) background.color = wanted;
+            }
+
+            PaintWeightSlider(row, selected);
+        }
+    }
+
+    // The WEIGHT slider stays usable whichever POST is selected - it is that POST's amount, and
+    // wanting to trim one from the group root is ordinary. It only stops LOOKING like the live
+    // control, which is the whole of the complaint: a bright blue bar under the group while the
+    // group is what you are editing reads as "this is what you are holding", and it is not.
+    void PaintWeightSlider(Transform row, bool selected)
+    {
+        Transform slider = row.Find("WeightSlider");
+        if (slider == null) return;
+
+        Transform fill = slider.Find("Fill Area/Fill");
+        if (fill != null)
+        {
+            Image image = fill.GetComponent<Image>();
+            if (image != null)
+            {
+                Color wanted = WeightFillIdleColour;
+                if (selected)
+                {
+                    wanted = WeightFillSelectedColour;
+                }
+                if (image.color != wanted) image.color = wanted;
+            }
+        }
+
+        Transform handle = slider.Find("Handle Slide Area/Handle");
+        if (handle != null)
+        {
+            Image image = handle.GetComponent<Image>();
+            if (image != null)
+            {
+                Color wanted = WeightHandleIdleColour;
+                if (selected)
+                {
+                    wanted = WeightHandleSelectedColour;
+                }
+                if (image.color != wanted) image.color = wanted;
+            }
+        }
+    }
+
+    // "PostAffector_{group}_{id}" - the id is what is after the LAST underscore. Split rather
+    // than a substring from the second underscore, because a group id is not a fixed width.
+    static bool TryReadRowAffectorId(string rowName, out int id)
+    {
+        id = -1;
+        int cut = rowName.LastIndexOf('_');
+        if (cut < 0 || cut >= rowName.Length - 1) return false;
+        return int.TryParse(rowName.Substring(cut + 1), out id);
     }
 
     void DetectGroupRootSelection()
@@ -705,7 +831,12 @@ public class PostAffectorManager : MonoBehaviour
         GameObject row = new GameObject(RowName(a.groupId, a.id), typeof(RectTransform), typeof(Image), typeof(HorizontalLayoutGroup));
         row.transform.SetParent(parent, false);
         row.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 34f);
-        row.GetComponent<Image>().color = a.id == activeId ? new Color(.18f, .24f, .34f, .98f) : new Color(.12f, .14f, .18f, .98f);
+        Color rowColour = RowIdleColour;
+        if (a.id == activeId)
+        {
+            rowColour = RowSelectedColour;
+        }
+        row.GetComponent<Image>().color = rowColour;
         HorizontalLayoutGroup layout = row.GetComponent<HorizontalLayoutGroup>();
         layout.padding = new RectOffset(6, 6, 4, 4);
         layout.spacing = 5f;

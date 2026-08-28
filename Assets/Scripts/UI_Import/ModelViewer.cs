@@ -589,7 +589,7 @@ public class ModelViewer : MonoBehaviour
         panelRect.sizeDelta = new Vector2(560, 0);
         panelRect.anchoredPosition = new Vector2(-10, 0);
         activePanelImage = panelGO.GetComponent<Image>();
-        activePanelImage.color = new Color(0.15f, 0.15f, 0.15f, 0.85f);
+        activePanelImage.color = GroomPanelIdleColour;
         VerticalLayoutGroup layout = panelGO.AddComponent<VerticalLayoutGroup>();
         layout.padding = new RectOffset(15, 15, 12, 12);
         layout.spacing = 4;
@@ -1496,7 +1496,7 @@ public class ModelViewer : MonoBehaviour
         brushFalloffDistance = 0.25f;
         selectionHitPoint = brushCenter;
         selectionHitNormal = hitNormal;
-        if (activePanelImage != null) activePanelImage.color = new Color(0.35f, 0.32f, 0.1f, 0.9f);
+        SetGroomPanelModifierAccent(true);
         HairCard[] groupCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None).Where(c => c.groupId == currentGroupId).ToArray();
         if (groupCards.Length > 0)
         {
@@ -1538,11 +1538,36 @@ public class ModelViewer : MonoBehaviour
         RecomputeSelectionWeights(brushCenter);
     }
 
+    // The groom panel's two backgrounds. They were three separate literals - here, in
+    // EnterSelectionMode and in the panel's own construction - which is how the panel came to be
+    // painted yellow by ONE of the routes into POST editing and left grey by the others.
+    public static readonly Color GroomPanelIdleColour = new Color(0.15f, 0.15f, 0.15f, 0.85f);
+    public static readonly Color GroomPanelModifierColour = new Color(0.35f, 0.32f, 0.1f, 0.9f);
+
+    // Yellow while a modifier owns the panel, grey while the group root does.
+    //
+    // Public because the routes into POST editing do not all go through this class:
+    // EnterSelectionMode is the Ctrl+click that CREATES a POST, but selecting an existing one
+    // later is PostAffectorManager.SelectAffector, and going back to the group root is its
+    // DetectGroupRootSelection. Those two used to leave the colour wherever the last route put
+    // it, so the panel was yellow the first time round and grey every time after.
+    public void SetGroomPanelModifierAccent(bool modifierOwnsPanel)
+    {
+        if (activePanelImage == null) return;
+        Color wanted = GroomPanelIdleColour;
+        if (modifierOwnsPanel)
+        {
+            wanted = GroomPanelModifierColour;
+        }
+
+        if (activePanelImage.color != wanted) activePanelImage.color = wanted;
+    }
+
     void ClearSelectionHotspot()
     {
         hasSelectionHotspot = false;
         isSelectionMode = false;
-        if (activePanelImage != null) activePanelImage.color = new Color(0.15f, 0.15f, 0.15f, 0.85f);
+        if (activePanelImage != null) activePanelImage.color = GroomPanelIdleColour;
         if (falloffRowGO != null) Destroy(falloffRowGO);
         if (strengthRowGO != null) Destroy(strengthRowGO);
         HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
