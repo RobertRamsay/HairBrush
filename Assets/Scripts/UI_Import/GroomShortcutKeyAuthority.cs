@@ -7,12 +7,17 @@ using UnityEngine.InputSystem;
 //
 //   P  PLACE     one card per click
 //   D  PAINT     continuous placing while held (draw)
-//   S  EVEN      brush that fills to an even spacing, never closer
+//   B  SPRAY     scatters cards through the brush radius
+//   F  EVEN      fills to an even spacing, never closer
 //   E  ERASE     removes cards in the brush radius
-//   X  SYMMETRY  same as clicking the SYMMETRY button
+//   S  SYMMETRY  same as clicking the SYMMETRY button
 //
-// SPRAY is deliberately unbound. Four of the five modes have a letter that names them; spray
-// does not, and inventing one would put a scatter brush a mistyped key away from a groom.
+//   CTRL + S     SAVE PROJ
+//   CTRL + X     EXPORT OBJ
+//
+// S moved to SYMMETRY and EVEN moved to F, which is the one reassignment here that was not
+// asked for: S was EVEN, and something had to give it up. F for "fill to a spacing" is the
+// closest free letter to what that brush does.
 //
 // WHY THIS IS A SEPARATE AUTHORITY, not four lines in PlacementBrushModeAuthority.Update:
 // that method returns early for whole minutes at a time - the texture workspace, an armed
@@ -59,22 +64,50 @@ public class GroomShortcutKeyAuthority : MonoBehaviour
         // reading it is somebody checking what a key does, not asking for it.
         if (InputKeysDialog.IsOpen) return;
 
-        // The texture workspace or a remap session owns the viewport.
-        if (GroomViewportSuppressed.Active) return;
-
-        // Something has taken grooming away on purpose and will hand it back.
+        // Something has taken grooming away on purpose and will hand it back. This is also what
+        // keeps every key below out of a REMAP session, which holds the lock for its whole life -
+        // and saving mid-remap in particular is not allowed: the preview is not the groom.
         if (GroomingInputLock.AnyHold) return;
 
+        // ---- CTRL chords ----------------------------------------------------------------
+        //
+        // Ahead of the viewport test below, because SAVE and EXPORT are on the panel in the
+        // TEXTURE workspace too and saving from there is an ordinary thing to want. They are also
+        // ahead of the bare-key block, which refuses every letter while CTRL is held - so CTRL+S
+        // can never reach the S below and toggle SYMMETRY on its way past. That guard was already
+        // there for CTRL+Z; this is the same protection, now load-bearing for a key of our own.
+        //
+        // SHIFT and ALT are excluded rather than ignored: CTRL+SHIFT is the group pick and the
+        // guide-point gesture, and a chord that means something else must not also save.
+        bool ctrl = keyboard.ctrlKey.isPressed || keyboard.leftCommandKey.isPressed || keyboard.rightCommandKey.isPressed;
+        bool shift = keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed;
+
+        if (ctrl && !shift && !keyboard.altKey.isPressed)
+        {
+            if (keyboard.sKey.wasPressedThisFrame)
+            {
+                PressPanelButton("SaveProjectButton", "SAVE PROJ");
+                return;
+            }
+
+            if (keyboard.xKey.wasPressedThisFrame)
+            {
+                PressPanelButton("ExportOBJButton", "EXPORT OBJ");
+                return;
+            }
+        }
+
+        // The texture workspace or a remap session owns the viewport. Below this line everything
+        // is a groom-viewport action.
+        if (GroomViewportSuppressed.Active) return;
+
         // Bare keys only. CTRL, ALT, SHIFT and CMD are all load-bearing elsewhere - ALT is the
-        // camera under MAYA-NAV, CTRL+SHIFT picks a group, CTRL+Z is undo - and a shortcut that
-        // fired as part of a chord would change the brush under a hand that was doing something
-        // else entirely.
-        bool modifier = keyboard.ctrlKey.isPressed
-            || keyboard.altKey.isPressed
-            || keyboard.leftShiftKey.isPressed
-            || keyboard.rightShiftKey.isPressed
-            || keyboard.leftCommandKey.isPressed
-            || keyboard.rightCommandKey.isPressed;
+        // camera under MAYA-NAV, CTRL+SHIFT picks a group, CTRL+Z is undo, CTRL+S is the save
+        // above - and a shortcut that fired as part of a chord would change the brush under a
+        // hand that was doing something else entirely.
+        bool modifier = ctrl
+            || shift
+            || keyboard.altKey.isPressed;
         if (modifier) return;
 
         // Not mid-stroke. Switching mode with the button down would finish a stroke in a mode it
@@ -84,7 +117,7 @@ public class GroomShortcutKeyAuthority : MonoBehaviour
 
         // ---- the keys -------------------------------------------------------------------
 
-        if (keyboard.xKey.wasPressedThisFrame)
+        if (keyboard.sKey.wasPressedThisFrame)
         {
             // No grooming test on this one: the SYMMETRY button stays clickable whenever the
             // panel is up, and the key is meant to be that button. The toggle raises its own
@@ -105,7 +138,13 @@ public class GroomShortcutKeyAuthority : MonoBehaviour
             return;
         }
 
-        if (keyboard.sKey.wasPressedThisFrame)
+        if (keyboard.bKey.wasPressedThisFrame)
+        {
+            ApplyMode(PlacementBrushModeAuthority.PlacementMode.Spray);
+            return;
+        }
+
+        if (keyboard.fKey.wasPressedThisFrame)
         {
             ApplyMode(PlacementBrushModeAuthority.PlacementMode.Even);
             return;
@@ -116,6 +155,25 @@ public class GroomShortcutKeyAuthority : MonoBehaviour
             ApplyMode(PlacementBrushModeAuthority.PlacementMode.Erase);
             return;
         }
+    }
+
+    // Presses the panel button rather than calling whatever it calls. Several authorities rebind
+    // these two - the demo build swaps EXPORT for its upgrade prompt, and the save path has its
+    // own focus guard - and invoking the click is the only way to get exactly what a click does
+    // without having to know which of them won.
+    private void PressPanelButton(string objectName, string label)
+    {
+        GameObject go = GameObject.Find(objectName);
+        UnityEngine.UI.Button button = null;
+        if (go != null) button = go.GetComponent<UnityEngine.UI.Button>();
+
+        if (button == null || !button.interactable)
+        {
+            StatusToast.Show(label + " is not available right now.", true);
+            return;
+        }
+
+        button.onClick.Invoke();
     }
 
     private void ApplyMode(PlacementBrushModeAuthority.PlacementMode next)

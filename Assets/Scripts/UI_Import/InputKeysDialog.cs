@@ -384,9 +384,10 @@ public class InputKeysDialog : MonoBehaviour
         Heading(parent, "PLACING HAIR");
         Row(parent, "P", "PLACE - one card per click");
         Row(parent, "D", "PAINT - draw continuously while held");
-        Row(parent, "S", "EVEN - fill to an even spacing, never closer");
+        Row(parent, "B", "SPRAY - scatter through the brush radius");
+        Row(parent, "F", "EVEN - fill to an even spacing, never closer");
         Row(parent, "E", "ERASE - remove cards under the brush");
-        Row(parent, "X", "SYMMETRY on / off");
+        Row(parent, "S", "SYMMETRY on / off");
         Row(parent, "SHIFT", "Cycle PLACE - PAINT - SPRAY - EVEN - ERASE");
         Row(parent, "LEFT click / hold", "Place, paint or erase, depending on the mode");
         Row(parent, "[  and  ]", "Brush radius smaller and bigger");
@@ -437,6 +438,8 @@ public class InputKeysDialog : MonoBehaviour
         Row(parent, "ESC", "Cancel the remap - the groom is untouched");
 
         Heading(parent, "EVERYWHERE");
+        Row(parent, "CTRL + S", "SAVE PROJ");
+        Row(parent, "CTRL + X", "EXPORT OBJ");
         Row(parent, "CTRL + Z", "Undo");
         Row(parent, "CTRL + Y", "Redo");
         Row(parent, "CTRL + SHIFT + Z", "Redo");
