@@ -84,6 +84,75 @@ public class PostAffectorManager : MonoBehaviour
         go.AddComponent<PostAffectorManager>();
     }
 
+    // The live manager, so ModelViewer's group-root edit path can reach it without a scene scan
+    // on every slider tick. Initialised to null here and cleared in OnDestroy.
+    private static PostAffectorManager instance = null;
+
+    public static PostAffectorManager Instance
+    {
+        get { return instance; }
+    }
+
+    void Awake()
+    {
+        instance = this;
+    }
+
+    void OnDestroy()
+    {
+        if (instance == this) instance = null;
+    }
+
+    // Called for every card a GROUP ROOT slider is about to write, immediately before the write.
+    //
+    // ModelViewer's group edit builds each card's new state out of the card's RENDERED fields -
+    // either as a pass-through ("keep the width it has") or as a relative step ("bend + delta") -
+    // and SetParameters promotes whatever it is handed straight into canonical. For a card inside
+    // a POST the rendered fields are base + that POST's contribution. So a root edit made with a
+    // POST live would bake the POST's contribution into the base, and ApplyAll would then add the
+    // same contribution again on top: the POST doubling on every slider tick, on EVERY channel
+    // rather than only the one being dragged, compounding for as long as the drag lasts.
+    //
+    // Re-asserting canonical onto the rendered fields first makes the edit read the base - which
+    // is what the panel is showing and what the user means to move. ApplyAll puts the POST back
+    // on top in the same frame's LateUpdate, so nothing is lost and nothing is counted twice.
+    //
+    // This is what makes the group root editable with POSTs in place. Before it, the root had to
+    // be locked (ModifierCoreLock) because there was no way to edit it that did not corrupt the
+    // POSTs sitting on it.
+    public void PrepareCardForRootEdit(HairCard card)
+    {
+        if (card == null) return;
+
+        // While a POST is being AUTHORED the panel belongs to that POST, not to the root: the
+        // edit is meant to become its delta, the preview writes are meant to show base + delta,
+        // and UpdateCanonicalBases restores canonical underneath them every frame. Rebasing here
+        // would fight all three. Nothing about POST authoring changes.
+        if (GetActive() != null && HasSelection()) return;
+
+        if (!groups.TryGetValue(card.groupId, out List<PostAffector> list)) return;
+        if (list == null || list.Count == 0) return;
+
+        // Rebased for EVERY card in a group that has POSTs, with no test on what the POSTs
+        // currently hold.
+        //
+        // The obvious optimisation - skip when this card's summed POST delta is zero - is
+        // WRONG, and wrong in the exact way this method exists to prevent. A POST's delta is
+        // not the only thing riding on top of canonical: PostVarianceAffectorBridge runs at
+        // 3500, after ApplyAll, and adds a rendered-only scatter layer driven by the POST's own
+        // VAR amounts, which AbsorbPanelEdit never writes into delta. A POST with zero delta and
+        // a VAR amount is an ordinary thing to have - author one, drag VAR, go back to the group
+        // - and on that POST the delta test skips the rebase, the group edit reads the scatter,
+        // SetParameters promotes it into canonical, and the bridge adds it again. It grows by one
+        // scatter per drag frame and is written to disk by CanonicalizeForSave.
+        //
+        // So the test is "does this group have POSTs", which cannot miss a layer. It costs
+        // nothing on the cards no POST reaches: their rendered state already equals canonical,
+        // so this writes the values that are already there, and with regenerateMesh false there
+        // is no rebuild behind it either.
+        card.ApplyEvaluatedState(ToGroomState(ReadCanonical(card)), false);
+    }
+
     void Update()
     {
         EnsureViewer();

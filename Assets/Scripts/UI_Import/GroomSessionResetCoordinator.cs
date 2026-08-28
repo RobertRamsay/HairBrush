@@ -120,12 +120,16 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         boundResetButton.onClick.AddListener(ResetCurrentAffector);
     }
 
+    // Always available now. It used to be greyed out whenever the current group had a POST and
+    // none was selected, which was the same rule ModifierCoreLock locked the sliders under: the
+    // group root could not be edited, so resetting it would have been a change nothing else
+    // could make or undo. The root is editable with POSTs live, so a RESET of it is an ordinary
+    // edit like any other - and a panel where every control is live except this one, under a
+    // notice saying these are the group base values, is worse than either state on its own.
     void MaintainResetAvailability()
     {
         if (boundResetButton == null) return;
-        bool activePost = TryGetActivePost(out _);
-        bool groupHasPost = GroupHasPost(viewer.currentGroupId);
-        boundResetButton.interactable = activePost || !groupHasPost;
+        boundResetButton.interactable = true;
     }
 
     GameObject GetLoadedModel()
@@ -145,11 +149,11 @@ public class GroomSessionResetCoordinator : MonoBehaviour
             return;
         }
 
-        // A group root that already contains POSTs is intentionally read-only. With no POST
-        // selected there is no current editable affector, so RESET must not reach underneath
-        // those downstream modifiers and alter the group behind their back.
+        // This used to refuse when the group had POSTs, because the group root was read-only
+        // and RESET would have been the one way to move it - underneath the modifiers, behind
+        // their back. The root is editable now, so resetting it is the same kind of edit as
+        // dragging every slider back by hand, and the POSTs go on riding over the result.
         int groupId = viewer.currentGroupId;
-        if (GroupHasPost(groupId)) return;
 
         ResetCurrentGroup(groupId);
         RefreshRuntimeUI();
@@ -248,13 +252,8 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         return active != null;
     }
 
-    bool GroupHasPost(int groupId)
-    {
-        PostAffectorManager manager = FindFirstObjectByType<PostAffectorManager>();
-        if (manager == null) return false;
-        List<PostAffectorSaveData> posts = manager.ExportGroup(groupId);
-        return posts != null && posts.Count > 0;
-    }
+    // GroupHasPost lived here. Both its callers - the availability gate and the refusal inside
+    // ResetCurrentAffector - existed only to enforce the read-only group root, and both are gone.
 
     void ResetPostLocalVariance(int postId)
     {

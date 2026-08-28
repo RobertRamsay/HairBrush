@@ -855,7 +855,13 @@ public class HairCard : MonoBehaviour
         if (applyToRendered) ApplyEvaluatedState(canonicalState);
     }
 
-    public void ApplyEvaluatedState(GroomState state)
+    // regenerateMesh:false is for a caller that is about to write the card AGAIN in the same
+    // breath - PostAffectorManager.PrepareCardForRootEdit, which puts the base back on the card
+    // purely so the group edit landing immediately afterwards reads the base rather than
+    // base + POST. Rebuilding the mesh for a state that exists for the length of one method call
+    // is a full array allocation and ~144 curve samples per card, per card, per drag frame,
+    // thrown away before anything can see it. Every other caller leaves it true.
+    public void ApplyEvaluatedState(GroomState state, bool regenerateMesh = true)
     {
         state = SanitizeState(state);
         length = state.length;
@@ -884,7 +890,7 @@ public class HairCard : MonoBehaviour
         // overwhelmingly with values identical to the ones already on the card. The field
         // writes and the transform update above still run unconditionally - only the mesh
         // rebuild is skipped, and only when nothing that feeds it has moved.
-        GenerateMeshIfInputsChanged();
+        if (regenerateMesh) GenerateMeshIfInputsChanged();
     }
 
     GroomState ReadRenderedState()

@@ -1,0 +1,335 @@
+diff --git a/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs b/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs
+index f6a4873..ab7e0a8 100644
+--- a/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs
++++ b/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs
+@@ -120,12 +120,16 @@ public class GroomSessionResetCoordinator : MonoBehaviour
+         boundResetButton.onClick.AddListener(ResetCurrentAffector);
+     }
+ 
++    // Always available now. It used to be greyed out whenever the current group had a POST and
++    // none was selected, which was the same rule ModifierCoreLock locked the sliders under: the
++    // group root could not be edited, so resetting it would have been a change nothing else
++    // could make or undo. The root is editable with POSTs live, so a RESET of it is an ordinary
++    // edit like any other - and a panel where every control is live except this one, under a
++    // notice saying these are the group base values, is worse than either state on its own.
+     void MaintainResetAvailability()
+     {
+         if (boundResetButton == null) return;
+-        bool activePost = TryGetActivePost(out _);
+-        bool groupHasPost = GroupHasPost(viewer.currentGroupId);
+-        boundResetButton.interactable = activePost || !groupHasPost;
++        boundResetButton.interactable = true;
+     }
+ 
+     GameObject GetLoadedModel()
+@@ -145,11 +149,11 @@ public class GroomSessionResetCoordinator : MonoBehaviour
+             return;
+         }
+ 
+-        // A group root that already contains POSTs is intentionally read-only. With no POST
+-        // selected there is no current editable affector, so RESET must not reach underneath
+-        // those downstream modifiers and alter the group behind their back.
++        // This used to refuse when the group had POSTs, because the group root was read-only
++        // and RESET would have been the one way to move it - underneath the modifiers, behind
++        // their back. The root is editable now, so resetting it is the same kind of edit as
++        // dragging every slider back by hand, and the POSTs go on riding over the result.
+         int groupId = viewer.currentGroupId;
+-        if (GroupHasPost(groupId)) return;
+ 
+         ResetCurrentGroup(groupId);
+         RefreshRuntimeUI();
+@@ -248,13 +252,8 @@ public class GroomSessionResetCoordinator : MonoBehaviour
+         return active != null;
+     }
+ 
+-    bool GroupHasPost(int groupId)
+-    {
+-        PostAffectorManager manager = FindFirstObjectByType<PostAffectorManager>();
+-        if (manager == null) return false;
+-        List<PostAffectorSaveData> posts = manager.ExportGroup(groupId);
+-        return posts != null && posts.Count > 0;
+-    }
++    // GroupHasPost lived here. Both its callers - the availability gate and the refusal inside
++    // ResetCurrentAffector - existed only to enforce the read-only group root, and both are gone.
+ 
+     void ResetPostLocalVariance(int postId)
+     {
+diff --git a/Assets/Scripts/UI_Import/HairCard.cs b/Assets/Scripts/UI_Import/HairCard.cs
+index d8f769b..bb53918 100644
+--- a/Assets/Scripts/UI_Import/HairCard.cs
++++ b/Assets/Scripts/UI_Import/HairCard.cs
+@@ -855,7 +855,13 @@ public class HairCard : MonoBehaviour
+         if (applyToRendered) ApplyEvaluatedState(canonicalState);
+     }
+ 
+-    public void ApplyEvaluatedState(GroomState state)
++    // regenerateMesh:false is for a caller that is about to write the card AGAIN in the same
++    // breath - PostAffectorManager.PrepareCardForRootEdit, which puts the base back on the card
++    // purely so the group edit landing immediately afterwards reads the base rather than
++    // base + POST. Rebuilding the mesh for a state that exists for the length of one method call
++    // is a full array allocation and ~144 curve samples per card, per card, per drag frame,
++    // thrown away before anything can see it. Every other caller leaves it true.
++    public void ApplyEvaluatedState(GroomState state, bool regenerateMesh = true)
+     {
+         state = SanitizeState(state);
+         length = state.length;
+@@ -884,7 +890,7 @@ public class HairCard : MonoBehaviour
+         // overwhelmingly with values identical to the ones already on the card. The field
+         // writes and the transform update above still run unconditionally - only the mesh
+         // rebuild is skipped, and only when nothing that feeds it has moved.
+-        GenerateMeshIfInputsChanged();
++        if (regenerateMesh) GenerateMeshIfInputsChanged();
+     }
+ 
+     GroomState ReadRenderedState()
+diff --git a/Assets/Scripts/UI_Import/ModelViewer.cs b/Assets/Scripts/UI_Import/ModelViewer.cs
+index 76d3437..39404aa 100644
+--- a/Assets/Scripts/UI_Import/ModelViewer.cs
++++ b/Assets/Scripts/UI_Import/ModelViewer.cs
+@@ -422,7 +422,22 @@ public class ModelViewer : MonoBehaviour
+     void ApplyGroupUpdate(System.Action<HairCard> updateAction)
+     {
+         HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
+-        foreach (HairCard card in allCards) if (card.groupId == currentGroupId) updateAction(card);
++        PostAffectorManager posts = PostAffectorManager.Instance;
++
++        foreach (HairCard card in allCards)
++        {
++            if (card == null || card.groupId != currentGroupId) continue;
++
++            // Every lambda that reaches here reads the card's RENDERED fields - "keep the width
++            // it has", "bend + delta" - and for a card under a POST those already carry that
++            // POST's contribution. Written back, it would be baked into the base and then added
++            // a second time when the POST is evaluated. PrepareCardForRootEdit puts the base
++            // back on the card first, and does nothing at all for a card no POST reaches or
++            // while a POST is being authored. See PostAffectorManager for the full reasoning.
++            if (posts != null) posts.PrepareCardForRootEdit(card);
++
++            updateAction(card);
++        }
+     }
+ 
+     void CreateModeToggleButton(Transform parent)
+diff --git a/Assets/Scripts/UI_Import/ModifierCoreLock.cs b/Assets/Scripts/UI_Import/ModifierCoreLock.cs
+index 2877602..68a985f 100644
+--- a/Assets/Scripts/UI_Import/ModifierCoreLock.cs
++++ b/Assets/Scripts/UI_Import/ModifierCoreLock.cs
+@@ -6,11 +6,28 @@ using TMPro;
+ using UnityEngine;
+ using UnityEngine.UI;
+ 
+-// POST affectors are downstream structural modifiers, so the group root is read-only
+-// while one exists. Variance remains part of the groom UI but is locked at the same time.
+-// CLUMPER is itself a downstream modifier and must stay editable even when POSTs exist.
+-// Predetermined UV routing is group metadata, not groom geometry, so its controls also
+-// stay editable at the group root and must not oscillate against this lock.
++// The group root is EDITABLE with POSTs in place. This class no longer locks anything - it
++// keeps the panel live and says what is going on.
++//
++// It used to make the whole groom panel read-only whenever the current group had a POST, for a
++// real reason: ModelViewer's group edit path reads each card's rendered state, which for a card
++// under a POST is base + that POST's contribution, and writes it back as the new base. Editing
++// the root with a POST live therefore baked the POST into the base and then evaluated it again
++// on top - doubling it on every channel, every slider tick. Locking the root was the only thing
++// standing between the user and that.
++//
++// PostAffectorManager.PrepareCardForRootEdit fixes it at the source: the root edit now reads the
++// base rather than base + POST, and the POSTs are re-applied over the result in the same frame.
++// So the root can move and the POSTs ride on top of wherever it lands, which is what a group
++// base value is supposed to mean.
++//
++// What is left here:
++//   - a pass that keeps the rows interactable and undimmed, so no stale lock state survives a
++//     panel rebuild or a project saved by a build that did lock them
++//   - the notice, reworded from a refusal into an explanation
++//
++// Authoring a POST is unchanged: Ctrl+click into one and the panel edits that POST's delta,
++// exactly as before.
+ [DefaultExecutionOrder(5000)]
+ public class ModifierCoreLock : MonoBehaviour
+ {
+@@ -48,10 +65,11 @@ public class ModifierCoreLock : MonoBehaviour
+         int groupId = viewer.currentGroupId;
+         bool editingPost = IsLocalizedPostEditing();
+         bool post = GroupHasPost(groupId);
+-        bool locked = post && !editingPost;
+ 
+         // Runtime rows can be rebuilt, so always re-apply instead of caching interactable state.
+-        ApplyLock(locked, post);
++        // The notice is for the group root only - while a POST is being authored the panel is
++        // that POST's, and saying anything about the root there would be wrong.
++        ApplyLock(post && !editingPost);
+     }
+ 
+     void ResolveReferences()
+@@ -88,26 +106,30 @@ public class ModifierCoreLock : MonoBehaviour
+         }
+     }
+ 
+-    void ApplyLock(bool locked, bool post)
++    // Everything here now sets the SAME value every pass - live, undimmed. It is kept as a pass
++    // rather than deleted because the state it is clearing is not always its own: a panel rebuilt
++    // from a project saved by a locking build, or any authority that dims a row and dies before
++    // putting it back, would otherwise leave a permanently dead slider with nothing to revive it.
++    void ApplyLock(bool post)
+     {
+         if (boundPanel == null) return;
+ 
+         foreach (Slider slider in boundPanel.GetComponentsInChildren<Slider>(true))
+         {
+             if (slider == null || IsInsideClumper(slider.transform) || IsInsideUVRouting(slider.transform)) continue;
+-            slider.interactable = !locked;
++            slider.interactable = true;
+         }
+ 
+         foreach (TMP_InputField input in boundPanel.GetComponentsInChildren<TMP_InputField>(true))
+         {
+             if (input == null || IsInsideClumper(input.transform) || IsInsideUVRouting(input.transform)) continue;
+-            input.interactable = !locked;
++            input.interactable = true;
+         }
+ 
+         foreach (Button button in boundPanel.GetComponentsInChildren<Button>(true))
+         {
+             if (button == null || IsInsideClumper(button.transform) || IsInsideUVRouting(button.transform) || !IsVarianceButton(button)) continue;
+-            button.interactable = !locked;
++            button.interactable = true;
+         }
+ 
+         foreach (Transform child in boundPanel.transform)
+@@ -122,26 +144,32 @@ public class ModifierCoreLock : MonoBehaviour
+             // having to work the other's answer out again.
+             //
+             // Note it is NOT on IsInsideUVRouting, and must not be: that list exempts a control
+-            // in both modes, which would leave the ADJUSTABLE flip editable under the lock.
++            // in both modes, and this loop is what would put a stale dim on it back to 1.
+             if (child == null || child.name == "ClumperScrollHost" || child.name == "ClumperControls" ||
+                 child.name == "GroupUVMode_Row" || child.name == "GroupUVPredetermined_Row" ||
+                 child.name == "GroupUVFlip_Row") continue;
+             bool editableRow = child.name.EndsWith("_Row", StringComparison.Ordinal) ||
+                                child.name.EndsWith("_VarianceRow", StringComparison.Ordinal);
+             if (!editableRow) continue;
++            // Only ever added, never dimmed. A CanvasGroup at alpha 1 costs nothing and is what
++            // an older project's 0.48 gets corrected to.
+             CanvasGroup cg = child.GetComponent<CanvasGroup>();
+             if (cg == null) cg = child.gameObject.AddComponent<CanvasGroup>();
+-            cg.alpha = locked ? 0.48f : 1f;
++            cg.alpha = 1f;
+         }
+ 
+         EnsureNotice();
+         if (lockNotice == null) return;
+-        lockNotice.SetActive(locked && !IsClumperVisible());
+-        if (!locked || IsClumperVisible()) return;
++
++        // Shown while the group has POSTs, hidden during a clumper session - the clumper hides
++        // the rest of the panel anyway, so a line about the root would be talking about controls
++        // that are not on screen.
++        bool show = post && !IsClumperVisible();
++        lockNotice.SetActive(show);
++        if (!show) return;
+ 
+         TextMeshProUGUI text = lockNotice.GetComponent<TextMeshProUGUI>();
+-        if (text != null)
+-            text.text = post ? "GROOM LOCKED — active: POST" : "GROOM LOCKED";
++        if (text != null) text.text = "POSTS LIVE — these are the group base values, POSTs ride on top";
+     }
+ 
+     bool IsInsideClumper(Transform t)
+@@ -204,11 +232,13 @@ public class ModifierCoreLock : MonoBehaviour
+         le.minHeight = 34f;
+ 
+         TextMeshProUGUI text = lockNotice.GetComponent<TextMeshProUGUI>();
+-        text.text = "GROOM LOCKED";
+-        text.fontSize = 13f;
++        text.text = "POSTS LIVE";
++        text.fontSize = 12f;
+         text.fontStyle = FontStyles.Bold;
+         text.alignment = TextAlignmentOptions.Center;
+-        text.color = new Color(1f, 0.72f, 0.28f, 1f);
++        // Was amber, which is this project's "you cannot do that". Nothing is being refused
++        // any more, so it reads as an ordinary panel label.
++        text.color = new Color(.62f, .74f, .86f, 1f);
+         text.raycastTarget = false;
+ 
+         int targetIndex = Mathf.Min(2, boundPanel.transform.childCount - 1);
+diff --git a/Assets/Scripts/UI_Import/PostAffectorManager.cs b/Assets/Scripts/UI_Import/PostAffectorManager.cs
+index 8717ec3..b97fbc2 100644
+--- a/Assets/Scripts/UI_Import/PostAffectorManager.cs
++++ b/Assets/Scripts/UI_Import/PostAffectorManager.cs
+@@ -84,6 +84,75 @@ public class PostAffectorManager : MonoBehaviour
+         go.AddComponent<PostAffectorManager>();
+     }
+ 
++    // The live manager, so ModelViewer's group-root edit path can reach it without a scene scan
++    // on every slider tick. Initialised to null here and cleared in OnDestroy.
++    private static PostAffectorManager instance = null;
++
++    public static PostAffectorManager Instance
++    {
++        get { return instance; }
++    }
++
++    void Awake()
++    {
++        instance = this;
++    }
++
++    void OnDestroy()
++    {
++        if (instance == this) instance = null;
++    }
++
++    // Called for every card a GROUP ROOT slider is about to write, immediately before the write.
++    //
++    // ModelViewer's group edit builds each card's new state out of the card's RENDERED fields -
++    // either as a pass-through ("keep the width it has") or as a relative step ("bend + delta") -
++    // and SetParameters promotes whatever it is handed straight into canonical. For a card inside
++    // a POST the rendered fields are base + that POST's contribution. So a root edit made with a
++    // POST live would bake the POST's contribution into the base, and ApplyAll would then add the
++    // same contribution again on top: the POST doubling on every slider tick, on EVERY channel
++    // rather than only the one being dragged, compounding for as long as the drag lasts.
++    //
++    // Re-asserting canonical onto the rendered fields first makes the edit read the base - which
++    // is what the panel is showing and what the user means to move. ApplyAll puts the POST back
++    // on top in the same frame's LateUpdate, so nothing is lost and nothing is counted twice.
++    //
++    // This is what makes the group root editable with POSTs in place. Before it, the root had to
++    // be locked (ModifierCoreLock) because there was no way to edit it that did not corrupt the
++    // POSTs sitting on it.
++    public void PrepareCardForRootEdit(HairCard card)
++    {
++        if (card == null) return;
++
++        // While a POST is being AUTHORED the panel belongs to that POST, not to the root: the
++        // edit is meant to become its delta, the preview writes are meant to show base + delta,
++        // and UpdateCanonicalBases restores canonical underneath them every frame. Rebasing here
++        // would fight all three. Nothing about POST authoring changes.
++        if (GetActive() != null && HasSelection()) return;
++
++        if (!groups.TryGetValue(card.groupId, out List<PostAffector> list)) return;
++        if (list == null || list.Count == 0) return;
++
++        // Rebased for EVERY card in a group that has POSTs, with no test on what the POSTs
++        // currently hold.
++        //
++        // The obvious optimisation - skip when this card's summed POST delta is zero - is
++        // WRONG, and wrong in the exact way this method exists to prevent. A POST's delta is
++        // not the only thing riding on top of canonical: PostVarianceAffectorBridge runs at
++        // 3500, after ApplyAll, and adds a rendered-only scatter layer driven by the POST's own
++        // VAR amounts, which AbsorbPanelEdit never writes into delta. A POST with zero delta and
++        // a VAR amount is an ordinary thing to have - author one, drag VAR, go back to the group
++        // - and on that POST the delta test skips the rebase, the group edit reads the scatter,
++        // SetParameters promotes it into canonical, and the bridge adds it again. It grows by one
++        // scatter per drag frame and is written to disk by CanonicalizeForSave.
++        //
++        // So the test is "does this group have POSTs", which cannot miss a layer. It costs
++        // nothing on the cards no POST reaches: their rendered state already equals canonical,
++        // so this writes the values that are already there, and with regenerateMesh false there
++        // is no rebuild behind it either.
++        card.ApplyEvaluatedState(ToGroomState(ReadCanonical(card)), false);
++    }
++
+     void Update()
+     {
+         EnsureViewer();

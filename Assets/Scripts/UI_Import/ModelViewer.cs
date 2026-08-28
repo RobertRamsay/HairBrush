@@ -422,7 +422,22 @@ public class ModelViewer : MonoBehaviour
     void ApplyGroupUpdate(System.Action<HairCard> updateAction)
     {
         HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
-        foreach (HairCard card in allCards) if (card.groupId == currentGroupId) updateAction(card);
+        PostAffectorManager posts = PostAffectorManager.Instance;
+
+        foreach (HairCard card in allCards)
+        {
+            if (card == null || card.groupId != currentGroupId) continue;
+
+            // Every lambda that reaches here reads the card's RENDERED fields - "keep the width
+            // it has", "bend + delta" - and for a card under a POST those already carry that
+            // POST's contribution. Written back, it would be baked into the base and then added
+            // a second time when the POST is evaluated. PrepareCardForRootEdit puts the base
+            // back on the card first, and does nothing at all for a card no POST reaches or
+            // while a POST is being authored. See PostAffectorManager for the full reasoning.
+            if (posts != null) posts.PrepareCardForRootEdit(card);
+
+            updateAction(card);
+        }
     }
 
     void CreateModeToggleButton(Transform parent)
