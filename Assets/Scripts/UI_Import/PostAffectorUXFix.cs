@@ -113,14 +113,18 @@ public class PostAffectorUXFix : MonoBehaviour
             // cannot be shifted by either.
             //
             // Panel is 360 wide with 10px VerticalLayoutGroup padding either side -> 340 usable.
-            // Minus this row's 4+4 padding and 5 gaps of 4 -> 312 for the six columns. The 306
-            // below leaves a little slack at the right so DEL never touches the panel edge.
-            SetWidth(row.Find("PostSelectButton"), 58f);  // POST n, or the user's name for it
-            SetWidth(row.Find("PostRenameField"), 58f);   // the edit box, same slot, only while open
-            SetWidth(row.Find("PostModeButton"), 34f);    // REL / ABS
-            SetWidth(row.Find("PostWeightLabel"), 48f);   // "WEIGHT"
-            SetWidth(row.Find("WeightSlider"), 94f);
-            SetWidth(row.Find("PostWeightValue"), 28f);
+            // Minus this row's 4+4 padding and 5 gaps of 4 -> 312 for the six columns.
+            //
+            // 306 was too close: the last column is DEL, so every pixel over budget comes off
+            // the one button that must never be half-visible - it was showing as "DE" against
+            // the panel edge. 276 leaves 36px of slack, which is a whole column's worth of room
+            // for a font or a canvas scale that measures slightly wider than this arithmetic.
+            SetWidth(row.Find("PostSelectButton"), 52f);  // POST n, or the user's name for it
+            SetWidth(row.Find("PostRenameField"), 52f);   // the edit box, same slot, only while open
+            SetWidth(row.Find("PostModeButton"), 32f);    // REL / ABS
+            SetWidth(row.Find("PostWeightLabel"), 44f);   // "WEIGHT"
+            SetWidth(row.Find("WeightSlider"), 78f);
+            SetWidth(row.Find("PostWeightValue"), 26f);
             SetWidth(row.Find("DEL"), 44f);
 
             ForceSingleLineWeightLabel(row.Find("PostWeightLabel"));

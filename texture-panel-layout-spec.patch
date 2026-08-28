@@ -1,0 +1,345 @@
+diff --git a/Assets/Scripts/UI_Import/MaterialEditorManager.cs b/Assets/Scripts/UI_Import/MaterialEditorManager.cs
+index 6476cda..1ce6422 100644
+--- a/Assets/Scripts/UI_Import/MaterialEditorManager.cs
++++ b/Assets/Scripts/UI_Import/MaterialEditorManager.cs
+@@ -39,6 +39,10 @@ public class MaterialEditorManager : MonoBehaviour
+     // old dictionary with one reserved key lets existing project persistence migrate cleanly.
+     private const int GlobalMaterialKey = int.MinValue;
+ 
++    // Label line, button line, filename line. TextureWorkspacePolishFix places the children
++    // against these same numbers.
++    public const float TextureRowHeight = 74f;
++
+     [Serializable]
+     private class HairMaterialEntry
+     {
+@@ -248,81 +252,56 @@ public class MaterialEditorManager : MonoBehaviour
+             CreateTextureRow(propertiesRoot, "Albedo", AlbedoProperty, false, entry.albedoPath);
+             CreateTextureRow(propertiesRoot, "Normal", NormalProperty, true, entry.normalPath);
+             CreateTextureRow(propertiesRoot, "Opacity Mask", OpacityProperty, true, entry.opacityPath);
+-            // Sliders directly under the textures, master colour last. Metallic was below the
+-            // colour block and fell off the bottom of the panel; both of these are per-material
+-            // numbers and belong with the maps they modify, while the colour is a single value
+-            // applied over the top of all of it.
++            CreateTintRow(propertiesRoot, entry);
+             CreateFloatSliderRow(propertiesRoot, "Smoothness", SmoothProperty, entry);
+             CreateFloatSliderRow(propertiesRoot, "Metallic", MetalProperty, entry);
+-            CreateTintRow(propertiesRoot, entry);
+         }
+     }
+ 
++    // One texture slot, in the shape asked for:
++    //
++    //     ALBEDO:
++    //     [LOAD] [FIND] [CLEAR]
++    //     FILE: HSD_NiceHairsExport_Color
++    //
++    // A flat row with the three children stacked by TextureWorkspacePolishFix, which positions
++    // everything in this panel by hand. The previous shape - a two-line text block beside a
++    // stacked button column - put the buttons and the filename on the same line as each other
++    // and left neither enough room.
+     private void CreateTextureRow(Transform parent, string label, string propertyName, bool linear, string currentPath)
+     {
+-        GameObject row = new GameObject(label + "Row", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
++        GameObject row = new GameObject(label + "Row", typeof(RectTransform), typeof(LayoutElement));
+         row.transform.SetParent(parent, false);
+-        // 50, which is exactly LOAD + LOCATE stacked: 24 + 24 with the column's 2px gap. The
+-        // row's layout group controls its children's heights, so that one number is also what
+-        // makes CLR square beside them - it gets the row height, and 50 wide is the width asked
+-        // for it. Setting a height here without matching the buttons would silently un-square it.
++
+         LayoutElement rowElement = row.GetComponent<LayoutElement>();
+-        rowElement.preferredHeight = 50f;
+-        rowElement.minHeight = 50f;
+-        HorizontalLayoutGroup layout = row.GetComponent<HorizontalLayoutGroup>();
+-        layout.spacing = 4f;
+-        layout.childControlWidth = false;
+-        layout.childControlHeight = true;
+-        layout.childForceExpandWidth = false;
+-        layout.childForceExpandHeight = false;
++        rowElement.preferredHeight = TextureRowHeight;
++        rowElement.minHeight = TextureRowHeight;
+ 
+-        GameObject textBlock = new GameObject("Info", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
+-        textBlock.transform.SetParent(row.transform, false);
+-        textBlock.GetComponent<LayoutElement>().preferredWidth = 320f;
+-        VerticalLayoutGroup textLayout = textBlock.GetComponent<VerticalLayoutGroup>();
+-        textLayout.spacing = 0f;
+-        textLayout.childControlHeight = false;
+-        textLayout.childControlWidth = true;
+-        textLayout.childForceExpandHeight = false;
++        // No layout group on the row at all. Every child below is anchored explicitly by the
++        // polish pass, and a layout group would only fight it - which is what it did.
++        CreateSubLabel(row.transform, label, 18f);
++
++        CreateSmallButton(row.transform, "LOAD", () => LoadTextureIntoSlot(propertyName, linear), 86f, 24f);
++
++        // FIND rather than LOCATE: three buttons across 280px want short words, and this one
++        // opens the folder the file came from.
++        CreateSmallButton(row.transform, "FIND", () => LocateTextureFile(currentPath), 86f, 24f);
++        CreateSmallButton(row.transform, "CLEAR", () => ClearTextureSlot(propertyName), 86f, 24f);
+ 
+-        CreateSubLabel(textBlock.transform, label, 16f);
+         string currentName = string.IsNullOrEmpty(currentPath) ? GetCurrentTextureName(propertyName) : Path.GetFileName(currentPath);
+-        // Some filenames are long enough that no single-line column width is going to hold them
+-        // at a readable size. Wrapping onto up to two lines instead of ellipsis-truncating means
+-        // the full name is always visible regardless of length, rather than chasing an ever-wider
+-        // column for whatever the longest name anyone loads turns out to be.
+-        TMPro.TextMeshProUGUI file = CreateSubLabel(textBlock.transform, "Current: " + currentName, 32f);
+-        file.fontSize = 10f;
++
++        GameObject fileGO = new GameObject("File", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI), typeof(LayoutElement));
++        fileGO.transform.SetParent(row.transform, false);
++        TMPro.TextMeshProUGUI file = fileGO.GetComponent<TMPro.TextMeshProUGUI>();
++        file.text = "FILE: " + currentName;
++        file.fontSize = 12f;
+         file.color = new Color(.72f, .72f, .72f);
+-        file.textWrappingMode = TMPro.TextWrappingModes.Normal;
+-        file.overflowMode = TMPro.TextOverflowModes.Truncate;
+-
+-        // Only ~56px remains after the Info column within the panel's fixed 300px width (see
+-        // TextureWorkspacePolishFix.PolishMaterialPanel), so LOAD and LOCATE stack vertically in
+-        // that same narrow column rather than sitting side by side, which would overflow the panel.
+-        GameObject buttonColumn = new GameObject("ButtonColumn", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
+-        buttonColumn.transform.SetParent(row.transform, false);
+-        LayoutElement columnLayout = buttonColumn.GetComponent<LayoutElement>();
+-        columnLayout.preferredWidth = 54f;
+-        columnLayout.minWidth = 54f;
+-        columnLayout.preferredHeight = 50f;
+-        columnLayout.minHeight = 50f;
+-        VerticalLayoutGroup columnGroup = buttonColumn.GetComponent<VerticalLayoutGroup>();
+-        columnGroup.spacing = 2f;
+-        columnGroup.childControlWidth = true;
+-        columnGroup.childForceExpandWidth = true;
+-        columnGroup.childControlHeight = true;
+-        columnGroup.childForceExpandHeight = false;
+-
+-        CreateSmallButton(buttonColumn.transform, "LOAD", () => LoadTextureIntoSlot(propertyName, linear), 54f, 24f);
+-        CreateSmallButton(buttonColumn.transform, "LOCATE", () => LocateTextureFile(currentPath), 54f, 24f);
+-
+-        // CLR: half the width of the buttons beside it, and the full height of both of them
+-        // stacked - 24 + 24 with the column's 2px gap. TextureWorkspacePolishFix sets the final
+-        // geometry (the row's layout group would otherwise hand it the row height and its own
+-        // preferred width, which is how it came out short and wide); these are the starting
+-        // values and the two agree on the numbers.
+-        CreateSmallButton(row.transform, "CLR", () => ClearTextureSlot(propertyName), 27f, 50f);
++        file.alignment = TMPro.TextAlignmentOptions.MidlineLeft;
++
++        // On its own line with the full panel width to itself, so a long basename shrinks a
++        // little rather than wrapping into the row below - which is what it was doing.
++        file.textWrappingMode = TMPro.TextWrappingModes.NoWrap;
++        file.overflowMode = TMPro.TextOverflowModes.Ellipsis;
+     }
+ 
+     // One 0-1 slider, built the way this panel builds them. Extracted so the master-colour
+diff --git a/Assets/Scripts/UI_Import/PostAffectorManager.cs b/Assets/Scripts/UI_Import/PostAffectorManager.cs
+index bc26c27..0f960d4 100644
+--- a/Assets/Scripts/UI_Import/PostAffectorManager.cs
++++ b/Assets/Scripts/UI_Import/PostAffectorManager.cs
+@@ -1005,9 +1005,9 @@ public class PostAffectorManager : MonoBehaviour
+         // every width onto the wrong column.
+         wt.gameObject.name = WeightLabelName;
+ 
+-        // 128 before the mode button existed. The 40 it gives up is exactly what that button
+-        // takes, so the row is the width it always was.
+-        Slider slider = AddWeightSlider(row.transform, a.weight, 88f);
++        // A starting width only - PostAffectorUXFix.CompactPostRows decides the real one every
++        // 0.05s, and its budget is what keeps DEL on the panel.
++        Slider slider = AddWeightSlider(row.transform, a.weight, 78f);
+         TextMeshProUGUI value = AddText(row.transform, a.weight.ToString("F2"), 10, 30f);
+         value.alignment = TextAlignmentOptions.Center;
+ 
+diff --git a/Assets/Scripts/UI_Import/PostAffectorUXFix.cs b/Assets/Scripts/UI_Import/PostAffectorUXFix.cs
+index 29e62e8..f0b4e74 100644
+--- a/Assets/Scripts/UI_Import/PostAffectorUXFix.cs
++++ b/Assets/Scripts/UI_Import/PostAffectorUXFix.cs
+@@ -113,14 +113,18 @@ public class PostAffectorUXFix : MonoBehaviour
+             // cannot be shifted by either.
+             //
+             // Panel is 360 wide with 10px VerticalLayoutGroup padding either side -> 340 usable.
+-            // Minus this row's 4+4 padding and 5 gaps of 4 -> 312 for the six columns. The 306
+-            // below leaves a little slack at the right so DEL never touches the panel edge.
+-            SetWidth(row.Find("PostSelectButton"), 58f);  // POST n, or the user's name for it
+-            SetWidth(row.Find("PostRenameField"), 58f);   // the edit box, same slot, only while open
+-            SetWidth(row.Find("PostModeButton"), 34f);    // REL / ABS
+-            SetWidth(row.Find("PostWeightLabel"), 48f);   // "WEIGHT"
+-            SetWidth(row.Find("WeightSlider"), 94f);
+-            SetWidth(row.Find("PostWeightValue"), 28f);
++            // Minus this row's 4+4 padding and 5 gaps of 4 -> 312 for the six columns.
++            //
++            // 306 was too close: the last column is DEL, so every pixel over budget comes off
++            // the one button that must never be half-visible - it was showing as "DE" against
++            // the panel edge. 276 leaves 36px of slack, which is a whole column's worth of room
++            // for a font or a canvas scale that measures slightly wider than this arithmetic.
++            SetWidth(row.Find("PostSelectButton"), 52f);  // POST n, or the user's name for it
++            SetWidth(row.Find("PostRenameField"), 52f);   // the edit box, same slot, only while open
++            SetWidth(row.Find("PostModeButton"), 32f);    // REL / ABS
++            SetWidth(row.Find("PostWeightLabel"), 44f);   // "WEIGHT"
++            SetWidth(row.Find("WeightSlider"), 78f);
++            SetWidth(row.Find("PostWeightValue"), 26f);
+             SetWidth(row.Find("DEL"), 44f);
+ 
+             ForceSingleLineWeightLabel(row.Find("PostWeightLabel"));
+diff --git a/Assets/Scripts/UI_Import/TextureWorkspacePolishFix.cs b/Assets/Scripts/UI_Import/TextureWorkspacePolishFix.cs
+index fe1e7c3..e3e1860 100644
+--- a/Assets/Scripts/UI_Import/TextureWorkspacePolishFix.cs
++++ b/Assets/Scripts/UI_Import/TextureWorkspacePolishFix.cs
+@@ -12,7 +12,6 @@ using UnityEngine.UI;
+ public class TextureWorkspacePolishFix : MonoBehaviour
+ {
+     private const float MaterialPanelWidth = 300f;
+-    private const float TextureInfoWidth = 220f;
+     private const float SliderWidth = 216f;
+     private const float SliderValueWidth = 44f;
+     private const float SliderHeight = 18f;
+@@ -30,9 +29,15 @@ public class TextureWorkspacePolishFix : MonoBehaviour
+ 
+     // The texture rows' right-hand controls. The column holds LOAD and LOCATE stacked, 24 each
+     // with a 2px gap; CLR stands beside it at half their width and the full height of both.
+-    private const float TextureButtonColumnWidth = 54f;
+-    private const float TextureButtonColumnHeight = 50f;
+-    private const float TextureClearWidth = 27f;
++    private const float ContentWidth = 280f;
++    // Referenced, not repeated: MaterialEditorManager builds the row against this same number,
++    // and two constants that must agree are one refactor from disagreeing.
++    private const float TextureRowHeight = MaterialEditorManager.TextureRowHeight;
++    private const float TextureLabelY = 2f;
++    private const float TextureButtonY = 22f;
++    private const float TextureButtonHeight = 24f;
++    private const float TextureButtonGap = 4f;
++    private const float TextureFileY = 50f;
+ 
+     private GameObject texturePanel;
+     private GameObject materialPanel;
+@@ -107,68 +112,46 @@ public class TextureWorkspacePolishFix : MonoBehaviour
+             // Keep the complete texture filename on one line, but make it substantially more
+             // readable than the previous tiny fit. Auto-sizing is only allowed to reduce from
+             // the larger target when a particularly long basename genuinely needs it.
+-            // The stacked LOAD/LOCATE column and the CLR beside it, placed rather than left to
+-            // the row's HorizontalLayoutGroup - which controls its children's heights and so
+-            // gave CLR the row's height and its own preferred width, coming out short and wide
+-            // instead of tall and narrow.
+-            Transform buttonColumn = row.Find("ButtonColumn");
+-            Transform clearButton = row.Find("CLRButton");
+-            if (buttonColumn != null && clearButton != null)
++            // A texture slot, in three lines:
++            //
++            //     Albedo
++            //     [LOAD] [FIND] [CLEAR]
++            //     FILE: HSD_NiceHairsExport_Color
++            //
++            // Placed by hand like everything else in this panel. The buttons were previously a
++            // stacked column with the filename beside them, which left the name sharing a line
++            // with two buttons and overlapping the row underneath.
++            Transform load = row.Find("LOADButton");
++            if (load != null)
+             {
+                 DisableRowLayout(row);
+-                SetRowHeight(row, TextureButtonColumnHeight);
++                SetRowHeight(row, TextureRowHeight);
+ 
+-                float columnX = TextureInfoWidth + 6f;
+-                PlaceLeft(buttonColumn, columnX, TextureButtonColumnWidth, TextureButtonColumnHeight, TextureButtonColumnHeight);
+-                PlaceLeft(clearButton, columnX + TextureButtonColumnWidth + 4f, TextureClearWidth, TextureButtonColumnHeight, TextureButtonColumnHeight);
+-            }
++                PlaceTop(row.Find("Label"), 0f, TextureLabelY, ContentWidth, 18f);
+ 
+-            Transform info = row.Find("Info");
+-            if (info != null)
+-            {
+-                LayoutElement infoLayout = info.GetComponent<LayoutElement>();
+-                if (infoLayout != null)
+-                {
+-                    infoLayout.preferredWidth = TextureInfoWidth;
+-                    infoLayout.minWidth = TextureInfoWidth;
+-                }
++                float buttonSpan = (ContentWidth - TextureButtonGap * 2f) / 3f;
++                PlaceTop(load, 0f, TextureButtonY, buttonSpan, TextureButtonHeight);
++                PlaceTop(row.Find("FINDButton"), buttonSpan + TextureButtonGap, TextureButtonY, buttonSpan, TextureButtonHeight);
++                PlaceTop(row.Find("CLEARButton"), (buttonSpan + TextureButtonGap) * 2f, TextureButtonY, buttonSpan, TextureButtonHeight);
+ 
+-                // Anchored explicitly as well, because the block above switches this row's
+-                // layout group off - without this the Info column would keep whatever position
+-                // it happened to have when the group stopped driving it.
+-                if (buttonColumn != null && clearButton != null)
+-                    PlaceLeft(info, 0f, TextureInfoWidth, TextureButtonColumnHeight, TextureButtonColumnHeight);
++                Transform file = row.Find("File");
++                PlaceTop(file, 0f, TextureFileY, ContentWidth, 20f);
+ 
+-                foreach (TextMeshProUGUI tmp in info.GetComponentsInChildren<TextMeshProUGUI>(true))
++                if (file != null)
+                 {
+-                    if (tmp == null || !tmp.text.StartsWith("Current:")) continue;
+-                    tmp.textWrappingMode = TextWrappingModes.NoWrap;
+-                    tmp.overflowMode = TextOverflowModes.Overflow;
+-                    // 20% up from 18/10. Autosizing still shrinks a long basename, but it now
+-                    // starts - and mostly stays - a fifth larger, which is the difference
+-                    // between reading the filename and recognising it.
+-                    tmp.enableAutoSizing = true;
+-                    tmp.fontSize = 21.6f;
+-                    tmp.fontSizeMax = 21.6f;
+-                    tmp.fontSizeMin = 12f;
+-                    tmp.margin = Vector4.zero;
++                    TextMeshProUGUI tmp = file.GetComponent<TextMeshProUGUI>();
++                    if (tmp != null)
++                    {
++                        // Autosizing down from 21.6 - the size asked for - so an ordinary name is
++                        // large and a very long one shrinks rather than being cut off.
++                        tmp.enableAutoSizing = true;
++                        tmp.fontSize = 21.6f;
++                        tmp.fontSizeMax = 21.6f;
++                        tmp.fontSizeMin = 12f;
++                        tmp.margin = Vector4.zero;
++                    }
+                 }
+-            }
+-
+-            // The master-colour rows are laid out here too, and for the same reason the two rows
+-            // below are: the panel's own layout groups do not survive contact with a 300px column,
+-            // so this component positions the children of every row in it by hand. A tint row that
+-            // was left to its HorizontalLayoutGroup came out with a zero-height slider - invisible -
+-            // and its value label pushed clean off the panel.
+-            if (row.name == "MasterColourRow")
+-            {
+-                LayoutHeaderRow(row);
+-                continue;
+-            }
+ 
+-            if (row.name.EndsWith("TintRow", System.StringComparison.Ordinal))
+-            {
+-                LayoutTintChannelRow(row);
+                 continue;
+             }
+ 
+@@ -303,6 +286,31 @@ public class TextureWorkspacePolishFix : MonoBehaviour
+         if (group != null) group.enabled = false;
+     }
+ 
++    // Anchored to the row's top-left, a given distance DOWN from the top rather than centred -
++    // which is what a row of three stacked lines needs.
++    static void PlaceTop(Transform child, float x, float y, float width, float height)
++    {
++        if (child == null) return;
++
++        RectTransform rect = child as RectTransform;
++        if (rect == null) return;
++
++        rect.anchorMin = new Vector2(0f, 1f);
++        rect.anchorMax = new Vector2(0f, 1f);
++        rect.pivot = new Vector2(0f, 1f);
++        rect.anchoredPosition = new Vector2(x, -y);
++        rect.sizeDelta = new Vector2(width, height);
++
++        LayoutElement element = child.GetComponent<LayoutElement>();
++        if (element != null)
++        {
++            element.preferredWidth = width;
++            element.minWidth = width;
++            element.preferredHeight = height;
++            element.minHeight = height;
++        }
++    }
++
+     // Anchored to the row's top-left and centred vertically in it, which is the same convention
+     // the Smoothness and Metallic rows are placed with. Returns the width used, so a caller can
+     // walk left to right without repeating the arithmetic.

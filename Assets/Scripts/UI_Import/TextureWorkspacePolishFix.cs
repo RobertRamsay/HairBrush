@@ -12,7 +12,6 @@ using UnityEngine.UI;
 public class TextureWorkspacePolishFix : MonoBehaviour
 {
     private const float MaterialPanelWidth = 300f;
-    private const float TextureInfoWidth = 220f;
     private const float SliderWidth = 216f;
     private const float SliderValueWidth = 44f;
     private const float SliderHeight = 18f;
@@ -30,9 +29,15 @@ public class TextureWorkspacePolishFix : MonoBehaviour
 
     // The texture rows' right-hand controls. The column holds LOAD and LOCATE stacked, 24 each
     // with a 2px gap; CLR stands beside it at half their width and the full height of both.
-    private const float TextureButtonColumnWidth = 54f;
-    private const float TextureButtonColumnHeight = 50f;
-    private const float TextureClearWidth = 27f;
+    private const float ContentWidth = 280f;
+    // Referenced, not repeated: MaterialEditorManager builds the row against this same number,
+    // and two constants that must agree are one refactor from disagreeing.
+    private const float TextureRowHeight = MaterialEditorManager.TextureRowHeight;
+    private const float TextureLabelY = 2f;
+    private const float TextureButtonY = 22f;
+    private const float TextureButtonHeight = 24f;
+    private const float TextureButtonGap = 4f;
+    private const float TextureFileY = 50f;
 
     private GameObject texturePanel;
     private GameObject materialPanel;
@@ -107,68 +112,46 @@ public class TextureWorkspacePolishFix : MonoBehaviour
             // Keep the complete texture filename on one line, but make it substantially more
             // readable than the previous tiny fit. Auto-sizing is only allowed to reduce from
             // the larger target when a particularly long basename genuinely needs it.
-            // The stacked LOAD/LOCATE column and the CLR beside it, placed rather than left to
-            // the row's HorizontalLayoutGroup - which controls its children's heights and so
-            // gave CLR the row's height and its own preferred width, coming out short and wide
-            // instead of tall and narrow.
-            Transform buttonColumn = row.Find("ButtonColumn");
-            Transform clearButton = row.Find("CLRButton");
-            if (buttonColumn != null && clearButton != null)
+            // A texture slot, in three lines:
+            //
+            //     Albedo
+            //     [LOAD] [FIND] [CLEAR]
+            //     FILE: HSD_NiceHairsExport_Color
+            //
+            // Placed by hand like everything else in this panel. The buttons were previously a
+            // stacked column with the filename beside them, which left the name sharing a line
+            // with two buttons and overlapping the row underneath.
+            Transform load = row.Find("LOADButton");
+            if (load != null)
             {
                 DisableRowLayout(row);
-                SetRowHeight(row, TextureButtonColumnHeight);
+                SetRowHeight(row, TextureRowHeight);
 
-                float columnX = TextureInfoWidth + 6f;
-                PlaceLeft(buttonColumn, columnX, TextureButtonColumnWidth, TextureButtonColumnHeight, TextureButtonColumnHeight);
-                PlaceLeft(clearButton, columnX + TextureButtonColumnWidth + 4f, TextureClearWidth, TextureButtonColumnHeight, TextureButtonColumnHeight);
-            }
+                PlaceTop(row.Find("Label"), 0f, TextureLabelY, ContentWidth, 18f);
 
-            Transform info = row.Find("Info");
-            if (info != null)
-            {
-                LayoutElement infoLayout = info.GetComponent<LayoutElement>();
-                if (infoLayout != null)
+                float buttonSpan = (ContentWidth - TextureButtonGap * 2f) / 3f;
+                PlaceTop(load, 0f, TextureButtonY, buttonSpan, TextureButtonHeight);
+                PlaceTop(row.Find("FINDButton"), buttonSpan + TextureButtonGap, TextureButtonY, buttonSpan, TextureButtonHeight);
+                PlaceTop(row.Find("CLEARButton"), (buttonSpan + TextureButtonGap) * 2f, TextureButtonY, buttonSpan, TextureButtonHeight);
+
+                Transform file = row.Find("File");
+                PlaceTop(file, 0f, TextureFileY, ContentWidth, 20f);
+
+                if (file != null)
                 {
-                    infoLayout.preferredWidth = TextureInfoWidth;
-                    infoLayout.minWidth = TextureInfoWidth;
+                    TextMeshProUGUI tmp = file.GetComponent<TextMeshProUGUI>();
+                    if (tmp != null)
+                    {
+                        // Autosizing down from 21.6 - the size asked for - so an ordinary name is
+                        // large and a very long one shrinks rather than being cut off.
+                        tmp.enableAutoSizing = true;
+                        tmp.fontSize = 21.6f;
+                        tmp.fontSizeMax = 21.6f;
+                        tmp.fontSizeMin = 12f;
+                        tmp.margin = Vector4.zero;
+                    }
                 }
 
-                // Anchored explicitly as well, because the block above switches this row's
-                // layout group off - without this the Info column would keep whatever position
-                // it happened to have when the group stopped driving it.
-                if (buttonColumn != null && clearButton != null)
-                    PlaceLeft(info, 0f, TextureInfoWidth, TextureButtonColumnHeight, TextureButtonColumnHeight);
-
-                foreach (TextMeshProUGUI tmp in info.GetComponentsInChildren<TextMeshProUGUI>(true))
-                {
-                    if (tmp == null || !tmp.text.StartsWith("Current:")) continue;
-                    tmp.textWrappingMode = TextWrappingModes.NoWrap;
-                    tmp.overflowMode = TextOverflowModes.Overflow;
-                    // 20% up from 18/10. Autosizing still shrinks a long basename, but it now
-                    // starts - and mostly stays - a fifth larger, which is the difference
-                    // between reading the filename and recognising it.
-                    tmp.enableAutoSizing = true;
-                    tmp.fontSize = 21.6f;
-                    tmp.fontSizeMax = 21.6f;
-                    tmp.fontSizeMin = 12f;
-                    tmp.margin = Vector4.zero;
-                }
-            }
-
-            // The master-colour rows are laid out here too, and for the same reason the two rows
-            // below are: the panel's own layout groups do not survive contact with a 300px column,
-            // so this component positions the children of every row in it by hand. A tint row that
-            // was left to its HorizontalLayoutGroup came out with a zero-height slider - invisible -
-            // and its value label pushed clean off the panel.
-            if (row.name == "MasterColourRow")
-            {
-                LayoutHeaderRow(row);
-                continue;
-            }
-
-            if (row.name.EndsWith("TintRow", System.StringComparison.Ordinal))
-            {
-                LayoutTintChannelRow(row);
                 continue;
             }
 
@@ -301,6 +284,31 @@ public class TextureWorkspacePolishFix : MonoBehaviour
     {
         HorizontalLayoutGroup group = row.GetComponent<HorizontalLayoutGroup>();
         if (group != null) group.enabled = false;
+    }
+
+    // Anchored to the row's top-left, a given distance DOWN from the top rather than centred -
+    // which is what a row of three stacked lines needs.
+    static void PlaceTop(Transform child, float x, float y, float width, float height)
+    {
+        if (child == null) return;
+
+        RectTransform rect = child as RectTransform;
+        if (rect == null) return;
+
+        rect.anchorMin = new Vector2(0f, 1f);
+        rect.anchorMax = new Vector2(0f, 1f);
+        rect.pivot = new Vector2(0f, 1f);
+        rect.anchoredPosition = new Vector2(x, -y);
+        rect.sizeDelta = new Vector2(width, height);
+
+        LayoutElement element = child.GetComponent<LayoutElement>();
+        if (element != null)
+        {
+            element.preferredWidth = width;
+            element.minWidth = width;
+            element.preferredHeight = height;
+            element.minHeight = height;
+        }
     }
 
     // Anchored to the row's top-left and centred vertically in it, which is the same convention

@@ -39,6 +39,10 @@ public class MaterialEditorManager : MonoBehaviour
     // old dictionary with one reserved key lets existing project persistence migrate cleanly.
     private const int GlobalMaterialKey = int.MinValue;
 
+    // Label line, button line, filename line. TextureWorkspacePolishFix places the children
+    // against these same numbers.
+    public const float TextureRowHeight = 74f;
+
     [Serializable]
     private class HairMaterialEntry
     {
@@ -248,81 +252,56 @@ public class MaterialEditorManager : MonoBehaviour
             CreateTextureRow(propertiesRoot, "Albedo", AlbedoProperty, false, entry.albedoPath);
             CreateTextureRow(propertiesRoot, "Normal", NormalProperty, true, entry.normalPath);
             CreateTextureRow(propertiesRoot, "Opacity Mask", OpacityProperty, true, entry.opacityPath);
-            // Sliders directly under the textures, master colour last. Metallic was below the
-            // colour block and fell off the bottom of the panel; both of these are per-material
-            // numbers and belong with the maps they modify, while the colour is a single value
-            // applied over the top of all of it.
+            CreateTintRow(propertiesRoot, entry);
             CreateFloatSliderRow(propertiesRoot, "Smoothness", SmoothProperty, entry);
             CreateFloatSliderRow(propertiesRoot, "Metallic", MetalProperty, entry);
-            CreateTintRow(propertiesRoot, entry);
         }
     }
 
+    // One texture slot, in the shape asked for:
+    //
+    //     ALBEDO:
+    //     [LOAD] [FIND] [CLEAR]
+    //     FILE: HSD_NiceHairsExport_Color
+    //
+    // A flat row with the three children stacked by TextureWorkspacePolishFix, which positions
+    // everything in this panel by hand. The previous shape - a two-line text block beside a
+    // stacked button column - put the buttons and the filename on the same line as each other
+    // and left neither enough room.
     private void CreateTextureRow(Transform parent, string label, string propertyName, bool linear, string currentPath)
     {
-        GameObject row = new GameObject(label + "Row", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
+        GameObject row = new GameObject(label + "Row", typeof(RectTransform), typeof(LayoutElement));
         row.transform.SetParent(parent, false);
-        // 50, which is exactly LOAD + LOCATE stacked: 24 + 24 with the column's 2px gap. The
-        // row's layout group controls its children's heights, so that one number is also what
-        // makes CLR square beside them - it gets the row height, and 50 wide is the width asked
-        // for it. Setting a height here without matching the buttons would silently un-square it.
+
         LayoutElement rowElement = row.GetComponent<LayoutElement>();
-        rowElement.preferredHeight = 50f;
-        rowElement.minHeight = 50f;
-        HorizontalLayoutGroup layout = row.GetComponent<HorizontalLayoutGroup>();
-        layout.spacing = 4f;
-        layout.childControlWidth = false;
-        layout.childControlHeight = true;
-        layout.childForceExpandWidth = false;
-        layout.childForceExpandHeight = false;
+        rowElement.preferredHeight = TextureRowHeight;
+        rowElement.minHeight = TextureRowHeight;
 
-        GameObject textBlock = new GameObject("Info", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
-        textBlock.transform.SetParent(row.transform, false);
-        textBlock.GetComponent<LayoutElement>().preferredWidth = 320f;
-        VerticalLayoutGroup textLayout = textBlock.GetComponent<VerticalLayoutGroup>();
-        textLayout.spacing = 0f;
-        textLayout.childControlHeight = false;
-        textLayout.childControlWidth = true;
-        textLayout.childForceExpandHeight = false;
+        // No layout group on the row at all. Every child below is anchored explicitly by the
+        // polish pass, and a layout group would only fight it - which is what it did.
+        CreateSubLabel(row.transform, label, 18f);
 
-        CreateSubLabel(textBlock.transform, label, 16f);
+        CreateSmallButton(row.transform, "LOAD", () => LoadTextureIntoSlot(propertyName, linear), 86f, 24f);
+
+        // FIND rather than LOCATE: three buttons across 280px want short words, and this one
+        // opens the folder the file came from.
+        CreateSmallButton(row.transform, "FIND", () => LocateTextureFile(currentPath), 86f, 24f);
+        CreateSmallButton(row.transform, "CLEAR", () => ClearTextureSlot(propertyName), 86f, 24f);
+
         string currentName = string.IsNullOrEmpty(currentPath) ? GetCurrentTextureName(propertyName) : Path.GetFileName(currentPath);
-        // Some filenames are long enough that no single-line column width is going to hold them
-        // at a readable size. Wrapping onto up to two lines instead of ellipsis-truncating means
-        // the full name is always visible regardless of length, rather than chasing an ever-wider
-        // column for whatever the longest name anyone loads turns out to be.
-        TMPro.TextMeshProUGUI file = CreateSubLabel(textBlock.transform, "Current: " + currentName, 32f);
-        file.fontSize = 10f;
+
+        GameObject fileGO = new GameObject("File", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI), typeof(LayoutElement));
+        fileGO.transform.SetParent(row.transform, false);
+        TMPro.TextMeshProUGUI file = fileGO.GetComponent<TMPro.TextMeshProUGUI>();
+        file.text = "FILE: " + currentName;
+        file.fontSize = 12f;
         file.color = new Color(.72f, .72f, .72f);
-        file.textWrappingMode = TMPro.TextWrappingModes.Normal;
-        file.overflowMode = TMPro.TextOverflowModes.Truncate;
+        file.alignment = TMPro.TextAlignmentOptions.MidlineLeft;
 
-        // Only ~56px remains after the Info column within the panel's fixed 300px width (see
-        // TextureWorkspacePolishFix.PolishMaterialPanel), so LOAD and LOCATE stack vertically in
-        // that same narrow column rather than sitting side by side, which would overflow the panel.
-        GameObject buttonColumn = new GameObject("ButtonColumn", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
-        buttonColumn.transform.SetParent(row.transform, false);
-        LayoutElement columnLayout = buttonColumn.GetComponent<LayoutElement>();
-        columnLayout.preferredWidth = 54f;
-        columnLayout.minWidth = 54f;
-        columnLayout.preferredHeight = 50f;
-        columnLayout.minHeight = 50f;
-        VerticalLayoutGroup columnGroup = buttonColumn.GetComponent<VerticalLayoutGroup>();
-        columnGroup.spacing = 2f;
-        columnGroup.childControlWidth = true;
-        columnGroup.childForceExpandWidth = true;
-        columnGroup.childControlHeight = true;
-        columnGroup.childForceExpandHeight = false;
-
-        CreateSmallButton(buttonColumn.transform, "LOAD", () => LoadTextureIntoSlot(propertyName, linear), 54f, 24f);
-        CreateSmallButton(buttonColumn.transform, "LOCATE", () => LocateTextureFile(currentPath), 54f, 24f);
-
-        // CLR: half the width of the buttons beside it, and the full height of both of them
-        // stacked - 24 + 24 with the column's 2px gap. TextureWorkspacePolishFix sets the final
-        // geometry (the row's layout group would otherwise hand it the row height and its own
-        // preferred width, which is how it came out short and wide); these are the starting
-        // values and the two agree on the numbers.
-        CreateSmallButton(row.transform, "CLR", () => ClearTextureSlot(propertyName), 27f, 50f);
+        // On its own line with the full panel width to itself, so a long basename shrinks a
+        // little rather than wrapping into the row below - which is what it was doing.
+        file.textWrappingMode = TMPro.TextWrappingModes.NoWrap;
+        file.overflowMode = TMPro.TextOverflowModes.Ellipsis;
     }
 
     // One 0-1 slider, built the way this panel builds them. Extracted so the master-colour

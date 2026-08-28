@@ -1005,9 +1005,9 @@ public class PostAffectorManager : MonoBehaviour
         // every width onto the wrong column.
         wt.gameObject.name = WeightLabelName;
 
-        // 128 before the mode button existed. The 40 it gives up is exactly what that button
-        // takes, so the row is the width it always was.
-        Slider slider = AddWeightSlider(row.transform, a.weight, 88f);
+        // A starting width only - PostAffectorUXFix.CompactPostRows decides the real one every
+        // 0.05s, and its budget is what keeps DEL on the panel.
+        Slider slider = AddWeightSlider(row.transform, a.weight, 78f);
         TextMeshProUGUI value = AddText(row.transform, a.weight.ToString("F2"), 10, 30f);
         value.alignment = TextAlignmentOptions.Center;
 
