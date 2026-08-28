@@ -18,6 +18,16 @@ public class TextureWorkspacePolishFix : MonoBehaviour
     private const float SliderHeight = 18f;
     private const float SliderRowHeight = 54f;
 
+    // MASTER COLOUR. One line per channel rather than the two-line block Smoothness and Metallic
+    // get: those need a full-width name above the control, but R/G/B under a heading do not, and
+    // three two-line blocks would take 162px of a 300px panel to say one colour.
+    private const float TintHeaderHeight = 26f;
+    private const float TintRowHeight = 24f;
+    private const float TintChannelLabelWidth = 16f;
+    private const float TintSliderWidth = 196f;
+    private const float TintSliderHeight = 16f;
+    private const float TintSwatchWidth = 44f;
+
     private GameObject texturePanel;
     private GameObject materialPanel;
     private GameObject previewPlane;
@@ -114,6 +124,23 @@ public class TextureWorkspacePolishFix : MonoBehaviour
                 }
             }
 
+            // The master-colour rows are laid out here too, and for the same reason the two rows
+            // below are: the panel's own layout groups do not survive contact with a 300px column,
+            // so this component positions the children of every row in it by hand. A tint row that
+            // was left to its HorizontalLayoutGroup came out with a zero-height slider - invisible -
+            // and its value label pushed clean off the panel.
+            if (row.name == "MasterColourRow")
+            {
+                LayoutHeaderRow(row);
+                continue;
+            }
+
+            if (row.name.EndsWith("TintRow", System.StringComparison.Ordinal))
+            {
+                LayoutTintChannelRow(row);
+                continue;
+            }
+
             Transform sliderTransform = row.Find("SmoothnessSlider");
             if (sliderTransform == null) sliderTransform = row.Find("MetallicSlider");
             if (sliderTransform == null) continue;
@@ -187,6 +214,90 @@ public class TextureWorkspacePolishFix : MonoBehaviour
                 }
             }
         }
+    }
+
+    // "MASTER COLOUR" on the left, the current colour as a swatch, then WHITE - one line.
+    void LayoutHeaderRow(Transform row)
+    {
+        SetRowHeight(row, TintHeaderHeight);
+        DisableRowLayout(row);
+
+        float cursor = 0f;
+        cursor += PlaceLeft(row.Find("Label"), cursor, 132f, 20f, TintHeaderHeight) + 6f;
+        cursor += PlaceLeft(row.Find("Swatch"), cursor, TintSwatchWidth, 18f, TintHeaderHeight) + 6f;
+        PlaceLeft(row.Find("WHITEButton"), cursor, 62f, 20f, TintHeaderHeight);
+    }
+
+    // R / G / B: a one-character label, the slider, and the value hard against its right end
+    // rather than out at the panel edge.
+    void LayoutTintChannelRow(Transform row)
+    {
+        SetRowHeight(row, TintRowHeight);
+        DisableRowLayout(row);
+
+        float cursor = 0f;
+        cursor += PlaceLeft(row.Find("Label"), cursor, TintChannelLabelWidth, 18f, TintRowHeight) + 4f;
+        cursor += PlaceLeft(FindSlider(row), cursor, TintSliderWidth, TintSliderHeight, TintRowHeight) + 8f;
+        PlaceLeft(row.Find("Value"), cursor, SliderValueWidth, 18f, TintRowHeight);
+    }
+
+    // The slider is not named "Slider" - it carries the channel name so nothing else in this
+    // file's "*Slider" lookups can pick it up - so it is found by component instead.
+    static Transform FindSlider(Transform row)
+    {
+        Slider slider = row.GetComponentInChildren<Slider>(true);
+        if (slider == null) return null;
+        return slider.transform;
+    }
+
+    // Both, not just preferred: the properties column does not always control its children's
+    // heights, and a row that only offers a preferred height can end up with none at all - which
+    // is what collapsed the tint sliders to zero pixels and made them disappear.
+    static void SetRowHeight(Transform row, float height)
+    {
+        LayoutElement element = row.GetComponent<LayoutElement>();
+        if (element != null)
+        {
+            element.preferredHeight = height;
+            element.minHeight = height;
+        }
+
+        RectTransform rect = row as RectTransform;
+        if (rect != null) rect.sizeDelta = new Vector2(rect.sizeDelta.x, height);
+    }
+
+    static void DisableRowLayout(Transform row)
+    {
+        HorizontalLayoutGroup group = row.GetComponent<HorizontalLayoutGroup>();
+        if (group != null) group.enabled = false;
+    }
+
+    // Anchored to the row's top-left and centred vertically in it, which is the same convention
+    // the Smoothness and Metallic rows are placed with. Returns the width used, so a caller can
+    // walk left to right without repeating the arithmetic.
+    static float PlaceLeft(Transform child, float x, float width, float height, float rowHeight)
+    {
+        if (child == null) return width;
+
+        RectTransform rect = child as RectTransform;
+        if (rect == null) return width;
+
+        rect.anchorMin = new Vector2(0f, 1f);
+        rect.anchorMax = new Vector2(0f, 1f);
+        rect.pivot = new Vector2(0f, .5f);
+        rect.anchoredPosition = new Vector2(x, -rowHeight * .5f);
+        rect.sizeDelta = new Vector2(width, height);
+
+        LayoutElement element = child.GetComponent<LayoutElement>();
+        if (element != null)
+        {
+            element.preferredWidth = width;
+            element.minWidth = width;
+            element.preferredHeight = height;
+            element.minHeight = height;
+        }
+
+        return width;
     }
 
     Vector3 CentrePreviewBetweenPanels()

@@ -430,7 +430,13 @@ public class MaterialEditorManager : MonoBehaviour
 
         GameObject header = new GameObject("MasterColourRow", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
         header.transform.SetParent(parent, false);
-        header.GetComponent<LayoutElement>().preferredHeight = 30f;
+        // TextureWorkspacePolishFix positions this row's children by hand within the 280px
+        // content width and sets the final heights. These are the starting values, and they set
+        // BOTH min and preferred - a row that offers only a preferred height can be given none.
+        LayoutElement headerElement = header.GetComponent<LayoutElement>();
+        headerElement.preferredHeight = 26f;
+        headerElement.minHeight = 26f;
+
         HorizontalLayoutGroup headerLayout = header.GetComponent<HorizontalLayoutGroup>();
         headerLayout.spacing = 6f;
         headerLayout.childControlWidth = false;
@@ -440,7 +446,7 @@ public class MaterialEditorManager : MonoBehaviour
 
         GameObject labelGO = new GameObject("Label", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI), typeof(LayoutElement));
         labelGO.transform.SetParent(header.transform, false);
-        labelGO.GetComponent<LayoutElement>().preferredWidth = 130f;
+        labelGO.GetComponent<LayoutElement>().preferredWidth = 132f;
         TMPro.TextMeshProUGUI labelTmp = labelGO.GetComponent<TMPro.TextMeshProUGUI>();
         labelTmp.text = "MASTER COLOUR";
         labelTmp.fontSize = 12f;
@@ -452,8 +458,8 @@ public class MaterialEditorManager : MonoBehaviour
         GameObject swatchGO = new GameObject("Swatch", typeof(RectTransform), typeof(Image), typeof(LayoutElement));
         swatchGO.transform.SetParent(header.transform, false);
         LayoutElement swatchLayout = swatchGO.GetComponent<LayoutElement>();
-        swatchLayout.preferredWidth = 56f;
-        swatchLayout.minWidth = 56f;
+        swatchLayout.preferredWidth = 44f;
+        swatchLayout.minWidth = 44f;
         Image swatch = swatchGO.GetComponent<Image>();
 
         Color current = entry.material.GetColor(TintProperty);
@@ -466,20 +472,24 @@ public class MaterialEditorManager : MonoBehaviour
         // Rebuilds the panel rather than only setting the colour: the three sliders below hold
         // their own handles, and a WHITE that moved the material but left them where they were
         // would leave the row reading a value it no longer has.
-        CreateSmallButton(header.transform, "WHITE", () => { SetTint(entry, Color.white, swatch); RefreshPanel(); }, 54f, 24f);
+        CreateSmallButton(header.transform, "WHITE", () => { SetTint(entry, Color.white, swatch); RefreshPanel(); }, 62f, 20f);
 
-        CreateTintChannelRow(parent, entry, swatch, 0, "Red");
-        CreateTintChannelRow(parent, entry, swatch, 1, "Green");
-        CreateTintChannelRow(parent, entry, swatch, 2, "Blue");
+        // R/G/B rather than Red/Green/Blue: under a heading that already says MASTER COLOUR the
+        // words earn nothing, and the letter leaves the slider the width it needs.
+        CreateTintChannelRow(parent, entry, swatch, 0, "R");
+        CreateTintChannelRow(parent, entry, swatch, 1, "G");
+        CreateTintChannelRow(parent, entry, swatch, 2, "B");
     }
 
     private void CreateTintChannelRow(Transform parent, HairMaterialEntry entry, Image swatch, int channel, string label)
     {
         GameObject row = new GameObject(label + "TintRow", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
         row.transform.SetParent(parent, false);
-        row.GetComponent<LayoutElement>().preferredHeight = 26f;
+        LayoutElement rowLayout = row.GetComponent<LayoutElement>();
+        rowLayout.preferredHeight = 24f;
+        rowLayout.minHeight = 24f;
         HorizontalLayoutGroup layout = row.GetComponent<HorizontalLayoutGroup>();
-        layout.spacing = 6f;
+        layout.spacing = 4f;
         layout.childControlWidth = false;
         layout.childControlHeight = true;
         layout.childForceExpandWidth = false;
@@ -487,7 +497,7 @@ public class MaterialEditorManager : MonoBehaviour
 
         GameObject labelGO = new GameObject("Label", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI), typeof(LayoutElement));
         labelGO.transform.SetParent(row.transform, false);
-        labelGO.GetComponent<LayoutElement>().preferredWidth = 46f;
+        labelGO.GetComponent<LayoutElement>().preferredWidth = 16f;
         TMPro.TextMeshProUGUI labelTmp = labelGO.GetComponent<TMPro.TextMeshProUGUI>();
         labelTmp.text = label;
         labelTmp.fontSize = 11f;
@@ -498,7 +508,7 @@ public class MaterialEditorManager : MonoBehaviour
         // NOT named "<label>Slider". TextureWorkspacePolishFix reformats any row it finds a
         // "SmoothnessSlider" or "MetallicSlider" in, tearing the horizontal layout off and
         // repositioning two known children by hand. These rows want to keep their own layout.
-        Slider slider = BuildSliderWidget(row.transform, label + "TintChannel", 150f);
+        Slider slider = BuildSliderWidget(row.transform, label + "TintChannel", 196f);
 
         GameObject valueGO = new GameObject("Value", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI), typeof(LayoutElement));
         valueGO.transform.SetParent(row.transform, false);
