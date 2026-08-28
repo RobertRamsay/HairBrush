@@ -981,7 +981,27 @@ public class ModelViewer : MonoBehaviour
         // them up to a quarter of a second later. RuntimeUIRebuildSignal.Mark at the end of this
         // method brings all five into the SAME frame as the build, so the rows are already right
         // the first time they are drawn.
-        foreach (Transform child in groupListContentTransform) Destroy(child.gameObject);
+        // CONDEMNED FIRST, destroyed second. Destroy is deferred to the end of the frame, so a
+        // plain Destroy here left every old row alive and RENDERED for the whole of the frame the
+        // new ones were built in. The list held both sets at once: the layout laid out twice the
+        // rows, the scroll content doubled in height, and it all collapsed back one frame later.
+        // That one frame is the jump - the part of this that styling could never fix, because
+        // nothing was mis-styled.
+        //
+        // Worse than the flicker, ten other authorities look a GroupItem up by name or by the
+        // "GroupItem_" prefix, several of them with FindObjectsInactive.Include, and for that one
+        // frame there were two of every id. Whichever came back first got the layout and the
+        // skin; if that was the condemned one, the real row went uncorrected until the next poll.
+        //
+        // The rename uses a PREFIX, not a suffix: "GroupItem_3_Discarded" still starts with
+        // "GroupItem_" and would still be found by all ten of them.
+        foreach (Transform child in groupListContentTransform)
+        {
+            if (child == null) continue;
+            child.gameObject.SetActive(false);
+            child.gameObject.name = "Discarded_" + child.gameObject.name;
+            Destroy(child.gameObject);
+        }
         foreach (int id in allGroupIds.OrderBy(g => g))
         {
             int gid = id;

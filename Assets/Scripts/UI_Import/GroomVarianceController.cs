@@ -155,10 +155,17 @@ public class GroomVarianceController : MonoBehaviour
         // row type this builds (main row, seed row, divider) - narrower matching here is exactly
         // what let an earlier divider-insertion feature elsewhere in this project leak orphaned
         // objects across reinstalls.
+        // Condemned before destroyed, for the same reason ModelViewer's group list is: Destroy
+        // does not take effect until the end of the frame, so the old rows would otherwise still
+        // be alive, still rendered and still findable BY NAME while the replacements below are
+        // built - one frame of a panel holding two of everything.
         foreach (Transform child in panel.Cast<Transform>().ToArray())
         {
-            if (child != null && child.name.Contains("_Variance"))
-                Destroy(child.gameObject);
+            if (child == null || !child.name.Contains("_Variance")) continue;
+
+            child.gameObject.SetActive(false);
+            child.gameObject.name = "Discarded_" + child.gameObject.name;
+            Destroy(child.gameObject);
         }
 
         rows.Clear();

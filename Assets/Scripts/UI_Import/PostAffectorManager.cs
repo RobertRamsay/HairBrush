@@ -87,6 +87,7 @@ public class PostAffectorManager : MonoBehaviour
     private GroomRootStateAuthority rootAuthority = null;
     private GroupClumperManager clumperManager = null;
     private float nextUIScan;
+    private int handledRebuildFrame = -1;
     private int lastCreatedFrame = -1;
     private int predeterminedUVCacheFrame = -1;
 
@@ -197,7 +198,13 @@ public class PostAffectorManager : MonoBehaviour
         // one this frame started with.
         MaintainSelectionPaint();
 
-        if (Time.unscaledTime >= nextUIScan)
+        // The POST rows live in the group list, so ModelViewer's rebuild destroys them too. Left
+        // to this scan alone they were gone for up to 0.12s after every group add or delete and
+        // then popped back - the same glitch from the other end. Rebuilding them on the rebuild
+        // frame puts them back before anything is drawn. This runs at 3300, after the group list
+        // is rebuilt at order 0, and before the styling passes at 3600 and later.
+        bool rebuilt = RuntimeUIRebuildSignal.TryConsume(ref handledRebuildFrame);
+        if (rebuilt || Time.unscaledTime >= nextUIScan)
         {
             nextUIScan = Time.unscaledTime + .12f;
             EnsureRowsAndOrder();
