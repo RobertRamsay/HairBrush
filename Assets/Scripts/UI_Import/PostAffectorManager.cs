@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -26,6 +27,11 @@ public class PostAffectorManager : MonoBehaviour
         public float radius = PostGroupLifetimeAuthority.DefaultPostRadius;
         public float falloff = PostGroupLifetimeAuthority.DefaultPostFalloff;
         [Range(0f, 1f)] public float weight = 1f;
+
+        // Up to 6 characters, chosen by the user by double-clicking the row's button. Empty is
+        // the normal state and means "no name": the row falls back to "POST n", numbered by
+        // position, which is what every POST was called before this existed.
+        public string label = "";
 
         // RELATIVE (false, the default and everything that existed before this) adds this POST's
         // delta on top of whatever each card's own base happens to be, so per-card differences
@@ -167,6 +173,22 @@ public class PostAffectorManager : MonoBehaviour
         EnsureViewer();
         if (viewer == null) return;
 
+        // ESC is NOT read here. TMP_InputField handles Escape itself, in the input module at
+        // execution order 0 - long before this Update at 3300 - by restoring the original text
+        // and ending the edit, which arrives as onEndEdit with wasCanceled set. Reading it here
+        // as well would have been a second consumer of the same press: an armed +POST placement
+        // also cancels on ESC, and one press would have closed the rename AND disarmed the
+        // placement.
+        //
+        // What IS needed is a sweep for a rename whose row died underneath it. Several paths
+        // destroy POST rows without going through RebuildGroupRows - ModelViewer rebuilding the
+        // group list, GroomSessionResetCoordinator clearing the modifier managers by reflection,
+        // PostGroupLifetimeAuthority purging a group - and each would leave renamingId set on a
+        // destroyed field. That state is not merely untidy: the next commit would read "" from
+        // the dead field and wipe a name that was already saved, and the POST could never be
+        // renamed again because BeginRename refuses to restart the id it thinks is open.
+        if (renamingId >= 0 && renameField == null) CancelRename();
+
         DetectGroupRootSelection();
         DetectCtrlClick();
         MaintainActiveAuthoring();
@@ -278,23 +300,51 @@ public class PostAffectorManager : MonoBehaviour
             // row remembers, so a row rebuilt by a project load, or restyled by UIThemeAuthority
             // on its one pass, comes back saying what the POST actually is.
             PostAffector affector;
-            if (TryFindAffector(rowId, out affector)) PaintModeButton(row, affector.absolute);
+            int number;
+            if (!TryFindAffector(rowId, out affector, out number)) continue;
+
+            PaintModeButton(row, affector.absolute);
+
+            // The caption too, so a rename and a renumber both land without anything having to
+            // remember to ask for them - and so a row rebuilt by a project load comes back with
+            // the name that project saved.
+            Transform select = row.Find(SelectButtonName);
+            if (select == null) continue;
+
+            // Not while it is being renamed: the caption is hidden behind the edit field, and
+            // writing to it under the user's typing is how a rename ends up half-applied.
+            if (renamingId == affector.id) continue;
+
+            TextMeshProUGUI caption = select.GetComponentInChildren<TextMeshProUGUI>(true);
+            if (caption == null) continue;
+
+            string wantedCaption = DisplayLabel(affector, number);
+            if (caption.text != wantedCaption) caption.text = wantedCaption;
         }
     }
 
-    bool TryFindAffector(int id, out PostAffector affector)
+    // The affector with this id, and its 1-based position in its group - which is the number a
+    // row shows when it has no name.
+    bool TryFindAffector(int id, out PostAffector affector, out int number)
     {
         affector = null;
+        number = 0;
         if (id < 0) return false;
 
         foreach (KeyValuePair<int, List<PostAffector>> pair in groups)
         {
             if (pair.Value == null) continue;
+
+            int position = 1;
             foreach (PostAffector a in pair.Value)
             {
-                if (a == null || a.id != id) continue;
-                affector = a;
-                return true;
+                if (a != null && a.id == id)
+                {
+                    affector = a;
+                    number = position;
+                    return true;
+                }
+                position++;
             }
         }
         return false;
@@ -505,7 +555,14 @@ public class PostAffectorManager : MonoBehaviour
         if (!Mathf.Approximately(viewer.selectionStrength, active.weight))
         {
             active.weight = Mathf.Clamp01(viewer.selectionStrength);
-            RebuildGroupRows(active.groupId);
+
+            // In place. This used to DESTROY every POST row in the group and let the 0.12s scan
+            // build them back, for nothing more than a number changing on one of them. It is a
+            // narrower path than it looks - PostAffectorUXFix hides the right-hand WEIGHT row,
+            // and the row's own slider writes a.weight before selectionStrength, so the compare
+            // above is usually true - but every frame it does fire is a frame the rows are torn
+            // down and rebuilt, and nothing about a changed weight needs a new row.
+            RefreshRowWeights(active.groupId);
         }
 
         AbsorbPanelEdit(active);
@@ -907,8 +964,18 @@ public class PostAffectorManager : MonoBehaviour
         layout.childControlWidth = false;
         layout.childControlHeight = true;
 
-        GameObject select = AddButton(row.transform, "POST " + number, 72f);
+        GameObject select = AddButton(row.transform, DisplayLabel(a, number), 72f);
+
+        // AddButton names the object after its caption. A caption that can be renamed is a name
+        // that can change, and the refresh pass finds this button by name, so it is pinned here -
+        // the same reason the mode button is built by hand rather than through AddButton.
+        select.name = SelectButtonName;
         select.GetComponent<Button>().onClick.AddListener(() => SelectAffector(a));
+
+        // Double-click to rename, the same gesture that renames a group. The Button's own click
+        // still fires first and selects the POST, which is what happens on a group row too.
+        PostRowDoubleClick relay = select.AddComponent<PostRowDoubleClick>();
+        relay.onDoubleClick = () => BeginRename(a);
 
         // REL / ABS. Built here with a FIXED object name rather than through AddButton, which
         // names the object after its caption - a caption that changes is a name that changes,
@@ -919,11 +986,21 @@ public class PostAffectorManager : MonoBehaviour
         TextMeshProUGUI wt = AddText(row.transform, "WEIGHT", 8, 48f);
         wt.alignment = TextAlignmentOptions.Center;
 
+        // Named, like every other child of this row, because PostAffectorUXFix sets the column
+        // widths by name - it used to do it by child index, and adding one button silently moved
+        // every width onto the wrong column.
+        wt.gameObject.name = WeightLabelName;
+
         // 128 before the mode button existed. The 40 it gives up is exactly what that button
         // takes, so the row is the width it always was.
         Slider slider = AddWeightSlider(row.transform, a.weight, 88f);
         TextMeshProUGUI value = AddText(row.transform, a.weight.ToString("F2"), 10, 30f);
         value.alignment = TextAlignmentOptions.Center;
+
+        // Both texts on this row are called "Text" by AddText. The one that carries a live value
+        // needs to be findable from outside the closure below, so that changing the weight can
+        // update the row in place instead of destroying and rebuilding it.
+        value.gameObject.name = WeightValueName;
         slider.onValueChanged.AddListener(v =>
         {
             a.weight = Mathf.Clamp01(v);
@@ -969,7 +1046,13 @@ public class PostAffectorManager : MonoBehaviour
         lastPanelControls = ReadControls();
         hasPanelControls = true;
 
-        RebuildGroupRows(a.groupId);
+        // THE CLICK GLITCH. This used to be RebuildGroupRows, which destroys every POST row in
+        // the group and lets the next scan rebuild them - so clicking a POST destroyed the very
+        // button being clicked, out from under the pointer, along with all its siblings. Unity
+        // then had a pointer-down on a dead object, the rows vanished for a frame or more, and
+        // the group list re-laid-out twice. Nothing about a selection needs a new row: the paint
+        // pass recolours the rows that are already there.
+        PaintAffectorRows();
     }
 
     // ApplyControls above updates ModelViewer.current* (the underlying data), but the actual
@@ -1031,8 +1114,47 @@ public class PostAffectorManager : MonoBehaviour
         ApplyAll();
     }
 
+    // Weight slider and its readout, for every row in one group, without touching the rows
+    // themselves. The value label is found by name because it is captured in a closure at build
+    // time and there is otherwise no way back to it.
+    void RefreshRowWeights(int gid)
+    {
+        foreach (RectTransform row in FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            if (row == null || !row.name.StartsWith("PostAffector_" + gid + "_", StringComparison.Ordinal)) continue;
+
+            int rowId;
+            if (!TryReadRowAffectorId(row.name, out rowId)) continue;
+
+            PostAffector affector;
+            int number;
+            if (!TryFindAffector(rowId, out affector, out number)) continue;
+
+            Slider slider = row.GetComponentInChildren<Slider>(true);
+            if (slider != null && !Mathf.Approximately(slider.value, affector.weight))
+                slider.SetValueWithoutNotify(affector.weight);
+
+            Transform value = row.Find(WeightValueName);
+            if (value == null) continue;
+
+            TextMeshProUGUI text = value.GetComponent<TextMeshProUGUI>();
+            if (text == null) continue;
+
+            string wanted = affector.weight.ToString("F2");
+            if (text.text != wanted) text.text = wanted;
+        }
+    }
+
+    // Still the right answer when the SET of rows changes - a POST created, deleted, or a whole
+    // group imported - because the rows are renumbered by position and the list they are built
+    // from has changed shape. It is NOT the right answer for anything that only changes how a
+    // row looks or what it reads; those two callers now refresh in place.
     void RebuildGroupRows(int gid)
     {
+        // A rename open on a row that is about to be destroyed would take the user's typing with
+        // it. Take what has been typed so far first.
+        CommitRename();
+
         foreach (RectTransform r in FindObjectsByType<RectTransform>(FindObjectsSortMode.None)
             .Where(r => r.name.StartsWith("PostAffector_" + gid + "_")))
             Destroy(r.gameObject);
@@ -1050,6 +1172,9 @@ public class PostAffectorManager : MonoBehaviour
             slider.SetValueWithoutNotify(viewer.selectionStrength);
     }
 
+    private const string SelectButtonName = "PostSelectButton";
+    private const string WeightValueName = "PostWeightValue";
+    private const string WeightLabelName = "PostWeightLabel";
     private const string ModeButtonName = "PostModeButton";
     private const float ModeButtonWidth = 40f;
 
@@ -1207,6 +1332,253 @@ public class PostAffectorManager : MonoBehaviour
         return s;
     }
 
+    // ---- renaming --------------------------------------------------------------------------
+    //
+    // Double-click a POST's button and type over it. Six characters, committed on ENTER or on
+    // losing focus, abandoned on ESC.
+    //
+    // The field is parented to the row rather than to the button, and the button is hidden while
+    // it is open, so the layout group keeps the row's shape and nothing shifts as the caption
+    // becomes an edit box. It is also why the rename has to be committed before RebuildGroupRows
+    // destroys the row underneath it.
+    //
+    // No separate "is the user typing" flag is needed for the shortcut keys: this is a real
+    // TMP_InputField and GroupNameInlineEditAuthority.IsEnteringText already reports any focused
+    // one, which is what GroomShortcutKeyAuthority and the other hotkeys ask.
+    private int renamingId = -1;
+    private TMP_InputField renameField;
+    private GameObject renameHiddenCaption;
+
+    void BeginRename(PostAffector a)
+    {
+        if (a == null) return;
+
+        // A second double-click on the row already being renamed should not restart it and lose
+        // what is in the box.
+        if (renamingId == a.id) return;
+
+        CommitRename();
+
+        RectTransform row = FindRow(a);
+        if (row == null) return;
+
+        Transform button = row.Find(SelectButtonName);
+        if (button == null) return;
+
+        GameObject fieldObject = new GameObject("PostRenameField", typeof(RectTransform), typeof(Image), typeof(TMP_InputField));
+        fieldObject.transform.SetParent(row, false);
+        fieldObject.transform.SetSiblingIndex(button.GetSiblingIndex());
+
+        RectTransform fieldRect = fieldObject.GetComponent<RectTransform>();
+        fieldRect.sizeDelta = ((RectTransform)button).sizeDelta;
+
+        // No LayoutElement, deliberately: the row's HorizontalLayoutGroup has childControlWidth
+        // off, so it lays out on the rect above. Matching the button exactly - same rect, same
+        // sibling index, button hidden - is what keeps the row from moving as the caption becomes
+        // an edit box.
+        fieldObject.GetComponent<Image>().color = new Color(.08f, .09f, .11f, 1f);
+
+        // TMP needs a real text child and a viewport to put a caret in; without them the caret
+        // and the selection highlight are drawn at the origin of the canvas.
+        GameObject textArea = new GameObject("Text Area", typeof(RectTransform), typeof(RectMask2D));
+        textArea.transform.SetParent(fieldObject.transform, false);
+        RectTransform areaRect = textArea.GetComponent<RectTransform>();
+        areaRect.anchorMin = Vector2.zero;
+        areaRect.anchorMax = Vector2.one;
+        areaRect.offsetMin = new Vector2(4f, 1f);
+        areaRect.offsetMax = new Vector2(-4f, -1f);
+
+        GameObject textObject = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
+        textObject.transform.SetParent(textArea.transform, false);
+        RectTransform textRect = textObject.GetComponent<RectTransform>();
+        textRect.anchorMin = Vector2.zero;
+        textRect.anchorMax = Vector2.one;
+        textRect.offsetMin = Vector2.zero;
+        textRect.offsetMax = Vector2.zero;
+
+        TextMeshProUGUI text = textObject.GetComponent<TextMeshProUGUI>();
+        text.fontSize = 10f;
+        text.color = Color.white;
+        text.alignment = TextAlignmentOptions.Center;
+        text.richText = false;
+
+        TMP_InputField field = fieldObject.GetComponent<TMP_InputField>();
+        field.textViewport = areaRect;
+        field.textComponent = text;
+        field.characterLimit = LabelCharacterLimit;
+        field.lineType = TMP_InputField.LineType.SingleLine;
+        field.richText = false;
+        field.text = a.label;
+        field.caretWidth = 2;
+        field.customCaretColor = true;
+        field.caretColor = Color.white;
+
+        // Set rather than assumed. It is TMP's default, but "ESC abandons the edit" is a promise
+        // this code makes, and a promise resting on somebody else's default is one version bump
+        // from being broken quietly.
+        field.restoreOriginalTextOnEscape = true;
+
+        renamingId = a.id;
+        renameField = field;
+        renameHiddenCaption = button.gameObject;
+        renameHiddenCaption.SetActive(false);
+
+        // One listener, not onSubmit plus onDeselect. onEndEdit covers both ways an edit can
+        // finish - ENTER and losing focus - and it is the only one that also tells us WHICH,
+        // through wasCanceled, so ESC can abandon rather than commit.
+        field.onEndEdit.AddListener(_ => HandleEndEdit());
+
+        field.Select();
+        field.ActivateInputField();
+        field.caretPosition = field.text.Length;
+    }
+
+    // TMP raises onEndEdit for both ways an edit finishes, and from INSIDE its own deselect
+    // handling - so the EventSystem is already mid-selection-change when this runs. That is what
+    // insideEndEditCallback is for: touching the selection again from here logs "Attempting to
+    // select while already selecting" and does nothing. Same guard, for the same reason, as
+    // GroupNameInlineEditAuthority.HandleEndEdit.
+    private bool insideEndEditCallback;
+
+    void HandleEndEdit()
+    {
+        insideEndEditCallback = true;
+
+        bool cancelled = renameField != null && renameField.wasCanceled;
+        if (cancelled)
+        {
+            CancelRename();
+        }
+        else
+        {
+            CommitRename();
+        }
+
+        insideEndEditCallback = false;
+    }
+
+    // ENTER, or clicking away. Empty is a legitimate answer and means "no name" - which is how a
+    // POST is un-renamed back to its number.
+    void CommitRename()
+    {
+        if (renamingId < 0) return;
+
+        // A commit with no field to read is not a commit. The row can be destroyed out from
+        // under an open rename by half a dozen paths, and reading "" off a dead reference and
+        // writing it to the affector would ERASE a name that was already saved - the user having
+        // done nothing but load a project with the box open. Nothing to read means nothing to
+        // write; the sweep in Update catches the state either way.
+        if (renameField == null)
+        {
+            CancelRename();
+            return;
+        }
+
+        int id = renamingId;
+        string typed = renameField.text;
+
+        // Cleared FIRST. The teardown below can re-enter through the listener - deactivating a
+        // focused field ends the edit - and re-entering with the state still set would commit
+        // twice and destroy an object that is already going.
+        renamingId = -1;
+
+        PostAffector affector;
+        int number;
+        if (TryFindAffector(id, out affector, out number)) affector.label = NormaliseLabel(typed);
+
+        EndRename();
+
+        // Puts the caption back to whatever the commit just decided, name or number.
+        PaintAffectorRows();
+    }
+
+    void CancelRename()
+    {
+        if (renamingId < 0) return;
+        renamingId = -1;
+        EndRename();
+        PaintAffectorRows();
+    }
+
+    void EndRename()
+    {
+        if (renameField != null)
+        {
+            renameField.onEndEdit.RemoveAllListeners();
+
+            // Only from outside TMP's own callback. Inside it the EventSystem is already moving
+            // the selection somewhere else and has guarded itself against exactly this.
+            if (!insideEndEditCallback
+                && EventSystem.current != null
+                && EventSystem.current.currentSelectedGameObject == renameField.gameObject)
+            {
+                EventSystem.current.SetSelectedGameObject(null);
+            }
+
+            Destroy(renameField.gameObject);
+            renameField = null;
+        }
+
+        if (renameHiddenCaption != null)
+        {
+            renameHiddenCaption.SetActive(true);
+            renameHiddenCaption = null;
+        }
+    }
+
+    RectTransform FindRow(PostAffector a)
+    {
+        string wanted = RowName(a.groupId, a.id);
+        foreach (RectTransform row in FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            if (row != null && row.name == wanted) return row;
+        }
+        return null;
+    }
+
+    // ---- names ---------------------------------------------------------------------------
+
+    public const int LabelCharacterLimit = 6;
+
+    // Six characters is the whole design of this: it is what fits the row's button at the size
+    // the button already is, so a named POST cannot push the WEIGHT slider or DEL off the end of
+    // the row. The field refuses the seventh character rather than accepting it and eliding it,
+    // so what you type is what you get.
+    static string NormaliseLabel(string raw)
+    {
+        if (string.IsNullOrEmpty(raw)) return "";
+
+        // Angle brackets and control characters go first. The row caption is an ordinary TMP
+        // label with rich text ON, so "<b>Hi" would render as a bold "Hi" on the row and as the
+        // literal five characters in the edit box - the same reason GroupNameInlineEditAuthority
+        // sanitises group names. Stripped before the length check, so what survives is six real
+        // characters rather than six minus whatever was thrown away.
+        StringBuilder builder = new StringBuilder(raw.Length);
+        for (int i = 0; i < raw.Length; i++)
+        {
+            char c = raw[i];
+            if (c == '<' || c == '>') continue;
+            if (char.IsControl(c)) continue;
+            builder.Append(c);
+        }
+
+        string trimmed = builder.ToString().Trim();
+        if (trimmed.Length > LabelCharacterLimit)
+        {
+            trimmed = trimmed.Substring(0, LabelCharacterLimit);
+        }
+        return trimmed;
+    }
+
+    // What the row's button says: the user's name when there is one, and otherwise the ordinal
+    // it has always shown. The ordinal is positional, so deleting POST 1 renumbers the rest -
+    // which is exactly the ambiguity a name is there to remove.
+    static string DisplayLabel(PostAffector a, int number)
+    {
+        if (a != null && !string.IsNullOrEmpty(a.label)) return a.label;
+        return "POST " + number;
+    }
+
     string RowName(int gid, int id) => "PostAffector_" + gid + "_" + id;
     PostAffector GetActive() => groups.TryGetValue(activeGroup, out List<PostAffector> list) ? list.FirstOrDefault(a => a.id == activeId) : null;
     bool HasSelection() => hasSelectionField != null && hasSelectionField.GetValue(viewer) is bool b && b;
@@ -1352,6 +1724,7 @@ public class PostAffectorManager : MonoBehaviour
                 normalX = a.normal.x, normalY = a.normal.y, normalZ = a.normal.z,
                 radius = a.radius, falloff = a.falloff, weight = a.weight,
                 absolute = a.absolute,
+                label = a.label,
                 baseline = ToSave(a.baseline), delta = ToSave(a.delta)
             });
         }
@@ -1376,6 +1749,10 @@ public class PostAffectorManager : MonoBehaviour
         SetField(hasSelectionField, false);
         SetField(hitPointField, Vector3.zero);
         SetField(hitNormalField, Vector3.zero);
+
+        // Whatever was being typed is going with the project that is being torn down. Cancel
+        // rather than commit: there is nothing left to commit it onto.
+        CancelRename();
 
         foreach (RectTransform r in FindObjectsByType<RectTransform>(FindObjectsSortMode.None).Where(r => r.name.StartsWith("PostAffector_")))
             Destroy(r.gameObject);
@@ -1406,6 +1783,9 @@ public class PostAffectorManager : MonoBehaviour
                 // Absent from every project saved before this existed, and a missing bool
                 // deserializes to false - which is RELATIVE, which is what those projects were.
                 absolute = d.absolute,
+                // Null rather than empty in a project written before the field existed, and
+                // every reader here treats both the same - but normalise once, at the door.
+                label = NormaliseLabel(d.label),
                 baseline = FromSave(d.baseline),
                 delta = FromSave(d.delta)
             };
@@ -1445,4 +1825,23 @@ public class PostAffectorManager : MonoBehaviour
         waveAmplitude = s.waveAmplitude, waveFrequency = s.waveFrequency,
         waveDirection = s.waveDirection, arch = s.arch
     };
+}
+
+
+// Double-click on a POST row's button, for the rename. Separate from CustomClickDetector in
+// ModelViewer, which only carries right-click and is bound to group rows.
+//
+// The Button's own onClick still runs on the first click and selects the POST. That is the same
+// thing a group row does when you double-click its name to rename it, so the gesture behaves the
+// way the one it is copied from behaves.
+public class PostRowDoubleClick : MonoBehaviour, IPointerClickHandler
+{
+    public System.Action onDoubleClick;
+
+    public void OnPointerClick(PointerEventData eventData)
+    {
+        if (eventData.button != PointerEventData.InputButton.Left) return;
+        if (eventData.clickCount < 2) return;
+        if (onDoubleClick != null) onDoubleClick();
+    }
 }

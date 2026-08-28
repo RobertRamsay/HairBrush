@@ -268,6 +268,10 @@ public class GuideNodeSaveData
     public float falloff=PostGroupLifetimeAuthority.DefaultPostFalloff;
     public float weight=1f;
 
+    // The user's name for this POST, up to 6 characters. Empty means unnamed, which is what
+    // every project written before this field deserializes to, and the row then shows "POST n".
+    public string label="";
+
     // false = RELATIVE, the only behaviour that existed before this field and what every older
     // project deserializes to. true = ABSOLUTE: the POST replaces the base inside its radius
     // rather than offsetting it. No format bump - an absent key reads as false, which is right.

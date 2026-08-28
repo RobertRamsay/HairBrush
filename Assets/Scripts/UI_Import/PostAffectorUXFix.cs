@@ -89,7 +89,6 @@ public class PostAffectorUXFix : MonoBehaviour
         foreach (RectTransform row in FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
         {
             if (!row.name.StartsWith("PostAffector_")) continue;
-            if (row.childCount < 5) continue;
 
             HorizontalLayoutGroup layout = row.GetComponent<HorizontalLayoutGroup>();
             if (layout != null)
@@ -104,16 +103,25 @@ public class PostAffectorUXFix : MonoBehaviour
             // overwritten here every .05s, so any sizing change has to be made in this method or
             // it silently has no effect.
             //
+            // BY NAME, not by child index. It was indexed - GetChild(0..4) - and that was a
+            // standing trap rather than a shortcut: the row gained a REL/ABS button, and every
+            // width from then on was applied to the wrong column, silently, because an index is
+            // not a claim about what it points at. The inline rename field makes it worse still,
+            // inserting a sixth child at index 0 for as long as the box is open. Named lookups
+            // cannot be shifted by either.
+            //
             // Panel is 360 wide with 10px VerticalLayoutGroup padding either side -> 340 usable.
-            // Minus this row's 4+4 padding and 4 gaps of 4 -> 316 for the five columns. The 300
+            // Minus this row's 4+4 padding and 5 gaps of 4 -> 312 for the six columns. The 306
             // below leaves a little slack at the right so DEL never touches the panel edge.
-            SetWidth(row.GetChild(0), 58f);  // POST n
-            SetWidth(row.GetChild(1), 52f);  // WEIGHT label
-            SetWidth(row.GetChild(2), 116f); // slider
-            SetWidth(row.GetChild(3), 30f);  // numeric value
-            SetWidth(row.GetChild(4), 44f);  // DEL
+            SetWidth(row.Find("PostSelectButton"), 58f);  // POST n, or the user's name for it
+            SetWidth(row.Find("PostRenameField"), 58f);   // the edit box, same slot, only while open
+            SetWidth(row.Find("PostModeButton"), 34f);    // REL / ABS
+            SetWidth(row.Find("PostWeightLabel"), 48f);   // "WEIGHT"
+            SetWidth(row.Find("WeightSlider"), 94f);
+            SetWidth(row.Find("PostWeightValue"), 28f);
+            SetWidth(row.Find("DEL"), 44f);
 
-            ForceSingleLineWeightLabel(row.GetChild(1));
+            ForceSingleLineWeightLabel(row.Find("PostWeightLabel"));
         }
     }
 
