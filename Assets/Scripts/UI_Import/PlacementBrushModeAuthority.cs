@@ -165,6 +165,42 @@ public class PlacementBrushModeAuthority : MonoBehaviour
         go.AddComponent<PlacementBrushModeAuthority>();
     }
 
+    // The live authority, for GroomShortcutKeyAuthority. Initialised to null here rather than
+    // left to chance, and set in Awake rather than resolved by a scene scan on every keypress.
+    private static PlacementBrushModeAuthority instance = null;
+
+    public static PlacementBrushModeAuthority Instance
+    {
+        get { return instance; }
+    }
+
+    void Awake()
+    {
+        instance = this;
+    }
+
+    // Whether the placement modes mean anything right now: grooming switched on, with a model
+    // under the brush. Read by the shortcut keys so that they and this method cannot disagree
+    // about what "grooming is on" means.
+    public bool GroomingActive
+    {
+        get
+        {
+            Resolve();
+            if (!GetBool(groomingModeField)) return false;
+            if (GetLoadedModel() == null) return false;
+            return true;
+        }
+    }
+
+    // The shortcut keys' way in. Everything SetMode does and nothing else - no toast, because
+    // the caller words its own, and no revert bookkeeping, because that belongs to the SHIFT
+    // cycle and a letter key is never half of a chord.
+    public void ApplyModeFromShortcut(PlacementMode next)
+    {
+        SetMode(next);
+    }
+
     void Update()
     {
         Resolve();
@@ -1156,5 +1192,9 @@ public class PlacementBrushModeAuthority : MonoBehaviour
     void OnDestroy()
     {
         if (brushMaterial != null) Destroy(brushMaterial);
+
+        // Never leave Instance pointing at a destroyed authority - the shortcut keys ask for it
+        // by name and a dead reference there would swallow every mode key silently.
+        if (instance == this) instance = null;
     }
 }

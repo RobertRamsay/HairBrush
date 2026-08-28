@@ -70,6 +70,10 @@ public class GroomSymmetryAuthority : MonoBehaviour
         planeResolved = false;
         planeConfidence = 0f;
         modelWidth = 1f;
+
+        // Cleared for the same reason as the flags above: with domain reload disabled the
+        // static survives play stop still pointing at last session's destroyed authority.
+        instance = null;
     }
 
     public static bool Enabled
@@ -245,6 +249,21 @@ public class GroomSymmetryAuthority : MonoBehaviour
     }
 
     // ---- UI --------------------------------------------------------------------------
+    //
+    // The live authority, so the X shortcut does not scan the scene on every press. Initialised
+    // to null here and cleared in OnDestroy rather than trusted to stay valid.
+    private static GroomSymmetryAuthority instance = null;
+
+    private void Awake()
+    {
+        instance = this;
+    }
+
+    private void OnDestroy()
+    {
+        if (instance == this) instance = null;
+    }
+
     private GameObject boundPanel;
     private Button button;
     private TextMeshProUGUI label;
@@ -361,6 +380,18 @@ public class GroomSymmetryAuthority : MonoBehaviour
             }
             if (image.color != colour) image.color = colour;
         }
+    }
+
+    // The X shortcut's way in - deliberately the same call the button makes, rather than a
+    // second path that sets symmetryOn directly. Setting the flag from outside would skip the
+    // plane resolve, the toast and the repaint, and symmetry would come on with the button
+    // still painted off.
+    public static void RequestToggle()
+    {
+        GroomSymmetryAuthority live = instance;
+        if (live == null) live = FindFirstObjectByType<GroomSymmetryAuthority>();
+        if (live == null) return;
+        live.Toggle();
     }
 
     private void Toggle()
