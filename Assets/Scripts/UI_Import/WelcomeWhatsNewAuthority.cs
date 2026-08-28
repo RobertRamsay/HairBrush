@@ -52,23 +52,34 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
     // Five at most, one line each - the panel does not scroll, and anything past about eighty
     // characters is silently ellipsised.
     //
-    // 0.2.1 carries more than five things worth saying, so these are ranked by what a user cannot
-    // work out for themselves. The REBIND gets its own line and is not negotiable: two gestures
-    // that have been on ALT since the tool shipped have moved, unconditionally, and this panel is
-    // the only place in the product that says so. Somebody who finds ALT+click has stopped picking
-    // groups, with nothing on screen to explain it, reads that as a broken build.
+    // 0.3.0 carries more than five things worth saying, so these are ranked by what a user cannot
+    // work out for themselves.
     //
-    // What did not make the cut, and why: the dolly sensitivity fix and the guide-point drift fix
-    // are repairs to things that were wrong, and a release note is a poor place to advertise that
-    // they ever were. The drift one is mentioned anyway, in the last line, because the shape of the
-    // fix changed how the handles FEEL and somebody who had learned to fight it should know.
+    // REMAP leads because the capability is invisible until you already have a groom and import a
+    // second head - there is no button for it anywhere, by design, and somebody who does not know
+    // it exists will rebuild a groom by hand rather than move one.
+    //
+    // The brush keys are second for the same reason the ALT rebind led 0.2.1: a key that does
+    // something has to be told to somebody, since nothing on screen says so. The line names INPUT
+    // KEYS as well, which is the panel button that lists all of them and replaces the old
+    // instructions block.
+    //
+    // The POST line is the "something you knew has changed" slot. The groom panel used to go grey
+    // and read GROOM LOCKED whenever a group had a POST on it, and the only way out was to delete
+    // every POST. Anybody who learned that will not go back and try the sliders again unprompted.
+    //
+    // What did not make the cut: the group list no longer rebuilding itself on every add and
+    // delete, and undo now covering the material panel. Both are repairs, and a release note is a
+    // poor place to advertise that something was ever wrong. The CLEAR half of the last line is
+    // there only because it shares the panel with MASTER COLOUR and would otherwise cost a line
+    // of its own.
     private static readonly string[] ReleaseNotes =
     {
-        "MAYA-NAV: ALT + drag to tumble, track and dolly. Off unless you switch it on.",
-        "ALT is the camera key now - group pick and guide points moved to CTRL + SHIFT.",
-        "DEL button on every group row, and right click on the name works again.",
-        "Give each GUIDE its own colour, and GUIDES ON TOP draws them through the hair.",
-        "Guide handles no longer drift at awkward angles, and points move freely.",
+        "Move a finished groom onto a different head: import a model and pick REMAP.",
+        "Brush keys: P place, D draw, S spacing, E erase, X symmetry. See INPUT KEYS.",
+        "Group sliders now stay live with POSTs on them - the POSTs ride on top.",
+        "Name a POST, and set it REL to offset the group or ABS to override it.",
+        "MASTER COLOUR tints the hair, and CLEAR empties any texture slot.",
     };
 
     // ---------------------------------------------------------------------------------
