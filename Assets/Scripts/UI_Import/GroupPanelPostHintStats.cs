@@ -59,6 +59,7 @@ public class GroupPanelPostHintStats : MonoBehaviour
     // objects away when a panel is rebuilt from an older layout - nothing builds them now.
     private const string InstructionsHeaderName = "InstructionsHeader";
 
+    private int handledRebuildFrame = -1;
     private GameObject boundPanel;
     private readonly List<Transform> ordered = new List<Transform>();
     private ModelViewer viewer;
@@ -76,7 +77,8 @@ public class GroupPanelPostHintStats : MonoBehaviour
 
     void LateUpdate()
     {
-        if (Time.unscaledTime < nextScan) return;
+        bool rebuilt = RuntimeUIRebuildSignal.TryConsume(ref handledRebuildFrame);
+        if (!rebuilt && Time.unscaledTime < nextScan) return;
         nextScan = Time.unscaledTime + .10f;
 
         ResolveViewer();

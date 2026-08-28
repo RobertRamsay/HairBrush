@@ -36,6 +36,7 @@ public class ModifierCoreLock : MonoBehaviour
     private FieldInfo hasSelectionField;
     private GameObject boundPanel;
     private GameObject lockNotice;
+    private int handledRebuildFrame = -1;
     private float nextScan;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -49,7 +50,8 @@ public class ModifierCoreLock : MonoBehaviour
 
     void Update()
     {
-        if (Time.unscaledTime < nextScan) return;
+        bool rebuilt = RuntimeUIRebuildSignal.TryConsume(ref handledRebuildFrame);
+        if (!rebuilt && Time.unscaledTime < nextScan) return;
         nextScan = Time.unscaledTime + 0.08f;
 
         ResolveReferences();

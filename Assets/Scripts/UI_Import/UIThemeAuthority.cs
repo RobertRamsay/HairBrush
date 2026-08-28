@@ -15,6 +15,7 @@ public class UIThemeAuthority : MonoBehaviour
 {
     private ModelViewer viewer;
     private float nextScan;
+    private int handledRebuildFrame = -1;
     private readonly HashSet<Button> styledButtons = new HashSet<Button>();
     private readonly HashSet<Slider> styledSliders = new HashSet<Slider>();
     private readonly Dictionary<Button, bool> lastInteractable = new Dictionary<Button, bool>();
@@ -30,7 +31,12 @@ public class UIThemeAuthority : MonoBehaviour
 
     void LateUpdate()
     {
-        if (Time.unscaledTime < nextScan) return;
+        // Also on the frame the UI was rebuilt. A quarter of a second is a long time to leave
+        // a freshly built button wearing no skin, and this authority is the last thing to run in
+        // the frame, so answering the signal here means the skin lands before the button is ever
+        // drawn. See RuntimeUIRebuildSignal.
+        bool rebuilt = RuntimeUIRebuildSignal.TryConsume(ref handledRebuildFrame);
+        if (!rebuilt && Time.unscaledTime < nextScan) return;
         nextScan = Time.unscaledTime + .25f;
 
         if (viewer == null) viewer = FindFirstObjectByType<ModelViewer>();

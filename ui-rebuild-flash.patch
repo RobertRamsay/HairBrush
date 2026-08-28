@@ -1,0 +1,256 @@
+diff --git a/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs b/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs
+index a78aead..21f431d 100644
+--- a/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs
++++ b/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs
+@@ -59,6 +59,7 @@ public class GroupPanelPostHintStats : MonoBehaviour
+     // objects away when a panel is rebuilt from an older layout - nothing builds them now.
+     private const string InstructionsHeaderName = "InstructionsHeader";
+ 
++    private int handledRebuildFrame = -1;
+     private GameObject boundPanel;
+     private readonly List<Transform> ordered = new List<Transform>();
+     private ModelViewer viewer;
+@@ -76,7 +77,8 @@ public class GroupPanelPostHintStats : MonoBehaviour
+ 
+     void LateUpdate()
+     {
+-        if (Time.unscaledTime < nextScan) return;
++        bool rebuilt = RuntimeUIRebuildSignal.TryConsume(ref handledRebuildFrame);
++        if (!rebuilt && Time.unscaledTime < nextScan) return;
+         nextScan = Time.unscaledTime + .10f;
+ 
+         ResolveViewer();
+diff --git a/Assets/Scripts/UI_Import/GroupPanelRowOrderAuthority.cs b/Assets/Scripts/UI_Import/GroupPanelRowOrderAuthority.cs
+index 8491304..7480c15 100644
+--- a/Assets/Scripts/UI_Import/GroupPanelRowOrderAuthority.cs
++++ b/Assets/Scripts/UI_Import/GroupPanelRowOrderAuthority.cs
+@@ -49,7 +49,8 @@ public class GroupPanelRowOrderAuthority : MonoBehaviour
+             structureChanged = true;
+         }
+ 
+-        if (!structureChanged && Time.unscaledTime < nextScan) return;
++        bool rebuilt = RuntimeUIRebuildSignal.TryConsume(ref handledRebuildFrame);
++        if (!rebuilt && !structureChanged && Time.unscaledTime < nextScan) return;
+         nextScan = Time.unscaledTime + ScanInterval;
+ 
+         RectTransform[] all = FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+diff --git a/Assets/Scripts/UI_Import/ModelViewer.cs b/Assets/Scripts/UI_Import/ModelViewer.cs
+index be9f1c7..d8a7476 100644
+--- a/Assets/Scripts/UI_Import/ModelViewer.cs
++++ b/Assets/Scripts/UI_Import/ModelViewer.cs
+@@ -974,6 +974,13 @@ public class ModelViewer : MonoBehaviour
+         }
+ 
+         // Group structure really changed (add/delete/load/reset), so a full rebuild is warranted.
++        //
++        // This is the path behind the "the buttons flash in their old format" glitch when a group
++        // is added or deleted: every row below is built plain - a 170x40 label button, flat grey,
++        // unskinned - and five separate polling authorities correct it afterwards, the last of
++        // them up to a quarter of a second later. RuntimeUIRebuildSignal.Mark at the end of this
++        // method brings all five into the SAME frame as the build, so the rows are already right
++        // the first time they are drawn.
+         foreach (Transform child in groupListContentTransform) Destroy(child.gameObject);
+         foreach (int id in allGroupIds.OrderBy(g => g))
+         {
+@@ -1079,6 +1086,10 @@ public class ModelViewer : MonoBehaviour
+             delState.Bind(this, gid, delBtnGO.GetComponent<Image>(), delTmp);
+             delBtnGO.GetComponent<Button>().onClick.AddListener(delState.Press);
+         }
++
++        // Every row above is placeholder-sized and unskinned. Tell the styling authorities to run
++        // in this frame rather than at their next poll, so none of it is ever presented raw.
++        RuntimeUIRebuildSignal.Mark();
+     }
+ 
+     void ToggleGroupSolo(int gid)
+diff --git a/Assets/Scripts/UI_Import/ModifierCoreLock.cs b/Assets/Scripts/UI_Import/ModifierCoreLock.cs
+index 68a985f..28fbfab 100644
+--- a/Assets/Scripts/UI_Import/ModifierCoreLock.cs
++++ b/Assets/Scripts/UI_Import/ModifierCoreLock.cs
+@@ -36,6 +36,7 @@ public class ModifierCoreLock : MonoBehaviour
+     private FieldInfo hasSelectionField;
+     private GameObject boundPanel;
+     private GameObject lockNotice;
++    private int handledRebuildFrame = -1;
+     private float nextScan;
+ 
+     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+@@ -49,7 +50,8 @@ public class ModifierCoreLock : MonoBehaviour
+ 
+     void Update()
+     {
+-        if (Time.unscaledTime < nextScan) return;
++        bool rebuilt = RuntimeUIRebuildSignal.TryConsume(ref handledRebuildFrame);
++        if (!rebuilt && Time.unscaledTime < nextScan) return;
+         nextScan = Time.unscaledTime + 0.08f;
+ 
+         ResolveReferences();
+diff --git a/Assets/Scripts/UI_Import/PostAffectorManager.cs b/Assets/Scripts/UI_Import/PostAffectorManager.cs
+index 77c2090..27931ee 100644
+--- a/Assets/Scripts/UI_Import/PostAffectorManager.cs
++++ b/Assets/Scripts/UI_Import/PostAffectorManager.cs
+@@ -940,7 +940,14 @@ public class PostAffectorManager : MonoBehaviour
+             {
+                 string rowName = RowName(gid, a.id);
+                 Transform row = parent.Find(rowName);
+-                if (row == null) row = BuildRow(parent, a, number).transform;
++                if (row == null)
++                {
++                    row = BuildRow(parent, a, number).transform;
++
++                    // Built with BuildRow's placeholder widths; PostAffectorUXFix owns the real
++                    // ones and UIThemeAuthority owns the skin. Both in this frame, not theirs.
++                    RuntimeUIRebuildSignal.Mark();
++                }
+                 row.SetSiblingIndex(insert++);
+                 number++;
+             }
+@@ -1159,6 +1166,7 @@ public class PostAffectorManager : MonoBehaviour
+             .Where(r => r.name.StartsWith("PostAffector_" + gid + "_")))
+             Destroy(r.gameObject);
+         nextUIScan = 0f;
++        RuntimeUIRebuildSignal.Mark();
+     }
+ 
+     void RenameLegacyStrengthToWeight()
+diff --git a/Assets/Scripts/UI_Import/PostAffectorUXFix.cs b/Assets/Scripts/UI_Import/PostAffectorUXFix.cs
+index 113c0d9..2943772 100644
+--- a/Assets/Scripts/UI_Import/PostAffectorUXFix.cs
++++ b/Assets/Scripts/UI_Import/PostAffectorUXFix.cs
+@@ -25,7 +25,8 @@ public class PostAffectorUXFix : MonoBehaviour
+ 
+     void Update()
+     {
+-        if (Time.unscaledTime < nextScan) return;
++        bool rebuilt = RuntimeUIRebuildSignal.TryConsume(ref handledRebuildFrame);
++        if (!rebuilt && Time.unscaledTime < nextScan) return;
+         nextScan = Time.unscaledTime + .05f;
+ 
+         if (viewer == null)
+diff --git a/Assets/Scripts/UI_Import/RuntimeUIRebuildSignal.cs b/Assets/Scripts/UI_Import/RuntimeUIRebuildSignal.cs
+new file mode 100644
+index 0000000..a443537
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/RuntimeUIRebuildSignal.cs
+@@ -0,0 +1,78 @@
++using UnityEngine;
++
++// "The panel was just rebuilt - whoever styles it, do it NOW rather than at your next poll."
++//
++// THE PROBLEM THIS SOLVES
++//
++// Runtime UI in this project is built plain and corrected afterwards by a chain of polling
++// authorities, each on its own timer:
++//
++//   PostAffectorUXFix          Update      3600    every .05s   POST row column widths
++//   ModifierCoreLock           Update      5000    every .08s   interactable / row alpha
++//   GroupPanelPostHintStats    LateUpdate  9000    every .10s   group header layout, ordering
++//   GroupPanelRowOrderAuthority LateUpdate 10000   every .12s   row order
++//   UIThemeAuthority           LateUpdate  50000   every .25s   the shared button and slider skin
++//
++// That is a sound arrangement - the pieces are built by a dozen scripts at a dozen moments and
++// no one of them could know the whole answer - but it has one visible cost. ModelViewer's group
++// list is destroyed and rebuilt whenever a group is added or deleted, and the fresh rows are
++// raw: a 170x40 label button, flat grey, unskinned. They are then DRAWN that way for up to a
++// quarter of a second, until each authority's timer comes round and corrects them one after
++// another. What the user sees is the old-looking button format flashing up before the real one
++// settles - a rebuild that stutters instead of just changing.
++//
++// THE FIX
++//
++// Nothing about the polling changes. The authorities simply also run on the frame something was
++// rebuilt, so the correction lands in the SAME frame as the build - and since Unity renders
++// after LateUpdate, the first frame those rows are ever presented they are already correct.
++// Every one of the five above runs late enough in the frame (Update at 3600+, or LateUpdate) to
++// catch a rebuild made in an Update or a UI button callback, which is where they all come from.
++//
++// A mark made too late for one of them - after its slot in the frame - is picked up on the very
++// next frame instead, because each authority remembers which mark it has acted on rather than
++// asking whether the mark is from this exact frame. One frame of raw row is the worst case; a
++// quarter of a second was the old best case.
++//
++// This is not a general "something changed" bus and must not become one. It says only that UI
++// OBJECTS WERE CREATED OR DESTROYED and therefore need the styling passes. Data changes - a
++// slider moved, a weight edited - are not marks; those authorities already handle them on their
++// own terms, and marking every data change would put all five passes on every frame.
++public static class RuntimeUIRebuildSignal
++{
++    // The frame of the most recent rebuild. -1 means nothing has been marked this session.
++    private static int lastMarkedFrame = -1;
++
++    // Statics survive "Enter Play Mode -> Disable Domain Reload", and a frame number from the
++    // previous run is a number from the future as often as not.
++    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
++    private static void ResetStatics()
++    {
++        lastMarkedFrame = -1;
++    }
++
++    // Call immediately AFTER building or destroying runtime UI objects, not before - the
++    // authorities that answer this run later in the same frame and need the objects to exist.
++    public static void Mark()
++    {
++        lastMarkedFrame = Time.frameCount;
++    }
++
++    // True once per mark, per caller. Each authority keeps its own handled-frame field, so a
++    // single rebuild is seen by all of them and by none of them twice.
++    //
++    // Used as: bool rebuilt = RuntimeUIRebuildSignal.TryConsume(ref handledRebuildFrame);
++    //          if (!rebuilt && Time.unscaledTime < nextScan) return;
++    //
++    // Consumed BEFORE the timer test in that idiom, deliberately: a mark has to be marked as
++    // handled even on a frame the timer would have allowed the pass anyway, or the authority
++    // runs a second time on the next frame for a rebuild it has already dealt with.
++    public static bool TryConsume(ref int handledFrame)
++    {
++        if (lastMarkedFrame < 0) return false;
++        if (handledFrame >= lastMarkedFrame) return false;
++
++        handledFrame = lastMarkedFrame;
++        return true;
++    }
++}
+diff --git a/Assets/Scripts/UI_Import/RuntimeUIRebuildSignal.cs.meta b/Assets/Scripts/UI_Import/RuntimeUIRebuildSignal.cs.meta
+new file mode 100644
+index 0000000..ca06b4e
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/RuntimeUIRebuildSignal.cs.meta
+@@ -0,0 +1,11 @@
++fileFormatVersion: 2
++guid: 5e91c4a7f2db4d3fa06c81b7e35d9a24
++MonoImporter:
++  externalObjects: {}
++  serializedVersion: 2
++  defaultReferences: []
++  executionOrder: 0
++  icon: {instanceID: 0}
++  userData: 
++  assetBundleName: 
++  assetBundleVariant: 
+diff --git a/Assets/Scripts/UI_Import/UIThemeAuthority.cs b/Assets/Scripts/UI_Import/UIThemeAuthority.cs
+index 992006f..1583968 100644
+--- a/Assets/Scripts/UI_Import/UIThemeAuthority.cs
++++ b/Assets/Scripts/UI_Import/UIThemeAuthority.cs
+@@ -15,6 +15,7 @@ public class UIThemeAuthority : MonoBehaviour
+ {
+     private ModelViewer viewer;
+     private float nextScan;
++    private int handledRebuildFrame = -1;
+     private readonly HashSet<Button> styledButtons = new HashSet<Button>();
+     private readonly HashSet<Slider> styledSliders = new HashSet<Slider>();
+     private readonly Dictionary<Button, bool> lastInteractable = new Dictionary<Button, bool>();
+@@ -30,7 +31,12 @@ public class UIThemeAuthority : MonoBehaviour
+ 
+     void LateUpdate()
+     {
+-        if (Time.unscaledTime < nextScan) return;
++        // Also on the frame the UI was rebuilt. A quarter of a second is a long time to leave
++        // a freshly built button wearing no skin, and this authority is the last thing to run in
++        // the frame, so answering the signal here means the skin lands before the button is ever
++        // drawn. See RuntimeUIRebuildSignal.
++        bool rebuilt = RuntimeUIRebuildSignal.TryConsume(ref handledRebuildFrame);
++        if (!rebuilt && Time.unscaledTime < nextScan) return;
+         nextScan = Time.unscaledTime + .25f;
+ 
+         if (viewer == null) viewer = FindFirstObjectByType<ModelViewer>();

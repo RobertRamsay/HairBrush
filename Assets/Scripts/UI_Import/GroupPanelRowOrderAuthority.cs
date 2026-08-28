@@ -49,7 +49,8 @@ public class GroupPanelRowOrderAuthority : MonoBehaviour
             structureChanged = true;
         }
 
-        if (!structureChanged && Time.unscaledTime < nextScan) return;
+        bool rebuilt = RuntimeUIRebuildSignal.TryConsume(ref handledRebuildFrame);
+        if (!rebuilt && !structureChanged && Time.unscaledTime < nextScan) return;
         nextScan = Time.unscaledTime + ScanInterval;
 
         RectTransform[] all = FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None);

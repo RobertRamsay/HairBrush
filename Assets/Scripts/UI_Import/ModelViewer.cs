@@ -974,6 +974,13 @@ public class ModelViewer : MonoBehaviour
         }
 
         // Group structure really changed (add/delete/load/reset), so a full rebuild is warranted.
+        //
+        // This is the path behind the "the buttons flash in their old format" glitch when a group
+        // is added or deleted: every row below is built plain - a 170x40 label button, flat grey,
+        // unskinned - and five separate polling authorities correct it afterwards, the last of
+        // them up to a quarter of a second later. RuntimeUIRebuildSignal.Mark at the end of this
+        // method brings all five into the SAME frame as the build, so the rows are already right
+        // the first time they are drawn.
         foreach (Transform child in groupListContentTransform) Destroy(child.gameObject);
         foreach (int id in allGroupIds.OrderBy(g => g))
         {
@@ -1079,6 +1086,10 @@ public class ModelViewer : MonoBehaviour
             delState.Bind(this, gid, delBtnGO.GetComponent<Image>(), delTmp);
             delBtnGO.GetComponent<Button>().onClick.AddListener(delState.Press);
         }
+
+        // Every row above is placeholder-sized and unskinned. Tell the styling authorities to run
+        // in this frame rather than at their next poll, so none of it is ever presented raw.
+        RuntimeUIRebuildSignal.Mark();
     }
 
     void ToggleGroupSolo(int gid)

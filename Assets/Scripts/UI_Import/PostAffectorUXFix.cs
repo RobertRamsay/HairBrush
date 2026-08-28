@@ -25,7 +25,8 @@ public class PostAffectorUXFix : MonoBehaviour
 
     void Update()
     {
-        if (Time.unscaledTime < nextScan) return;
+        bool rebuilt = RuntimeUIRebuildSignal.TryConsume(ref handledRebuildFrame);
+        if (!rebuilt && Time.unscaledTime < nextScan) return;
         nextScan = Time.unscaledTime + .05f;
 
         if (viewer == null)

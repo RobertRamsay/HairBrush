@@ -940,7 +940,14 @@ public class PostAffectorManager : MonoBehaviour
             {
                 string rowName = RowName(gid, a.id);
                 Transform row = parent.Find(rowName);
-                if (row == null) row = BuildRow(parent, a, number).transform;
+                if (row == null)
+                {
+                    row = BuildRow(parent, a, number).transform;
+
+                    // Built with BuildRow's placeholder widths; PostAffectorUXFix owns the real
+                    // ones and UIThemeAuthority owns the skin. Both in this frame, not theirs.
+                    RuntimeUIRebuildSignal.Mark();
+                }
                 row.SetSiblingIndex(insert++);
                 number++;
             }
@@ -1159,6 +1166,7 @@ public class PostAffectorManager : MonoBehaviour
             .Where(r => r.name.StartsWith("PostAffector_" + gid + "_")))
             Destroy(r.gameObject);
         nextUIScan = 0f;
+        RuntimeUIRebuildSignal.Mark();
     }
 
     void RenameLegacyStrengthToWeight()
