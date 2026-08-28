@@ -1,0 +1,400 @@
+diff --git a/Assets/Scripts/UI_Import/ModelViewer.cs b/Assets/Scripts/UI_Import/ModelViewer.cs
+index f9563d8..3b5b440 100644
+--- a/Assets/Scripts/UI_Import/ModelViewer.cs
++++ b/Assets/Scripts/UI_Import/ModelViewer.cs
+@@ -922,9 +922,8 @@ public class ModelViewer : MonoBehaviour
+             groupCardCounts[card.groupId]++;
+         }
+ 
+-        // Most refreshes only change presentation (card count, active color, name, solo state).
+-        // Updating those rows in place preserves POST/modifier children and keeps the ScrollRect
+-        // from collapsing/re-expanding every time a hair card is placed.
++        // The rows that already exist, by group id. Discarded_* rows are excluded for free -
++        // CondemnRow renames with that prefix, so they no longer start with "GroupItem_".
+         Dictionary<int, Transform> existingGroups = new Dictionary<int, Transform>();
+         foreach (Transform child in groupListContentTransform)
+         {
+@@ -933,183 +932,216 @@ public class ModelViewer : MonoBehaviour
+                 existingGroups[gid] = child;
+         }
+ 
+-        bool structureMatches = existingGroups.Count == allGroupIds.Count && allGroupIds.All(id => existingGroups.ContainsKey(id));
+-        if (structureMatches)
++        // ---- reconcile, do not rebuild -------------------------------------------------
++        //
++        // This used to clear the list and build every row again whenever the set of groups
++        // changed. Adding one group threw away nine perfectly good rows to make ten, and the
++        // replacements arrived plain - placeholder sizes, no skin - to be corrected afterwards by
++        // five polling authorities. Two rounds of fixes made that correction land sooner and stop
++        // the old rows lingering into the new frame, and both were real bugs, but neither could
++        // make a rebuild look like nothing happened. A row that is never rebuilt cannot flicker.
++        //
++        // So: remove the rows whose group is gone, build a row for a group that has none, and
++        // leave every other row exactly as it is - already sized, already skinned, still holding
++        // its POST and CLUMPER children, with the scroll position undisturbed. Adding a group now
++        // touches one row. Deleting one touches one row.
++        bool structureChanged = false;
++
++        foreach (KeyValuePair<int, Transform> pair in existingGroups)
+         {
+-            foreach (int id in allGroupIds)
+-            {
+-                Transform item = existingGroups[id];
+-                Image bg = item.GetComponent<Image>();
+-                if (bg != null)
+-                    bg.color = id == currentGroupId ? new Color(0.3f, 0.6f, 0.3f, 1f) : new Color(0.25f, 0.25f, 0.25f, 1f);
++            if (allGroupIds.Contains(pair.Key)) continue;
++            CondemnRow(pair.Value);
++            structureChanged = true;
++        }
+ 
+-                Transform labelButton = item.Find("LabelButton");
+-                if (labelButton != null)
+-                {
+-                    Transform nameLabel = labelButton.Find("Label");
+-                    TMPro.TextMeshProUGUI nameTmp = nameLabel != null ? nameLabel.GetComponent<TMPro.TextMeshProUGUI>() : null;
+-                    if (nameTmp != null)
+-                        nameTmp.text = groupNames.ContainsKey(id) ? groupNames[id] : ("Group " + id);
+-
+-                    Transform countLabel = labelButton.Find("CardCountLabel");
+-                    TMPro.TextMeshProUGUI countTmp = countLabel != null ? countLabel.GetComponent<TMPro.TextMeshProUGUI>() : null;
+-                    if (countTmp != null)
+-                    {
+-                        int count = groupCardCounts.ContainsKey(id) ? groupCardCounts[id] : 0;
+-                        countTmp.text = count + (count == 1 ? " card" : " cards");
+-                    }
+-                }
++        foreach (int id in allGroupIds.OrderBy(g => g))
++        {
++            if (existingGroups.ContainsKey(id)) continue;
+ 
+-                Transform solo = item.Find("SoloButton");
+-                Image soloImage = solo != null ? solo.GetComponent<Image>() : null;
+-                if (soloImage != null)
+-                {
+-                    bool isSoloed = GroupSoloVisibilityAuthority.IsSoloed(id);
+-                    Color soloColor = new Color(0.35f, 0.35f, 0.35f);
+-                    if (isSoloed) soloColor = new Color(0.9f, 0.5f, 0.1f);
+-                    soloImage.color = soloColor;
+-                }
+-            }
+-            return;
++            int newCount = 0;
++            if (groupCardCounts.ContainsKey(id)) newCount = groupCardCounts[id];
++
++            GameObject built = BuildGroupRow(id, newCount);
++            existingGroups[id] = built.transform;
++            structureChanged = true;
+         }
+ 
+-        // Group structure really changed (add/delete/load/reset), so a full rebuild is warranted.
+-        //
+-        // This is the path behind the "the buttons flash in their old format" glitch when a group
+-        // is added or deleted: every row below is built plain - a 170x40 label button, flat grey,
+-        // unskinned - and five separate polling authorities correct it afterwards, the last of
+-        // them up to a quarter of a second later. RuntimeUIRebuildSignal.Mark at the end of this
+-        // method brings all five into the SAME frame as the build, so the rows are already right
+-        // the first time they are drawn.
+-        // CONDEMNED FIRST, destroyed second. Destroy is deferred to the end of the frame, so a
+-        // plain Destroy here left every old row alive and RENDERED for the whole of the frame the
+-        // new ones were built in. The list held both sets at once: the layout laid out twice the
+-        // rows, the scroll content doubled in height, and it all collapsed back one frame later.
+-        // That one frame is the jump - the part of this that styling could never fix, because
+-        // nothing was mis-styled.
+-        //
+-        // Worse than the flicker, ten other authorities look a GroupItem up by name or by the
+-        // "GroupItem_" prefix, several of them with FindObjectsInactive.Include, and for that one
+-        // frame there were two of every id. Whichever came back first got the layout and the
+-        // skin; if that was the condemned one, the real row went uncorrected until the next poll.
+-        //
+-        // The rename uses a PREFIX, not a suffix: "GroupItem_3_Discarded" still starts with
+-        // "GroupItem_" and would still be found by all ten of them.
+-        foreach (Transform child in groupListContentTransform)
++        // Presentation, for every row that is staying as well as the one that may have just been
++        // built. This is the pass that used to run only when the structure had NOT changed.
++        foreach (int id in allGroupIds)
++        {
++            Transform item;
++            if (!existingGroups.TryGetValue(id, out item)) continue;
++            if (item == null) continue;
++
++            ApplyGroupRowPresentation(item, id, groupCardCounts);
++        }
++
++        // Only when something was actually created or destroyed. A card placed into an existing
++        // group changes a count and nothing else, and does not need five styling passes.
++        if (structureChanged) RuntimeUIRebuildSignal.Mark();
++    }
++
++    // Deactivated and renamed before the Destroy, never merely destroyed. Destroy is deferred to
++    // the end of the frame, so a plain Destroy leaves the row alive and RENDERED for the rest of
++    // it - and findable by name, which matters because ten authorities look a GroupItem up by the
++    // "GroupItem_" prefix, several of them including inactive objects.
++    //
++    // The rename is a PREFIX: "GroupItem_3_Discarded" still starts with "GroupItem_" and would
++    // still be found by every one of them.
++    void CondemnRow(Transform row)
++    {
++        if (row == null) return;
++        row.gameObject.SetActive(false);
++        row.gameObject.name = "Discarded_" + row.gameObject.name;
++        Destroy(row.gameObject);
++    }
++
++    // Everything about a row that depends on state rather than structure: which group is current,
++    // what it is called, how many cards it holds, whether it is soloed.
++    void ApplyGroupRowPresentation(Transform item, int id, Dictionary<int, int> groupCardCounts)
++    {
++        Image bg = item.GetComponent<Image>();
++        if (bg != null)
+         {
+-            if (child == null) continue;
+-            child.gameObject.SetActive(false);
+-            child.gameObject.name = "Discarded_" + child.gameObject.name;
+-            Destroy(child.gameObject);
++            Color rowColour = new Color(0.25f, 0.25f, 0.25f, 1f);
++            if (id == currentGroupId) rowColour = new Color(0.3f, 0.6f, 0.3f, 1f);
++            bg.color = rowColour;
+         }
+-        foreach (int id in allGroupIds.OrderBy(g => g))
++
++        Transform labelButton = item.Find("LabelButton");
++        if (labelButton != null)
++        {
++            Transform nameLabel = labelButton.Find("Label");
++            TMPro.TextMeshProUGUI nameTmp = nameLabel != null ? nameLabel.GetComponent<TMPro.TextMeshProUGUI>() : null;
++            if (nameTmp != null)
++                nameTmp.text = groupNames.ContainsKey(id) ? groupNames[id] : ("Group " + id);
++
++            Transform countLabel = labelButton.Find("CardCountLabel");
++            TMPro.TextMeshProUGUI countTmp = countLabel != null ? countLabel.GetComponent<TMPro.TextMeshProUGUI>() : null;
++            if (countTmp != null)
++            {
++                int count = 0;
++                if (groupCardCounts.ContainsKey(id)) count = groupCardCounts[id];
++                countTmp.text = count + (count == 1 ? " card" : " cards");
++            }
++        }
++
++        Transform solo = item.Find("SoloButton");
++        Image soloImage = solo != null ? solo.GetComponent<Image>() : null;
++        if (soloImage != null)
+         {
+-            int gid = id;
+-            int cardCount = groupCardCounts.ContainsKey(gid) ? groupCardCounts[gid] : 0;
+-            GameObject itemGO = new GameObject("GroupItem_" + gid, typeof(RectTransform), typeof(Image), typeof(HorizontalLayoutGroup));
+-            itemGO.transform.SetParent(groupListContentTransform, false);
+-            itemGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 48);
+-            itemGO.GetComponent<Image>().color = (gid == currentGroupId) ? new Color(0.3f, 0.6f, 0.3f, 1f) : new Color(0.25f, 0.25f, 0.25f, 1f);
+-            HorizontalLayoutGroup rowLayout = itemGO.GetComponent<HorizontalLayoutGroup>();
+-            rowLayout.padding = new RectOffset(8, 8, 4, 4);
+-            rowLayout.spacing = 8;
+-            rowLayout.childControlWidth = false;
+-            rowLayout.childControlHeight = true;
+-            GameObject labelBtnGO = new GameObject("LabelButton", typeof(RectTransform), typeof(Button), typeof(CustomClickDetector));
+-            labelBtnGO.transform.SetParent(itemGO.transform, false);
+-            // Held only until ApplyHeaderLayout stretches this to the full row - see the panel
+-            // width above. Left at its original value rather than tuned, because tuning it would
+-            // look like it mattered.
+-            labelBtnGO.GetComponent<RectTransform>().sizeDelta = new Vector2(170, 40);
+-            labelBtnGO.GetComponent<Button>().onClick.AddListener(() => HandleGroupItemClick(gid));
+-            labelBtnGO.GetComponent<CustomClickDetector>().onRightClick = () => PromptDeleteGroup(gid);
+-            GameObject txtGO = new GameObject("Label", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
+-            txtGO.transform.SetParent(labelBtnGO.transform, false);
+-            TMPro.TextMeshProUGUI tmp = txtGO.GetComponent<TMPro.TextMeshProUGUI>();
+-            tmp.text = groupNames.ContainsKey(gid) ? groupNames[gid] : ("Group " + gid);
+-            tmp.fontSize = 14;
+-            tmp.fontStyle = TMPro.FontStyles.Bold;
+-            tmp.alignment = TMPro.TextAlignmentOptions.TopLeft;
+-            tmp.color = Color.white;
+-            RectTransform txtRect = txtGO.GetComponent<RectTransform>();
+-            txtRect.anchorMin = Vector2.zero;
+-            txtRect.anchorMax = Vector2.one;
+-            txtRect.offsetMin = new Vector2(2, 2);
+-            txtRect.offsetMax = new Vector2(-2, -2);
+-            GameObject countTxtGO = new GameObject("CardCountLabel", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
+-            countTxtGO.transform.SetParent(labelBtnGO.transform, false);
+-            TMPro.TextMeshProUGUI countTmp = countTxtGO.GetComponent<TMPro.TextMeshProUGUI>();
+-            countTmp.text = cardCount + (cardCount == 1 ? " card" : " cards");
+-            countTmp.fontSize = 11;
+-            countTmp.alignment = TMPro.TextAlignmentOptions.BottomLeft;
+-            countTmp.color = new Color(0.8f, 0.8f, 0.8f, 0.9f);
+-            RectTransform countRect = countTxtGO.GetComponent<RectTransform>();
+-            countRect.anchorMin = Vector2.zero;
+-            countRect.anchorMax = Vector2.one;
+-            countRect.offsetMin = new Vector2(2, 2);
+-            countRect.offsetMax = new Vector2(-2, -2);
+-            GameObject soloBtnGO = new GameObject("SoloButton", typeof(RectTransform), typeof(Image), typeof(Button));
+-            soloBtnGO.transform.SetParent(itemGO.transform, false);
+-            soloBtnGO.GetComponent<RectTransform>().sizeDelta = new Vector2(65, 36);
+-            bool isSoloed = GroupSoloVisibilityAuthority.IsSoloed(gid);
+-            Color soloIdleColor = new Color(0.35f, 0.35f, 0.35f);
+-            if (isSoloed) soloIdleColor = new Color(0.9f, 0.5f, 0.1f);
+-            soloBtnGO.GetComponent<Image>().color = soloIdleColor;
+-            Button soloBtn = soloBtnGO.GetComponent<Button>();
+-            GameObject soloTxtGO = new GameObject("Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
+-            soloTxtGO.transform.SetParent(soloBtnGO.transform, false);
+-            TMPro.TextMeshProUGUI soloTmp = soloTxtGO.GetComponent<TMPro.TextMeshProUGUI>();
+-            soloTmp.text = "SOLO";
+-            soloTmp.fontSize = 13;
+-            soloTmp.fontStyle = TMPro.FontStyles.Bold;
+-            soloTmp.alignment = TMPro.TextAlignmentOptions.Center;
+-            soloTmp.color = Color.white;
+-            soloTxtGO.GetComponent<RectTransform>().anchorMin = Vector2.zero;
+-            soloTxtGO.GetComponent<RectTransform>().anchorMax = Vector2.one;
+-            soloTxtGO.GetComponent<RectTransform>().sizeDelta = Vector2.zero;
+-            soloBtn.onClick.AddListener(() => ToggleGroupSolo(gid));
+-
+-            // DEL, at the right-hand end of the row. Right-click on the group name still deletes
+-            // and now routes through this same button - see PromptDeleteGroup - so the two
+-            // gestures cannot get out of step with each other.
+-            GameObject delBtnGO = new GameObject("DeleteButton", typeof(RectTransform), typeof(Image), typeof(Button), typeof(GroupDeleteButton));
+-            delBtnGO.transform.SetParent(itemGO.transform, false);
+-            // Placeholder only. GroupPanelPostHintStats.ApplyHeaderLayout anchors this into the
+-            // row's top-right corner and sets its real size; see DeleteButtonWidth there.
+-            delBtnGO.GetComponent<RectTransform>().sizeDelta = new Vector2(56, 20);
+-            GameObject delTxtGO = new GameObject("Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
+-            delTxtGO.transform.SetParent(delBtnGO.transform, false);
+-            TMPro.TextMeshProUGUI delTmp = delTxtGO.GetComponent<TMPro.TextMeshProUGUI>();
+-
+-            // Sized HERE and nowhere else. A TMP label with no fontSize takes the project default,
+-            // which is 36 - so leaving it out does not give a small button, it gives "DEL" at 36pt
+-            // wrapped across a 56x20 rect and spilling over the group name. And it cannot be set
+-            // later either: PanelTypographyScale caches the first size it sees and force-writes it
+-            // every LateUpdate, so construction time is the only moment that counts. 13 matches
+-            // SOLO beside it.
+-            delTmp.fontSize = 13;
+-
+-            // NoWrap so that if this ever gets out of step again it fails by being clipped, which
+-            // is obvious, rather than by wrapping into the rows above and below, which reads as a
+-            // layout bug somewhere else entirely.
+-            delTmp.textWrappingMode = TMPro.TextWrappingModes.NoWrap;
+-            delTmp.overflowMode = TMPro.TextOverflowModes.Overflow;
+-            delTmp.fontStyle = TMPro.FontStyles.Bold;
+-            delTmp.alignment = TMPro.TextAlignmentOptions.Center;
+-            delTmp.color = Color.white;
+-            delTmp.raycastTarget = false;
+-            delTxtGO.GetComponent<RectTransform>().anchorMin = Vector2.zero;
+-            delTxtGO.GetComponent<RectTransform>().anchorMax = Vector2.one;
+-            delTxtGO.GetComponent<RectTransform>().sizeDelta = Vector2.zero;
+-
+-            GroupDeleteButton delState = delBtnGO.GetComponent<GroupDeleteButton>();
+-            delState.Bind(this, gid, delBtnGO.GetComponent<Image>(), delTmp);
+-            delBtnGO.GetComponent<Button>().onClick.AddListener(delState.Press);
++            Color soloColor = new Color(0.35f, 0.35f, 0.35f);
++            if (GroupSoloVisibilityAuthority.IsSoloed(id)) soloColor = new Color(0.9f, 0.5f, 0.1f);
++            soloImage.color = soloColor;
+         }
++    }
+ 
+-        // Every row above is placeholder-sized and unskinned. Tell the styling authorities to run
+-        // in this frame rather than at their next poll, so none of it is ever presented raw.
+-        RuntimeUIRebuildSignal.Mark();
++    // One group row, built from nothing. Called for a group that has no row yet - which, after
++    // the reconcile above, means a group that was just created or one being restored by a load.
++    GameObject BuildGroupRow(int gid, int cardCount)
++    {
++        GameObject itemGO = new GameObject("GroupItem_" + gid, typeof(RectTransform), typeof(Image), typeof(HorizontalLayoutGroup));
++        itemGO.transform.SetParent(groupListContentTransform, false);
++        itemGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 48);
++        itemGO.GetComponent<Image>().color = (gid == currentGroupId) ? new Color(0.3f, 0.6f, 0.3f, 1f) : new Color(0.25f, 0.25f, 0.25f, 1f);
++        HorizontalLayoutGroup rowLayout = itemGO.GetComponent<HorizontalLayoutGroup>();
++        rowLayout.padding = new RectOffset(8, 8, 4, 4);
++        rowLayout.spacing = 8;
++        rowLayout.childControlWidth = false;
++        rowLayout.childControlHeight = true;
++        GameObject labelBtnGO = new GameObject("LabelButton", typeof(RectTransform), typeof(Button), typeof(CustomClickDetector));
++        labelBtnGO.transform.SetParent(itemGO.transform, false);
++        // Held only until ApplyHeaderLayout stretches this to the full row - see the panel
++        // width above. Left at its original value rather than tuned, because tuning it would
++        // look like it mattered.
++        labelBtnGO.GetComponent<RectTransform>().sizeDelta = new Vector2(170, 40);
++        labelBtnGO.GetComponent<Button>().onClick.AddListener(() => HandleGroupItemClick(gid));
++        labelBtnGO.GetComponent<CustomClickDetector>().onRightClick = () => PromptDeleteGroup(gid);
++        GameObject txtGO = new GameObject("Label", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
++        txtGO.transform.SetParent(labelBtnGO.transform, false);
++        TMPro.TextMeshProUGUI tmp = txtGO.GetComponent<TMPro.TextMeshProUGUI>();
++        tmp.text = groupNames.ContainsKey(gid) ? groupNames[gid] : ("Group " + gid);
++        tmp.fontSize = 14;
++        tmp.fontStyle = TMPro.FontStyles.Bold;
++        tmp.alignment = TMPro.TextAlignmentOptions.TopLeft;
++        tmp.color = Color.white;
++        RectTransform txtRect = txtGO.GetComponent<RectTransform>();
++        txtRect.anchorMin = Vector2.zero;
++        txtRect.anchorMax = Vector2.one;
++        txtRect.offsetMin = new Vector2(2, 2);
++        txtRect.offsetMax = new Vector2(-2, -2);
++        GameObject countTxtGO = new GameObject("CardCountLabel", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
++        countTxtGO.transform.SetParent(labelBtnGO.transform, false);
++        TMPro.TextMeshProUGUI countTmp = countTxtGO.GetComponent<TMPro.TextMeshProUGUI>();
++        countTmp.text = cardCount + (cardCount == 1 ? " card" : " cards");
++        countTmp.fontSize = 11;
++        countTmp.alignment = TMPro.TextAlignmentOptions.BottomLeft;
++        countTmp.color = new Color(0.8f, 0.8f, 0.8f, 0.9f);
++        RectTransform countRect = countTxtGO.GetComponent<RectTransform>();
++        countRect.anchorMin = Vector2.zero;
++        countRect.anchorMax = Vector2.one;
++        countRect.offsetMin = new Vector2(2, 2);
++        countRect.offsetMax = new Vector2(-2, -2);
++        GameObject soloBtnGO = new GameObject("SoloButton", typeof(RectTransform), typeof(Image), typeof(Button));
++        soloBtnGO.transform.SetParent(itemGO.transform, false);
++        soloBtnGO.GetComponent<RectTransform>().sizeDelta = new Vector2(65, 36);
++        bool isSoloed = GroupSoloVisibilityAuthority.IsSoloed(gid);
++        Color soloIdleColor = new Color(0.35f, 0.35f, 0.35f);
++        if (isSoloed) soloIdleColor = new Color(0.9f, 0.5f, 0.1f);
++        soloBtnGO.GetComponent<Image>().color = soloIdleColor;
++        Button soloBtn = soloBtnGO.GetComponent<Button>();
++        GameObject soloTxtGO = new GameObject("Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
++        soloTxtGO.transform.SetParent(soloBtnGO.transform, false);
++        TMPro.TextMeshProUGUI soloTmp = soloTxtGO.GetComponent<TMPro.TextMeshProUGUI>();
++        soloTmp.text = "SOLO";
++        soloTmp.fontSize = 13;
++        soloTmp.fontStyle = TMPro.FontStyles.Bold;
++        soloTmp.alignment = TMPro.TextAlignmentOptions.Center;
++        soloTmp.color = Color.white;
++        soloTxtGO.GetComponent<RectTransform>().anchorMin = Vector2.zero;
++        soloTxtGO.GetComponent<RectTransform>().anchorMax = Vector2.one;
++        soloTxtGO.GetComponent<RectTransform>().sizeDelta = Vector2.zero;
++        soloBtn.onClick.AddListener(() => ToggleGroupSolo(gid));
++
++        // DEL, at the right-hand end of the row. Right-click on the group name still deletes
++        // and now routes through this same button - see PromptDeleteGroup - so the two
++        // gestures cannot get out of step with each other.
++        GameObject delBtnGO = new GameObject("DeleteButton", typeof(RectTransform), typeof(Image), typeof(Button), typeof(GroupDeleteButton));
++        delBtnGO.transform.SetParent(itemGO.transform, false);
++        // Placeholder only. GroupPanelPostHintStats.ApplyHeaderLayout anchors this into the
++        // row's top-right corner and sets its real size; see DeleteButtonWidth there.
++        delBtnGO.GetComponent<RectTransform>().sizeDelta = new Vector2(56, 20);
++        GameObject delTxtGO = new GameObject("Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
++        delTxtGO.transform.SetParent(delBtnGO.transform, false);
++        TMPro.TextMeshProUGUI delTmp = delTxtGO.GetComponent<TMPro.TextMeshProUGUI>();
++
++        // Sized HERE and nowhere else. A TMP label with no fontSize takes the project default,
++        // which is 36 - so leaving it out does not give a small button, it gives "DEL" at 36pt
++        // wrapped across a 56x20 rect and spilling over the group name. And it cannot be set
++        // later either: PanelTypographyScale caches the first size it sees and force-writes it
++        // every LateUpdate, so construction time is the only moment that counts. 13 matches
++        // SOLO beside it.
++        delTmp.fontSize = 13;
++
++        // NoWrap so that if this ever gets out of step again it fails by being clipped, which
++        // is obvious, rather than by wrapping into the rows above and below, which reads as a
++        // layout bug somewhere else entirely.
++        delTmp.textWrappingMode = TMPro.TextWrappingModes.NoWrap;
++        delTmp.overflowMode = TMPro.TextOverflowModes.Overflow;
++        delTmp.fontStyle = TMPro.FontStyles.Bold;
++        delTmp.alignment = TMPro.TextAlignmentOptions.Center;
++        delTmp.color = Color.white;
++        delTmp.raycastTarget = false;
++        delTxtGO.GetComponent<RectTransform>().anchorMin = Vector2.zero;
++        delTxtGO.GetComponent<RectTransform>().anchorMax = Vector2.one;
++        delTxtGO.GetComponent<RectTransform>().sizeDelta = Vector2.zero;
++
++        GroupDeleteButton delState = delBtnGO.GetComponent<GroupDeleteButton>();
++        delState.Bind(this, gid, delBtnGO.GetComponent<Image>(), delTmp);
++        delBtnGO.GetComponent<Button>().onClick.AddListener(delState.Press);
++
++        return itemGO;
+     }
+ 
+     void ToggleGroupSolo(int gid)
