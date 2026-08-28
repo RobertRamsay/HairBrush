@@ -116,10 +116,13 @@ public class TextureWorkspacePolishFix : MonoBehaviour
                     if (tmp == null || !tmp.text.StartsWith("Current:")) continue;
                     tmp.textWrappingMode = TextWrappingModes.NoWrap;
                     tmp.overflowMode = TextOverflowModes.Overflow;
+                    // 20% up from 18/10. Autosizing still shrinks a long basename, but it now
+                    // starts - and mostly stays - a fifth larger, which is the difference
+                    // between reading the filename and recognising it.
                     tmp.enableAutoSizing = true;
-                    tmp.fontSize = 18f;
-                    tmp.fontSizeMax = 18f;
-                    tmp.fontSizeMin = 10f;
+                    tmp.fontSize = 21.6f;
+                    tmp.fontSizeMax = 21.6f;
+                    tmp.fontSizeMin = 12f;
                     tmp.margin = Vector4.zero;
                 }
             }

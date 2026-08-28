@@ -47,6 +47,15 @@ public class MaterialEditorManager : MonoBehaviour
         public string albedoPath = "";
         public string normalPath = "";
         public string opacityPath = "";
+
+        // CLEARED is not the same state as "no path". The material is cloned from the template,
+        // which SHIPS with all three maps, so an empty path has always meant "never loaded, keep
+        // what the template gave you". Now that a slot can be deliberately emptied, that needs
+        // saying out loud - otherwise a clear cannot survive a save, an undo or a redo, because
+        // the restore has no way to tell it apart from a project nobody ever loaded a map into.
+        public bool albedoCleared = false;
+        public bool normalCleared = false;
+        public bool opacityCleared = false;
     }
 
     private ModelViewer viewer;
@@ -239,9 +248,13 @@ public class MaterialEditorManager : MonoBehaviour
             CreateTextureRow(propertiesRoot, "Albedo", AlbedoProperty, false, entry.albedoPath);
             CreateTextureRow(propertiesRoot, "Normal", NormalProperty, true, entry.normalPath);
             CreateTextureRow(propertiesRoot, "Opacity Mask", OpacityProperty, true, entry.opacityPath);
-            CreateTintRow(propertiesRoot, entry);
+            // Sliders directly under the textures, master colour last. Metallic was below the
+            // colour block and fell off the bottom of the panel; both of these are per-material
+            // numbers and belong with the maps they modify, while the colour is a single value
+            // applied over the top of all of it.
             CreateFloatSliderRow(propertiesRoot, "Smoothness", SmoothProperty, entry);
             CreateFloatSliderRow(propertiesRoot, "Metallic", MetalProperty, entry);
+            CreateTintRow(propertiesRoot, entry);
         }
     }
 
@@ -249,9 +262,13 @@ public class MaterialEditorManager : MonoBehaviour
     {
         GameObject row = new GameObject(label + "Row", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
         row.transform.SetParent(parent, false);
-        // 54 held two stacked buttons; CLEAR is a third. TextureWorkspacePolishFix reformats
-        // the SLIDER rows and leaves these alone, so this is the only place the height is set.
-        row.GetComponent<LayoutElement>().preferredHeight = 80f;
+        // 50, which is exactly LOAD + LOCATE stacked: 24 + 24 with the column's 2px gap. The
+        // row's layout group controls its children's heights, so that one number is also what
+        // makes CLR square beside them - it gets the row height, and 50 wide is the width asked
+        // for it. Setting a height here without matching the buttons would silently un-square it.
+        LayoutElement rowElement = row.GetComponent<LayoutElement>();
+        rowElement.preferredHeight = 50f;
+        rowElement.minHeight = 50f;
         HorizontalLayoutGroup layout = row.GetComponent<HorizontalLayoutGroup>();
         layout.spacing = 4f;
         layout.childControlWidth = false;
@@ -288,7 +305,8 @@ public class MaterialEditorManager : MonoBehaviour
         LayoutElement columnLayout = buttonColumn.GetComponent<LayoutElement>();
         columnLayout.preferredWidth = 54f;
         columnLayout.minWidth = 54f;
-        columnLayout.preferredHeight = 80f;
+        columnLayout.preferredHeight = 50f;
+        columnLayout.minHeight = 50f;
         VerticalLayoutGroup columnGroup = buttonColumn.GetComponent<VerticalLayoutGroup>();
         columnGroup.spacing = 2f;
         columnGroup.childControlWidth = true;
@@ -298,7 +316,11 @@ public class MaterialEditorManager : MonoBehaviour
 
         CreateSmallButton(buttonColumn.transform, "LOAD", () => LoadTextureIntoSlot(propertyName, linear), 54f, 24f);
         CreateSmallButton(buttonColumn.transform, "LOCATE", () => LocateTextureFile(currentPath), 54f, 24f);
-        CreateSmallButton(buttonColumn.transform, "CLEAR", () => ClearTextureSlot(propertyName), 54f, 24f);
+
+        // CLR, square, to the right of the stacked pair and as tall as both of them together -
+        // 24 + 24 with the column's 2px gap between. "CLEAR" does not fit that width; "CLR" does,
+        // and next to LOAD and LOCATE there is nothing else it could mean.
+        CreateSmallButton(row.transform, "CLR", () => ClearTextureSlot(propertyName), 50f, 50f);
     }
 
     // One 0-1 slider, built the way this panel builds them. Extracted so the master-colour
@@ -406,6 +428,8 @@ public class MaterialEditorManager : MonoBehaviour
             valueTmp.text = v.ToString("F2");
             if (entry.material != null && entry.material.HasProperty(propertyName))
                 entry.material.SetFloat(propertyName, v);
+
+            UndoHistoryAuthority.NotifyEdit();
 
             // Same rule texture loading uses: only push to rendered hair cards if this entry
             // is the currently active global material.
@@ -553,6 +577,11 @@ public class MaterialEditorManager : MonoBehaviour
         entry.material.SetColor(TintProperty, colour);
         if (swatch != null) swatch.color = new Color(colour.r, colour.g, colour.b, 1f);
 
+        // Armed on every write, not only on the one that ends the drag. The authority coalesces
+        // - it captures a settle after activity stops and drops a step whose hash matches the
+        // last - so a drag becomes one step, not one per frame.
+        UndoHistoryAuthority.NotifyEdit();
+
         if (GetGlobalMaterialIndex() == selectedMaterialIndex)
         {
             viewer.hairCardMaterial = entry.material;
@@ -606,11 +635,15 @@ public class MaterialEditorManager : MonoBehaviour
         }
 
         entry.material.SetTexture(propertyName, texture);
-        if (propertyName == AlbedoProperty) entry.albedoPath = path;
-        else if (propertyName == NormalProperty) entry.normalPath = path;
-        else if (propertyName == OpacityProperty) entry.opacityPath = path;
+        SetSlotPath(entry, propertyName, path);
+        SetSlotCleared(entry, propertyName, false);
 
         StatusToast.Show("Loaded " + Path.GetFileName(path));
+
+        // The panel's buttons are ordinary left clicks, which the undo authority already arms
+        // on - but it arms on the RELEASE, and a file dialog swallows that release on some
+        // platforms. Saying so explicitly costs nothing and does not depend on the gesture.
+        UndoHistoryAuthority.NotifyEdit();
 
         // Edits to the active global material must update every existing card immediately.
         if (GetGlobalMaterialIndex() == selectedMaterialIndex)
@@ -656,12 +689,11 @@ public class MaterialEditorManager : MonoBehaviour
         // texture out from under a material that is still using it is a black hair card with no
         // error to explain it. Unity collects it when the last reference goes.
         entry.material.SetTexture(propertyName, null);
-
-        if (propertyName == AlbedoProperty) entry.albedoPath = "";
-        else if (propertyName == NormalProperty) entry.normalPath = "";
-        else if (propertyName == OpacityProperty) entry.opacityPath = "";
+        SetSlotPath(entry, propertyName, "");
+        SetSlotCleared(entry, propertyName, true);
 
         StatusToast.Show("Cleared the " + LabelForSlot(propertyName) + " texture.");
+        UndoHistoryAuthority.NotifyEdit();
 
         if (GetGlobalMaterialIndex() == selectedMaterialIndex)
         {
@@ -671,6 +703,20 @@ public class MaterialEditorManager : MonoBehaviour
 
         UpdatePreviewForSelectedMaterial();
         RefreshPanel();
+    }
+
+    private static void SetSlotPath(HairMaterialEntry entry, string propertyName, string path)
+    {
+        if (propertyName == AlbedoProperty) entry.albedoPath = path;
+        else if (propertyName == NormalProperty) entry.normalPath = path;
+        else if (propertyName == OpacityProperty) entry.opacityPath = path;
+    }
+
+    private static void SetSlotCleared(HairMaterialEntry entry, string propertyName, bool cleared)
+    {
+        if (propertyName == AlbedoProperty) entry.albedoCleared = cleared;
+        else if (propertyName == NormalProperty) entry.normalCleared = cleared;
+        else if (propertyName == OpacityProperty) entry.opacityCleared = cleared;
     }
 
     private static string PathForSlot(HairMaterialEntry entry, string propertyName)

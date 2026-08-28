@@ -61,6 +61,9 @@ public class MaterialProjectPersistenceBridge : MonoBehaviour
                     opacityPath = et.GetField("opacityPath")?.GetValue(entry) as string,
                     smooth = entryMaterial != null && entryMaterial.HasProperty(SmoothProperty) ? entryMaterial.GetFloat(SmoothProperty) : 0.56f,
                     metal = entryMaterial != null && entryMaterial.HasProperty(MetalProperty) ? entryMaterial.GetFloat(MetalProperty) : 0.33f,
+                    albedoCleared = ReadBool(et, entry, "albedoCleared"),
+                    normalCleared = ReadBool(et, entry, "normalCleared"),
+                    opacityCleared = ReadBool(et, entry, "opacityCleared"),
                     hasTint = entryMaterial != null && entryMaterial.HasProperty(TintProperty),
                     tintR = ReadTintChannel(entryMaterial, 0),
                     tintG = ReadTintChannel(entryMaterial, 1),
@@ -142,9 +145,9 @@ public class MaterialProjectPersistenceBridge : MonoBehaviour
             {
                 // Texture2D's final constructor argument is "linear". Albedo is colour data,
                 // while normal/opacity are data textures and must stay linear.
-                TryRestoreTexture(entry, AlbedoProperty, "albedoPath", saved.albedoPath, false);
-                TryRestoreTexture(entry, NormalProperty, "normalPath", saved.normalPath, true);
-                TryRestoreTexture(entry, OpacityProperty, "opacityPath", saved.opacityPath, true);
+                RestoreSlot(entry, AlbedoProperty, "albedoPath", "albedoCleared", saved.albedoPath, saved.albedoCleared, false);
+                RestoreSlot(entry, NormalProperty, "normalPath", "normalCleared", saved.normalPath, saved.normalCleared, true);
+                RestoreSlot(entry, OpacityProperty, "opacityPath", "opacityCleared", saved.opacityPath, saved.opacityCleared, true);
                 TryRestoreFloat(entry, SmoothProperty, saved.smooth);
                 TryRestoreFloat(entry, MetalProperty, saved.metal);
                 RestoreTint(editor, entry, saved);
@@ -197,6 +200,40 @@ public class MaterialProjectPersistenceBridge : MonoBehaviour
     }
 
     private const string TintProperty = MaterialEditorManager.TintProperty;
+
+    private static bool ReadBool(Type entryType, object entry, string fieldName)
+    {
+        object value = entryType.GetField(fieldName)?.GetValue(entry);
+        if (value is bool b) return b;
+        return false;
+    }
+
+    // One texture slot, in its three possible states:
+    //
+    //   cleared     the user emptied it -> assign null, and say so on the entry, so a later save
+    //               or undo step carries the same answer rather than reverting to the template.
+    //   has a path  load it, as before.
+    //   neither     leave the template material's own texture alone. This is every project
+    //               written before CLEAR existed and is why "cleared" needed its own flag: an
+    //               empty path cannot mean both "never touched" and "deliberately emptied".
+    private static void RestoreSlot(object entry, string propertyName, string pathFieldName,
+                                    string clearedFieldName, string path, bool cleared, bool linear)
+    {
+        if (entry == null) return;
+
+        Type et = entry.GetType();
+        et.GetField(clearedFieldName)?.SetValue(entry, cleared);
+
+        if (cleared)
+        {
+            Material material = et.GetField("material")?.GetValue(entry) as Material;
+            if (material != null && material.HasProperty(propertyName)) material.SetTexture(propertyName, null);
+            et.GetField(pathFieldName)?.SetValue(entry, "");
+            return;
+        }
+
+        TryRestoreTexture(entry, propertyName, pathFieldName, path, linear);
+    }
 
     private static float ReadTintChannel(Material material, int channel)
     {

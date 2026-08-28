@@ -594,6 +594,18 @@ public class UndoHistoryAuthority : MonoBehaviour
                 // that puts them back is the very restore this hash decides whether to skip.
                 hash = Fold(hash, material.smooth.GetHashCode());
                 hash = Fold(hash, material.metal.GetHashCode());
+
+                // Everything else the material panel can author. A value missing from this hash
+                // is a value undo silently refuses to put back: the step is captured, the restore
+                // is queued by the parse, and then withdrawn here because the two steps look the
+                // same. CLEAR and the master colour both had to be added for exactly that reason.
+                hash = Fold(hash, material.albedoCleared ? 1UL : 0UL);
+                hash = Fold(hash, material.normalCleared ? 1UL : 0UL);
+                hash = Fold(hash, material.opacityCleared ? 1UL : 0UL);
+                hash = Fold(hash, material.hasTint ? 1UL : 0UL);
+                hash = Fold(hash, material.tintR.GetHashCode());
+                hash = Fold(hash, material.tintG.GetHashCode());
+                hash = Fold(hash, material.tintB.GetHashCode());
             }
         }
 

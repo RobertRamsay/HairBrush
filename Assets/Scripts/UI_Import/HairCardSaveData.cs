@@ -160,6 +160,13 @@ public class HairMaterialSaveData
     // separates "white" from "this project predates the control": absent in an older file it
     // deserializes to false, and the restore then puts the shader's OWN default back rather
     // than white, so an existing groom looks exactly as it did. New materials save true.
+    // A slot the user emptied on purpose. Distinct from an empty PATH, which has always meant
+    // "never loaded anything here, keep whatever the template material came with" - and still
+    // does for every project written before CLEAR existed, all of which read false here.
+    public bool albedoCleared = false;
+    public bool normalCleared = false;
+    public bool opacityCleared = false;
+
     public bool hasTint = false;
     public float tintR = 1f;
     public float tintG = 1f;
