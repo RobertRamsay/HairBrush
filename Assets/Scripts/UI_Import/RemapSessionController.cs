@@ -659,6 +659,10 @@ public class RemapSessionController : MonoBehaviour
     void Update()
     {
         if (!sessionActive) return;
+
+        // The INPUT KEYS page owns ESC while it is up. Cancelling a whole remap because the
+        // user shut a help page is the most expensive version of this mistake in the project.
+        if (InputKeysDialog.IsOpen) return;
         if (UnityEngine.InputSystem.Keyboard.current == null) return;
         if (UnityEngine.InputSystem.Keyboard.current.escapeKey.wasPressedThisFrame)
         {

@@ -55,20 +55,11 @@ public class GroupPanelPostHintStats : MonoBehaviour
     // GroupNameInlineEditAuthority builds its field by copying this label's rect, so without the
     // reserve the caret and the text being typed would run under a live delete button.
     private const float NameRightReserve = UtilityRightInset + DeleteButtonWidth + 6f;
-    // Bump this whenever a line is added to ApplyHintStyle, or the last one gets clipped.
-    // 113 carried nine lines at font 11, so about 12.6 each. Ten lines since the group pick got
-    // a line of its own - it used to be ALT + CLICK and was not listed here at all, which was
-    // survivable while ALT was a single key and is not now that it is a two-key chord nobody
-    // will guess. 126 keeps the same per-line room; trimming a line is the cheaper fix if this
-    // list ever needs an eleventh.
-    private const float ControlsHintHeight = 126f;
-
+    // The names the old in-panel instructions block used. Kept only so Bind can sweep the two
+    // objects away when a panel is rebuilt from an older layout - nothing builds them now.
     private const string InstructionsHeaderName = "InstructionsHeader";
-    private const float InstructionsHeaderHeight = 26f;
 
     private GameObject boundPanel;
-    private TextMeshProUGUI hint;
-    private TextMeshProUGUI instructionsHeader;
     private readonly List<Transform> ordered = new List<Transform>();
     private ModelViewer viewer;
     private FieldInfo groupNamesField;
@@ -94,12 +85,10 @@ public class GroupPanelPostHintStats : MonoBehaviour
         if (panel == null)
         {
             boundPanel = null;
-            hint = null;
-            instructionsHeader = null;
             return;
         }
 
-        if (boundPanel != panel || hint == null)
+        if (boundPanel != panel)
             Bind(panel);
 
         MaintainPanelOrder(panel.transform);
@@ -114,109 +103,50 @@ public class GroupPanelPostHintStats : MonoBehaviour
             groupNamesField = typeof(ModelViewer).GetField("groupNames", BindingFlags.Instance | BindingFlags.NonPublic);
     }
 
+    // The instructions block used to be BUILT here. It now only gets swept away: the control
+    // reference lives behind the INPUT KEYS button (InputKeysDialog), which has room to be
+    // complete and correct, and this panel gets its 152px back.
+    //
+    // The sweep is not only for tidiness. A project saved by an older build, and any panel
+    // rebuilt from one, can still carry both objects; left in place they would sit in the
+    // running order below with nothing maintaining them, showing a list that is now two lines
+    // wrong and missing a dozen others.
     void Bind(GameObject panel)
     {
         boundPanel = panel;
-        Transform existing = panel.transform.Find("PostCreateHint");
-        if (existing != null)
-        {
-            hint = existing.GetComponent<TextMeshProUGUI>();
-            ApplyHintStyle();
-            return;
-        }
-
-        GameObject go = new GameObject("PostCreateHint", typeof(RectTransform), typeof(LayoutElement), typeof(TextMeshProUGUI));
-        go.transform.SetParent(panel.transform, false);
-
-        LayoutElement layout = go.GetComponent<LayoutElement>();
-        layout.preferredHeight = ControlsHintHeight;
-        layout.minHeight = ControlsHintHeight;
-
-        RectTransform rect = go.GetComponent<RectTransform>();
-        rect.sizeDelta = new Vector2(0f, ControlsHintHeight);
-
-        hint = go.GetComponent<TextMeshProUGUI>();
-        ApplyHintStyle();
-
+        RemoveLegacyChild(panel.transform, "PostCreateHint");
+        RemoveLegacyChild(panel.transform, InstructionsHeaderName);
         MaintainPanelOrder(panel.transform);
     }
 
-    // Section header for the hint block, styled to match the panel's "Hair Groups" title.
-    void EnsureInstructionsHeader(Transform panel)
+    void RemoveLegacyChild(Transform panel, string childName)
     {
-        if (instructionsHeader != null) return;
+        Transform existing = panel.Find(childName);
+        if (existing == null) return;
 
-        Transform existing = panel.Find(InstructionsHeaderName);
-        if (existing != null)
-        {
-            instructionsHeader = existing.GetComponent<TextMeshProUGUI>();
-            if (instructionsHeader != null) return;
-        }
-
-        GameObject go = new GameObject(InstructionsHeaderName, typeof(RectTransform), typeof(LayoutElement), typeof(TextMeshProUGUI));
-        go.transform.SetParent(panel, false);
-
-        LayoutElement layout = go.GetComponent<LayoutElement>();
-        layout.preferredHeight = InstructionsHeaderHeight;
-        layout.minHeight = InstructionsHeaderHeight;
-        go.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, InstructionsHeaderHeight);
-
-        instructionsHeader = go.GetComponent<TextMeshProUGUI>();
-        instructionsHeader.text = "INSTRUCTIONS";
-        instructionsHeader.fontSize = 18f;
-        instructionsHeader.fontStyle = FontStyles.Bold;
-        instructionsHeader.alignment = TextAlignmentOptions.MidlineLeft;
-        instructionsHeader.color = Color.white;
-        instructionsHeader.raycastTarget = false;
+        // Deactivated and renamed before the Destroy, not merely destroyed. Destroy is deferred
+        // to the end of the frame, so a panel scan later in this same frame would otherwise
+        // still find it by name and put it back in the running order.
+        existing.gameObject.SetActive(false);
+        existing.gameObject.name = childName + "_Discarded";
+        Destroy(existing.gameObject);
     }
 
-    void ApplyHintStyle()
-    {
-        if (hint == null) return;
-        hint.text = "CTRL + CLICK to ADD a POST Modifier\n" +
-                    "TAB + CLICK to ADD a CLUMP Modifier\n" +
-                    "CTRL + SHIFT + CLICK selects a hair's group\n" +
-                    "SHIFT to Toggle brushing mode\n" +
-                    "Click UV:ADJ/PRE for UV Mode\n" +
-                    "Double Click Group name to rename it.\n" +
-                    "Click in space to come out of mode\n" +
-                    "DEL or right click removes a group\n" +
-                    "SPACE + Click to reposition Modifier\n" +
-                    "SYMMETRY mirrors painting and erasing";
-        hint.fontSize = 11f;
-        hint.fontStyle = FontStyles.Bold;
-        hint.alignment = TextAlignmentOptions.MidlineLeft;
-        hint.color = new Color(.72f, .78f, .86f, 1f);
-        hint.textWrappingMode = TextWrappingModes.Normal;
-        hint.raycastTarget = false;
-
-        LayoutElement layout = hint.GetComponent<LayoutElement>();
-        if (layout != null)
-        {
-            layout.preferredHeight = ControlsHintHeight;
-            layout.minHeight = ControlsHintHeight;
-        }
-        hint.rectTransform.sizeDelta = new Vector2(0f, ControlsHintHeight);
-    }
-
-    // Owns the whole left-panel running order, not just the hint's place in it, because
-    // the pieces are built by four different scripts at four different moments and each
-    // one only ever knew where to put itself relative to whatever already existed.
+    // Owns the whole left-panel running order, because the pieces are built by five different
+    // scripts at five different moments and each one only ever knew where to put itself
+    // relative to whatever already existed.
     //
-    //   MENU  ->  POLYGONS  ->  LIGHT ANGLE  ->  INSTRUCTIONS  ->  the hint text
-    //         ->  Hair Groups  ->  + GROUP  ->  the group list
+    //   MENU  ->  POLYGONS  ->  LIGHT ANGLE  ->  INPUT KEYS  ->  SYMMETRY  ->  MAYA-NAV
+    //         ->  GUIDES  ->  Hair Groups  ->  + GROUP  ->  the group list
     void MaintainPanelOrder(Transform panel)
     {
         if (panel == null) return;
 
-        EnsureInstructionsHeader(panel);
-
         ordered.Clear();
         AddIfPresent(panel, "HairPolygonCounterText");
         AddIfPresent(panel, SceneLightAngleAuthority.RowName);
-        AddIfPresent(panel, InstructionsHeaderName);
-        AddIfPresent(panel, "PostCreateHint");
-        // The SYMMETRY toggle sits directly under the instructions. Anything NOT listed here
+        AddIfPresent(panel, InputKeysDialog.ButtonName);
+        // The SYMMETRY toggle sits directly under INPUT KEYS. Anything NOT listed here
         // gets shoved around every scan as the listed children are reindexed past it, so a new
         // panel child has to be named here or its position will not hold.
         //

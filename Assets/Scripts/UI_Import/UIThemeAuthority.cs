@@ -62,6 +62,10 @@ public class UIThemeAuthority : MonoBehaviour
             // stretched rect off by 32 units on the way past. The three buttons INSIDE the card
             // are not named here and are skinned normally, which is the point of them.
             if (goName == DemoUpgradePromptAuthority.DismissLayerName) continue;
+            // The INPUT KEYS page's dimmer is the same shape and the same trap: a Button whose
+            // Graphic is the full-screen backdrop, so that clicking away closes the page. The
+            // CLOSE button inside it is not named here and is skinned normally.
+            if (goName == InputKeysDialog.DimmerName) continue;
 
             if (!styledButtons.Contains(button))
             {

@@ -1,0 +1,1014 @@
+diff --git a/Assets/Scripts/UI_Import/GroomPanelDiagnostics.cs b/Assets/Scripts/UI_Import/GroomPanelDiagnostics.cs
+deleted file mode 100644
+index 5870672..0000000
+--- a/Assets/Scripts/UI_Import/GroomPanelDiagnostics.cs
++++ /dev/null
+@@ -1,166 +0,0 @@
+-using System.Text;
+-using TMPro;
+-using UnityEngine;
+-using UnityEngine.InputSystem;
+-using UnityEngine.UI;
+-
+-// Press F9 to have the grooming panel describe its own state.
+-//
+-// This exists because the frozen header failing after a project load has now survived three
+-// plausible explanations - a duplicate panel, ModifierCoreLock, deferred destruction - each of
+-// which was worth fixing and none of which was this. Guessing a fourth time from a screenshot is
+-// not a method. Everything the frozen-header authority checks before it decides to act, and
+-// everything that could make a live row look dead, is printed here in one block.
+-//
+-// Read the output top to bottom: the first line that is not what it should be is the answer.
+-//   - more than one GroomingPanel        -> the rebuild made a second one
+-//   - the bound panel is not the live one -> ModelViewer.groomingSliderPanelGO is stale
+-//   - ClumperScrollHost active           -> the frozen authority is deliberately standing down
+-//   - a row with no Canvas               -> Apply never reached it
+-//   - a row Canvas below the root's order -> overrideSorting is losing to the canvas above it
+-//   - alpha below 1 on a row or a parent -> something is dimming it, and the name says what
+-[DefaultExecutionOrder(20000)]
+-public class GroomPanelDiagnostics : MonoBehaviour
+-{
+-    private static readonly string[] Rows =
+-    {
+-        "PanelTabRow", "TopControlsRow", "PlacementModeRow",
+-        "Radius_Row", "Falloff Dist_Row", "Falloff_Row"
+-    };
+-
+-    private ModelViewer viewer;
+-
+-    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+-    static void Spawn()
+-    {
+-        if (FindFirstObjectByType<GroomPanelDiagnostics>() != null) return;
+-        GameObject go = new GameObject("GroomPanelDiagnostics");
+-        DontDestroyOnLoad(go);
+-        go.AddComponent<GroomPanelDiagnostics>();
+-    }
+-
+-    void Update()
+-    {
+-        if (Keyboard.current == null) return;
+-        if (!Keyboard.current.f9Key.wasPressedThisFrame) return;
+-        Report();
+-    }
+-
+-    void Report()
+-    {
+-        if (viewer == null) viewer = FindFirstObjectByType<ModelViewer>();
+-        StringBuilder text = new StringBuilder();
+-        text.AppendLine("=== HairBrush groom panel diagnostics ===");
+-
+-        if (viewer == null)
+-        {
+-            Debug.Log(text.AppendLine("no ModelViewer in the scene").ToString());
+-            return;
+-        }
+-
+-        GameObject bound = viewer.groomingSliderPanelGO;
+-        text.AppendLine("groomingSliderPanelGO: " + Describe(bound));
+-
+-        int panels = 0;
+-        foreach (RectTransform rect in FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+-        {
+-            if (rect == null || rect.name != "GroomingPanel") continue;
+-            panels++;
+-            text.AppendLine("  GroomingPanel found: " + Describe(rect.gameObject) + (rect.gameObject == bound ? "   <- bound" : "   <- NOT the bound one"));
+-        }
+-        text.AppendLine("GroomingPanel count (inactive included): " + panels);
+-
+-        if (bound == null)
+-        {
+-            Debug.Log(text.ToString());
+-            return;
+-        }
+-
+-        Canvas root = bound.GetComponentInParent<Canvas>();
+-        if (root != null) root = root.rootCanvas;
+-        int rootOrder = 0;
+-        if (root != null) rootOrder = root.sortingOrder;
+-        text.AppendLine("root canvas: " + Describe(root == null ? null : root.gameObject) + "  sortingOrder " + rootOrder);
+-
+-        Transform clumperHost = bound.transform.Find("ClumperScrollHost");
+-        text.AppendLine("ClumperScrollHost: " + (clumperHost == null ? "absent" : Describe(clumperHost.gameObject) + (clumperHost.gameObject.activeInHierarchy ? "   <- ACTIVE, frozen header stands down" : "")));
+-
+-        VerticalLayoutGroup layout = bound.GetComponent<VerticalLayoutGroup>();
+-        text.AppendLine("panel VerticalLayoutGroup: " + (layout == null ? "MISSING - frozen header returns early" : "present, top padding " + layout.padding.top));
+-
+-        text.AppendLine("frozen header rows:");
+-        foreach (string rowName in Rows)
+-        {
+-            Transform row = bound.transform.Find(rowName);
+-            if (row == null)
+-            {
+-                text.AppendLine("  " + rowName + ": NOT FOUND as a direct child");
+-                continue;
+-            }
+-
+-            LayoutElement element = row.GetComponent<LayoutElement>();
+-            Canvas canvas = row.GetComponent<Canvas>();
+-            string canvasState = "no Canvas - never lifted";
+-            if (canvas != null)
+-            {
+-                canvasState = "Canvas override=" + canvas.overrideSorting + " order=" + canvas.sortingOrder;
+-                if (canvas.overrideSorting && canvas.sortingOrder <= rootOrder)
+-                    canvasState += "   <- AT OR BELOW the root canvas, so it draws underneath";
+-            }
+-
+-            text.AppendLine("  " + rowName
+-                + ": sibling " + row.GetSiblingIndex()
+-                + ", ignoreLayout " + (element != null && element.ignoreLayout)
+-                + ", raycaster " + (row.GetComponent<GraphicRaycaster>() != null)
+-                + ", " + canvasState
+-                + ", " + DescribeDimming(row, bound.transform));
+-        }
+-
+-        text.AppendLine("buttons:");
+-        foreach (Button button in bound.GetComponentsInChildren<Button>(true))
+-        {
+-            if (button == null) continue;
+-            string name = button.gameObject.name;
+-            if (name.IndexOf("Tab", System.StringComparison.OrdinalIgnoreCase) < 0
+-                && name.IndexOf("Menu", System.StringComparison.OrdinalIgnoreCase) < 0
+-                && name.IndexOf("Save", System.StringComparison.OrdinalIgnoreCase) < 0
+-                && name.IndexOf("Reset", System.StringComparison.OrdinalIgnoreCase) < 0
+-                && name.IndexOf("Export", System.StringComparison.OrdinalIgnoreCase) < 0) continue;
+-
+-            TextMeshProUGUI label = button.GetComponentInChildren<TextMeshProUGUI>(true);
+-            string caption = "";
+-            if (label != null) caption = " \"" + label.text + "\"";
+-            text.AppendLine("  " + name + caption
+-                + ": interactable " + button.interactable
+-                + ", transition " + button.transition
+-                + ", " + DescribeDimming(button.transform, bound.transform));
+-        }
+-
+-        Debug.Log(text.ToString());
+-    }
+-
+-    // Walks up to the panel looking for anything that could be washing a control out - an alpha
+-    // below one, or a CanvasGroup that has stopped taking input - and names the object doing it.
+-    static string DescribeDimming(Transform from, Transform stopAt)
+-    {
+-        Transform walk = from;
+-        while (walk != null)
+-        {
+-            CanvasGroup group = walk.GetComponent<CanvasGroup>();
+-            if (group != null && (group.alpha < .999f || !group.interactable || !group.blocksRaycasts))
+-            {
+-                return "dimmed by " + walk.name + " (alpha " + group.alpha.ToString("F2")
+-                    + ", interactable " + group.interactable + ", blocksRaycasts " + group.blocksRaycasts + ")";
+-            }
+-            if (walk == stopAt) break;
+-            walk = walk.parent;
+-        }
+-        return "no CanvasGroup dimming";
+-    }
+-
+-    static string Describe(GameObject go)
+-    {
+-        if (go == null) return "null";
+-        return go.name + " #" + go.GetInstanceID() + " active=" + go.activeInHierarchy;
+-    }
+-}
+diff --git a/Assets/Scripts/UI_Import/GroomPanelDiagnostics.cs.meta b/Assets/Scripts/UI_Import/GroomPanelDiagnostics.cs.meta
+deleted file mode 100644
+index c770460..0000000
+--- a/Assets/Scripts/UI_Import/GroomPanelDiagnostics.cs.meta
++++ /dev/null
+@@ -1,2 +0,0 @@
+-fileFormatVersion: 2
+-guid: 7d61f228b14c430abd666dd9986b3781
+diff --git a/Assets/Scripts/UI_Import/GroomShortcutKeyAuthority.cs b/Assets/Scripts/UI_Import/GroomShortcutKeyAuthority.cs
+index 8612d65..7f44429 100644
+--- a/Assets/Scripts/UI_Import/GroomShortcutKeyAuthority.cs
++++ b/Assets/Scripts/UI_Import/GroomShortcutKeyAuthority.cs
+@@ -55,6 +55,10 @@ public class GroomShortcutKeyAuthority : MonoBehaviour
+         // A modal is up. Always false in a PRO build.
+         if (DemoUpgradePrompt.IsOpen) return;
+ 
++        // The INPUT KEYS page is up. It is the list of these very keys, so a press made while
++        // reading it is somebody checking what a key does, not asking for it.
++        if (InputKeysDialog.IsOpen) return;
++
+         // The texture workspace or a remap session owns the viewport.
+         if (GroomViewportSuppressed.Active) return;
+ 
+diff --git a/Assets/Scripts/UI_Import/GroomSymmetryAuthority.cs b/Assets/Scripts/UI_Import/GroomSymmetryAuthority.cs
+index dab66ce..6fde152 100644
+--- a/Assets/Scripts/UI_Import/GroomSymmetryAuthority.cs
++++ b/Assets/Scripts/UI_Import/GroomSymmetryAuthority.cs
+@@ -349,9 +349,9 @@ public class GroomSymmetryAuthority : MonoBehaviour
+         label.raycastTarget = false;
+ 
+         // First guess only. GroupPanelPostHintStats.MaintainPanelOrder is the running order
+-        // authority for this panel and puts the button under the instructions hint every scan.
+-        Transform hint = parent.Find("PostCreateHint");
+-        if (hint != null) go.transform.SetSiblingIndex(Mathf.Clamp(hint.GetSiblingIndex() + 1, 0, parent.childCount - 1));
++        // authority for this panel and puts the button under INPUT KEYS every scan.
++        Transform above = parent.Find(InputKeysDialog.ButtonName);
++        if (above != null) go.transform.SetSiblingIndex(Mathf.Clamp(above.GetSiblingIndex() + 1, 0, parent.childCount - 1));
+ 
+         Repaint();
+     }
+diff --git a/Assets/Scripts/UI_Import/GroupAddButtonPlacementAuthority.cs b/Assets/Scripts/UI_Import/GroupAddButtonPlacementAuthority.cs
+index 21e8a89..9e8c93e 100644
+--- a/Assets/Scripts/UI_Import/GroupAddButtonPlacementAuthority.cs
++++ b/Assets/Scripts/UI_Import/GroupAddButtonPlacementAuthority.cs
+@@ -237,7 +237,9 @@ public class GroupAddButtonPlacementAuthority : MonoBehaviour
+ 
+         UpdateBanner();
+ 
+-        if (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame)
++        // The INPUT KEYS page owns ESC while it is up - closing a help page must not also throw
++        // away the placement the user armed before opening it.
++        if (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame && !InputKeysDialog.IsOpen)
+         {
+             Disarm();
+             return;
+diff --git a/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs b/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs
+index 82403c0..a78aead 100644
+--- a/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs
++++ b/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs
+@@ -55,20 +55,11 @@ public class GroupPanelPostHintStats : MonoBehaviour
+     // GroupNameInlineEditAuthority builds its field by copying this label's rect, so without the
+     // reserve the caret and the text being typed would run under a live delete button.
+     private const float NameRightReserve = UtilityRightInset + DeleteButtonWidth + 6f;
+-    // Bump this whenever a line is added to ApplyHintStyle, or the last one gets clipped.
+-    // 113 carried nine lines at font 11, so about 12.6 each. Ten lines since the group pick got
+-    // a line of its own - it used to be ALT + CLICK and was not listed here at all, which was
+-    // survivable while ALT was a single key and is not now that it is a two-key chord nobody
+-    // will guess. 126 keeps the same per-line room; trimming a line is the cheaper fix if this
+-    // list ever needs an eleventh.
+-    private const float ControlsHintHeight = 126f;
+-
++    // The names the old in-panel instructions block used. Kept only so Bind can sweep the two
++    // objects away when a panel is rebuilt from an older layout - nothing builds them now.
+     private const string InstructionsHeaderName = "InstructionsHeader";
+-    private const float InstructionsHeaderHeight = 26f;
+ 
+     private GameObject boundPanel;
+-    private TextMeshProUGUI hint;
+-    private TextMeshProUGUI instructionsHeader;
+     private readonly List<Transform> ordered = new List<Transform>();
+     private ModelViewer viewer;
+     private FieldInfo groupNamesField;
+@@ -94,12 +85,10 @@ public class GroupPanelPostHintStats : MonoBehaviour
+         if (panel == null)
+         {
+             boundPanel = null;
+-            hint = null;
+-            instructionsHeader = null;
+             return;
+         }
+ 
+-        if (boundPanel != panel || hint == null)
++        if (boundPanel != panel)
+             Bind(panel);
+ 
+         MaintainPanelOrder(panel.transform);
+@@ -114,109 +103,50 @@ public class GroupPanelPostHintStats : MonoBehaviour
+             groupNamesField = typeof(ModelViewer).GetField("groupNames", BindingFlags.Instance | BindingFlags.NonPublic);
+     }
+ 
++    // The instructions block used to be BUILT here. It now only gets swept away: the control
++    // reference lives behind the INPUT KEYS button (InputKeysDialog), which has room to be
++    // complete and correct, and this panel gets its 152px back.
++    //
++    // The sweep is not only for tidiness. A project saved by an older build, and any panel
++    // rebuilt from one, can still carry both objects; left in place they would sit in the
++    // running order below with nothing maintaining them, showing a list that is now two lines
++    // wrong and missing a dozen others.
+     void Bind(GameObject panel)
+     {
+         boundPanel = panel;
+-        Transform existing = panel.transform.Find("PostCreateHint");
+-        if (existing != null)
+-        {
+-            hint = existing.GetComponent<TextMeshProUGUI>();
+-            ApplyHintStyle();
+-            return;
+-        }
+-
+-        GameObject go = new GameObject("PostCreateHint", typeof(RectTransform), typeof(LayoutElement), typeof(TextMeshProUGUI));
+-        go.transform.SetParent(panel.transform, false);
+-
+-        LayoutElement layout = go.GetComponent<LayoutElement>();
+-        layout.preferredHeight = ControlsHintHeight;
+-        layout.minHeight = ControlsHintHeight;
+-
+-        RectTransform rect = go.GetComponent<RectTransform>();
+-        rect.sizeDelta = new Vector2(0f, ControlsHintHeight);
+-
+-        hint = go.GetComponent<TextMeshProUGUI>();
+-        ApplyHintStyle();
+-
++        RemoveLegacyChild(panel.transform, "PostCreateHint");
++        RemoveLegacyChild(panel.transform, InstructionsHeaderName);
+         MaintainPanelOrder(panel.transform);
+     }
+ 
+-    // Section header for the hint block, styled to match the panel's "Hair Groups" title.
+-    void EnsureInstructionsHeader(Transform panel)
++    void RemoveLegacyChild(Transform panel, string childName)
+     {
+-        if (instructionsHeader != null) return;
+-
+-        Transform existing = panel.Find(InstructionsHeaderName);
+-        if (existing != null)
+-        {
+-            instructionsHeader = existing.GetComponent<TextMeshProUGUI>();
+-            if (instructionsHeader != null) return;
+-        }
+-
+-        GameObject go = new GameObject(InstructionsHeaderName, typeof(RectTransform), typeof(LayoutElement), typeof(TextMeshProUGUI));
+-        go.transform.SetParent(panel, false);
+-
+-        LayoutElement layout = go.GetComponent<LayoutElement>();
+-        layout.preferredHeight = InstructionsHeaderHeight;
+-        layout.minHeight = InstructionsHeaderHeight;
+-        go.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, InstructionsHeaderHeight);
+-
+-        instructionsHeader = go.GetComponent<TextMeshProUGUI>();
+-        instructionsHeader.text = "INSTRUCTIONS";
+-        instructionsHeader.fontSize = 18f;
+-        instructionsHeader.fontStyle = FontStyles.Bold;
+-        instructionsHeader.alignment = TextAlignmentOptions.MidlineLeft;
+-        instructionsHeader.color = Color.white;
+-        instructionsHeader.raycastTarget = false;
+-    }
+-
+-    void ApplyHintStyle()
+-    {
+-        if (hint == null) return;
+-        hint.text = "CTRL + CLICK to ADD a POST Modifier\n" +
+-                    "TAB + CLICK to ADD a CLUMP Modifier\n" +
+-                    "CTRL + SHIFT + CLICK selects a hair's group\n" +
+-                    "SHIFT to Toggle brushing mode\n" +
+-                    "Click UV:ADJ/PRE for UV Mode\n" +
+-                    "Double Click Group name to rename it.\n" +
+-                    "Click in space to come out of mode\n" +
+-                    "DEL or right click removes a group\n" +
+-                    "SPACE + Click to reposition Modifier\n" +
+-                    "SYMMETRY mirrors painting and erasing";
+-        hint.fontSize = 11f;
+-        hint.fontStyle = FontStyles.Bold;
+-        hint.alignment = TextAlignmentOptions.MidlineLeft;
+-        hint.color = new Color(.72f, .78f, .86f, 1f);
+-        hint.textWrappingMode = TextWrappingModes.Normal;
+-        hint.raycastTarget = false;
+-
+-        LayoutElement layout = hint.GetComponent<LayoutElement>();
+-        if (layout != null)
+-        {
+-            layout.preferredHeight = ControlsHintHeight;
+-            layout.minHeight = ControlsHintHeight;
+-        }
+-        hint.rectTransform.sizeDelta = new Vector2(0f, ControlsHintHeight);
++        Transform existing = panel.Find(childName);
++        if (existing == null) return;
++
++        // Deactivated and renamed before the Destroy, not merely destroyed. Destroy is deferred
++        // to the end of the frame, so a panel scan later in this same frame would otherwise
++        // still find it by name and put it back in the running order.
++        existing.gameObject.SetActive(false);
++        existing.gameObject.name = childName + "_Discarded";
++        Destroy(existing.gameObject);
+     }
+ 
+-    // Owns the whole left-panel running order, not just the hint's place in it, because
+-    // the pieces are built by four different scripts at four different moments and each
+-    // one only ever knew where to put itself relative to whatever already existed.
++    // Owns the whole left-panel running order, because the pieces are built by five different
++    // scripts at five different moments and each one only ever knew where to put itself
++    // relative to whatever already existed.
+     //
+-    //   MENU  ->  POLYGONS  ->  LIGHT ANGLE  ->  INSTRUCTIONS  ->  the hint text
+-    //         ->  Hair Groups  ->  + GROUP  ->  the group list
++    //   MENU  ->  POLYGONS  ->  LIGHT ANGLE  ->  INPUT KEYS  ->  SYMMETRY  ->  MAYA-NAV
++    //         ->  GUIDES  ->  Hair Groups  ->  + GROUP  ->  the group list
+     void MaintainPanelOrder(Transform panel)
+     {
+         if (panel == null) return;
+ 
+-        EnsureInstructionsHeader(panel);
+-
+         ordered.Clear();
+         AddIfPresent(panel, "HairPolygonCounterText");
+         AddIfPresent(panel, SceneLightAngleAuthority.RowName);
+-        AddIfPresent(panel, InstructionsHeaderName);
+-        AddIfPresent(panel, "PostCreateHint");
+-        // The SYMMETRY toggle sits directly under the instructions. Anything NOT listed here
++        AddIfPresent(panel, InputKeysDialog.ButtonName);
++        // The SYMMETRY toggle sits directly under INPUT KEYS. Anything NOT listed here
+         // gets shoved around every scan as the listed children are reindexed past it, so a new
+         // panel child has to be named here or its position will not hold.
+         //
+diff --git a/Assets/Scripts/UI_Import/GuideCurveManager.cs b/Assets/Scripts/UI_Import/GuideCurveManager.cs
+index aae941e..a3de160 100644
+--- a/Assets/Scripts/UI_Import/GuideCurveManager.cs
++++ b/Assets/Scripts/UI_Import/GuideCurveManager.cs
+@@ -891,6 +891,10 @@ public class GuideCurveManager : MonoBehaviour
+         // this both see the same press. Cancelling a placement must not also close the panel of
+         // the guide being tuned - the placement owns ESC while it is armed.
+         if (GroupAddButtonPlacementAuthority.ArmedKind != GroupAddButtonPlacementAuthority.AddKind.None) return;
++
++        // Same rule for the INPUT KEYS page: while it is up, ESC closes the page and nothing
++        // else. The guide the user was shaping is still there when they come back to it.
++        if (InputKeysDialog.IsOpen) return;
+         if (Keyboard.current == null) return;
+         if (!Keyboard.current.escapeKey.wasPressedThisFrame) return;
+         ClearSelection();
+diff --git a/Assets/Scripts/UI_Import/InputKeysDialog.cs b/Assets/Scripts/UI_Import/InputKeysDialog.cs
+new file mode 100644
+index 0000000..9b35883
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/InputKeysDialog.cs
+@@ -0,0 +1,526 @@
++using TMPro;
++using UnityEngine;
++using UnityEngine.InputSystem;
++using UnityEngine.UI;
++
++// INPUT KEYS - the whole control reference, on a button instead of down the side of the panel.
++//
++// It replaces the ten-line INSTRUCTIONS block that used to live in the left panel. That block
++// was out of room long before it was out of date: it carried a comment saying to bump its
++// height every time a line was added, it never mentioned the camera, the brush radius keys, the
++// sidedness keys or undo, and two of the ten lines it did carry were wrong -
++//
++//   "DEL or right click removes a group"   there is no DEL key in this project. DEL is a button
++//                                          on the group row. No deleteKey read exists anywhere.
++//   "SHIFT to Toggle brushing mode"        SHIFT CYCLES five modes, it does not toggle two.
++//
++// A panel is a bad home for a reference that only grows. A dialogue has as much room as it
++// needs, is read when it is wanted rather than sitting in the corner of every screenshot, and
++// gives the left panel its 152px back.
++//
++// The camera section is built at OPEN time rather than once, because it depends on MAYA-NAV:
++// both schemes are always listed - a reference with an "if" in it is worse than one that shows
++// both - but the live one is marked, so the answer to "which of these applies to me" is on the
++// page rather than in the reader's memory of a toggle.
++[DefaultExecutionOrder(8960)]
++public class InputKeysDialog : MonoBehaviour
++{
++    // GroupPanelPostHintStats orders the left panel and needs to know this button by name.
++    public const string ButtonName = "InputKeysButton";
++
++    // UIThemeAuthority skips this one by name. It is a Button whose Graphic is the full-screen
++    // backdrop, and the shared skin would repaint the whole screen white with a button sprite
++    // on it - exactly what the demo card's dismiss layer is exempted for.
++    public const string DimmerName = "InputKeysDimmer";
++
++    private const string DialogCanvasName = "InputKeysDialogCanvas";
++    private const float ButtonHeight = 32f;
++    private const float ScanInterval = .25f;
++    private const float ChordColumnWidth = 232f;
++    private const float RowHeight = 22f;
++    private const float HeadingHeight = 34f;
++
++    private static readonly Color HeadingColour = new Color(.55f, .82f, .74f, 1f);
++    private static readonly Color ChordColour = new Color(.98f, .86f, .55f, 1f);
++    private static readonly Color BodyColour = new Color(.84f, .88f, .93f, 1f);
++    private static readonly Color NoteColour = new Color(.62f, .68f, .76f, 1f);
++
++    // Open state, asked by GroomShortcutKeyAuthority and by every ESC reader in the project so
++    // that closing this dialogue does not also cancel a guide or an armed placement behind it.
++    private static bool open = false;
++
++    // The frame the page was closed on. Without it the ESC guards elsewhere would depend on
++    // script execution order: ESC is not consumed by whoever reads it first, so a reader that
++    // runs AFTER this component's close would see IsOpen already false on the very frame the
++    // press was meant for the dialogue, and would cancel the guide or the armed placement
++    // sitting behind it. Reporting open for the whole of the closing frame makes every reader
++    // agree regardless of the order they run in.
++    private static int closedFrame = -1;
++
++    public static bool IsOpen
++    {
++        get
++        {
++            if (open) return true;
++            return Time.frameCount == closedFrame;
++        }
++    }
++
++    // Statics survive "Enter Play Mode -> Disable Domain Reload". A dialogue left open when play
++    // stopped would otherwise have every ESC reader in the project standing down forever.
++    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
++    private static void ResetStatics()
++    {
++        open = false;
++        closedFrame = -1;
++    }
++
++    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
++    private static void Spawn()
++    {
++        if (FindFirstObjectByType<InputKeysDialog>() != null) return;
++        GameObject go = new GameObject(nameof(InputKeysDialog));
++        DontDestroyOnLoad(go);
++        go.AddComponent<InputKeysDialog>();
++    }
++
++    private GameObject boundPanel;
++    private Button button;
++    private GameObject dialogRoot;
++    private float nextScan;
++
++    private void Update()
++    {
++        if (open && Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame)
++        {
++            Close();
++            return;
++        }
++
++        if (Time.unscaledTime < nextScan) return;
++        nextScan = Time.unscaledTime + ScanInterval;
++
++        // The left panel is destroyed and rebuilt on every model and project load, so the
++        // binding is re-checked rather than established once - the same shape SYMMETRY and
++        // MAYA-NAV use, for the same reason.
++        GameObject panel = GameObject.Find("GroupManagerPanel");
++        if (panel == null)
++        {
++            boundPanel = null;
++            button = null;
++            return;
++        }
++
++        if (boundPanel != panel || button == null) Bind(panel);
++    }
++
++    private void OnDestroy()
++    {
++        if (dialogRoot != null) Destroy(dialogRoot);
++        open = false;
++    }
++
++    // ---- the button ---------------------------------------------------------------------
++
++    private void Bind(GameObject panel)
++    {
++        boundPanel = panel;
++
++        Transform existing = panel.transform.Find(ButtonName);
++        if (existing != null)
++        {
++            button = existing.GetComponent<Button>();
++            if (button != null) return;
++
++            // A half-built husk from an interrupted rebuild - start again rather than adopt it.
++            Destroy(existing.gameObject);
++        }
++
++        BuildButton(panel.transform);
++    }
++
++    private void BuildButton(Transform parent)
++    {
++        GameObject go = new GameObject(ButtonName, typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
++        go.transform.SetParent(parent, false);
++        go.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, ButtonHeight);
++        go.GetComponent<LayoutElement>().preferredHeight = ButtonHeight;
++        go.GetComponent<LayoutElement>().minHeight = ButtonHeight;
++
++        // A starting colour only. UIThemeAuthority skins every button that is not exempted by
++        // name, so this one ends up in the shared white skin within a quarter second - which is
++        // right for it: SYMMETRY and MAYA-NAV repaint themselves teal because their colour is
++        // reporting STATE, and this button has no state to report.
++        go.GetComponent<Image>().color = new Color(.24f, .32f, .44f, 1f);
++
++        button = go.GetComponent<Button>();
++        button.onClick.AddListener(Open);
++
++        GameObject textGO = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
++        textGO.transform.SetParent(go.transform, false);
++        RectTransform textRect = textGO.GetComponent<RectTransform>();
++        textRect.anchorMin = Vector2.zero;
++        textRect.anchorMax = Vector2.one;
++        textRect.offsetMin = Vector2.zero;
++        textRect.offsetMax = Vector2.zero;
++
++        TextMeshProUGUI label = textGO.GetComponent<TextMeshProUGUI>();
++        label.text = "INPUT KEYS";
++        label.fontSize = 13f;
++        label.fontStyle = FontStyles.Bold;
++        label.alignment = TextAlignmentOptions.Center;
++        label.color = Color.white;
++        label.raycastTarget = false;
++
++        // First guess only. GroupPanelPostHintStats.MaintainPanelOrder is the running order
++        // authority for this panel and puts this button where the instructions used to be.
++        Transform above = parent.Find(SceneLightAngleAuthority.RowName);
++        if (above != null) go.transform.SetSiblingIndex(Mathf.Clamp(above.GetSiblingIndex() + 1, 0, parent.childCount - 1));
++    }
++
++    // ---- the dialogue -------------------------------------------------------------------
++
++    public void Open()
++    {
++        if (dialogRoot != null) return;
++        open = true;
++        Build();
++    }
++
++    public void Close()
++    {
++        if (open) closedFrame = Time.frameCount;
++        open = false;
++        if (dialogRoot == null) return;
++        Destroy(dialogRoot);
++        dialogRoot = null;
++    }
++
++    private void Build()
++    {
++        GameObject canvasObject = new GameObject(DialogCanvasName, typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
++        dialogRoot = canvasObject;
++        DontDestroyOnLoad(canvasObject);
++
++        Canvas canvas = canvasObject.GetComponent<Canvas>();
++        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
++
++        // Above the groom UI, and BELOW the import prompt's 5000. That prompt hides the whole
++        // menu while it is up, so the two can never be on screen together - but if a later one
++        // does not, a help page must not cover a question that is waiting for an answer.
++        canvas.sortingOrder = 4800;
++
++        CanvasScaler scaler = canvasObject.GetComponent<CanvasScaler>();
++        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
++        scaler.referenceResolution = new Vector2(1920f, 1080f);
++
++        // Full-screen blocker, and a close button in its own right. It is what makes this modal:
++        // it swallows the click that would otherwise reach the viewport, which is why every
++        // placement authority stays quiet while the page is up - they all stand down on
++        // EventSystem.IsPointerOverGameObject.
++        GameObject dimmer = new GameObject(DimmerName, typeof(RectTransform), typeof(Image), typeof(Button));
++        dimmer.transform.SetParent(canvasObject.transform, false);
++        RectTransform dimmerRect = dimmer.GetComponent<RectTransform>();
++        dimmerRect.anchorMin = Vector2.zero;
++        dimmerRect.anchorMax = Vector2.one;
++        dimmerRect.offsetMin = Vector2.zero;
++        dimmerRect.offsetMax = Vector2.zero;
++        dimmer.GetComponent<Image>().color = new Color(0f, 0f, 0f, .66f);
++        dimmer.GetComponent<Button>().onClick.AddListener(Close);
++
++        GameObject panel = new GameObject("InputKeysPanel", typeof(RectTransform), typeof(Image), typeof(VerticalLayoutGroup));
++        panel.transform.SetParent(canvasObject.transform, false);
++        RectTransform panelRect = panel.GetComponent<RectTransform>();
++        panelRect.anchorMin = new Vector2(.5f, .5f);
++        panelRect.anchorMax = new Vector2(.5f, .5f);
++        panelRect.pivot = new Vector2(.5f, .5f);
++        panelRect.sizeDelta = new Vector2(900f, 760f);
++        panel.GetComponent<Image>().color = new Color(.13f, .15f, .18f, .99f);
++
++        VerticalLayoutGroup panelLayout = panel.GetComponent<VerticalLayoutGroup>();
++        panelLayout.padding = new RectOffset(26, 26, 20, 20);
++        panelLayout.spacing = 10f;
++
++        // Both true. A layout group ignores LayoutElement.preferred* on an axis it does not
++        // control, and with childControlHeight off the scroll view below collapses to nothing -
++        // the same failure that flattened the remap phase bar.
++        panelLayout.childControlHeight = true;
++        panelLayout.childControlWidth = true;
++        panelLayout.childForceExpandHeight = false;
++        panelLayout.childForceExpandWidth = true;
++
++        BuildTitle(panel.transform);
++        BuildScrollingBody(panel.transform);
++        BuildCloseButton(panel.transform);
++    }
++
++    private void BuildTitle(Transform parent)
++    {
++        GameObject go = new GameObject("InputKeysTitle", typeof(RectTransform), typeof(TextMeshProUGUI), typeof(LayoutElement));
++        go.transform.SetParent(parent, false);
++
++        TextMeshProUGUI text = go.GetComponent<TextMeshProUGUI>();
++        text.text = "INPUT KEYS";
++        text.fontSize = 26f;
++        text.fontStyle = FontStyles.Bold;
++        text.color = Color.white;
++        text.alignment = TextAlignmentOptions.MidlineLeft;
++        text.raycastTarget = false;
++
++        LayoutElement layout = go.GetComponent<LayoutElement>();
++        layout.preferredHeight = 36f;
++        layout.minHeight = 36f;
++    }
++
++    private void BuildScrollingBody(Transform parent)
++    {
++        GameObject viewport = new GameObject("InputKeysViewport", typeof(RectTransform), typeof(Image), typeof(Mask), typeof(ScrollRect), typeof(LayoutElement));
++        viewport.transform.SetParent(parent, false);
++
++        // The mask needs a graphic to cut against; it is not meant to be seen, so it is nearly
++        // transparent rather than absent. showMaskGraphic off would hide it completely and take
++        // the scroll wheel's raycast target with it.
++        viewport.GetComponent<Image>().color = new Color(.10f, .12f, .14f, .35f);
++
++        LayoutElement viewportLayout = viewport.GetComponent<LayoutElement>();
++        viewportLayout.preferredHeight = 640f;
++        viewportLayout.flexibleHeight = 1f;
++
++        GameObject content = new GameObject("InputKeysContent", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
++        content.transform.SetParent(viewport.transform, false);
++        RectTransform contentRect = content.GetComponent<RectTransform>();
++        contentRect.anchorMin = new Vector2(0f, 1f);
++        contentRect.anchorMax = new Vector2(1f, 1f);
++        contentRect.pivot = new Vector2(.5f, 1f);
++        contentRect.offsetMin = new Vector2(0f, 0f);
++        contentRect.offsetMax = new Vector2(0f, 0f);
++
++        VerticalLayoutGroup contentLayout = content.GetComponent<VerticalLayoutGroup>();
++        contentLayout.padding = new RectOffset(14, 14, 10, 14);
++        contentLayout.spacing = 2f;
++        contentLayout.childControlHeight = true;
++        contentLayout.childControlWidth = true;
++        contentLayout.childForceExpandHeight = false;
++        contentLayout.childForceExpandWidth = true;
++
++        ContentSizeFitter fitter = content.GetComponent<ContentSizeFitter>();
++        fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
++        fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
++
++        ScrollRect scroll = viewport.GetComponent<ScrollRect>();
++        scroll.content = contentRect;
++        scroll.viewport = viewport.GetComponent<RectTransform>();
++        scroll.horizontal = false;
++        scroll.vertical = true;
++        scroll.movementType = ScrollRect.MovementType.Clamped;
++        scroll.scrollSensitivity = 28f;
++
++        FillContent(content.transform);
++    }
++
++    private void BuildCloseButton(Transform parent)
++    {
++        GameObject go = new GameObject("InputKeysCloseButton", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
++        go.transform.SetParent(parent, false);
++        go.GetComponent<Image>().color = new Color(.24f, .30f, .38f, 1f);
++
++        LayoutElement layout = go.GetComponent<LayoutElement>();
++        layout.preferredHeight = 38f;
++        layout.minHeight = 38f;
++
++        GameObject textObject = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
++        textObject.transform.SetParent(go.transform, false);
++        RectTransform textRect = textObject.GetComponent<RectTransform>();
++        textRect.anchorMin = Vector2.zero;
++        textRect.anchorMax = Vector2.one;
++        textRect.offsetMin = Vector2.zero;
++        textRect.offsetMax = Vector2.zero;
++
++        TextMeshProUGUI text = textObject.GetComponent<TextMeshProUGUI>();
++        text.text = "CLOSE   (ESC)";
++        text.fontSize = 16f;
++        text.fontStyle = FontStyles.Bold;
++        text.color = Color.white;
++        text.alignment = TextAlignmentOptions.Center;
++        text.raycastTarget = false;
++
++        go.GetComponent<Button>().onClick.AddListener(Close);
++    }
++
++    // ---- the reference itself -----------------------------------------------------------
++    //
++    // Every line here was read off the code rather than off the old hint block, which is how the
++    // two wrong lines in that block were found. Where a gesture only works in one context, the
++    // heading says so - a list that does not is a list people file bugs against.
++
++    private void FillContent(Transform parent)
++    {
++        bool maya = MayaNavigationAuthority.Enabled;
++
++        string cameraHeading = "CAMERA   -   MAYA-NAV IS OFF";
++        if (maya)
++        {
++            cameraHeading = "CAMERA   -   MAYA-NAV IS ON";
++        }
++
++        Heading(parent, cameraHeading);
++        if (maya)
++        {
++            Row(parent, "ALT + LEFT drag", "Tumble (orbit) the view");
++            Row(parent, "ALT + MIDDLE drag", "Track (pan) the view");
++            Row(parent, "ALT + RIGHT drag", "Dolly - drag right to come closer");
++            Row(parent, "WHEEL", "Zoom in and out");
++            Note(parent, "With MAYA-NAV off it is RIGHT drag to orbit and MIDDLE drag to pan, with no ALT.");
++        }
++        else
++        {
++            Row(parent, "RIGHT drag", "Orbit the view");
++            Row(parent, "MIDDLE drag", "Pan the view");
++            Row(parent, "WHEEL", "Zoom in and out");
++            Note(parent, "Switch MAYA-NAV on for ALT + LEFT tumble, ALT + MIDDLE track, ALT + RIGHT dolly.");
++        }
++        Note(parent, "ALT never places anything, in either mode - it belongs to the camera.");
++
++        Heading(parent, "PLACING HAIR");
++        Row(parent, "P", "PLACE - one card per click");
++        Row(parent, "D", "PAINT - draw continuously while held");
++        Row(parent, "S", "EVEN - fill to an even spacing, never closer");
++        Row(parent, "E", "ERASE - remove cards under the brush");
++        Row(parent, "X", "SYMMETRY on / off");
++        Row(parent, "SHIFT", "Cycle PLACE - PAINT - SPRAY - EVEN - ERASE");
++        Row(parent, "LEFT click / hold", "Place, paint or erase, depending on the mode");
++        Row(parent, "[  and  ]", "Brush radius smaller and bigger");
++        Row(parent, "1  /  2", "All hair cards single-sided / double-sided");
++        Note(parent, "The radius keys work in SPRAY, EVEN and ERASE, and on a live CTRL selection. PLACE and PAINT have no radius.");
++
++        Heading(parent, "SELECTING");
++        Row(parent, "CTRL + LEFT click", "Set a soft selection hotspot on the group");
++        Row(parent, "CTRL + SHIFT + LEFT click", "Select the group of the hair under the cursor");
++        Row(parent, "LEFT click in empty space", "Come out of the current mode");
++        Row(parent, "CTRL (held, no click)", "Preview the selection radius");
++
++        Heading(parent, "GROUPS");
++        Row(parent, "LEFT click a group row", "Make it the current group");
++        Row(parent, "DOUBLE click the name", "Rename the group");
++        Row(parent, "CTRL + BACKSPACE", "Clear the name while typing it");
++        Row(parent, "RIGHT click a group row", "Delete the group (the DEL button does the same)");
++        Row(parent, "RIGHT click any slider", "Put that slider back to its default");
++
++        Heading(parent, "MODIFIERS - POST AND CLUMPER");
++        Row(parent, "CTRL + LEFT click", "Add a POST modifier where you click");
++        Row(parent, "TAB + LEFT click", "Add a CLUMP modifier where you click");
++        Row(parent, "SPACE + LEFT click", "Move the selected modifier to a new point");
++        Row(parent, "CTRL + click empty space", "Leave the CLUMPER editor");
++        Row(parent, "RIGHT click  or  ESC", "Cancel an armed +POST / +GUIDE / +CLUMP");
++
++        Heading(parent, "GUIDE CURVES");
++        Row(parent, "SPACE + LEFT click", "Move the guide's root, keeping its shape");
++        Row(parent, "CTRL + SHIFT + LEFT click", "Insert a point on the curve");
++        Row(parent, "CTRL + SHIFT + RIGHT click", "Remove that point");
++        Row(parent, "Drag a handle", "Reshape the curve");
++        Row(parent, "ESC  or  empty space", "Finish editing the guide");
++
++        Heading(parent, "SHAPE CURVE GRAPH");
++        Row(parent, "LEFT click the graph", "Add a point");
++        Row(parent, "Drag a point", "Move it");
++        Row(parent, "RIGHT click a point", "Remove it");
++
++        Heading(parent, "TEXTURE / UV WORKSPACE");
++        Row(parent, "LEFT drag on the texture", "Draw a UV rect, while DRAW UV RECT is on");
++        Row(parent, "ESC", "Leave DRAW UV RECT mode");
++        Row(parent, "RIGHT click a rect or its row", "Delete that rect");
++        Row(parent, "Drag a list row", "Reorder the rects");
++
++        Heading(parent, "REMAP SESSION");
++        Row(parent, "LEFT click a head", "Place the next marker");
++        Row(parent, "Drag a marker", "Move it");
++        Row(parent, "ESC", "Cancel the remap - the groom is untouched");
++
++        Heading(parent, "EVERYWHERE");
++        Row(parent, "CTRL + Z", "Undo");
++        Row(parent, "CTRL + Y", "Redo");
++        Row(parent, "CTRL + SHIFT + Z", "Redo");
++        Note(parent, "No shortcut fires while you are typing a group name or a seed value.");
++    }
++
++    private static void Heading(Transform parent, string caption)
++    {
++        GameObject go = new GameObject("Heading", typeof(RectTransform), typeof(TextMeshProUGUI), typeof(LayoutElement));
++        go.transform.SetParent(parent, false);
++
++        TextMeshProUGUI text = go.GetComponent<TextMeshProUGUI>();
++        text.text = caption;
++        text.fontSize = 15f;
++        text.fontStyle = FontStyles.Bold;
++        text.color = HeadingColour;
++        text.alignment = TextAlignmentOptions.BottomLeft;
++        text.raycastTarget = false;
++
++        LayoutElement layout = go.GetComponent<LayoutElement>();
++        layout.preferredHeight = HeadingHeight;
++        layout.minHeight = HeadingHeight;
++    }
++
++    private static void Row(Transform parent, string chord, string meaning)
++    {
++        GameObject go = new GameObject("Row", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
++        go.transform.SetParent(parent, false);
++
++        HorizontalLayoutGroup layout = go.GetComponent<HorizontalLayoutGroup>();
++        layout.spacing = 12f;
++        layout.childControlHeight = true;
++        layout.childControlWidth = true;
++        layout.childForceExpandHeight = true;
++        layout.childForceExpandWidth = false;
++
++        LayoutElement rowLayout = go.GetComponent<LayoutElement>();
++        rowLayout.preferredHeight = RowHeight;
++        rowLayout.minHeight = RowHeight;
++
++        Cell(go.transform, "Chord", chord, ChordColour, FontStyles.Bold, ChordColumnWidth, 0f);
++        Cell(go.transform, "Meaning", meaning, BodyColour, FontStyles.Normal, 0f, 1f);
++    }
++
++    private static void Note(Transform parent, string caption)
++    {
++        GameObject go = new GameObject("Note", typeof(RectTransform), typeof(TextMeshProUGUI), typeof(LayoutElement));
++        go.transform.SetParent(parent, false);
++
++        TextMeshProUGUI text = go.GetComponent<TextMeshProUGUI>();
++        text.text = caption;
++        text.fontSize = 12f;
++        text.fontStyle = FontStyles.Italic;
++        text.color = NoteColour;
++        text.alignment = TextAlignmentOptions.MidlineLeft;
++        text.textWrappingMode = TextWrappingModes.Normal;
++        text.raycastTarget = false;
++
++        LayoutElement layout = go.GetComponent<LayoutElement>();
++        layout.preferredHeight = 24f;
++        layout.minHeight = 24f;
++    }
++
++    private static void Cell(Transform parent, string name, string content, Color colour, FontStyles style, float width, float flexible)
++    {
++        GameObject go = new GameObject(name, typeof(RectTransform), typeof(TextMeshProUGUI), typeof(LayoutElement));
++        go.transform.SetParent(parent, false);
++
++        TextMeshProUGUI text = go.GetComponent<TextMeshProUGUI>();
++        text.text = content;
++        text.fontSize = 14f;
++        text.fontStyle = style;
++        text.color = colour;
++        text.alignment = TextAlignmentOptions.MidlineLeft;
++        text.textWrappingMode = TextWrappingModes.NoWrap;
++        text.overflowMode = TextOverflowModes.Ellipsis;
++        text.raycastTarget = false;
++
++        LayoutElement layout = go.GetComponent<LayoutElement>();
++        if (width > 0f)
++        {
++            layout.preferredWidth = width;
++            layout.minWidth = width;
++        }
++        layout.flexibleWidth = flexible;
++    }
++}
+diff --git a/Assets/Scripts/UI_Import/InputKeysDialog.cs.meta b/Assets/Scripts/UI_Import/InputKeysDialog.cs.meta
+new file mode 100644
+index 0000000..0216d5d
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/InputKeysDialog.cs.meta
+@@ -0,0 +1,11 @@
++fileFormatVersion: 2
++guid: 8b2f47d3c15e42a6b93d1e08f7a4c531
++MonoImporter:
++  externalObjects: {}
++  serializedVersion: 2
++  defaultReferences: []
++  executionOrder: 0
++  icon: {instanceID: 0}
++  userData: 
++  assetBundleName: 
++  assetBundleVariant: 
+diff --git a/Assets/Scripts/UI_Import/RemapSessionController.cs b/Assets/Scripts/UI_Import/RemapSessionController.cs
+index fd6cd3b..9429fb7 100644
+--- a/Assets/Scripts/UI_Import/RemapSessionController.cs
++++ b/Assets/Scripts/UI_Import/RemapSessionController.cs
+@@ -659,6 +659,10 @@ public class RemapSessionController : MonoBehaviour
+     void Update()
+     {
+         if (!sessionActive) return;
++
++        // The INPUT KEYS page owns ESC while it is up. Cancelling a whole remap because the
++        // user shut a help page is the most expensive version of this mistake in the project.
++        if (InputKeysDialog.IsOpen) return;
+         if (UnityEngine.InputSystem.Keyboard.current == null) return;
+         if (UnityEngine.InputSystem.Keyboard.current.escapeKey.wasPressedThisFrame)
+         {
+diff --git a/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs b/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs
+index f22dbd5..cfc14c7 100644
+--- a/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs
++++ b/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs
+@@ -565,7 +565,9 @@ public class TextureUVRectWorkspace : MonoBehaviour
+     {
+         if (!drawMode || Mouse.current == null || previewPlane == null || viewer == null || viewer.mainCamera == null) return;
+ 
+-        if (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame)
++        // The INPUT KEYS page owns ESC while it is up, so closing it does not also drop the
++        // rectangle being drawn behind it.
++        if (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame && !InputKeysDialog.IsOpen)
+         {
+             drawMode = false;
+             dragging = false;
+diff --git a/Assets/Scripts/UI_Import/UIThemeAuthority.cs b/Assets/Scripts/UI_Import/UIThemeAuthority.cs
+index 97acf59..992006f 100644
+--- a/Assets/Scripts/UI_Import/UIThemeAuthority.cs
++++ b/Assets/Scripts/UI_Import/UIThemeAuthority.cs
+@@ -62,6 +62,10 @@ public class UIThemeAuthority : MonoBehaviour
+             // stretched rect off by 32 units on the way past. The three buttons INSIDE the card
+             // are not named here and are skinned normally, which is the point of them.
+             if (goName == DemoUpgradePromptAuthority.DismissLayerName) continue;
++            // The INPUT KEYS page's dimmer is the same shape and the same trap: a Button whose
++            // Graphic is the full-screen backdrop, so that clicking away closes the page. The
++            // CLOSE button inside it is not named here and is skinned normally.
++            if (goName == InputKeysDialog.DimmerName) continue;
+ 
+             if (!styledButtons.Contains(button))
+             {

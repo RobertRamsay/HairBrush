@@ -565,7 +565,9 @@ public class TextureUVRectWorkspace : MonoBehaviour
     {
         if (!drawMode || Mouse.current == null || previewPlane == null || viewer == null || viewer.mainCamera == null) return;
 
-        if (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame)
+        // The INPUT KEYS page owns ESC while it is up, so closing it does not also drop the
+        // rectangle being drawn behind it.
+        if (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame && !InputKeysDialog.IsOpen)
         {
             drawMode = false;
             dragging = false;

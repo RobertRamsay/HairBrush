@@ -891,6 +891,10 @@ public class GuideCurveManager : MonoBehaviour
         // this both see the same press. Cancelling a placement must not also close the panel of
         // the guide being tuned - the placement owns ESC while it is armed.
         if (GroupAddButtonPlacementAuthority.ArmedKind != GroupAddButtonPlacementAuthority.AddKind.None) return;
+
+        // Same rule for the INPUT KEYS page: while it is up, ESC closes the page and nothing
+        // else. The guide the user was shaping is still there when they come back to it.
+        if (InputKeysDialog.IsOpen) return;
         if (Keyboard.current == null) return;
         if (!Keyboard.current.escapeKey.wasPressedThisFrame) return;
         ClearSelection();

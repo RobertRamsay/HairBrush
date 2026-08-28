@@ -349,9 +349,9 @@ public class GroomSymmetryAuthority : MonoBehaviour
         label.raycastTarget = false;
 
         // First guess only. GroupPanelPostHintStats.MaintainPanelOrder is the running order
-        // authority for this panel and puts the button under the instructions hint every scan.
-        Transform hint = parent.Find("PostCreateHint");
-        if (hint != null) go.transform.SetSiblingIndex(Mathf.Clamp(hint.GetSiblingIndex() + 1, 0, parent.childCount - 1));
+        // authority for this panel and puts the button under INPUT KEYS every scan.
+        Transform above = parent.Find(InputKeysDialog.ButtonName);
+        if (above != null) go.transform.SetSiblingIndex(Mathf.Clamp(above.GetSiblingIndex() + 1, 0, parent.childCount - 1));
 
         Repaint();
     }

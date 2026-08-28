@@ -55,6 +55,10 @@ public class GroomShortcutKeyAuthority : MonoBehaviour
         // A modal is up. Always false in a PRO build.
         if (DemoUpgradePrompt.IsOpen) return;
 
+        // The INPUT KEYS page is up. It is the list of these very keys, so a press made while
+        // reading it is somebody checking what a key does, not asking for it.
+        if (InputKeysDialog.IsOpen) return;
+
         // The texture workspace or a remap session owns the viewport.
         if (GroomViewportSuppressed.Active) return;
 

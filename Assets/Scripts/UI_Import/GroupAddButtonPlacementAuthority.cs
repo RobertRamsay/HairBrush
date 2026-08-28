@@ -237,7 +237,9 @@ public class GroupAddButtonPlacementAuthority : MonoBehaviour
 
         UpdateBanner();
 
-        if (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame)
+        // The INPUT KEYS page owns ESC while it is up - closing a help page must not also throw
+        // away the placement the user armed before opening it.
+        if (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame && !InputKeysDialog.IsOpen)
         {
             Disarm();
             return;
