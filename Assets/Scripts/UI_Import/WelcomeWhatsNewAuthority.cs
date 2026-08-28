@@ -76,7 +76,7 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
     private static readonly string[] ReleaseNotes =
     {
         "Move a finished groom onto a different head: import a model and pick REMAP.",
-        "Brush keys: P place, D draw, S spacing, E erase, X symmetry. See INPUT KEYS.",
+        "Brush keys: P place, D draw, B spray-brush F even-fill, E erase, S symmetry. See INPUT KEYS.",
         "Group sliders now stay live with POSTs on them - the POSTs ride on top.",
         "Name a POST, and set it REL to offset the group or ABS to override it.",
         "MASTER COLOUR tints the hair, and CLEAR empties any texture slot.",
