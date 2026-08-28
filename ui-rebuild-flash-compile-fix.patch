@@ -1,0 +1,24 @@
+diff --git a/Assets/Scripts/UI_Import/GroupPanelRowOrderAuthority.cs b/Assets/Scripts/UI_Import/GroupPanelRowOrderAuthority.cs
+index 7480c15..b2c10af 100644
+--- a/Assets/Scripts/UI_Import/GroupPanelRowOrderAuthority.cs
++++ b/Assets/Scripts/UI_Import/GroupPanelRowOrderAuthority.cs
+@@ -36,6 +36,7 @@ public class GroupPanelRowOrderAuthority : MonoBehaviour
+     // net out to an unchanged count, and a rename that changes a row's prefix is invisible.
+     // Both simply wait out the throttle.
+     private const float ScanInterval = .1f;
++    private int handledRebuildFrame = -1;
+     private float nextScan;
+     private Transform watchedPanel;
+     private int lastPanelChildCount = -1;
+diff --git a/Assets/Scripts/UI_Import/PostAffectorUXFix.cs b/Assets/Scripts/UI_Import/PostAffectorUXFix.cs
+index 2943772..29e62e8 100644
+--- a/Assets/Scripts/UI_Import/PostAffectorUXFix.cs
++++ b/Assets/Scripts/UI_Import/PostAffectorUXFix.cs
+@@ -12,6 +12,7 @@ public class PostAffectorUXFix : MonoBehaviour
+     private PostAffectorManager manager;
+     private FieldInfo strengthRowField;
+     private FieldInfo groupsField;
++    private int handledRebuildFrame = -1;
+     private float nextScan;
+ 
+     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]

@@ -12,6 +12,7 @@ public class PostAffectorUXFix : MonoBehaviour
     private PostAffectorManager manager;
     private FieldInfo strengthRowField;
     private FieldInfo groupsField;
+    private int handledRebuildFrame = -1;
     private float nextScan;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]

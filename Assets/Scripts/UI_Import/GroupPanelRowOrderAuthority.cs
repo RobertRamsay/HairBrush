@@ -36,6 +36,7 @@ public class GroupPanelRowOrderAuthority : MonoBehaviour
     // net out to an unchanged count, and a rename that changes a row's prefix is invisible.
     // Both simply wait out the throttle.
     private const float ScanInterval = .1f;
+    private int handledRebuildFrame = -1;
     private float nextScan;
     private Transform watchedPanel;
     private int lastPanelChildCount = -1;
