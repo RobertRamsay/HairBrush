@@ -393,6 +393,7 @@ public class InputKeysDialog : MonoBehaviour
         Row(parent, "[  and  ]", "Brush radius smaller and bigger");
         Row(parent, "1  /  2", "All hair cards single-sided / double-sided");
         Note(parent, "The radius keys work in SPRAY, EVEN and ERASE, and on a live CTRL selection. PLACE and PAINT have no radius.");
+        Note(parent, "1 and 2 do nothing while CARD is set to DIAMOND - a closed card is single-sided by construction. Same for SS/DS and N+/N- on the group rows.");
 
         Heading(parent, "SELECTING");
         Row(parent, "CTRL + LEFT click", "Set a soft selection hotspot on the group");

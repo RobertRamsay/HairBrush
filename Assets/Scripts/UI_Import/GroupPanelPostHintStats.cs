@@ -139,7 +139,7 @@ public class GroupPanelPostHintStats : MonoBehaviour
     // relative to whatever already existed.
     //
     //   MENU  ->  POLYGONS  ->  LIGHT ANGLE  ->  INPUT KEYS  ->  SYMMETRY  ->  MAYA-NAV
-    //         ->  GUIDES  ->  Hair Groups  ->  + GROUP  ->  the group list
+    //         ->  GUIDES  ->  CARD  ->  Hair Groups  ->  + GROUP  ->  the group list
     void MaintainPanelOrder(Transform panel)
     {
         if (panel == null) return;
@@ -159,6 +159,7 @@ public class GroupPanelPostHintStats : MonoBehaviour
         AddIfPresent(panel, GroomSymmetryAuthority.ButtonName);
         AddIfPresent(panel, MayaNavigationAuthority.ButtonName);
         AddIfPresent(panel, GuideOverlayAuthority.ButtonName);
+        AddIfPresent(panel, HairCardProfileAuthority.ButtonName);
         AddIfPresent(panel, "TitleText");
         AddIfPresent(panel, "NewGroupButton");
         AddIfPresent(panel, "GroupScrollView");

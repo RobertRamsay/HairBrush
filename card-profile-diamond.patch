@@ -1,0 +1,1142 @@
+diff --git a/Assets/Scripts/UI_Import/GroupNormalFlipAuthority.cs b/Assets/Scripts/UI_Import/GroupNormalFlipAuthority.cs
+index 3bdc019..fd63547 100644
+--- a/Assets/Scripts/UI_Import/GroupNormalFlipAuthority.cs
++++ b/Assets/Scripts/UI_Import/GroupNormalFlipAuthority.cs
+@@ -55,7 +55,20 @@ public class GroupNormalFlipAuthority : MonoBehaviour
+ 
+     // Read once per card per mesh rebuild, and folded into HairCard's mesh-input hash - which
+     // is what makes a toggle take effect without anything here having to hunt down the cards.
++    // Under DIAMOND there is nothing to flip. N- exists because an OPEN surface has a right
++    // side and a wrong side and the tent gives you no way to know which one you are looking at;
++    // a closed section has an outward normal on every face by construction, so the answer is
++    // already correct and reversing the winding would only turn every card inside out. The
++    // group's own setting is kept, not cleared - see IsFlippedStored.
+     public static bool IsFlipped(int groupId)
++    {
++        if (HairCardSection.IsDiamond) return false;
++        return IsFlippedStored(groupId);
++    }
++
++    // What the user chose, whether or not the current profile is honouring it. Saving and the
++    // button label both read this; the mesh reads IsFlipped.
++    public static bool IsFlippedStored(int groupId)
+     {
+         bool flipped;
+         if (flippedByGroup.TryGetValue(groupId, out flipped)) return flipped;
+@@ -83,7 +96,10 @@ public class GroupNormalFlipAuthority : MonoBehaviour
+         foreach (GroupSaveData group in data.groups)
+         {
+             if (group == null) continue;
+-            group.normalFlipped = IsFlipped(group.groupId);
++
++            // Stored, not effective. Saving the effective answer while DIAMOND is on would
++            // clear every group's N- and it would not come back with TENT.
++            group.normalFlipped = IsFlippedStored(group.groupId);
+         }
+     }
+ 
+@@ -173,12 +189,21 @@ public class GroupNormalFlipAuthority : MonoBehaviour
+                 text = existing.GetComponentInChildren<TextMeshProUGUI>(true);
+             }
+ 
++            // Effective, so under DIAMOND it reads N+ whatever the group holds, dimmed to say
++            // the profile is answering rather than the button. Same treatment as SS/DS beside
++            // it, and for the same reason.
++            bool forced = HairCardSection.IsDiamond;
+             bool flipped = IsFlipped(gid);
++
+             if (text != null)
+             {
+                 string label = "N+";
+                 if (flipped) label = "N-";
+                 if (text.text != label) text.text = label;
++
++                Color textColour = Color.white;
++                if (forced) textColour = new Color(1f, 1f, 1f, .35f);
++                if (text.color != textColour) text.color = textColour;
+             }
+ 
+             if (button != null)
+@@ -188,6 +213,7 @@ public class GroupNormalFlipAuthority : MonoBehaviour
+                 {
+                     Color colour = new Color(.28f, .28f, .28f, 1f);
+                     if (flipped) colour = new Color(.24f, .52f, .46f, 1f);
++                    if (forced) colour = new Color(.20f, .20f, .20f, 1f);
+                     if (image.color != colour) image.color = colour;
+                 }
+             }
+@@ -196,7 +222,13 @@ public class GroupNormalFlipAuthority : MonoBehaviour
+ 
+     void Toggle(int groupId)
+     {
+-        SetFlipped(groupId, !IsFlipped(groupId));
++        if (HairCardSection.IsDiamond)
++        {
++            StatusToast.Show("DIAMOND cards need no normal flip - a closed section points outward on every face. Switch the CARD profile to TENT to use N+/N-.", true, 5f);
++            return;
++        }
++
++        SetFlipped(groupId, !IsFlippedStored(groupId));
+ 
+         // Nothing needs to touch the cards. The flag is part of HairCard's mesh-input hash, so
+         // the next per-frame re-assertion sees a changed hash and rebuilds the group by itself.
+diff --git a/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs b/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs
+index 21f431d..860cc77 100644
+--- a/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs
++++ b/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs
+@@ -139,7 +139,7 @@ public class GroupPanelPostHintStats : MonoBehaviour
+     // relative to whatever already existed.
+     //
+     //   MENU  ->  POLYGONS  ->  LIGHT ANGLE  ->  INPUT KEYS  ->  SYMMETRY  ->  MAYA-NAV
+-    //         ->  GUIDES  ->  Hair Groups  ->  + GROUP  ->  the group list
++    //         ->  GUIDES  ->  CARD  ->  Hair Groups  ->  + GROUP  ->  the group list
+     void MaintainPanelOrder(Transform panel)
+     {
+         if (panel == null) return;
+@@ -159,6 +159,7 @@ public class GroupPanelPostHintStats : MonoBehaviour
+         AddIfPresent(panel, GroomSymmetryAuthority.ButtonName);
+         AddIfPresent(panel, MayaNavigationAuthority.ButtonName);
+         AddIfPresent(panel, GuideOverlayAuthority.ButtonName);
++        AddIfPresent(panel, HairCardProfileAuthority.ButtonName);
+         AddIfPresent(panel, "TitleText");
+         AddIfPresent(panel, "NewGroupButton");
+         AddIfPresent(panel, "GroupScrollView");
+diff --git a/Assets/Scripts/UI_Import/GroupSidednessAuthority.cs b/Assets/Scripts/UI_Import/GroupSidednessAuthority.cs
+index ce0c709..99fc7bd 100644
+--- a/Assets/Scripts/UI_Import/GroupSidednessAuthority.cs
++++ b/Assets/Scripts/UI_Import/GroupSidednessAuthority.cs
+@@ -28,6 +28,19 @@ public class GroupSidednessAuthority : MonoBehaviour
+ 
+     private float nextScan;
+ 
++    // Statics survive "Enter Play Mode -> Disable Domain Reload", which this project has on.
++    // GroupNormalFlipAuthority next door has always reset; this one had not, so a play-mode
++    // restart came back with the previous run's SS/DS map still in it while the flip map beside
++    // it had been cleared - two controls on the same row disagreeing about whether the session
++    // was new. Noticed while making the profile force both of them.
++    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
++    static void ResetStatics()
++    {
++        singleSidedByGroup.Clear();
++        pendingRestore = null;
++        pendingRestoreFrames = 0;
++    }
++
+     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+     static void Spawn()
+     {
+@@ -37,7 +50,23 @@ public class GroupSidednessAuthority : MonoBehaviour
+         go.AddComponent<GroupSidednessAuthority>();
+     }
+ 
++    // What actually gets rendered. Under DIAMOND that is single sided for every group and
++    // there is nothing to decide: a closed section has an outward normal on every face, so the
++    // far pair is genuinely facing away and culling it is correct rather than a saving. Double
++    // sided there would draw those faces a second time, from the inside, over the top of the
++    // ones in front - the exact artefact the diamond exists to remove.
+     public static bool IsSingleSided(int groupId)
++    {
++        if (HairCardSection.IsDiamond) return true;
++        return IsSingleSidedStored(groupId);
++    }
++
++    // What the user chose, whether or not the current profile is honouring it.
++    //
++    // Kept separate from IsSingleSided so a groom switched to DIAMOND and saved does not come
++    // back with every group's SS/DS choice overwritten by the profile's answer. Switch back to
++    // TENT and the buttons say what they said before.
++    public static bool IsSingleSidedStored(int groupId)
+     {
+         bool single;
+         if (singleSidedByGroup.TryGetValue(groupId, out single)) return single;
+@@ -50,6 +79,14 @@ public class GroupSidednessAuthority : MonoBehaviour
+         ApplyGroup(groupId);
+     }
+ 
++    // Called by HairCardSection when the profile changes. The scan below would get there within
++    // a tenth of a second anyway; this makes the switch land on the same frame as the rebuild
++    // instead of a beat after it, which on a large groom is a visible flash of the wrong cull.
++    public static void ReapplyAll()
++    {
++        ApplyAll();
++    }
++
+     public static void Forget(int groupId)
+     {
+         singleSidedByGroup.Remove(groupId);
+@@ -67,7 +104,10 @@ public class GroupSidednessAuthority : MonoBehaviour
+         foreach (GroupSaveData group in data.groups)
+         {
+             if (group == null) continue;
+-            group.singleSided = IsSingleSided(group.groupId);
++
++            // Stored, not effective - see IsSingleSidedStored. Saving the effective answer
++            // while DIAMOND is on would write SS into every group and lose the choice for good.
++            group.singleSided = IsSingleSidedStored(group.groupId);
+         }
+     }
+ 
+@@ -182,12 +222,23 @@ public class GroupSidednessAuthority : MonoBehaviour
+                 text = existing.GetComponentInChildren<TextMeshProUGUI>(true);
+             }
+ 
++            // The label follows what is on screen, so under DIAMOND it reads SS whatever the
++            // group's own setting says - a button reading DS beside a single-sided card would
++            // be a lie. Dimmed rather than hidden, and left in the row: it comes back holding
++            // the same value the moment the profile goes back to TENT, and a control that
++            // vanishes and returns is harder to trust than one that visibly has no say.
++            bool forced = HairCardSection.IsDiamond;
+             bool single = IsSingleSided(gid);
++
+             if (text != null)
+             {
+                 string label = "DS";
+                 if (single) label = "SS";
+                 if (text.text != label) text.text = label;
++
++                Color textColour = Color.white;
++                if (forced) textColour = new Color(1f, 1f, 1f, .35f);
++                if (text.color != textColour) text.color = textColour;
+             }
+ 
+             if (button != null)
+@@ -197,6 +248,7 @@ public class GroupSidednessAuthority : MonoBehaviour
+                 {
+                     Color colour = new Color(.28f, .28f, .28f, 1f);
+                     if (single) colour = new Color(.62f, .38f, .18f, 1f);
++                    if (forced) colour = new Color(.20f, .20f, .20f, 1f);
+                     if (image.color != colour) image.color = colour;
+                 }
+             }
+@@ -205,7 +257,15 @@ public class GroupSidednessAuthority : MonoBehaviour
+ 
+     void Toggle(int groupId)
+     {
+-        SetSingleSided(groupId, !IsSingleSided(groupId));
++        // Refused rather than swallowed. The click is a reasonable thing to try, and silence
++        // would read as a broken button rather than as a control the profile has taken over.
++        if (HairCardSection.IsDiamond)
++        {
++            StatusToast.Show("DIAMOND cards are single sided - every face already points outward. Switch the CARD profile to TENT to choose SS/DS per group.", true, 5f);
++            return;
++        }
++
++        SetSingleSided(groupId, !IsSingleSidedStored(groupId));
+         nextScan = 0f;
+     }
+ }
+diff --git a/Assets/Scripts/UI_Import/GuideCurveManager.cs b/Assets/Scripts/UI_Import/GuideCurveManager.cs
+index a3de160..b3cbffb 100644
+--- a/Assets/Scripts/UI_Import/GuideCurveManager.cs
++++ b/Assets/Scripts/UI_Import/GuideCurveManager.cs
+@@ -1513,18 +1513,23 @@ public static class GuideDeformation
+                 turn = Quaternion.AngleAxis(180f, across.normalized);
+             }
+ 
+-            vertices[index] = spine[i] + turn * (vertices[index] - original);
+-            vertices[index + 1] = spine[i] + turn * (vertices[index + 1] - original);
+-            vertices[index + 2] = spine[i] + turn * (vertices[index + 2] - original);
++            // Over the row's columns rather than three by name: under DIAMOND there is a
++            // fourth point, and a cross-section carried onto the new spine with one of its
++            // points left on the old one is not a cross-section any more.
++            for (int column = 0; column < columns; column++)
++            {
++                vertices[index + column] = spine[i] + turn * (vertices[index + column] - original);
++            }
+ 
+             // The root row's own cross-section, turned by the first segment's rotation. Its spine
+             // point stays exactly where it was - only the facing changes - so the scalp anchor
+             // holds while the ribbon leaves it without a kink.
+             if (i == 1)
+             {
+-                vertices[0] = spine[0] + turn * (vertices[0] - spine[0]);
+-                vertices[1] = spine[0] + turn * (vertices[1] - spine[0]);
+-                vertices[2] = spine[0] + turn * (vertices[2] - spine[0]);
++                for (int column = 0; column < columns; column++)
++                {
++                    vertices[column] = spine[0] + turn * (vertices[column] - spine[0]);
++                }
+             }
+ 
+             previousOriginal = original;
+diff --git a/Assets/Scripts/UI_Import/HairCard.cs b/Assets/Scripts/UI_Import/HairCard.cs
+index bb53918..b1e9e50 100644
+--- a/Assets/Scripts/UI_Import/HairCard.cs
++++ b/Assets/Scripts/UI_Import/HairCard.cs
+@@ -34,7 +34,16 @@ public class HairCard : MonoBehaviour
+     // The arch value that leaves the cross-section exactly as it was before Arch existed.
+     // Also where a brand-new card, a reset group and a legacy project all land.
+     public const float ArchNeutral = 0.5f;
+-    public const int CrossSectionColumns = 3;
++    // How many points a row of the cross-section has. Three under TENT, four under DIAMOND.
++    //
++    // Was a const, and every caller wrote `const int columns = HairCard.CrossSectionColumns;`
++    // - which is exactly what a const is for and exactly what makes a second profile
++    // impossible, since the value would be baked into each caller at compile time. It is a
++    // property now, and HairCardSection owns the answer.
++    public static int CrossSectionColumns
++    {
++        get { return HairCardSection.Columns; }
++    }
+ 
+     // Curl banking. Without this the coil only displaces the centreline while every
+     // cross-section keeps pointing the same way, so a curled card cycles between
+@@ -106,37 +115,13 @@ public class HairCard : MonoBehaviour
+     //
+     // flipWinding reverses each triangle, which is what actually inverts the surface normals -
+     // RecalculateNormals derives them from winding, so there is nothing else to flip.
++    // Kept as the name every builder already calls; the topology itself moved to
++    // HairCardSection when the DIAMOND profile arrived, because a second winding pattern was
++    // one hand-written copy too many. Under TENT it emits the same four triangles, in the same
++    // order, that used to be written out here.
+     public static void BuildStripTriangles(int segments, bool flipWinding, int[] triangles)
+     {
+-        if (triangles == null) return;
+-        const int columns = CrossSectionColumns;
+-
+-        int triIndex = 0;
+-        for (int i = 0; i < segments; i++)
+-        {
+-            int row = i * columns;
+-            int next = row + columns;
+-
+-            // Left half of the convex strip, then the right half.
+-            AddTriangle(triangles, ref triIndex, row, next, row + 1, flipWinding);
+-            AddTriangle(triangles, ref triIndex, row + 1, next, next + 1, flipWinding);
+-            AddTriangle(triangles, ref triIndex, row + 1, next + 1, row + 2, flipWinding);
+-            AddTriangle(triangles, ref triIndex, row + 2, next + 1, next + 2, flipWinding);
+-        }
+-    }
+-
+-    static void AddTriangle(int[] triangles, ref int index, int a, int b, int c, bool flipWinding)
+-    {
+-        if (flipWinding)
+-        {
+-            triangles[index++] = a;
+-            triangles[index++] = c;
+-            triangles[index++] = b;
+-            return;
+-        }
+-        triangles[index++] = a;
+-        triangles[index++] = b;
+-        triangles[index++] = c;
++        HairCardSection.BuildTriangles(segments, flipWinding, triangles);
+     }
+ 
+     public static float MaxRepresentableTurns(int segments)
+@@ -1441,6 +1426,14 @@ public class HairCard : MonoBehaviour
+             // edit happened to dirty the group.
+             hash = hash * 31 + GroupNormalFlipAuthority.IsFlipped(groupId).GetHashCode();
+ 
++            // The cross-section profile changes both the vertex count and every position, so
++            // it has to be here or a card would keep whichever shape it happened to be built
++            // with. This is also what makes the switch self-healing rather than dependent on
++            // somebody remembering to rebuild: a card that missed HairCardSection's own sweep -
++            // spawned a frame later, restored by a load, hidden inside a SOLO freeze - notices
++            // by itself on its next re-assertion.
++            hash = hash * 31 + (int)HairCardSection.Current;
++
+             hash = hash * 31 + GroomShapeCurveRegistry.EpochFor(groupId);
+             hash = hash * 31 + PostShapeCurveBridge.Epoch;
+ 
+@@ -1471,11 +1464,11 @@ public class HairCard : MonoBehaviour
+     {
+         if (mesh == null || segments < 1) return;
+ 
+-        const int columns = CrossSectionColumns;
++        int columns = CrossSectionColumns;
+         int numVertices = (segments + 1) * columns;
+         baseVertices = new Vector3[numVertices];
+         Vector2[] uvs = new Vector2[numVertices];
+-        int[] triangles = new int[segments * 12];
++        int[] triangles = new int[segments * HairCardSection.IndicesPerSegment];
+ 
+         // Segment density remap, spine and section frames all resolved up front - the
+         // frame at a row needs its neighbours' spine points, so it cannot be done
+@@ -1493,7 +1486,6 @@ public class HairCard : MonoBehaviour
+             float baseURight = uScale < 0f ? 0f : 1f;
+             float finalULeft = baseULeft * Mathf.Abs(uScale) + uOffset;
+             float finalURight = baseURight * Mathf.Abs(uScale) + uOffset;
+-            float finalUCenter = (finalULeft + finalURight) * .5f;
+ 
+             float absVScale = Mathf.Abs(vScale);
+             float baseV = (1f - t) * absVScale;
+@@ -1517,39 +1509,38 @@ public class HairCard : MonoBehaviour
+             EvaluateWave(this, t, out waveOffset, mirrored);
+ 
+             Vector3 sectionOrigin = new Vector3(0f, 0f, z);
+-            Vector3 left = sectionOrigin + bankRotation * new Vector3(-currentWidth, 0f, 0f);
+-            Vector3 center = sectionOrigin + bankRotation * new Vector3(0f, ridgeHeight, 0f);
+-            Vector3 right = sectionOrigin + bankRotation * new Vector3(currentWidth, 0f, 0f);
++
++            // Everything that displaces the WHOLE section, accumulated before the section is
++            // built rather than added to each point afterwards. The points themselves are
++            // HairCardSection's business now - it is the only thing that knows whether there
++            // are three of them or four.
++            Vector3 sectionOffset = Vector3.zero;
+ 
+             if (clumpActive && t > 0f)
+             {
+                 float influence = Mathf.Clamp01(clumpStrength * clumpCurve.Evaluate(t));
+-                Vector3 straightCenter = (left + right) * 0.5f;
++
++                // This used to average the left and right points to find the undisplaced
++                // centre. Those two are sectionOrigin plus and minus the same banked
++                // half-span, so their midpoint IS sectionOrigin - identical arithmetic, and
++                // it no longer needs the points to exist first.
+                 Vector3 worldAxisPoint = clumpSurfacePoint + clumpSurfaceNormal * (length * t);
+                 Vector3 targetCenter = transform.InverseTransformPoint(worldAxisPoint);
+-                Vector3 movedCenter = Vector3.Lerp(straightCenter, targetCenter, influence);
+-                Vector3 delta = movedCenter - straightCenter;
+-                left += delta;
+-                center += delta;
+-                right += delta;
++                sectionOffset += Vector3.Lerp(sectionOrigin, targetCenter, influence) - sectionOrigin;
+             }
+ 
+             // Curl (spiral/coil): displaces the whole cross-section outward from the straight
+             // centerline, sweeping around the card's own length axis as t increases. Applied
+             // after width (currentWidth above) and before Bend/X/Y/Z's rotation below, so a
+             // curled card still gets bent/angled as a whole on top of its own coil shape.
+-            // The section was already banked into this same sweep when it was built.
+-            left += curlOffset;
+-            center += curlOffset;
+-            right += curlOffset;
++            // The section is banked into this same sweep as it is built.
++            sectionOffset += curlOffset;
+ 
+             // Wave rides on top of curl. Both are displacements of the whole cross-section in
+             // the card's own local space, applied after the section has been built and banked
+             // and before the path-following frame places it, so a card can be curled AND wavy
+             // without either shape fighting the other.
+-            left += waveOffset;
+-            center += waveOffset;
+-            right += waveOffset;
++            sectionOffset += waveOffset;
+ 
+             // The spine keeps exactly the position the authored bend/twist rotation
+             // always put it at. Only the section's own lateral extent - width, ridge,
+@@ -1558,12 +1549,12 @@ public class HairCard : MonoBehaviour
+             Vector3 spinePoint = segmentSpine[i];
+             Quaternion sectionFrame = segmentFrame[i];
+ 
+-            baseVertices[index] = spinePoint + sectionFrame * (left - sectionOrigin);
+-            baseVertices[index + 1] = spinePoint + sectionFrame * (center - sectionOrigin);
+-            baseVertices[index + 2] = spinePoint + sectionFrame * (right - sectionOrigin);
+-            uvs[index] = new Vector2(finalULeft, finalV);
+-            uvs[index + 1] = new Vector2(finalUCenter, finalV);
+-            uvs[index + 2] = new Vector2(finalURight, finalV);
++            HairCardSection.WriteRow(
++                baseVertices, uvs, index,
++                sectionOrigin, bankRotation, sectionOffset,
++                spinePoint, sectionFrame,
++                currentWidth, ridgeHeight,
++                finalULeft, finalURight, finalV);
+         }
+ 
+         BuildStripTriangles(segments, GroupNormalFlipAuthority.IsFlipped(groupId), triangles);
+diff --git a/Assets/Scripts/UI_Import/HairCardProfileAuthority.cs b/Assets/Scripts/UI_Import/HairCardProfileAuthority.cs
+new file mode 100644
+index 0000000..ad9213a
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/HairCardProfileAuthority.cs
+@@ -0,0 +1,161 @@
++using TMPro;
++using UnityEngine;
++using UnityEngine.UI;
++
++// The global CARD: TENT / DIAMOND toggle, on the left panel under GUIDES.
++//
++// Global rather than per group, and that was a decision rather than an omission. Per group
++// looks tempting - it sits next to SS/DS and N+/N-, which are both per group - but it does not
++// survive contact with the rest of the tool. The clumper and guide reconstructions rebuild
++// whole groups at a time and share one evaluator; every one of them would have to carry a
++// profile through it. And SS/DS is the reason the setting exists at all: a groom with both
++// profiles in it has no consistent answer for whether double sided should be on, so the
++// control that suppresses it cannot itself be per group.
++//
++// SAVED WITH THE PROJECT, not in the settings ini. MAYA-NAV and GUIDES ON TOP are about the
++// person - how they like to look at things - so they follow the person from project to
++// project. This is about the hair: a diamond card and a tent card are different geometry, and
++// a groom has to come back the shape it was saved as. See HairCardSection.Capture.
++//
++// WHAT SWITCHING COSTS. Every card in the scene rebuilds, which is the same work a Segments
++// change already does to a group and is fast enough to be instant on a normal groom. Nothing
++// is lost either way: the mesh is a pure function of the card's parameters, so a groom taken
++// to DIAMOND and back to TENT is the groom it started as, down to the vertex.
++[DefaultExecutionOrder(6800)]
++public class HairCardProfileAuthority : MonoBehaviour
++{
++    // GroupPanelPostHintStats orders the left panel and needs to know this button by name.
++    // A panel child that is not in its list gets shoved around every scan.
++    public const string ButtonName = "HairCardProfileButton";
++
++    private const float ScanInterval = .25f;
++    private const float ButtonHeight = 32f;
++
++    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
++    private static void Spawn()
++    {
++        if (FindFirstObjectByType<HairCardProfileAuthority>() != null) return;
++        GameObject go = new GameObject(nameof(HairCardProfileAuthority));
++        DontDestroyOnLoad(go);
++        go.AddComponent<HairCardProfileAuthority>();
++    }
++
++    private GameObject boundPanel;
++    private Button button;
++    private TextMeshProUGUI label;
++    private Image image;
++    private float nextScan;
++
++    private void Update()
++    {
++        if (Time.unscaledTime < nextScan) return;
++        nextScan = Time.unscaledTime + ScanInterval;
++
++        // The left panel is destroyed and rebuilt on every model and project load, so the
++        // binding is re-checked rather than established once.
++        GameObject panel = GameObject.Find("GroupManagerPanel");
++        if (panel == null)
++        {
++            boundPanel = null;
++            button = null;
++            label = null;
++            image = null;
++            return;
++        }
++
++        if (boundPanel != panel || button == null) Bind(panel);
++        Repaint();
++    }
++
++    private void Bind(GameObject panel)
++    {
++        boundPanel = panel;
++
++        Transform existing = panel.transform.Find(ButtonName);
++        if (existing != null)
++        {
++            button = existing.GetComponent<Button>();
++            label = existing.GetComponentInChildren<TextMeshProUGUI>(true);
++            image = existing.GetComponent<Image>();
++            if (button != null) return;
++
++            // A half-built husk from an interrupted rebuild - start again rather than adopt it.
++            existing.gameObject.SetActive(false);
++            existing.gameObject.name = "Discarded_" + ButtonName;
++            Destroy(existing.gameObject);
++        }
++
++        BuildButton(panel.transform);
++    }
++
++    private void BuildButton(Transform parent)
++    {
++        GameObject go = new GameObject(ButtonName, typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
++        go.transform.SetParent(parent, false);
++        go.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, ButtonHeight);
++        go.GetComponent<LayoutElement>().preferredHeight = ButtonHeight;
++
++        image = go.GetComponent<Image>();
++        button = go.GetComponent<Button>();
++        button.onClick.AddListener(Toggle);
++
++        GameObject textGO = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
++        textGO.transform.SetParent(go.transform, false);
++        RectTransform textRect = textGO.GetComponent<RectTransform>();
++        textRect.anchorMin = Vector2.zero;
++        textRect.anchorMax = Vector2.one;
++        textRect.offsetMin = Vector2.zero;
++        textRect.offsetMax = Vector2.zero;
++
++        label = textGO.GetComponent<TextMeshProUGUI>();
++        label.fontSize = 13f;
++        label.fontStyle = FontStyles.Bold;
++        label.alignment = TextAlignmentOptions.Center;
++        label.color = Color.white;
++        label.raycastTarget = false;
++
++        // First guess only. GroupPanelPostHintStats.MaintainPanelOrder is the running order
++        // authority for this panel and puts this button under GUIDES every scan.
++        Transform above = parent.Find(GuideOverlayAuthority.ButtonName);
++        if (above == null) above = parent.Find(MayaNavigationAuthority.ButtonName);
++        if (above != null) go.transform.SetSiblingIndex(Mathf.Clamp(above.GetSiblingIndex() + 1, 0, parent.childCount - 1));
++
++        Repaint();
++    }
++
++    private void Repaint()
++    {
++        // Only write when the value actually changed - a TMP text assignment forces a mesh
++        // rebuild of the label whether or not the string differs.
++        if (label != null)
++        {
++            string text = "CARD: TENT";
++            if (HairCardSection.IsDiamond) text = "CARD: DIAMOND";
++            if (label.text != text) label.text = text;
++        }
++
++        if (image != null)
++        {
++            Color colour = new Color(.28f, .28f, .28f, 1f);
++            if (HairCardSection.IsDiamond) colour = new Color(.32f, .34f, .62f, 1f);
++            if (image.color != colour) image.color = colour;
++        }
++    }
++
++    private void Toggle()
++    {
++        if (HairCardSection.IsDiamond)
++        {
++            HairCardSection.SetProfile(HairCardSection.Profile.Tent, true);
++            StatusToast.Show("CARD: TENT - open cross-section. SS/DS and N+/N- are yours again per group.", false, 5f);
++            nextScan = 0f;
++            Repaint();
++            return;
++        }
++
++        HairCardSection.SetProfile(HairCardSection.Profile.Diamond, true);
++        StatusToast.Show("CARD: DIAMOND - closed cross-section, single sided, normals correct from any angle. SS/DS and N+/N- are held while this is on.", false, 6f);
++        nextScan = 0f;
++        Repaint();
++    }
++}
+diff --git a/Assets/Scripts/UI_Import/HairCardProfileAuthority.cs.meta b/Assets/Scripts/UI_Import/HairCardProfileAuthority.cs.meta
+new file mode 100644
+index 0000000..2ecb557
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/HairCardProfileAuthority.cs.meta
+@@ -0,0 +1,2 @@
++fileFormatVersion: 2
++guid: 5919da80e6574bdfa51eade566078bdf
+diff --git a/Assets/Scripts/UI_Import/HairCardSaveData.cs b/Assets/Scripts/UI_Import/HairCardSaveData.cs
+index 0af0a77..d45d214 100644
+--- a/Assets/Scripts/UI_Import/HairCardSaveData.cs
++++ b/Assets/Scripts/UI_Import/HairCardSaveData.cs
+@@ -450,6 +450,11 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
+     public float sliderWaveDirection = 1f;
+     public float sliderArch = 0.5f;
+ 
++    // HairCardSection.Profile: 0 TENT, 1 DIAMOND. Absent from a project written before the
++    // diamond existed, which decodes to 0 - so every old file opens as the shape it was made
++    // with, which is the whole point of defaulting this way round.
++    public int cardSectionProfile;
++
+     public void OnBeforeSerialize()
+     {
+         ModifierPersistenceBridge bridge=UnityEngine.Object.FindFirstObjectByType<ModifierPersistenceBridge>();
+@@ -487,6 +492,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
+             GroomShapeCurveAuthority.Capture(this);
+             GroupSidednessAuthority.Capture(this);
+             GroupNormalFlipAuthority.Capture(this);
++            HairCardSection.Capture(this);
+         }
+         finally
+         {
+@@ -517,6 +523,11 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
+         if(sourceVersion >= 2 && sourceVersion < CanonicalProjectStateBridge.CurrentFormatVersion)
+             formatVersion = CanonicalProjectStateBridge.CurrentFormatVersion;
+ 
++        // Ahead of every QueueRestore below, and applied on the spot rather than queued: this
++        // decides what shape the cards are BUILT as, so it has to land before they exist. It
++        // sets a single field and touches nothing in the scene - see HairCardSection.Restore.
++        HairCardSection.Restore(this);
++
+         PendingModifierRestore=this;
+         PendingUVRectRestore=this;
+         PendingGroupUVRestore=this;
+diff --git a/Assets/Scripts/UI_Import/HairCardSection.cs b/Assets/Scripts/UI_Import/HairCardSection.cs
+new file mode 100644
+index 0000000..d07d83e
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/HairCardSection.cs
+@@ -0,0 +1,307 @@
++using UnityEngine;
++
++// The shape of a hair card's CROSS SECTION, and the one place that knows how many points it has.
++//
++// TENT (the original, and what every project made before this loads as) is three points per row:
++//     left edge at y=0, centre raised to +ridge, right edge at y=0.
++// An open surface with no underside, so a card seen from behind shows a back face - which is why
++// double-sided rendering is the default and why N+ / N- exists at all: an open surface lit from
++// the wrong side looks wrong, and flipping it is the only repair available.
++//
++// DIAMOND closes that section with a fourth point at -ridge. Every face then has an outward
++// normal, so the lighting is right from any angle with no flipping, backface culling drops the
++// two faces pointing away, and single-sided is simply correct rather than a compromise.
++//
++//     TENT                DIAMOND
++//        T                   T
++//       / \                 / \
++//      L---R               L   R
++//                           \ /
++//                            B
++//
++// WHAT IT COSTS. Be honest about this: the diamond is not an optimisation. Double-sided is a cull
++// state on the shader, not extra geometry, so it is nearly free - and the diamond pays twice the
++// triangles (eight per segment against four) to retire it. Culling discards the far pair after
++// vertex processing, so the fragment cost lands about where it already was. What the diamond buys
++// is correct normals everywhere, for a doubled vertex cost and a doubled polygon count. That is a
++// quality argument, not a speed one.
++//
++// WHY THIS FILE EXISTS AT ALL. Four separate places built the three-column section, each with its
++// own copy of the topology written out longhand: HairCard.GenerateMesh,
++// ThreeColumnClumperMeshAuthority.BuildCleanMesh, GuideDeformation.Apply and
++// ModifierNeutralizeBeforeDeleteAuthority.WriteCleanThreeColumnMesh. A second profile could not be
++// added to four hand-written copies without them drifting, and they have drifted before - the
++// clumper reconstruction silently lost curl and ignored the density profile, twice, because it
++// held its own copy of a loop. They now share this.
++//
++// COLUMN ORDER IS PART OF THE CONTRACT: 0 left, 1 top, 2 right, and 3 bottom when it exists. The
++// first three keep the meaning they have always had, so every piece of code that reads index+0,
++// +1 or +2 still means what it meant - and the fourth is only ever seen by code that loops over
++// Columns.
++public static class HairCardSection
++{
++    public enum Profile
++    {
++        Tent = 0,
++        Diamond = 1
++    }
++
++    // Global, not per group. Per group was considered and rejected: the clumper and guide
++    // reconstructions rebuild whole groups at a time and would have to carry the profile through
++    // every one of them, and a groom with both profiles in it has no consistent answer for
++    // whether double-sided should be on.
++    private static Profile current = Profile.Tent;
++
++    // One error, not one per triangle per row per card per frame. See AddTriangle.
++    private static bool warnedUndersized;
++
++    // Statics survive "Enter Play Mode -> Disable Domain Reload", and a profile left on Diamond
++    // when play stopped would rebuild the next session's cards before anything loaded a project.
++    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
++    private static void ResetStatics()
++    {
++        current = Profile.Tent;
++        warnedUndersized = false;
++    }
++
++    public static Profile Current
++    {
++        get { return current; }
++    }
++
++    public static bool IsDiamond
++    {
++        get { return current == Profile.Diamond; }
++    }
++
++    public static int Columns
++    {
++        get
++        {
++            if (current == Profile.Diamond) return 4;
++            return 3;
++        }
++    }
++
++    // Four edges round the loop instead of two across the tent, and six indices to a quad.
++    public static int IndicesPerSegment
++    {
++        get { return EdgeCount * 6; }
++    }
++
++    private static int EdgeCount
++    {
++        get
++        {
++            if (current == Profile.Diamond) return 4;
++            return 2;
++        }
++    }
++
++    // A closed section whose two centre points meet is not a flat card - it is two coincident
++    // surfaces, and they z-fight. ARCH at 0 asks for exactly that, so the diamond keeps a floor
++    // proportional to the card's own width rather than an absolute distance, which would read as
++    // a thick card on a narrow one and no card at all on a wide one.
++    private const float MinimumRidgeFraction = .06f;
++
++    // Applied to the magnitude, not the value: N- negates the ridge to turn a convex tent
++    // concave, and a symmetric diamond does not care which way that sign points.
++    public static float ResolveRidge(float ridge, float span)
++    {
++        if (current != Profile.Diamond) return ridge;
++
++        float floor = Mathf.Abs(span) * MinimumRidgeFraction;
++        return Mathf.Max(Mathf.Abs(ridge), floor);
++    }
++
++    // One row of the section, written straight into a mesh's arrays.
++    //
++    // Everything the two callers did by hand is here: build the points in the section's own
++    // space, bank them into the curl, add the curl and wave displacement, then place them on the
++    // spine with the path-following frame.
++    public static void WriteRow(
++        Vector3[] vertices, Vector2[] uvs, int index,
++        Vector3 sectionOrigin, Quaternion bank, Vector3 offset,
++        Vector3 spinePoint, Quaternion sectionFrame,
++        float span, float ridge,
++        float uLeft, float uRight, float v)
++    {
++        if (vertices == null) return;
++
++        float resolvedRidge = ResolveRidge(ridge, span);
++        float uCentre = (uLeft + uRight) * .5f;
++
++        Place(vertices, index + 0, sectionOrigin, bank, offset, spinePoint, sectionFrame, new Vector3(-span, 0f, 0f));
++        Place(vertices, index + 1, sectionOrigin, bank, offset, spinePoint, sectionFrame, new Vector3(0f, resolvedRidge, 0f));
++        Place(vertices, index + 2, sectionOrigin, bank, offset, spinePoint, sectionFrame, new Vector3(span, 0f, 0f));
++
++        if (uvs != null)
++        {
++            uvs[index + 0] = new Vector2(uLeft, v);
++            uvs[index + 1] = new Vector2(uCentre, v);
++            uvs[index + 2] = new Vector2(uRight, v);
++        }
++
++        if (current != Profile.Diamond) return;
++
++        Place(vertices, index + 3, sectionOrigin, bank, offset, spinePoint, sectionFrame, new Vector3(0f, -resolvedRidge, 0f));
++
++        // The back pair mirrors the front pair's U rather than continuing around the loop. Run
++        // U from 0 to 1 all the way round and each visible side shows half a hair strip; mirrored,
++        // whichever pair of faces is turned toward the camera shows a whole one - which is what
++        // double-sided gave you, and the reason the change is invisible in the texture.
++        if (uvs != null) uvs[index + 3] = new Vector2(uCentre, v);
++    }
++
++    private static void Place(
++        Vector3[] vertices, int index,
++        Vector3 sectionOrigin, Quaternion bank, Vector3 offset,
++        Vector3 spinePoint, Quaternion sectionFrame,
++        Vector3 local)
++    {
++        Vector3 point = sectionOrigin + bank * local + offset;
++        vertices[index] = spinePoint + sectionFrame * (point - sectionOrigin);
++    }
++
++    // The strip between every pair of rows, one quad per edge of the section.
++    //
++    // The tent's two edges produce exactly the four triangles, in exactly the order, that the
++    // hand-written version produced - so a tent card's mesh is unchanged, index for index.
++    public static void BuildTriangles(int segments, bool flipWinding, int[] triangles)
++    {
++        if (triangles == null) return;
++
++        int columns = Columns;
++        int edges = EdgeCount;
++        int triIndex = 0;
++
++        for (int i = 0; i < segments; i++)
++        {
++            int row = i * columns;
++            int next = row + columns;
++
++            for (int edge = 0; edge < edges; edge++)
++            {
++                int a = edge;
++
++                // The last edge of a diamond closes back onto column 0. The tent has no such
++                // edge, which is the whole difference between an open surface and a closed one.
++                int b = edge + 1;
++                if (b >= columns) b = 0;
++
++                AddTriangle(triangles, ref triIndex, row + a, next + a, row + b, flipWinding);
++                AddTriangle(triangles, ref triIndex, row + b, next + a, next + b, flipWinding);
++            }
++        }
++    }
++
++    private static void AddTriangle(int[] triangles, ref int index, int a, int b, int c, bool flipWinding)
++    {
++        // A builder that sized its array with the old hardcoded `segments * 12` instead of
++        // IndicesPerSegment would fill half the strip and leave the tail zeroed - a card whose
++        // geometry simply stops halfway up, with every remaining triangle a (0,0,0) degenerate.
++        // Silently returning would hide exactly the mistake this refactor exists to prevent, so
++        // it says so once and then stops writing rather than throwing on every row of every
++        // card for the rest of the session.
++        if (index + 2 >= triangles.Length)
++        {
++            if (!warnedUndersized)
++            {
++                warnedUndersized = true;
++                Debug.LogError("HairCardSection: triangle array is too small for this profile. "
++                    + "Size it with HairCardSection.IndicesPerSegment, not a hardcoded 12.");
++            }
++            return;
++        }
++
++        if (flipWinding)
++        {
++            triangles[index++] = a;
++            triangles[index++] = c;
++            triangles[index++] = b;
++            return;
++        }
++
++        triangles[index++] = a;
++        triangles[index++] = b;
++        triangles[index++] = c;
++    }
++
++    // ---- switching -------------------------------------------------------------------------
++
++    // Set by the panel toggle and by a project load. Rebuilds every card, because the mesh is a
++    // pure function of the parameters and this changes the function.
++    public static void SetProfile(Profile profile, bool rebuild)
++    {
++        if (current == profile) return;
++        current = profile;
++
++        // The cull state has to move with the geometry. GroupSidednessAuthority's own scan
++        // would get there within a tenth of a second, which on a groom of any size is long
++        // enough to see the wrong one.
++        GroupSidednessAuthority.ReapplyAll();
++
++        if (!rebuild) return;
++        RebuildAllCards();
++    }
++
++    // ---- persistence -----------------------------------------------------------------------
++    //
++    // The profile belongs to the GROOM, not to the machine: a card built as a diamond and a
++    // card built as a tent are different geometry, and a project reopened on another machine
++    // has to come back the shape it was saved as. That is why this is in the project file and
++    // not in the settings ini beside MAYA-NAV and GUIDES ON TOP.
++
++    // DELIBERATELY NOT reset by GroomSessionResetCoordinator when a new model is imported,
++    // unlike the group maps beside it. Import a head while working in DIAMOND and the new
++    // groom starts in DIAMOND. The setting is saved with the project, so that new groom's
++    // first save carries a profile the user did not pick for THAT file - but they did pick it,
++    // in this session, and the panel button says CARD: DIAMOND the whole time. Snapping back to
++    // TENT on every import would be the more surprising of the two.
++    public static void Capture(HairProjectSaveData data)
++    {
++        if (data == null) return;
++        data.cardSectionProfile = (int)current;
++    }
++
++    // Applied immediately, not deferred like the other restore bridges.
++    //
++    // Those defer because they act on cards, and the cards of a loaded project do not exist on
++    // the frame load returns. This is the opposite case: it decides what those cards are BUILT
++    // as. Two frames later would mean the whole groom generated as tents and then rebuilt -
++    // a visible flip on load, and a full mesh rebuild of every card for nothing.
++    //
++    // A project written before this existed has no field and decodes to 0, which is Tent.
++    //
++    // TOUCHES NOTHING IN THE SCENE, deliberately. This runs inside OnAfterDeserialize, where
++    // every other line only parks a static flag, and UndoHistoryAuthority parses a snapshot on
++    // its way to THROWING THE WHOLE SCENE AWAY - so a rebuild here is a full regeneration of
++    // every card in the groom, discarded one frame later. Nothing needs it: the profile is
++    // part of HairCard's mesh-input hash, so any card that outlives the load notices on its own
++    // next re-assertion, and GroupSidednessAuthority's sweep re-applies the cull within a tenth
++    // of a second. It also keeps a serialization callback free of FindObjectsByType, which is
++    // main-thread only.
++    public static void Restore(HairProjectSaveData data)
++    {
++        if (data == null) return;
++
++        Profile profile = Profile.Tent;
++        if (data.cardSectionProfile == (int)Profile.Diamond) profile = Profile.Diamond;
++
++        current = profile;
++    }
++
++    public static void RebuildAllCards()
++    {
++        foreach (HairCard card in Object.FindObjectsByType<HairCard>(FindObjectsSortMode.None))
++        {
++            if (card == null) continue;
++
++            // GenerateMesh directly, not the dirty-checked wrapper. The hash does cover the
++            // profile, so the guarded path would rebuild too - but it would also skip any card
++            // a modifier currently owns, and this is the one moment where every card in the
++            // scene genuinely has to be rewritten before it is next drawn.
++            card.GenerateMesh();
++        }
++    }
++}
+diff --git a/Assets/Scripts/UI_Import/HairCardSection.cs.meta b/Assets/Scripts/UI_Import/HairCardSection.cs.meta
+new file mode 100644
+index 0000000..0c3e89a
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/HairCardSection.cs.meta
+@@ -0,0 +1,2 @@
++fileFormatVersion: 2
++guid: 44b97fc34dcb46419b129ec5df878615
+diff --git a/Assets/Scripts/UI_Import/HairCardSidednessHotkeyAuthority.cs b/Assets/Scripts/UI_Import/HairCardSidednessHotkeyAuthority.cs
+index 2cd30ac..194e534 100644
+--- a/Assets/Scripts/UI_Import/HairCardSidednessHotkeyAuthority.cs
++++ b/Assets/Scripts/UI_Import/HairCardSidednessHotkeyAuthority.cs
+@@ -40,6 +40,17 @@ public class HairCardSidednessHotkeyAuthority : MonoBehaviour
+         bool wantDoubleSided = Keyboard.current.digit2Key.wasPressedThisFrame || Keyboard.current.numpad2Key.wasPressedThisFrame;
+         if (!wantSingleSided && !wantDoubleSided) return;
+ 
++        // The same refusal the SS/DS button gives under DIAMOND, and it has to be here too:
++        // this key writes every card in the scene directly, so without it 2 would set every
++        // card double sided until GroupSidednessAuthority's next sweep put it back - a
++        // scene-wide flash of the exact state the diamond exists to make unnecessary, plus a
++        // material write per card, twice, for nothing.
++        if (HairCardSection.IsDiamond)
++        {
++            StatusToast.Show("DIAMOND cards are single sided - every face already points outward. Switch the CARD profile to TENT to use 1 / 2.", true, 5f);
++            return;
++        }
++
+         bool doubleSided = true;
+         if (wantSingleSided) doubleSided = false;
+ 
+diff --git a/Assets/Scripts/UI_Import/InputKeysDialog.cs b/Assets/Scripts/UI_Import/InputKeysDialog.cs
+index 66d52a8..558d7bd 100644
+--- a/Assets/Scripts/UI_Import/InputKeysDialog.cs
++++ b/Assets/Scripts/UI_Import/InputKeysDialog.cs
+@@ -393,6 +393,7 @@ public class InputKeysDialog : MonoBehaviour
+         Row(parent, "[  and  ]", "Brush radius smaller and bigger");
+         Row(parent, "1  /  2", "All hair cards single-sided / double-sided");
+         Note(parent, "The radius keys work in SPRAY, EVEN and ERASE, and on a live CTRL selection. PLACE and PAINT have no radius.");
++        Note(parent, "1 and 2 do nothing while CARD is set to DIAMOND - a closed card is single-sided by construction. Same for SS/DS and N+/N- on the group rows.");
+ 
+         Heading(parent, "SELECTING");
+         Row(parent, "CTRL + LEFT click", "Set a soft selection hotspot on the group");
+diff --git a/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs b/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs
+index a38802b..9c88f56 100644
+--- a/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs
++++ b/Assets/Scripts/UI_Import/ModifierNeutralizeBeforeDeleteAuthority.cs
+@@ -219,7 +219,7 @@ public class ModifierDeleteNeutralizeHook : MonoBehaviour, IPointerDownHandler
+ 
+     static void WriteCleanThreeColumnMesh(HairCard card)
+     {
+-        const int columns = HairCard.CrossSectionColumns;
++        int columns = HairCard.CrossSectionColumns;
+         int segments = Mathf.Clamp(card.segments, 1, 60);
+         Vector3[] vertices = new Vector3[(segments + 1) * columns];
+ 
+@@ -258,15 +258,21 @@ public class ModifierDeleteNeutralizeHook : MonoBehaviour, IPointerDownHandler
+             HairCard.EvaluateWave(card, t, out waveOffset, card.mirrored);
+ 
+             Vector3 sectionOrigin = new Vector3(0f, 0f, z);
+-            Vector3 left = sectionOrigin + bankRotation * new Vector3(-span, 0f, 0f) + curlOffset + waveOffset;
+-            Vector3 center = sectionOrigin + bankRotation * new Vector3(0f, ridge, 0f) + curlOffset + waveOffset;
+-            Vector3 right = sectionOrigin + bankRotation * new Vector3(span, 0f, 0f) + curlOffset + waveOffset;
++            Vector3 sectionOffset = curlOffset + waveOffset;
+ 
+             Vector3 spinePoint = segmentSpine[i];
+             Quaternion sectionFrame = segmentFrame[i];
+-            vertices[index] = spinePoint + sectionFrame * (left - sectionOrigin);
+-            vertices[index + 1] = spinePoint + sectionFrame * (center - sectionOrigin);
+-            vertices[index + 2] = spinePoint + sectionFrame * (right - sectionOrigin);
++
++            // Positions only; this writes into a live mesh that already has its UVs and its
++            // topology, so there is nothing to pass for uvs. Shared with GenerateMesh for the
++            // same reason as everywhere else - a neutralised card must come back the shape it
++            // was, profile included.
++            HairCardSection.WriteRow(
++                vertices, null, index,
++                sectionOrigin, bankRotation, sectionOffset,
++                spinePoint, sectionFrame,
++                span, ridge,
++                0f, 0f, 0f);
+         }
+ 
+         // Same rule as ThreeColumnClumperMeshAuthority.WriteFullMesh: HairCard.GetLiveMesh(),
+diff --git a/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs b/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
+index d631ebd..f94aab7 100644
+--- a/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
++++ b/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
+@@ -516,12 +516,12 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
+     {
+         if (card == null) return null;
+ 
+-        const int columns = HairCard.CrossSectionColumns;
++        int columns = HairCard.CrossSectionColumns;
+         int segments = Mathf.Clamp(card.segments, 1, 60);
+         int vertexCount = (segments + 1) * columns;
+         Vector3[] vertices = new Vector3[vertexCount];
+         Vector2[] uvs = new Vector2[vertexCount];
+-        int[] triangles = new int[segments * 12];
++        int[] triangles = new int[segments * HairCardSection.IndicesPerSegment];
+ 
+ 
+         // Segment density remap, spine and path-following section frames come straight
+@@ -558,30 +558,31 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
+             HairCard.EvaluateWave(card, t, out waveOffset, card.mirrored);
+ 
+             Vector3 sectionOrigin = new Vector3(0f, 0f, z);
+-            Vector3 left = sectionOrigin + bankRotation * new Vector3(-span, 0f, 0f) + curlOffset + waveOffset;
+-            Vector3 center = sectionOrigin + bankRotation * new Vector3(0f, ridge, 0f) + curlOffset + waveOffset;
+-            Vector3 right = sectionOrigin + bankRotation * new Vector3(span, 0f, 0f) + curlOffset + waveOffset;
++            Vector3 sectionOffset = curlOffset + waveOffset;
+ 
+             Vector3 spinePoint = segmentSpine[i];
+             Quaternion sectionFrame = segmentFrame[i];
+-            vertices[index] = spinePoint + sectionFrame * (left - sectionOrigin);
+-            vertices[index + 1] = spinePoint + sectionFrame * (center - sectionOrigin);
+-            vertices[index + 2] = spinePoint + sectionFrame * (right - sectionOrigin);
+ 
+             float baseULeft = card.uScale < 0f ? 1f : 0f;
+             float baseURight = card.uScale < 0f ? 0f : 1f;
+             float finalULeft = baseULeft * Mathf.Abs(card.uScale) + card.uOffset;
+             float finalURight = baseURight * Mathf.Abs(card.uScale) + card.uOffset;
+-            float finalUCenter = (finalULeft + finalURight) * .5f;
+ 
+             float absVScale = Mathf.Abs(card.vScale);
+             float baseV = (1f - t) * absVScale;
+             if (card.vScale < 0f) baseV = absVScale - baseV;
+             float finalV = baseV + card.vOffset;
+ 
+-            uvs[index] = new Vector2(finalULeft, finalV);
+-            uvs[index + 1] = new Vector2(finalUCenter, finalV);
+-            uvs[index + 2] = new Vector2(finalURight, finalV);
++            // Shared with GenerateMesh, same reason as everything else in this loop: the
++            // reconstruction must not know the section's shape independently, or DIAMOND
++            // would reach unclumped cards only and clumping a group would flatten it back to
++            // a tent.
++            HairCardSection.WriteRow(
++                vertices, uvs, index,
++                sectionOrigin, bankRotation, sectionOffset,
++                spinePoint, sectionFrame,
++                span, ridge,
++                finalULeft, finalURight, finalV);
+         }
+ 
+         HairCard.BuildStripTriangles(segments, GroupNormalFlipAuthority.IsFlipped(card.groupId), triangles);
+@@ -597,7 +598,7 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
+ 
+     static void ApplyClumpAdditive(HairCard source, Vector3[] current, CleanMeshData sourceData, HairCard leader, CleanMeshData leaderData, float influence)
+     {
+-        const int columns = HairCard.CrossSectionColumns;
++        int columns = HairCard.CrossSectionColumns;
+         if (current == null || sourceData == null || leaderData == null) return;
+ 
+         Vector3[] sourceClean = sourceData.vertices;
+@@ -645,9 +646,15 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
+ 
+             Vector3 leaderLocal = source.transform.InverseTransformPoint(leaderWorld);
+             Vector3 delta = (leaderLocal - ownAnchor) * w;
+-            current[index] += delta;
+-            current[index + 1] += delta;
+-            current[index + 2] += delta;
++
++            // Over the row's columns rather than three by name. A clump is a translation of
++            // the whole section, so under DIAMOND the fourth point has to move with the
++            // other three - left behind, it would stay on the unclumped strand and stretch
++            // the card between the two.
++            for (int column = 0; column < columns; column++)
++            {
++                current[index + column] += delta;
++            }
+         }
+     }
+ 
+@@ -683,7 +690,7 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
+ 
+     static Vector3 SampleCentreWorld(HairCard card, Vector3[] vertices, float t)
+     {
+-        const int columns = HairCard.CrossSectionColumns;
++        int columns = HairCard.CrossSectionColumns;
+         int rows = vertices.Length / columns;
+         if (rows <= 0) return card.transform.position;
+         float rowF = Mathf.Clamp01(t) * (rows - 1);

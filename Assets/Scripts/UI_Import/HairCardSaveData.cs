@@ -450,6 +450,11 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
     public float sliderWaveDirection = 1f;
     public float sliderArch = 0.5f;
 
+    // HairCardSection.Profile: 0 TENT, 1 DIAMOND. Absent from a project written before the
+    // diamond existed, which decodes to 0 - so every old file opens as the shape it was made
+    // with, which is the whole point of defaulting this way round.
+    public int cardSectionProfile;
+
     public void OnBeforeSerialize()
     {
         ModifierPersistenceBridge bridge=UnityEngine.Object.FindFirstObjectByType<ModifierPersistenceBridge>();
@@ -487,6 +492,7 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
             GroomShapeCurveAuthority.Capture(this);
             GroupSidednessAuthority.Capture(this);
             GroupNormalFlipAuthority.Capture(this);
+            HairCardSection.Capture(this);
         }
         finally
         {
@@ -516,6 +522,11 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
         // migration so the normal canonical restore path still runs unchanged.
         if(sourceVersion >= 2 && sourceVersion < CanonicalProjectStateBridge.CurrentFormatVersion)
             formatVersion = CanonicalProjectStateBridge.CurrentFormatVersion;
+
+        // Ahead of every QueueRestore below, and applied on the spot rather than queued: this
+        // decides what shape the cards are BUILT as, so it has to land before they exist. It
+        // sets a single field and touches nothing in the scene - see HairCardSection.Restore.
+        HairCardSection.Restore(this);
 
         PendingModifierRestore=this;
         PendingUVRectRestore=this;

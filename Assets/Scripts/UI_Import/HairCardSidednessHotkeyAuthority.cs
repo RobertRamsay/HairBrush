@@ -40,6 +40,17 @@ public class HairCardSidednessHotkeyAuthority : MonoBehaviour
         bool wantDoubleSided = Keyboard.current.digit2Key.wasPressedThisFrame || Keyboard.current.numpad2Key.wasPressedThisFrame;
         if (!wantSingleSided && !wantDoubleSided) return;
 
+        // The same refusal the SS/DS button gives under DIAMOND, and it has to be here too:
+        // this key writes every card in the scene directly, so without it 2 would set every
+        // card double sided until GroupSidednessAuthority's next sweep put it back - a
+        // scene-wide flash of the exact state the diamond exists to make unnecessary, plus a
+        // material write per card, twice, for nothing.
+        if (HairCardSection.IsDiamond)
+        {
+            StatusToast.Show("DIAMOND cards are single sided - every face already points outward. Switch the CARD profile to TENT to use 1 / 2.", true, 5f);
+            return;
+        }
+
         bool doubleSided = true;
         if (wantSingleSided) doubleSided = false;
 

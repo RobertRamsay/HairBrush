@@ -55,7 +55,20 @@ public class GroupNormalFlipAuthority : MonoBehaviour
 
     // Read once per card per mesh rebuild, and folded into HairCard's mesh-input hash - which
     // is what makes a toggle take effect without anything here having to hunt down the cards.
+    // Under DIAMOND there is nothing to flip. N- exists because an OPEN surface has a right
+    // side and a wrong side and the tent gives you no way to know which one you are looking at;
+    // a closed section has an outward normal on every face by construction, so the answer is
+    // already correct and reversing the winding would only turn every card inside out. The
+    // group's own setting is kept, not cleared - see IsFlippedStored.
     public static bool IsFlipped(int groupId)
+    {
+        if (HairCardSection.IsDiamond) return false;
+        return IsFlippedStored(groupId);
+    }
+
+    // What the user chose, whether or not the current profile is honouring it. Saving and the
+    // button label both read this; the mesh reads IsFlipped.
+    public static bool IsFlippedStored(int groupId)
     {
         bool flipped;
         if (flippedByGroup.TryGetValue(groupId, out flipped)) return flipped;
@@ -83,7 +96,10 @@ public class GroupNormalFlipAuthority : MonoBehaviour
         foreach (GroupSaveData group in data.groups)
         {
             if (group == null) continue;
-            group.normalFlipped = IsFlipped(group.groupId);
+
+            // Stored, not effective. Saving the effective answer while DIAMOND is on would
+            // clear every group's N- and it would not come back with TENT.
+            group.normalFlipped = IsFlippedStored(group.groupId);
         }
     }
 
@@ -173,12 +189,21 @@ public class GroupNormalFlipAuthority : MonoBehaviour
                 text = existing.GetComponentInChildren<TextMeshProUGUI>(true);
             }
 
+            // Effective, so under DIAMOND it reads N+ whatever the group holds, dimmed to say
+            // the profile is answering rather than the button. Same treatment as SS/DS beside
+            // it, and for the same reason.
+            bool forced = HairCardSection.IsDiamond;
             bool flipped = IsFlipped(gid);
+
             if (text != null)
             {
                 string label = "N+";
                 if (flipped) label = "N-";
                 if (text.text != label) text.text = label;
+
+                Color textColour = Color.white;
+                if (forced) textColour = new Color(1f, 1f, 1f, .35f);
+                if (text.color != textColour) text.color = textColour;
             }
 
             if (button != null)
@@ -188,6 +213,7 @@ public class GroupNormalFlipAuthority : MonoBehaviour
                 {
                     Color colour = new Color(.28f, .28f, .28f, 1f);
                     if (flipped) colour = new Color(.24f, .52f, .46f, 1f);
+                    if (forced) colour = new Color(.20f, .20f, .20f, 1f);
                     if (image.color != colour) image.color = colour;
                 }
             }
@@ -196,7 +222,13 @@ public class GroupNormalFlipAuthority : MonoBehaviour
 
     void Toggle(int groupId)
     {
-        SetFlipped(groupId, !IsFlipped(groupId));
+        if (HairCardSection.IsDiamond)
+        {
+            StatusToast.Show("DIAMOND cards need no normal flip - a closed section points outward on every face. Switch the CARD profile to TENT to use N+/N-.", true, 5f);
+            return;
+        }
+
+        SetFlipped(groupId, !IsFlippedStored(groupId));
 
         // Nothing needs to touch the cards. The flag is part of HairCard's mesh-input hash, so
         // the next per-frame re-assertion sees a changed hash and rebuilds the group by itself.

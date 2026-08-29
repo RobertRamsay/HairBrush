@@ -28,6 +28,19 @@ public class GroupSidednessAuthority : MonoBehaviour
 
     private float nextScan;
 
+    // Statics survive "Enter Play Mode -> Disable Domain Reload", which this project has on.
+    // GroupNormalFlipAuthority next door has always reset; this one had not, so a play-mode
+    // restart came back with the previous run's SS/DS map still in it while the flip map beside
+    // it had been cleared - two controls on the same row disagreeing about whether the session
+    // was new. Noticed while making the profile force both of them.
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    static void ResetStatics()
+    {
+        singleSidedByGroup.Clear();
+        pendingRestore = null;
+        pendingRestoreFrames = 0;
+    }
+
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Spawn()
     {
@@ -37,7 +50,23 @@ public class GroupSidednessAuthority : MonoBehaviour
         go.AddComponent<GroupSidednessAuthority>();
     }
 
+    // What actually gets rendered. Under DIAMOND that is single sided for every group and
+    // there is nothing to decide: a closed section has an outward normal on every face, so the
+    // far pair is genuinely facing away and culling it is correct rather than a saving. Double
+    // sided there would draw those faces a second time, from the inside, over the top of the
+    // ones in front - the exact artefact the diamond exists to remove.
     public static bool IsSingleSided(int groupId)
+    {
+        if (HairCardSection.IsDiamond) return true;
+        return IsSingleSidedStored(groupId);
+    }
+
+    // What the user chose, whether or not the current profile is honouring it.
+    //
+    // Kept separate from IsSingleSided so a groom switched to DIAMOND and saved does not come
+    // back with every group's SS/DS choice overwritten by the profile's answer. Switch back to
+    // TENT and the buttons say what they said before.
+    public static bool IsSingleSidedStored(int groupId)
     {
         bool single;
         if (singleSidedByGroup.TryGetValue(groupId, out single)) return single;
@@ -48,6 +77,14 @@ public class GroupSidednessAuthority : MonoBehaviour
     {
         singleSidedByGroup[groupId] = single;
         ApplyGroup(groupId);
+    }
+
+    // Called by HairCardSection when the profile changes. The scan below would get there within
+    // a tenth of a second anyway; this makes the switch land on the same frame as the rebuild
+    // instead of a beat after it, which on a large groom is a visible flash of the wrong cull.
+    public static void ReapplyAll()
+    {
+        ApplyAll();
     }
 
     public static void Forget(int groupId)
@@ -67,7 +104,10 @@ public class GroupSidednessAuthority : MonoBehaviour
         foreach (GroupSaveData group in data.groups)
         {
             if (group == null) continue;
-            group.singleSided = IsSingleSided(group.groupId);
+
+            // Stored, not effective - see IsSingleSidedStored. Saving the effective answer
+            // while DIAMOND is on would write SS into every group and lose the choice for good.
+            group.singleSided = IsSingleSidedStored(group.groupId);
         }
     }
 
@@ -182,12 +222,23 @@ public class GroupSidednessAuthority : MonoBehaviour
                 text = existing.GetComponentInChildren<TextMeshProUGUI>(true);
             }
 
+            // The label follows what is on screen, so under DIAMOND it reads SS whatever the
+            // group's own setting says - a button reading DS beside a single-sided card would
+            // be a lie. Dimmed rather than hidden, and left in the row: it comes back holding
+            // the same value the moment the profile goes back to TENT, and a control that
+            // vanishes and returns is harder to trust than one that visibly has no say.
+            bool forced = HairCardSection.IsDiamond;
             bool single = IsSingleSided(gid);
+
             if (text != null)
             {
                 string label = "DS";
                 if (single) label = "SS";
                 if (text.text != label) text.text = label;
+
+                Color textColour = Color.white;
+                if (forced) textColour = new Color(1f, 1f, 1f, .35f);
+                if (text.color != textColour) text.color = textColour;
             }
 
             if (button != null)
@@ -197,6 +248,7 @@ public class GroupSidednessAuthority : MonoBehaviour
                 {
                     Color colour = new Color(.28f, .28f, .28f, 1f);
                     if (single) colour = new Color(.62f, .38f, .18f, 1f);
+                    if (forced) colour = new Color(.20f, .20f, .20f, 1f);
                     if (image.color != colour) image.color = colour;
                 }
             }
@@ -205,7 +257,15 @@ public class GroupSidednessAuthority : MonoBehaviour
 
     void Toggle(int groupId)
     {
-        SetSingleSided(groupId, !IsSingleSided(groupId));
+        // Refused rather than swallowed. The click is a reasonable thing to try, and silence
+        // would read as a broken button rather than as a control the profile has taken over.
+        if (HairCardSection.IsDiamond)
+        {
+            StatusToast.Show("DIAMOND cards are single sided - every face already points outward. Switch the CARD profile to TENT to choose SS/DS per group.", true, 5f);
+            return;
+        }
+
+        SetSingleSided(groupId, !IsSingleSidedStored(groupId));
         nextScan = 0f;
     }
 }

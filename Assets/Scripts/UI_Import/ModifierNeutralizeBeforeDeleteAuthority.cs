@@ -219,7 +219,7 @@ public class ModifierDeleteNeutralizeHook : MonoBehaviour, IPointerDownHandler
 
     static void WriteCleanThreeColumnMesh(HairCard card)
     {
-        const int columns = HairCard.CrossSectionColumns;
+        int columns = HairCard.CrossSectionColumns;
         int segments = Mathf.Clamp(card.segments, 1, 60);
         Vector3[] vertices = new Vector3[(segments + 1) * columns];
 
@@ -258,15 +258,21 @@ public class ModifierDeleteNeutralizeHook : MonoBehaviour, IPointerDownHandler
             HairCard.EvaluateWave(card, t, out waveOffset, card.mirrored);
 
             Vector3 sectionOrigin = new Vector3(0f, 0f, z);
-            Vector3 left = sectionOrigin + bankRotation * new Vector3(-span, 0f, 0f) + curlOffset + waveOffset;
-            Vector3 center = sectionOrigin + bankRotation * new Vector3(0f, ridge, 0f) + curlOffset + waveOffset;
-            Vector3 right = sectionOrigin + bankRotation * new Vector3(span, 0f, 0f) + curlOffset + waveOffset;
+            Vector3 sectionOffset = curlOffset + waveOffset;
 
             Vector3 spinePoint = segmentSpine[i];
             Quaternion sectionFrame = segmentFrame[i];
-            vertices[index] = spinePoint + sectionFrame * (left - sectionOrigin);
-            vertices[index + 1] = spinePoint + sectionFrame * (center - sectionOrigin);
-            vertices[index + 2] = spinePoint + sectionFrame * (right - sectionOrigin);
+
+            // Positions only; this writes into a live mesh that already has its UVs and its
+            // topology, so there is nothing to pass for uvs. Shared with GenerateMesh for the
+            // same reason as everywhere else - a neutralised card must come back the shape it
+            // was, profile included.
+            HairCardSection.WriteRow(
+                vertices, null, index,
+                sectionOrigin, bankRotation, sectionOffset,
+                spinePoint, sectionFrame,
+                span, ridge,
+                0f, 0f, 0f);
         }
 
         // Same rule as ThreeColumnClumperMeshAuthority.WriteFullMesh: HairCard.GetLiveMesh(),

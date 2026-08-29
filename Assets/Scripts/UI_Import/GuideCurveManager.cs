@@ -1513,18 +1513,23 @@ public static class GuideDeformation
                 turn = Quaternion.AngleAxis(180f, across.normalized);
             }
 
-            vertices[index] = spine[i] + turn * (vertices[index] - original);
-            vertices[index + 1] = spine[i] + turn * (vertices[index + 1] - original);
-            vertices[index + 2] = spine[i] + turn * (vertices[index + 2] - original);
+            // Over the row's columns rather than three by name: under DIAMOND there is a
+            // fourth point, and a cross-section carried onto the new spine with one of its
+            // points left on the old one is not a cross-section any more.
+            for (int column = 0; column < columns; column++)
+            {
+                vertices[index + column] = spine[i] + turn * (vertices[index + column] - original);
+            }
 
             // The root row's own cross-section, turned by the first segment's rotation. Its spine
             // point stays exactly where it was - only the facing changes - so the scalp anchor
             // holds while the ribbon leaves it without a kink.
             if (i == 1)
             {
-                vertices[0] = spine[0] + turn * (vertices[0] - spine[0]);
-                vertices[1] = spine[0] + turn * (vertices[1] - spine[0]);
-                vertices[2] = spine[0] + turn * (vertices[2] - spine[0]);
+                for (int column = 0; column < columns; column++)
+                {
+                    vertices[column] = spine[0] + turn * (vertices[column] - spine[0]);
+                }
             }
 
             previousOriginal = original;

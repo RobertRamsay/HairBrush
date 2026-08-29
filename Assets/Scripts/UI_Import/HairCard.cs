@@ -34,7 +34,16 @@ public class HairCard : MonoBehaviour
     // The arch value that leaves the cross-section exactly as it was before Arch existed.
     // Also where a brand-new card, a reset group and a legacy project all land.
     public const float ArchNeutral = 0.5f;
-    public const int CrossSectionColumns = 3;
+    // How many points a row of the cross-section has. Three under TENT, four under DIAMOND.
+    //
+    // Was a const, and every caller wrote `const int columns = HairCard.CrossSectionColumns;`
+    // - which is exactly what a const is for and exactly what makes a second profile
+    // impossible, since the value would be baked into each caller at compile time. It is a
+    // property now, and HairCardSection owns the answer.
+    public static int CrossSectionColumns
+    {
+        get { return HairCardSection.Columns; }
+    }
 
     // Curl banking. Without this the coil only displaces the centreline while every
     // cross-section keeps pointing the same way, so a curled card cycles between
@@ -106,37 +115,13 @@ public class HairCard : MonoBehaviour
     //
     // flipWinding reverses each triangle, which is what actually inverts the surface normals -
     // RecalculateNormals derives them from winding, so there is nothing else to flip.
+    // Kept as the name every builder already calls; the topology itself moved to
+    // HairCardSection when the DIAMOND profile arrived, because a second winding pattern was
+    // one hand-written copy too many. Under TENT it emits the same four triangles, in the same
+    // order, that used to be written out here.
     public static void BuildStripTriangles(int segments, bool flipWinding, int[] triangles)
     {
-        if (triangles == null) return;
-        const int columns = CrossSectionColumns;
-
-        int triIndex = 0;
-        for (int i = 0; i < segments; i++)
-        {
-            int row = i * columns;
-            int next = row + columns;
-
-            // Left half of the convex strip, then the right half.
-            AddTriangle(triangles, ref triIndex, row, next, row + 1, flipWinding);
-            AddTriangle(triangles, ref triIndex, row + 1, next, next + 1, flipWinding);
-            AddTriangle(triangles, ref triIndex, row + 1, next + 1, row + 2, flipWinding);
-            AddTriangle(triangles, ref triIndex, row + 2, next + 1, next + 2, flipWinding);
-        }
-    }
-
-    static void AddTriangle(int[] triangles, ref int index, int a, int b, int c, bool flipWinding)
-    {
-        if (flipWinding)
-        {
-            triangles[index++] = a;
-            triangles[index++] = c;
-            triangles[index++] = b;
-            return;
-        }
-        triangles[index++] = a;
-        triangles[index++] = b;
-        triangles[index++] = c;
+        HairCardSection.BuildTriangles(segments, flipWinding, triangles);
     }
 
     public static float MaxRepresentableTurns(int segments)
@@ -1441,6 +1426,14 @@ public class HairCard : MonoBehaviour
             // edit happened to dirty the group.
             hash = hash * 31 + GroupNormalFlipAuthority.IsFlipped(groupId).GetHashCode();
 
+            // The cross-section profile changes both the vertex count and every position, so
+            // it has to be here or a card would keep whichever shape it happened to be built
+            // with. This is also what makes the switch self-healing rather than dependent on
+            // somebody remembering to rebuild: a card that missed HairCardSection's own sweep -
+            // spawned a frame later, restored by a load, hidden inside a SOLO freeze - notices
+            // by itself on its next re-assertion.
+            hash = hash * 31 + (int)HairCardSection.Current;
+
             hash = hash * 31 + GroomShapeCurveRegistry.EpochFor(groupId);
             hash = hash * 31 + PostShapeCurveBridge.Epoch;
 
@@ -1471,11 +1464,11 @@ public class HairCard : MonoBehaviour
     {
         if (mesh == null || segments < 1) return;
 
-        const int columns = CrossSectionColumns;
+        int columns = CrossSectionColumns;
         int numVertices = (segments + 1) * columns;
         baseVertices = new Vector3[numVertices];
         Vector2[] uvs = new Vector2[numVertices];
-        int[] triangles = new int[segments * 12];
+        int[] triangles = new int[segments * HairCardSection.IndicesPerSegment];
 
         // Segment density remap, spine and section frames all resolved up front - the
         // frame at a row needs its neighbours' spine points, so it cannot be done
@@ -1493,7 +1486,6 @@ public class HairCard : MonoBehaviour
             float baseURight = uScale < 0f ? 0f : 1f;
             float finalULeft = baseULeft * Mathf.Abs(uScale) + uOffset;
             float finalURight = baseURight * Mathf.Abs(uScale) + uOffset;
-            float finalUCenter = (finalULeft + finalURight) * .5f;
 
             float absVScale = Mathf.Abs(vScale);
             float baseV = (1f - t) * absVScale;
@@ -1517,39 +1509,38 @@ public class HairCard : MonoBehaviour
             EvaluateWave(this, t, out waveOffset, mirrored);
 
             Vector3 sectionOrigin = new Vector3(0f, 0f, z);
-            Vector3 left = sectionOrigin + bankRotation * new Vector3(-currentWidth, 0f, 0f);
-            Vector3 center = sectionOrigin + bankRotation * new Vector3(0f, ridgeHeight, 0f);
-            Vector3 right = sectionOrigin + bankRotation * new Vector3(currentWidth, 0f, 0f);
+
+            // Everything that displaces the WHOLE section, accumulated before the section is
+            // built rather than added to each point afterwards. The points themselves are
+            // HairCardSection's business now - it is the only thing that knows whether there
+            // are three of them or four.
+            Vector3 sectionOffset = Vector3.zero;
 
             if (clumpActive && t > 0f)
             {
                 float influence = Mathf.Clamp01(clumpStrength * clumpCurve.Evaluate(t));
-                Vector3 straightCenter = (left + right) * 0.5f;
+
+                // This used to average the left and right points to find the undisplaced
+                // centre. Those two are sectionOrigin plus and minus the same banked
+                // half-span, so their midpoint IS sectionOrigin - identical arithmetic, and
+                // it no longer needs the points to exist first.
                 Vector3 worldAxisPoint = clumpSurfacePoint + clumpSurfaceNormal * (length * t);
                 Vector3 targetCenter = transform.InverseTransformPoint(worldAxisPoint);
-                Vector3 movedCenter = Vector3.Lerp(straightCenter, targetCenter, influence);
-                Vector3 delta = movedCenter - straightCenter;
-                left += delta;
-                center += delta;
-                right += delta;
+                sectionOffset += Vector3.Lerp(sectionOrigin, targetCenter, influence) - sectionOrigin;
             }
 
             // Curl (spiral/coil): displaces the whole cross-section outward from the straight
             // centerline, sweeping around the card's own length axis as t increases. Applied
             // after width (currentWidth above) and before Bend/X/Y/Z's rotation below, so a
             // curled card still gets bent/angled as a whole on top of its own coil shape.
-            // The section was already banked into this same sweep when it was built.
-            left += curlOffset;
-            center += curlOffset;
-            right += curlOffset;
+            // The section is banked into this same sweep as it is built.
+            sectionOffset += curlOffset;
 
             // Wave rides on top of curl. Both are displacements of the whole cross-section in
             // the card's own local space, applied after the section has been built and banked
             // and before the path-following frame places it, so a card can be curled AND wavy
             // without either shape fighting the other.
-            left += waveOffset;
-            center += waveOffset;
-            right += waveOffset;
+            sectionOffset += waveOffset;
 
             // The spine keeps exactly the position the authored bend/twist rotation
             // always put it at. Only the section's own lateral extent - width, ridge,
@@ -1558,12 +1549,12 @@ public class HairCard : MonoBehaviour
             Vector3 spinePoint = segmentSpine[i];
             Quaternion sectionFrame = segmentFrame[i];
 
-            baseVertices[index] = spinePoint + sectionFrame * (left - sectionOrigin);
-            baseVertices[index + 1] = spinePoint + sectionFrame * (center - sectionOrigin);
-            baseVertices[index + 2] = spinePoint + sectionFrame * (right - sectionOrigin);
-            uvs[index] = new Vector2(finalULeft, finalV);
-            uvs[index + 1] = new Vector2(finalUCenter, finalV);
-            uvs[index + 2] = new Vector2(finalURight, finalV);
+            HairCardSection.WriteRow(
+                baseVertices, uvs, index,
+                sectionOrigin, bankRotation, sectionOffset,
+                spinePoint, sectionFrame,
+                currentWidth, ridgeHeight,
+                finalULeft, finalURight, finalV);
         }
 
         BuildStripTriangles(segments, GroupNormalFlipAuthority.IsFlipped(groupId), triangles);

@@ -516,12 +516,12 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
     {
         if (card == null) return null;
 
-        const int columns = HairCard.CrossSectionColumns;
+        int columns = HairCard.CrossSectionColumns;
         int segments = Mathf.Clamp(card.segments, 1, 60);
         int vertexCount = (segments + 1) * columns;
         Vector3[] vertices = new Vector3[vertexCount];
         Vector2[] uvs = new Vector2[vertexCount];
-        int[] triangles = new int[segments * 12];
+        int[] triangles = new int[segments * HairCardSection.IndicesPerSegment];
 
 
         // Segment density remap, spine and path-following section frames come straight
@@ -558,30 +558,31 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
             HairCard.EvaluateWave(card, t, out waveOffset, card.mirrored);
 
             Vector3 sectionOrigin = new Vector3(0f, 0f, z);
-            Vector3 left = sectionOrigin + bankRotation * new Vector3(-span, 0f, 0f) + curlOffset + waveOffset;
-            Vector3 center = sectionOrigin + bankRotation * new Vector3(0f, ridge, 0f) + curlOffset + waveOffset;
-            Vector3 right = sectionOrigin + bankRotation * new Vector3(span, 0f, 0f) + curlOffset + waveOffset;
+            Vector3 sectionOffset = curlOffset + waveOffset;
 
             Vector3 spinePoint = segmentSpine[i];
             Quaternion sectionFrame = segmentFrame[i];
-            vertices[index] = spinePoint + sectionFrame * (left - sectionOrigin);
-            vertices[index + 1] = spinePoint + sectionFrame * (center - sectionOrigin);
-            vertices[index + 2] = spinePoint + sectionFrame * (right - sectionOrigin);
 
             float baseULeft = card.uScale < 0f ? 1f : 0f;
             float baseURight = card.uScale < 0f ? 0f : 1f;
             float finalULeft = baseULeft * Mathf.Abs(card.uScale) + card.uOffset;
             float finalURight = baseURight * Mathf.Abs(card.uScale) + card.uOffset;
-            float finalUCenter = (finalULeft + finalURight) * .5f;
 
             float absVScale = Mathf.Abs(card.vScale);
             float baseV = (1f - t) * absVScale;
             if (card.vScale < 0f) baseV = absVScale - baseV;
             float finalV = baseV + card.vOffset;
 
-            uvs[index] = new Vector2(finalULeft, finalV);
-            uvs[index + 1] = new Vector2(finalUCenter, finalV);
-            uvs[index + 2] = new Vector2(finalURight, finalV);
+            // Shared with GenerateMesh, same reason as everything else in this loop: the
+            // reconstruction must not know the section's shape independently, or DIAMOND
+            // would reach unclumped cards only and clumping a group would flatten it back to
+            // a tent.
+            HairCardSection.WriteRow(
+                vertices, uvs, index,
+                sectionOrigin, bankRotation, sectionOffset,
+                spinePoint, sectionFrame,
+                span, ridge,
+                finalULeft, finalURight, finalV);
         }
 
         HairCard.BuildStripTriangles(segments, GroupNormalFlipAuthority.IsFlipped(card.groupId), triangles);
@@ -597,7 +598,7 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
 
     static void ApplyClumpAdditive(HairCard source, Vector3[] current, CleanMeshData sourceData, HairCard leader, CleanMeshData leaderData, float influence)
     {
-        const int columns = HairCard.CrossSectionColumns;
+        int columns = HairCard.CrossSectionColumns;
         if (current == null || sourceData == null || leaderData == null) return;
 
         Vector3[] sourceClean = sourceData.vertices;
@@ -645,9 +646,15 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
 
             Vector3 leaderLocal = source.transform.InverseTransformPoint(leaderWorld);
             Vector3 delta = (leaderLocal - ownAnchor) * w;
-            current[index] += delta;
-            current[index + 1] += delta;
-            current[index + 2] += delta;
+
+            // Over the row's columns rather than three by name. A clump is a translation of
+            // the whole section, so under DIAMOND the fourth point has to move with the
+            // other three - left behind, it would stay on the unclumped strand and stretch
+            // the card between the two.
+            for (int column = 0; column < columns; column++)
+            {
+                current[index + column] += delta;
+            }
         }
     }
 
@@ -683,7 +690,7 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
 
     static Vector3 SampleCentreWorld(HairCard card, Vector3[] vertices, float t)
     {
-        const int columns = HairCard.CrossSectionColumns;
+        int columns = HairCard.CrossSectionColumns;
         int rows = vertices.Length / columns;
         if (rows <= 0) return card.transform.position;
         float rowF = Mathf.Clamp01(t) * (rows - 1);
