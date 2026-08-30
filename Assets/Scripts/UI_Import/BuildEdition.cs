@@ -17,7 +17,7 @@
 public static class BuildEdition
 {
     // 0 = PRO, 1 = DEMO.
-    public const int DEMO = 0;
+    public const int DEMO = 1;
 
     // readonly rather than const, and this is deliberate. A const bool makes every
     // `if (BuildEdition.IsDemo)` branch statically known, so the compiler flags the other side

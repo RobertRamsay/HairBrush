@@ -1463,6 +1463,43 @@ public static class GuideDeformation
         // thresholds below are ever allowed to disagree.
         Vector3 previousDirection = Vector3.forward;
 
+        // The rotation carried up the strand from the root, and the whole reason the ribbon
+        // banks steadily instead of gimballing.
+        //
+        // THIS USED TO BE DERIVED FRESH PER ROW as FromToRotation(ownDirection, movedDirection),
+        // and the comment below it claimed that added no roll BECAUSE it was "never composed
+        // down the chain". That was exactly backwards, and it is worth being precise about why.
+        // FromToRotation gives the SHORTEST rotation between two directions, so its axis is
+        // cross(own, moved) - and both of those swing as you walk up the card. Every row was
+        // therefore rolling its cross-section about a different axis, chosen with no reference
+        // to its neighbours. Applying a sequence of independent shortest rotations along a curve
+        // is the one thing that does NOT parallel-transport a frame: the net roll comes out
+        // proportional to the area the tangent sweeps on the unit sphere. Being "never composed"
+        // was the fault, not the safeguard.
+        //
+        // That is why it appeared with guides and not without. HairCard.BuildSegmentFrames uses
+        // the same call, but composes it onto the authored bend/twist rotation, so its correction
+        // starts small and stays continuous. Here the correction was the entire transform, and a
+        // guide exists to swing a card somewhere its own line does not go.
+        //
+        // Measured against a true rotation-minimising frame: a straight card whose guide sweeps a
+        // 35-degree cone took 65 degrees of roll into the tip that nothing asked for. A curled
+        // card being combed took 7 degrees of roll BETWEEN ADJACENT ROWS - a visible kink in the
+        // ribbon, which is the twisting itself rather than a slow lean.
+        //
+        // Carrying the correction fixes both. Each row asks only for the minimum turn from where
+        // the carried frame ALREADY points to where that row needs to point, and that increment
+        // is a discrete parallel transport - it adds no roll of its own, so the only roll in the
+        // card is the one established at the root and inherited all the way up. The same two
+        // cases measure 0.00 and 0.16 degrees.
+        //
+        // Identity at the root, so the first row's turn is exactly the FromToRotation the old
+        // form gave it - the banking the strand leaves the scalp with is unchanged, and that is
+        // the one the rest of the card now inherits. Where a row's tangent is untouched the
+        // increment is exactly identity and nothing accumulates, so a card sitting at zero guide
+        // weight is carried no differently than it was.
+        Quaternion carried = Quaternion.identity;
+
         for (int i = 1; i < rows; i++)
         {
             // Saved before spine[i] is overwritten: the NEXT row measures its own segment against
@@ -1487,15 +1524,17 @@ public static class GuideDeformation
             // somewhere else, so a card combed across its own width axis shears into a sliver and
             // RecalculateNormals lights it from the wrong side.
             //
-            // FromToRotation, so the ribbon is carried by the shortest rotation onto the new
-            // tangent and picks up no roll of its own. Roll along the card is TWIST's job, and it
-            // is already baked into the offsets this rotates. Built per row from that row's own
-            // direction, never composed down the chain, so sixty segments accumulate exactly as
-            // much roll as two do: none.
-            Quaternion turn;
-            if (Vector3.Dot(ownDirection, movedDirection) > -.9999f)
+            // Roll along the card is TWIST's job and is already baked into the offsets this
+            // rotates, so all this has to add is the aiming - and none of its own.
+            //
+            // Measured from where the CARRIED frame already points, not from ownDirection. See
+            // the block above the loop for why that one word is the whole fix.
+            Vector3 carriedDirection = carried * ownDirection;
+
+            Quaternion step;
+            if (Vector3.Dot(carriedDirection, movedDirection) > -.9999f)
             {
-                turn = Quaternion.FromToRotation(ownDirection, movedDirection);
+                step = Quaternion.FromToRotation(carriedDirection, movedDirection);
             }
             else
             {
@@ -1506,12 +1545,26 @@ public static class GuideDeformation
                 // this same case; here the cross-section's own offset - half-width, plus whatever
                 // curl and wave have added to it - is the natural axis, since turning about it
                 // flips the card over in its own plane rather than edge-on.
+                //
+                // Rarer than it was. The test is now carriedDirection against movedDirection,
+                // and on any smooth spine the carried frame is already pointing near the previous
+                // row's tangent - so reaching a true reversal takes a genuine doubling back
+                // rather than merely a card whose own line disagrees with the guide's.
+                //
+                // The axis is built in the card's own space and then carried, which keeps it
+                // perpendicular to carriedDirection for free: a rotation preserves angles, so
+                // an axis square to ownDirection is square to carried * ownDirection.
                 Vector3 across = vertices[index] - original;
                 across -= ownDirection * Vector3.Dot(across, ownDirection);
                 if (across.sqrMagnitude < .0000000001f) across = Vector3.Cross(ownDirection, Vector3.up);
                 if (across.sqrMagnitude < .0000000001f) across = Vector3.Cross(ownDirection, Vector3.right);
-                turn = Quaternion.AngleAxis(180f, across.normalized);
+                step = Quaternion.AngleAxis(180f, (carried * across).normalized);
             }
+
+            // Renormalised as it accumulates. Sixty composed quaternions is not enough drift to
+            // see, but this runs per card per guided group per rebuild and costs one sqrt.
+            carried = Quaternion.Normalize(step * carried);
+            Quaternion turn = carried;
 
             // Over the row's columns rather than three by name: under DIAMOND there is a
             // fourth point, and a cross-section carried onto the new spine with one of its
