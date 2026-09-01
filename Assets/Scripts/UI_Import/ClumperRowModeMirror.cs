@@ -24,6 +24,14 @@ public class ClumperRowModeMirror : MonoBehaviour
         Resolve();
         if (manager == null) return;
 
+        // THROTTLED. `manager` is an auto-spawned singleton so the guard above never fires, and
+        // below it is a walk of Unity's whole object registry reading a name off every object -
+        // one managed string allocated per object - which ran every frame whether or not a
+        // clumper existed anywhere. The rows it mirrors are edited by hand, so four times a
+        // second is well inside what anyone can see.
+        if (Time.unscaledTime < nextScan) return;
+        nextScan = Time.unscaledTime + ScanInterval;
+
         foreach (RectTransform row in FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
         {
             if (row == null || !row.name.StartsWith("GroupClumper_")) continue;
@@ -75,4 +83,7 @@ public class ClumperRowModeMirror : MonoBehaviour
             _ => "POINT"
         };
     }
+
+    private const float ScanInterval = .25f;
+    private float nextScan;
 }

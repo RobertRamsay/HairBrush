@@ -39,6 +39,12 @@ public class SaveProjectFocusGuardWatcher : MonoBehaviour
     {
         if (guardedButton != null) return;
 
+        // THROTTLED - same reason as SceneQuitButtonBinder. Until the button exists this ran a
+        // full active-scene name search every frame, and the scene's active object count is
+        // dominated by the groom.
+        if (Time.unscaledTime < nextBindAttempt) return;
+        nextBindAttempt = Time.unscaledTime + BindRetryInterval;
+
         GameObject saveButton = GameObject.Find("SaveProjectButton");
         if (saveButton == null) return;
 
@@ -49,4 +55,8 @@ public class SaveProjectFocusGuardWatcher : MonoBehaviour
 
         guardedButton = saveButton;
     }
+
+    // Retrying four times a second is ample for a binder waiting on a UI object.
+    private const float BindRetryInterval = .25f;
+    private float nextBindAttempt;
 }

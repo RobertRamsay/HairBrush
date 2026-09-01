@@ -991,6 +991,11 @@ public class ModelViewer : MonoBehaviour
     // still be found by every one of them.
     void CondemnRow(Transform row)
     {
+        // A row is leaving, so the shared list of them is stale. See GroupRowRegistry - fourteen
+        // authorities read it, and none of them should have to wait out its interval to notice a
+        // group was deleted.
+        GroupRowRegistry.Invalidate();
+
         if (row == null) return;
         row.gameObject.SetActive(false);
         row.gameObject.name = "Discarded_" + row.gameObject.name;
@@ -1041,6 +1046,9 @@ public class ModelViewer : MonoBehaviour
     // the reconcile above, means a group that was just created or one being restored by a load.
     GameObject BuildGroupRow(int gid, int cardCount)
     {
+        // A new row, so the shared list is stale - same reason as CondemnRow.
+        GroupRowRegistry.Invalidate();
+
         GameObject itemGO = new GameObject("GroupItem_" + gid, typeof(RectTransform), typeof(Image), typeof(HorizontalLayoutGroup));
         itemGO.transform.SetParent(groupListContentTransform, false);
         itemGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 48);

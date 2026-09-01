@@ -23,6 +23,13 @@ public class SceneQuitButtonBinder : MonoBehaviour
     {
         if (bound) return;
 
+        // THROTTLED, because the miss is the normal case. GameObject.Find walks every ACTIVE
+        // object in the scene comparing names, and hair cards are root GameObjects - so at forty
+        // thousand cards this was forty thousand name comparisons per frame, forever, for a
+        // button that may not exist in the runtime scene at all.
+        if (Time.unscaledTime < nextBindAttempt) return;
+        nextBindAttempt = Time.unscaledTime + BindRetryInterval;
+
         GameObject quitGO = GameObject.Find("Button_Quit");
         if (quitGO == null) return;
 
@@ -45,4 +52,8 @@ public class SceneQuitButtonBinder : MonoBehaviour
         Application.Quit();
 #endif
     }
+
+    // Retrying four times a second is ample for a binder waiting on a UI object.
+    private const float BindRetryInterval = .25f;
+    private float nextBindAttempt;
 }

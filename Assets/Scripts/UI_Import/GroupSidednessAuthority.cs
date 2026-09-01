@@ -222,10 +222,15 @@ public class GroupSidednessAuthority : MonoBehaviour
 
     void MaintainGroupButtons()
     {
-        foreach (RectTransform row in FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        // Shared, throttled - see GroupRowRegistry. This was a full walk of the object
+        // registry with a string allocated per object, every scan, and thirteen other
+        // authorities were each doing the same.
+        IReadOnlyList<GroupRowRegistry.Row> registryRows = GroupRowRegistry.Rows;
+        for (int r = 0; r < registryRows.Count; r++)
         {
-            if (row == null || !row.name.StartsWith("GroupItem_")) continue;
-            if (!int.TryParse(row.name.Substring("GroupItem_".Length), out int gid)) continue;
+            RectTransform row = registryRows[r].transform;
+            int gid = registryRows[r].groupId;
+            if (row == null) continue;
 
             Transform solo = row.Find("SoloButton");
             if (solo == null) continue;

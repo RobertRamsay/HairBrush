@@ -1,0 +1,384 @@
+diff --git a/Assets/Scripts/UI_Import/ClumperRowModeMirror.cs b/Assets/Scripts/UI_Import/ClumperRowModeMirror.cs
+index 5cba6a8..346823d 100644
+--- a/Assets/Scripts/UI_Import/ClumperRowModeMirror.cs
++++ b/Assets/Scripts/UI_Import/ClumperRowModeMirror.cs
+@@ -24,6 +24,14 @@ public class ClumperRowModeMirror : MonoBehaviour
+         Resolve();
+         if (manager == null) return;
+ 
++        // THROTTLED. `manager` is an auto-spawned singleton so the guard above never fires, and
++        // below it is a walk of Unity's whole object registry reading a name off every object -
++        // one managed string allocated per object - which ran every frame whether or not a
++        // clumper existed anywhere. The rows it mirrors are edited by hand, so four times a
++        // second is well inside what anyone can see.
++        if (Time.unscaledTime < nextScan) return;
++        nextScan = Time.unscaledTime + ScanInterval;
++
+         foreach (RectTransform row in FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+         {
+             if (row == null || !row.name.StartsWith("GroupClumper_")) continue;
+@@ -75,4 +83,7 @@ public class ClumperRowModeMirror : MonoBehaviour
+             _ => "POINT"
+         };
+     }
++
++    private const float ScanInterval = .25f;
++    private float nextScan;
+ }
+diff --git a/Assets/Scripts/UI_Import/GroupNormalFlipAuthority.cs b/Assets/Scripts/UI_Import/GroupNormalFlipAuthority.cs
+index fd63547..73344c6 100644
+--- a/Assets/Scripts/UI_Import/GroupNormalFlipAuthority.cs
++++ b/Assets/Scripts/UI_Import/GroupNormalFlipAuthority.cs
+@@ -142,10 +142,13 @@ public class GroupNormalFlipAuthority : MonoBehaviour
+ 
+     void MaintainGroupButtons()
+     {
+-        foreach (RectTransform row in FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
++        // Shared, throttled - see GroupRowRegistry.
++        IReadOnlyList<GroupRowRegistry.Row> registryRows = GroupRowRegistry.Rows;
++        for (int r = 0; r < registryRows.Count; r++)
+         {
+-            if (row == null || !row.name.StartsWith("GroupItem_")) continue;
+-            if (!int.TryParse(row.name.Substring("GroupItem_".Length), out int gid)) continue;
++            RectTransform row = registryRows[r].transform;
++            int gid = registryRows[r].groupId;
++            if (row == null) continue;
+ 
+             // Anchor off SOLO exactly as the sidedness button does. GroupPanelPostHintStats
+             // owns the final placement; this only has to land in the row.
+diff --git a/Assets/Scripts/UI_Import/GroupRowRegistry.cs b/Assets/Scripts/UI_Import/GroupRowRegistry.cs
+new file mode 100644
+index 0000000..d2ea0a1
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/GroupRowRegistry.cs
+@@ -0,0 +1,106 @@
++using System.Collections.Generic;
++using UnityEngine;
++
++// The group rows in the left panel, found once and shared.
++//
++// WHY. Fourteen separate authorities want this same list - the SS/DS and N+/N- buttons, the row
++// order, the header stats, the UV mode, the clumper row mirror, the POST lifetime, and more - and
++// every one of them was finding it for itself:
++//
++//     foreach (RectTransform row in FindObjectsByType<RectTransform>(FindObjectsInactive.Include, ...))
++//         if (row.name.StartsWith("GroupItem_")) ...
++//
++// That is a walk of Unity's entire object registry, and `Transform.name` allocates a fresh
++// managed string on EVERY access, so each sweep allocates one string per object in the scene.
++// Hair cards are root GameObjects, so the registry grows with the groom: at forty thousand cards
++// a single sweep touches a quarter of a million objects, and fourteen callers were each doing it
++// on their own timer, several of them every frame.
++//
++// This makes it one sweep per interval, shared. The name is read once per object per sweep
++// instead of once per object per caller per frame, and the parsed group id comes with it so no
++// caller has to Substring and int.Parse it again either.
++public static class GroupRowRegistry
++{
++    public struct Row
++    {
++        public RectTransform transform;
++        public int groupId;
++    }
++
++    // Rows appear when a group is added and vanish when one is deleted, both of which call
++    // Invalidate. This interval is the backstop for anything that builds a row without saying so.
++    private const float RefreshInterval = .1f;
++
++    private const string Prefix = "GroupItem_";
++
++    private static readonly List<Row> rows = new List<Row>();
++    private static float nextRefresh;
++    private static bool valid;
++
++    // Statics survive "Enter Play Mode -> Disable Domain Reload", so without this the second Play
++    // session starts holding destroyed rows from the first.
++    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
++    private static void ResetStatics()
++    {
++        rows.Clear();
++        nextRefresh = 0f;
++        valid = false;
++    }
++
++    // Call when rows have just been built or destroyed, so the next read does not sit out the
++    // rest of the interval. The panel is rebuilt on model and project load and edited on every
++    // group add and delete, and all of those want to be seen immediately.
++    public static void Invalidate()
++    {
++        valid = false;
++        nextRefresh = 0f;
++    }
++
++    public static IReadOnlyList<Row> Rows
++    {
++        get
++        {
++            Refresh();
++            return rows;
++        }
++    }
++
++    private static void Refresh()
++    {
++        // A destroyed row leaves a null behind, and a caller iterating the cache would have to
++        // guess whether that means "gone" or "not found yet". Rebuilding on the first null keeps
++        // the list something callers can trust without asking.
++        if (valid && Time.unscaledTime < nextRefresh)
++        {
++            for (int i = 0; i < rows.Count; i++)
++            {
++                if (rows[i].transform != null) continue;
++                valid = false;
++                break;
++            }
++            if (valid) return;
++        }
++
++        valid = true;
++        nextRefresh = Time.unscaledTime + RefreshInterval;
++        rows.Clear();
++
++        RectTransform[] all = Object.FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None);
++        for (int i = 0; i < all.Length; i++)
++        {
++            RectTransform t = all[i];
++            if (t == null) continue;
++
++            // The one .name read. It is the expensive part of the whole sweep, which is why
++            // this exists at all.
++            string name = t.name;
++            if (name.Length <= Prefix.Length) continue;
++            if (!name.StartsWith(Prefix, System.StringComparison.Ordinal)) continue;
++
++            int groupId;
++            if (!int.TryParse(name.Substring(Prefix.Length), out groupId)) continue;
++
++            rows.Add(new Row { transform = t, groupId = groupId });
++        }
++    }
++}
+diff --git a/Assets/Scripts/UI_Import/GroupRowRegistry.cs.meta b/Assets/Scripts/UI_Import/GroupRowRegistry.cs.meta
+new file mode 100644
+index 0000000..fa890a2
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/GroupRowRegistry.cs.meta
+@@ -0,0 +1,2 @@
++fileFormatVersion: 2
++guid: c0c2011fee6d44e0b0fbc7a02d8cedde
+diff --git a/Assets/Scripts/UI_Import/GroupSidednessAuthority.cs b/Assets/Scripts/UI_Import/GroupSidednessAuthority.cs
+index 94cb34f..e0658ba 100644
+--- a/Assets/Scripts/UI_Import/GroupSidednessAuthority.cs
++++ b/Assets/Scripts/UI_Import/GroupSidednessAuthority.cs
+@@ -222,10 +222,15 @@ public class GroupSidednessAuthority : MonoBehaviour
+ 
+     void MaintainGroupButtons()
+     {
+-        foreach (RectTransform row in FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
++        // Shared, throttled - see GroupRowRegistry. This was a full walk of the object
++        // registry with a string allocated per object, every scan, and thirteen other
++        // authorities were each doing the same.
++        IReadOnlyList<GroupRowRegistry.Row> registryRows = GroupRowRegistry.Rows;
++        for (int r = 0; r < registryRows.Count; r++)
+         {
+-            if (row == null || !row.name.StartsWith("GroupItem_")) continue;
+-            if (!int.TryParse(row.name.Substring("GroupItem_".Length), out int gid)) continue;
++            RectTransform row = registryRows[r].transform;
++            int gid = registryRows[r].groupId;
++            if (row == null) continue;
+ 
+             Transform solo = row.Find("SoloButton");
+             if (solo == null) continue;
+diff --git a/Assets/Scripts/UI_Import/ModelViewer.cs b/Assets/Scripts/UI_Import/ModelViewer.cs
+index 3b5b440..79b91d6 100644
+--- a/Assets/Scripts/UI_Import/ModelViewer.cs
++++ b/Assets/Scripts/UI_Import/ModelViewer.cs
+@@ -991,6 +991,11 @@ public class ModelViewer : MonoBehaviour
+     // still be found by every one of them.
+     void CondemnRow(Transform row)
+     {
++        // A row is leaving, so the shared list of them is stale. See GroupRowRegistry - fourteen
++        // authorities read it, and none of them should have to wait out its interval to notice a
++        // group was deleted.
++        GroupRowRegistry.Invalidate();
++
+         if (row == null) return;
+         row.gameObject.SetActive(false);
+         row.gameObject.name = "Discarded_" + row.gameObject.name;
+@@ -1041,6 +1046,9 @@ public class ModelViewer : MonoBehaviour
+     // the reconcile above, means a group that was just created or one being restored by a load.
+     GameObject BuildGroupRow(int gid, int cardCount)
+     {
++        // A new row, so the shared list is stale - same reason as CondemnRow.
++        GroupRowRegistry.Invalidate();
++
+         GameObject itemGO = new GameObject("GroupItem_" + gid, typeof(RectTransform), typeof(Image), typeof(HorizontalLayoutGroup));
+         itemGO.transform.SetParent(groupListContentTransform, false);
+         itemGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 48);
+diff --git a/Assets/Scripts/UI_Import/PanelTypographyScale.cs b/Assets/Scripts/UI_Import/PanelTypographyScale.cs
+index bc65c40..2bb3287 100644
+--- a/Assets/Scripts/UI_Import/PanelTypographyScale.cs
++++ b/Assets/Scripts/UI_Import/PanelTypographyScale.cs
+@@ -18,35 +18,91 @@ public class PanelTypographyScale : MonoBehaviour
+         go.AddComponent<PanelTypographyScale>();
+     }
+ 
++    // The labels this is currently correcting, found on the periodic rescan and re-asserted
++    // every frame in between.
++    private readonly List<TextMeshProUGUI> tracked = new List<TextMeshProUGUI>();
++
++    // FINDING the labels is throttled. CORRECTING them is not, and the two must stay separate.
++    //
++    // This authority does not own the only word on font size - it bumps whatever size a label
++    // was built with, and several other authorities write their own sizes to the same labels on
++    // their own timers: the group header stats, the POST row labels. So it is in a permanent
++    // argument with them, and it only looks settled because it used to re-assert every frame and
++    // therefore always got the last word.
++    //
++    // Throttling the whole method - which is what a first pass at the per-frame cost did - let
++    // the other writer's size stand for up to a quarter of a second before being corrected, and
++    // that is long enough to see. It reads as the text flickering between two sizes, which is
++    // exactly what it is.
++    //
++    // So the expensive half is throttled and the cheap half is not. GameObject.Find plus two
++    // GetComponentsInChildren walks happen four times a second; re-asserting a float on a cached
++    // list happens every frame and costs a compare per label.
+     void LateUpdate()
+     {
+-        // The interval was missing: `nextScan = Time.unscaledTime` sets the next scan to NOW,
+-        // so the guard above was always already satisfied and the throttle never engaged once.
+-        // Two GameObject.Find calls plus two GetComponentsInChildren<TextMeshProUGUI>(true)
+-        // walks were running every frame, for a restyle whose answer changes only when a panel
+-        // is rebuilt.
+-        if (Time.unscaledTime < nextScan) return;
+-        nextScan = Time.unscaledTime + ScanInterval;
+-        ScalePanel(GameObject.Find("GroupManagerPanel"));
+-        ScalePanel(GameObject.Find("GroomingPanel"));
++        if (Time.unscaledTime >= nextScan)
++        {
++            nextScan = Time.unscaledTime + ScanInterval;
++            Rescan();
++        }
++
++        for (int i = 0; i < tracked.Count; i++)
++        {
++            TextMeshProUGUI text = tracked[i];
++            if (text == null) continue;
++
++            float target;
++            if (!sizes.TryGetValue(text.GetInstanceID(), out target)) continue;
++            if (!Mathf.Approximately(text.fontSize, target)) text.fontSize = target;
++        }
+     }
+ 
+-    void ScalePanel(GameObject panel)
++    void Rescan()
++    {
++        tracked.Clear();
++        Collect(GameObject.Find("GroupManagerPanel"));
++        Collect(GameObject.Find("GroomingPanel"));
++
++        // Drop remembered sizes for labels that no longer exist. Group rows are rebuilt often,
++        // so without this the dictionary grows for the whole session.
++        //
++        // Only the DEAD ones, and that distinction is load-bearing: a target is derived once,
++        // from the size the label was BUILT with. Dropping a live entry would re-derive it from
++        // the already-bumped size and bump it again, and the text would grow a point every time
++        // it happened.
++        if (sizes.Count <= tracked.Count * 2) return;
++
++        live.Clear();
++        for (int i = 0; i < tracked.Count; i++)
++        {
++            if (tracked[i] != null) live.Add(tracked[i].GetInstanceID());
++        }
++
++        stale.Clear();
++        foreach (KeyValuePair<int, float> entry in sizes)
++        {
++            if (!live.Contains(entry.Key)) stale.Add(entry.Key);
++        }
++        for (int i = 0; i < stale.Count; i++) sizes.Remove(stale[i]);
++    }
++
++    private readonly HashSet<int> live = new HashSet<int>();
++    private readonly List<int> stale = new List<int>();
++
++    void Collect(GameObject panel)
+     {
+         if (panel == null) return;
+         TextMeshProUGUI[] texts = panel.GetComponentsInChildren<TextMeshProUGUI>(true);
+         foreach (TextMeshProUGUI text in texts)
+         {
+             if (text == null) continue;
++            tracked.Add(text);
++
+             int id = text.GetInstanceID();
+-            float target;
+-            if (!sizes.TryGetValue(id, out target))
+-            {
+-                float original = text.fontSize;
+-                target = original + (original <= 13f ? 2f : 1f);
+-                sizes[id] = target;
+-            }
+-            if (!Mathf.Approximately(text.fontSize, target)) text.fontSize = target;
++            if (sizes.ContainsKey(id)) continue;
++
++            float original = text.fontSize;
++            sizes[id] = original + (original <= 13f ? 2f : 1f);
+         }
+     }
+ }
+diff --git a/Assets/Scripts/UI_Import/SaveProjectFocusGuard.cs b/Assets/Scripts/UI_Import/SaveProjectFocusGuard.cs
+index 7dd6840..b1591a7 100644
+--- a/Assets/Scripts/UI_Import/SaveProjectFocusGuard.cs
++++ b/Assets/Scripts/UI_Import/SaveProjectFocusGuard.cs
+@@ -39,6 +39,12 @@ public class SaveProjectFocusGuardWatcher : MonoBehaviour
+     {
+         if (guardedButton != null) return;
+ 
++        // THROTTLED - same reason as SceneQuitButtonBinder. Until the button exists this ran a
++        // full active-scene name search every frame, and the scene's active object count is
++        // dominated by the groom.
++        if (Time.unscaledTime < nextBindAttempt) return;
++        nextBindAttempt = Time.unscaledTime + BindRetryInterval;
++
+         GameObject saveButton = GameObject.Find("SaveProjectButton");
+         if (saveButton == null) return;
+ 
+@@ -49,4 +55,8 @@ public class SaveProjectFocusGuardWatcher : MonoBehaviour
+ 
+         guardedButton = saveButton;
+     }
++
++    // Retrying four times a second is ample for a binder waiting on a UI object.
++    private const float BindRetryInterval = .25f;
++    private float nextBindAttempt;
+ }
+diff --git a/Assets/Scripts/UI_Import/SceneQuitButtonBinder.cs b/Assets/Scripts/UI_Import/SceneQuitButtonBinder.cs
+index e096c4b..11fdb51 100644
+--- a/Assets/Scripts/UI_Import/SceneQuitButtonBinder.cs
++++ b/Assets/Scripts/UI_Import/SceneQuitButtonBinder.cs
+@@ -23,6 +23,13 @@ public class SceneQuitButtonBinder : MonoBehaviour
+     {
+         if (bound) return;
+ 
++        // THROTTLED, because the miss is the normal case. GameObject.Find walks every ACTIVE
++        // object in the scene comparing names, and hair cards are root GameObjects - so at forty
++        // thousand cards this was forty thousand name comparisons per frame, forever, for a
++        // button that may not exist in the runtime scene at all.
++        if (Time.unscaledTime < nextBindAttempt) return;
++        nextBindAttempt = Time.unscaledTime + BindRetryInterval;
++
+         GameObject quitGO = GameObject.Find("Button_Quit");
+         if (quitGO == null) return;
+ 
+@@ -45,4 +52,8 @@ public class SceneQuitButtonBinder : MonoBehaviour
+         Application.Quit();
+ #endif
+     }
++
++    // Retrying four times a second is ample for a binder waiting on a UI object.
++    private const float BindRetryInterval = .25f;
++    private float nextBindAttempt;
+ }

@@ -142,10 +142,13 @@ public class GroupNormalFlipAuthority : MonoBehaviour
 
     void MaintainGroupButtons()
     {
-        foreach (RectTransform row in FindObjectsByType<RectTransform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        // Shared, throttled - see GroupRowRegistry.
+        IReadOnlyList<GroupRowRegistry.Row> registryRows = GroupRowRegistry.Rows;
+        for (int r = 0; r < registryRows.Count; r++)
         {
-            if (row == null || !row.name.StartsWith("GroupItem_")) continue;
-            if (!int.TryParse(row.name.Substring("GroupItem_".Length), out int gid)) continue;
+            RectTransform row = registryRows[r].transform;
+            int gid = registryRows[r].groupId;
+            if (row == null) continue;
 
             // Anchor off SOLO exactly as the sidedness button does. GroupPanelPostHintStats
             // owns the final placement; this only has to land in the row.
