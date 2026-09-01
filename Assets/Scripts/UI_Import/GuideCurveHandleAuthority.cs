@@ -64,6 +64,11 @@ public class GuideCurveHandleAuthority : MonoBehaviour
     // How far a press has to travel before it counts as a root drag rather than a click.
     private const float DragStartPixels = 3f;
 
+    // Degrees of node roll per pixel of horizontal cursor travel. Half a degree puts a full turn
+    // at 720 pixels - most of a screen's width for 360 degrees, which is about right for a value
+    // whose useful range is mostly the first ninety.
+    private const float RollDegreesPerPixel = .5f;
+
     // How close to the nearest handle another one has to project before the two count as tied and
     // depth decides between them. Four pixels: wide enough to catch the end-on case, where the
     // whole guide collapses to a smudge, and narrow enough that two handles a comfortable
@@ -140,6 +145,27 @@ public class GuideCurveHandleAuthority : MonoBehaviour
     private int dragging = -1;
     private int draggingGuideId = -1;
 
+    // The node whose ROLL is being dragged - CTRL and left on a node ring - or -1 for nothing.
+    //
+    // Kept separate from `dragging` rather than folded into it with a mode flag. They are two
+    // gestures on the same handle with different capture, different clamps and different clears,
+    // and a single index plus a bool is one variable that can disagree with itself; the root
+    // sentinel is already carrying that trick and once is enough.
+    private int rolling = -1;
+    private int rollingGuideId = -1;
+
+    // Where the roll drag started, in pixels, and what the node was rolled to then. The angle is
+    // solved from the ORIGIN every frame rather than accumulated per-frame from the last cursor
+    // position - the same reason CaptureNodeDrag captures its plane. Accumulating means a frame
+    // dropped mid-drag silently loses its share of the turn, and a value the user watched go past
+    // 90 cannot be got back to by returning the cursor to where it was.
+    private Vector2 rollDragOrigin;
+    private float rollDragStartDegrees;
+
+    // The last whole degree the toast reported, so it only speaks when the number moves. Seeded
+    // out of range at the press so the first frame of every drag always reports.
+    private int lastRollToast = int.MinValue;
+
     // Where every node sat in the world at the moment the ROOT was grabbed. See MoveGuideRoot for
     // why a root drag re-derives from this snapshot every frame rather than from the guide's live
     // positions. Grown on demand; a guide has at most twenty nodes.
@@ -178,6 +204,10 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         nodeRings.Clear();
         dragging = -1;
         draggingGuideId = -1;
+        rolling = -1;
+        rollingGuideId = -1;
+        rollDragOrigin = Vector2.zero;
+        rollDragStartDegrees = 0f;
         rootDragWorld = new Vector3[0];
         rootDragCount = 0;
         rootDragOrigin = Vector2.zero;
@@ -264,6 +294,7 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         {
             dragging = -1;
             draggingGuideId = -1;
+            rolling = -1;
             HideAll();
             return;
         }
@@ -273,6 +304,7 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         if (GroupAddButtonPlacementAuthority.ArmedKind != GroupAddButtonPlacementAuthority.AddKind.None)
         {
             dragging = -1;
+            rolling = -1;
             DrawHandles(guide, -1);
             return;
         }
@@ -289,6 +321,7 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         {
             dragging = -1;
             draggingGuideId = -1;
+            rolling = -1;
         }
 
         // ALT is reserved for the camera, in BOTH modes.
@@ -308,6 +341,15 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         {
             dragging = -1;
             draggingGuideId = -1;
+
+            // The roll drag goes with it, and this one is not merely tidiness. DragRollTo solves
+            // from the pixel the press landed on, so a tumble that left `rolling` set would come
+            // back with a stale origin and snap the node by the whole width of the camera move -
+            // a 500 pixel tumble is a silent 250 degree roll, committed and saved. CTRL+ALT+LMB
+            // is Maya's own camera chord, so this is a hand shape users make constantly rather
+            // than a corner case.
+            rolling = -1;
+
             DrawHandles(guide, -1);
             return;
         }
@@ -329,6 +371,12 @@ public class GuideCurveHandleAuthority : MonoBehaviour
             if (Mouse.current.leftButton.wasPressedThisFrame)
             {
                 dragging = -1;
+
+                // An insert shifts every index at or above it, so a roll drag surviving this
+                // would carry on writing its accumulated angle onto whichever node moved into
+                // the slot it was holding.
+                rolling = -1;
+
                 InsertPointAt(guide, mouse);
                 DrawHandles(guide, -1);
                 return;
@@ -337,6 +385,12 @@ public class GuideCurveHandleAuthority : MonoBehaviour
             if (Mouse.current.rightButton.wasPressedThisFrame)
             {
                 dragging = -1;
+
+                // Same shift, downward. The count test below would catch a roll drag left on the
+                // node that no longer exists, but not one left on an index that now addresses a
+                // DIFFERENT node - and that is the case that writes the wrong value silently.
+                rolling = -1;
+
                 RemovePointAt(guide, mouse);
                 DrawHandles(guide, -1);
                 return;
@@ -367,6 +421,76 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         // removed from under the drag is the same problem, hence the count test.
         if (dragging != -1 && draggingGuideId != guide.id) dragging = -1;
         if (dragging >= 0 && dragging >= GuideCurveManager.NodeCount(guide)) dragging = -1;
+
+        // What is left of standing the roll drag down. Every branch above that RETURNS clears it
+        // on the way past - it has to be done there rather than gathered here, because a return
+        // never reaches this line and a stale rollDragOrigin surviving into the next frame is the
+        // whole hazard. These two are the tests that fall through.
+        if (cameraGesture) rolling = -1;
+        if (rolling != -1 && rollingGuideId != guide.id) rolling = -1;
+        if (rolling >= 0 && rolling >= GuideCurveManager.NodeCount(guide)) rolling = -1;
+
+        // ---------------------------------------------------------------------- CTRL: node roll
+        //
+        // CTRL and left, dragged sideways on a node ring, rolls the hair about the strand as it
+        // passes that node. The guide already banks what it combs; this is for when the bank it
+        // arrives at is not the one wanted.
+        //
+        // CTRL ALONE IS FREE HERE, and only here. Elsewhere in the viewport it is POST authoring -
+        // which is why the modifierHeld test below stands the shape drag down for it - but Update
+        // holds GroomingInputLock for as long as a guide is selected, so while these handles are
+        // on screen nothing else is reading it. That lock is what makes this binding available
+        // rather than merely unused, and it is the reason to be nervous about taking CTRL for
+        // anything that outlives guide editing.
+        //
+        // SHIFT must be UP: CTRL+SHIFT is the point editor, handled and returned above. Testing
+        // for it again is belt and braces against that branch ever ceasing to return - which the
+        // comment up there already warns about, and which would otherwise mean an insert click
+        // also starting a roll drag on whatever it landed near.
+        bool rollHeld = Keyboard.current != null &&
+                        Keyboard.current.ctrlKey.isPressed &&
+                        !Keyboard.current.shiftKey.isPressed;
+
+        // `dragging == -1` so a shape drag already under way is not interrupted by reaching for
+        // CTRL mid-gesture. modifierHeld below only ever guarded the START of a drag - a shape
+        // drag has always continued through a CTRL press - and taking that away would make the
+        // handle stick under the cursor until the key came back up.
+        if (rollHeld && !pointerOverUI && dragging == -1)
+        {
+            if (rolling == -1 && Mouse.current.leftButton.wasPressedThisFrame)
+            {
+                int hit = PickHandle(guide, mouse);
+
+                // Nodes only. The root has no roll to set - it is not in nodesLocal, and the hair
+                // leaving the scalp unrolled is the property the whole feature is built on - so a
+                // CTRL grab that lands on the green ring does nothing rather than quietly picking
+                // the nearest node instead.
+                if (hit >= 0)
+                {
+                    rolling = hit;
+                    rollingGuideId = guide.id;
+                    rollDragOrigin = mouse;
+                    rollDragStartDegrees = GuideCurveManager.GetNodeRoll(guide, hit);
+                    lastRollToast = int.MinValue;
+                }
+            }
+
+            if (rolling >= 0 && Mouse.current.leftButton.isPressed)
+            {
+                DragRollTo(guide, mouse);
+                DrawHandles(guide, rolling);
+                return;
+            }
+
+            // CTRL is held but no roll drag is running - a press that missed every ring, or the
+            // key held while nothing is pressed. Draw the hover and return WITHOUT falling into
+            // the shape-drag block: modifierHeld below would refuse the press anyway, and the
+            // deselect test would not, so a CTRL click into empty space would close the guide.
+            DrawHandles(guide, PickHandle(guide, mouse));
+            return;
+        }
+
+        rolling = -1;
 
         // CTRL, TAB and SPACE all mean "this click belongs to another gesture". SPACE+click in
         // particular repositions the guide, and GuideCurveManager has already moved its contact by
@@ -459,6 +583,36 @@ public class GuideCurveHandleAuthority : MonoBehaviour
             local = local.normalized * dragReachLimit;
 
         GuideCurveManager.SetNode(guide, dragging, local);
+    }
+
+    // Horizontal cursor travel from the press, straight onto the node's roll.
+    //
+    // HORIZONTAL ONLY, and solved from the origin rather than accumulated. Sideways reads as
+    // turning something, and using both axes would make the value depend on the path the cursor
+    // took rather than where it ended up - a small circle would wind the node up indefinitely.
+    //
+    // No arm threshold, unlike the root drag. A roll of a fraction of a degree from a click that
+    // did not quite hold still is invisible and instantly undone by carrying on with the drag;
+    // the root needed one because a bare click there teleports the guide's base.
+    void DragRollTo(GuideCurveManager.GuideCurve guide, Vector2 mouse)
+    {
+        float degrees = rollDragStartDegrees + (mouse.x - rollDragOrigin.x) * RollDegreesPerPixel;
+        GuideCurveManager.SetNodeRoll(guide, rolling, degrees);
+
+        // Read back rather than reported from `degrees`, so the number on screen is the one the
+        // guide actually holds once the clamp has had it. Sliding on past the ceiling then shows
+        // a value that has stopped moving, which is the only signal there is that it is a ceiling.
+        int shown = Mathf.RoundToInt(GuideCurveManager.GetNodeRoll(guide, rolling));
+
+        // Only when the printed number actually changes. This runs every frame the button is
+        // held, including frames the cursor did not move, and StatusToast.Show opens with an
+        // unconditional Debug.Log - so an unguarded toast here is three hundred stack-trace
+        // captures for a five second drag. Every other per-frame drag in this file is silent for
+        // the same reason; this one reports because a roll has no other readout of its value.
+        if (shown == lastRollToast) return;
+        lastRollToast = shown;
+
+        StatusToast.Show("GUIDE NODE " + (rolling + 1) + " ROLL: " + shown + " deg", false, 1.5f);
     }
 
     // The root does not drag in a camera-facing plane the way the others do. It has to stay ON
@@ -703,7 +857,11 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         // the gesture says it does.
         Vector3 local = GuideCurveManager.ToLocal(guide, point);
 
-        int index = GuideCurveManager.InsertNode(guide, span, local);
+        // How far into that span the click landed, so the new node inherits the roll the curve was
+        // already carrying there rather than the midpoint's.
+        float spanFraction = Mathf.Clamp01(bestT * spans - span);
+
+        int index = GuideCurveManager.InsertNode(guide, span, local, spanFraction);
         if (index < 0) return;
 
         StatusToast.Show("Point added. " + (GuideCurveManager.NodeCount(guide) + 1) +
@@ -809,7 +967,14 @@ public class GuideCurveHandleAuthority : MonoBehaviour
             float radius = tip ? HandlePixelRadius : HandlePixelRadius * .78f;
             if (i == hot) color = HotColor;
 
-            DrawRing(nodeRings[i], GuideCurveManager.WorldNode(guide, i), color, radius);
+            // The needle appears when there is something to read or somebody about to set it -
+            // a node actually rolled, or the one under the cursor. An unrolled guide therefore
+            // looks exactly as it did before this existed, which matters: every guide in every
+            // project made so far is unrolled, and none of them should suddenly grow spokes.
+            float roll = GuideCurveManager.GetNodeRoll(guide, i);
+            bool showNeedle = Mathf.Abs(roll) > .5f || i == hot;
+
+            DrawRing(nodeRings[i], GuideCurveManager.WorldNode(guide, i), color, radius, roll, showNeedle);
         }
     }
 
@@ -824,6 +989,26 @@ public class GuideCurveHandleAuthority : MonoBehaviour
     // Sized in world units from the pixel radius and the distance to the camera, so the handle
     // keeps the same on-screen size and the grab radius above stays honest at any zoom.
     void DrawRing(LineRenderer line, Vector3 center, Color color, float pixelRadius)
+    {
+        DrawRing(line, center, color, pixelRadius, 0f, false);
+    }
+
+    // The ring, and optionally a spoke from its rim to its centre showing what the node is rolled
+    // to.
+    //
+    // READ IT AS A DIAL, not as a gizmo. The circle is built in the camera's own right/up basis -
+    // it billboards, which is what keeps it a constant size and always grabbable - so it carries
+    // no information about any axis in the world, and a spoke drawn on it cannot be the roll axis
+    // pointing anywhere real. What it is is a needle on a face: straight up is zero, and it turns
+    // clockwise as the value climbs. That is honest about what it can show, and it is the only
+    // readout there is for a value with no slider behind it.
+    //
+    // THE CIRCLE STARTS AT THE NEEDLE'S ANGLE, which is what lets one unbroken polyline draw both.
+    // Walk the circle from there, come back to the first point, then run in to the centre: the
+    // closing segment and the spoke are the same angle, so there is no stray chord. Starting at a
+    // fixed angle and adding the spoke afterwards would draw a second spoke at three o'clock.
+    void DrawRing(LineRenderer line, Vector3 center, Color color, float pixelRadius,
+                  float needleDegrees, bool showNeedle)
     {
         if (line == null) return;
 
@@ -840,11 +1025,30 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         Vector3 right = cam.transform.right;
         Vector3 up = cam.transform.up;
 
-        line.positionCount = CircleSegments;
+        // Twelve o'clock is zero and the needle turns clockwise, so the start angle runs the
+        // other way round from the maths convention the cosine and sine below use.
+        float start = Mathf.PI * .5f;
+        if (showNeedle) start = Mathf.PI * .5f - needleDegrees * Mathf.Deg2Rad;
+
+        int points = CircleSegments;
+        if (showNeedle) points = CircleSegments + 2;
+
+        line.loop = !showNeedle;
+        line.positionCount = points;
+
         for (int i = 0; i < CircleSegments; i++)
         {
-            float a = (i / (float)CircleSegments) * Mathf.PI * 2f;
+            float a = start + (i / (float)CircleSegments) * Mathf.PI * 2f;
             line.SetPosition(i, center + (right * Mathf.Cos(a) + up * Mathf.Sin(a)) * worldRadius);
+        }
+
+        if (showNeedle)
+        {
+            // Back onto the first point to close the circle by hand - loop is off, because the
+            // renderer's own closing segment would run from the centre to the rim and draw the
+            // spoke twice - and then in to the middle.
+            line.SetPosition(CircleSegments, line.GetPosition(0));
+            line.SetPosition(CircleSegments + 1, center);
         }
 
         line.startColor = color;

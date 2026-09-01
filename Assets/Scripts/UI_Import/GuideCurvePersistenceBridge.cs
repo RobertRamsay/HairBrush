@@ -193,9 +193,19 @@ public class GuideCurvePersistenceBridge : MonoBehaviour
         List<GuideNodeSaveData> nodes = new List<GuideNodeSaveData>();
         if (guide.nodesLocal == null) return nodes;
 
-        foreach (Vector3 node in guide.nodesLocal)
+        // Lines the roll list up with the node list before pairing them by index. In a running
+        // session it is already in step; this is what makes a save safe after a guide has come in
+        // from an older file and not yet been touched.
+        GuideCurveManager.NormaliseRoll(guide);
+
+        for (int i = 0; i < guide.nodesLocal.Count; i++)
         {
-            nodes.Add(new GuideNodeSaveData { x = node.x, y = node.y, z = node.z });
+            Vector3 node = guide.nodesLocal[i];
+
+            float roll = 0f;
+            if (guide.nodeRoll != null && i < guide.nodeRoll.Count) roll = guide.nodeRoll[i];
+
+            nodes.Add(new GuideNodeSaveData { x = node.x, y = node.y, z = node.z, roll = roll });
         }
         return nodes;
     }
@@ -208,7 +218,7 @@ public class GuideCurvePersistenceBridge : MonoBehaviour
         foreach (GuideNodeSaveData node in source)
         {
             if (node == null) continue;
-            copy.Add(new GuideNodeSaveData { x = node.x, y = node.y, z = node.z });
+            copy.Add(new GuideNodeSaveData { x = node.x, y = node.y, z = node.z, roll = node.roll });
         }
         return copy;
     }
@@ -372,6 +382,13 @@ public class GuideCurvePersistenceBridge : MonoBehaviour
             frame = GuideCurveManager.BuildInitialFrame(normal);
         }
 
+        // Both lists out of one call, so the trim and the legacy padding inside it apply to the
+        // rolls and the positions in lockstep. Two calls could not: the trim decides which points
+        // survive, and a second pass would have to reach the same decision again from the same
+        // data and be trusted to keep doing so.
+        List<float> rolls;
+        List<Vector3> nodes = FromNodes(saved, out rolls);
+
         return new GuideCurveManager.GuideCurve
         {
             id = ClaimId(saved.id, usedIds, ref nextId),
@@ -379,7 +396,8 @@ public class GuideCurvePersistenceBridge : MonoBehaviour
             contact = new Vector3(saved.contactX, saved.contactY, saved.contactZ),
             normal = normal,
             frame = frame,
-            nodesLocal = FromNodes(saved),
+            nodesLocal = nodes,
+            nodeRoll = rolls,
             amount = Mathf.Clamp01(saved.amount),
             radius = Mathf.Max(.001f, saved.radius),
             falloff = Mathf.Max(0f, saved.falloff),
@@ -394,9 +412,10 @@ public class GuideCurvePersistenceBridge : MonoBehaviour
     // legacy mid/end pair is what rebuilds it. Anything shorter than the floor is padded from
     // the same pair rather than rejected, so a hand-edited file cannot produce a guide with no
     // tip to drag.
-    static List<Vector3> FromNodes(GuideCurveSaveData saved)
+    static List<Vector3> FromNodes(GuideCurveSaveData saved, out List<float> rolls)
     {
         List<Vector3> nodes = new List<Vector3>();
+        rolls = new List<float>();
 
         if (saved.nodes != null)
         {
@@ -404,26 +423,52 @@ public class GuideCurvePersistenceBridge : MonoBehaviour
             {
                 if (node == null) continue;
                 nodes.Add(new Vector3(node.x, node.y, node.z));
+
+                // Clamped on the way IN as well as on the way out. The ceiling is enforced at the
+                // drag, so a value past it can only have come from a hand-edited file - and a
+                // guide holding one would be un-editable to any sane value without dragging it
+                // back through everything in between.
+                rolls.Add(Mathf.Clamp(node.roll,
+                    -GuideCurveManager.MaxNodeRoll, GuideCurveManager.MaxNodeRoll));
             }
 
             // Over the ceiling, keep the first ones AND the last. Trimming the tail instead
             // throws the tip away, so the guide silently shortens to wherever the last surviving
             // point happened to be - the one change a load must never make without saying so.
+            //
+            // The rolls are cut by the same indices in the same breath. A point and its roll that
+            // parted company here would not fail; the guide would simply load wearing somebody
+            // else's twist, which is far harder to notice than a missing point.
             if (nodes.Count > GuideCurveManager.MaxGuideNodes)
             {
                 Vector3 tip = nodes[nodes.Count - 1];
+                float tipRoll = rolls[rolls.Count - 1];
+
                 nodes.RemoveRange(GuideCurveManager.MaxGuideNodes - 1,
                                   nodes.Count - (GuideCurveManager.MaxGuideNodes - 1));
+                rolls.RemoveRange(GuideCurveManager.MaxGuideNodes - 1,
+                                  rolls.Count - (GuideCurveManager.MaxGuideNodes - 1));
+
                 nodes.Add(tip);
+                rolls.Add(tipRoll);
                 Debug.LogWarning("HairBrush: a guide carried more than " +
                                  GuideCurveManager.MaxGuideNodes +
                                  " points and was trimmed. Its root and tip are unchanged.");
             }
         }
 
-        if (nodes.Count == 0) nodes.Add(new Vector3(saved.midX, saved.midY, saved.midZ));
+        // The legacy rebuild has no roll to restore - the files it reads predate the whole idea -
+        // so these pad with zero and the guide comes back unrolled, which is what it was.
+        if (nodes.Count == 0)
+        {
+            nodes.Add(new Vector3(saved.midX, saved.midY, saved.midZ));
+            rolls.Add(0f);
+        }
         if (nodes.Count < GuideCurveManager.MinGuideNodes)
+        {
             nodes.Add(new Vector3(saved.endX, saved.endY, saved.endZ));
+            rolls.Add(0f);
+        }
 
         return nodes;
     }

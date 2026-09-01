@@ -420,6 +420,8 @@ public class InputKeysDialog : MonoBehaviour
         Row(parent, "CTRL + SHIFT + LEFT click", "Insert a point on the curve");
         Row(parent, "CTRL + SHIFT + RIGHT click", "Remove that point");
         Row(parent, "Drag a handle", "Reshape the curve");
+        Row(parent, "CTRL + drag a point", "Roll the hair about the strand at that point");
+        Note(parent, "Roll is zero at the root and eases between points, so a guide banks from the scalp. The needle on a ring shows its angle.");
         Row(parent, "ESC  or  empty space", "Finish editing the guide");
 
         Heading(parent, "SHAPE CURVE GRAPH");

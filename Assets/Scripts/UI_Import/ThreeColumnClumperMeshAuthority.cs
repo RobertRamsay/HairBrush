@@ -364,6 +364,17 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
                             hash = Mix(hash, node.z.GetHashCode());
                         }
                     }
+
+                    // NODE ROLL. Geometry, exactly like the positions above it, and the rule at
+                    // the top of this block applies to it in full: without this a CTRL+drag on a
+                    // ring writes the value, turns the needle and raises the toast while the hair
+                    // does not move - the group hashes back to its cached value and the whole
+                    // evaluation is skipped. The roll would then land all at once at whatever
+                    // unrelated edit next dirtied the group, which is worse than never.
+                    if (g.nodeRoll != null)
+                    {
+                        foreach (float roll in g.nodeRoll) hash = Mix(hash, roll.GetHashCode());
+                    }
                     // The frame turns the two local offsets into world points, so it is as much
                     // geometry as they are. It used to be safe to leave out, because the only
                     // thing that wrote it also wrote contact and normal in the same call. Guides

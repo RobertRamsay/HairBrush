@@ -130,6 +130,24 @@ public class GuideCurveManager : MonoBehaviour
         // protected as well.
         public List<Vector3> nodesLocal = new List<Vector3> { Vector3.up, Vector3.up };
 
+        // How far the hair is rolled about the strand as it passes each node, in degrees.
+        //
+        // The guide already banks the cards it combs - that falls out of carrying the frame up
+        // the strand, and it is the natural answer. This is the control for when the natural
+        // answer is not the wanted one: a parting that needs the hair to turn its face over as it
+        // goes round, a fringe that should show its edge at the tip.
+        //
+        // Parallel to nodesLocal and the same length, ALWAYS - allocated here with an entry per
+        // default node rather than left null and tested for at the point of use, and held in step
+        // by InsertNode and RemoveNode, which are the only two places the node count changes.
+        // NormaliseRoll is the backstop for a file that disagrees.
+        //
+        // THE ROOT IS NOT IN HERE, exactly as it is not in nodesLocal, and that is the whole
+        // reason the base stays put: roll is zero at the contact by construction, and there is no
+        // entry a user could set to make it otherwise. Whatever the first node says, the hair
+        // arrives at it from an unrolled scalp.
+        public List<float> nodeRoll = new List<float> { 0f, 0f };
+
         // Starts at zero, exactly like a new clumper: a modifier that changes nothing until it
         // is asked to. Dropping a guide onto the model should never move hair by itself.
         [Range(0f, 1f)] public float amount = 0f;
@@ -238,6 +256,47 @@ public class GuideCurveManager : MonoBehaviour
         guide.nodesLocal[index] = local;
     }
 
+    // ------------------------------------------------------------------------------ node roll
+
+    // Two full turns either way. Generous - a corkscrew tip is a real thing to want - and bounded,
+    // because the drag is unbounded travel and a number with no ceiling reached by sliding the
+    // mouse is one a user can put somewhere they cannot find their way back from.
+    public const float MaxNodeRoll = 720f;
+
+    public static float GetNodeRoll(GuideCurve guide, int index)
+    {
+        NormaliseRoll(guide);
+        if (guide == null || guide.nodeRoll == null) return 0f;
+        if (index < 0 || index >= guide.nodeRoll.Count) return 0f;
+        return guide.nodeRoll[index];
+    }
+
+    public static void SetNodeRoll(GuideCurve guide, int index, float degrees)
+    {
+        NormaliseRoll(guide);
+        if (guide == null || guide.nodeRoll == null) return;
+        if (index < 0 || index >= guide.nodeRoll.Count) return;
+        guide.nodeRoll[index] = Mathf.Clamp(degrees, -MaxNodeRoll, MaxNodeRoll);
+    }
+
+    // Makes the roll list the same length as the node list, padding with zero and trimming the
+    // tail. Called by every reader and writer above rather than trusted to have been called.
+    //
+    // The list is initialised with the guide and kept in step by InsertNode and RemoveNode, so in
+    // a running session this never has anything to do. It is here for the two ways a guide can
+    // arrive from outside that contract: a project file written by hand, and a build that loads a
+    // guide saved before roll existed - where the nodes are present and the rolls are simply
+    // absent. Padding with zero is what makes such a guide load as the guide it was.
+    public static void NormaliseRoll(GuideCurve guide)
+    {
+        if (guide == null) return;
+        if (guide.nodesLocal == null) return;
+        if (guide.nodeRoll == null) guide.nodeRoll = new List<float>();
+
+        while (guide.nodeRoll.Count < guide.nodesLocal.Count) guide.nodeRoll.Add(0f);
+        while (guide.nodeRoll.Count > guide.nodesLocal.Count) guide.nodeRoll.RemoveAt(guide.nodeRoll.Count - 1);
+    }
+
     // Every point of the curve, contact first, in world space. Allocated per call, so callers
     // that run per frame build it once and hand it around rather than asking twice.
     public static Vector3[] WorldPoints(GuideCurve guide)
@@ -260,7 +319,11 @@ public class GuideCurveManager : MonoBehaviour
     // frame - it is where the reach limit is measured and where the nodes are stored - so handing
     // this a world position would put a second conversion, and a second chance to disagree about
     // which frame is current, right here.
-    public static int InsertNode(GuideCurve guide, int spanIndex, Vector3 local)
+    // spanFraction is how far ALONG that span the new point landed, 0 at the span's near end and
+    // 1 at its far end. It exists only so the new node can be given the roll the curve already
+    // had at that exact spot - see below - and defaults to the middle for a caller that does not
+    // know or care.
+    public static int InsertNode(GuideCurve guide, int spanIndex, Vector3 local, float spanFraction = .5f)
     {
         if (guide == null || guide.nodesLocal == null) return -1;
         if (guide.nodesLocal.Count >= MaxGuideNodes) return -1;
@@ -271,8 +334,42 @@ public class GuideCurveManager : MonoBehaviour
         // Clamped BELOW the last node, not to the count. Inserting at the count appends past the
         // tip and makes the new point the tip, which is the one thing RemoveNode is written to
         // guarantee cannot happen - and an invariant guarded at one end only is not an invariant.
+        // BEFORE the node goes in, so the roll list still matches the list the neighbours below
+        // are read from. NormaliseRoll pads at the TAIL, and the new point is going into the
+        // middle - running it afterwards would line the rolls up one short and shift every roll
+        // past the insertion onto the wrong node.
+        NormaliseRoll(guide);
+
         int index = Mathf.Clamp(spanIndex, 0, guide.nodesLocal.Count - 1);
+
+        // The new point takes the roll the curve ALREADY had AT THE SPOT IT WAS CLICKED, not zero
+        // and not the average of its neighbours. Inserting a point is a request for more control
+        // over a shape, never a request to change it.
+        //
+        // The average was the first version of this and only holds for a click at the middle of a
+        // span, because SampleRollByLength smoothsteps and smoothstep(.5) is .5. A point inserted
+        // a tenth of the way into a span running 0 to 90 sat on a curve reading about 2 degrees
+        // and would have been handed 45 - an eighteen-fold jump that visibly re-twists the hair on
+        // both sides of a click that promised to change nothing.
+        //
+        // Smoothstepped by the SAME formula the sampler uses, so the value is the one the curve
+        // was actually carrying rather than merely a better guess at it. Arc length and span
+        // fraction are not the same parameter, so this is exact only for an evenly sampled span -
+        // but it is continuous with both neighbours and correct at both ends, and re-running
+        // BuildPath here to be exact would rebuild the whole path on every insert.
+        //
+        // nodeRoll[index] is the node about to be pushed along to index + 1, so it is the far
+        // neighbour; index - 1 is the near one, and on the first span there is none, which is the
+        // root, which is zero.
+        float before = 0f;
+        if (index > 0) before = guide.nodeRoll[index - 1];
+        float after = guide.nodeRoll[index];
+
+        float f = Mathf.Clamp01(spanFraction);
+        f = f * f * (3f - 2f * f);
+
         guide.nodesLocal.Insert(index, local);
+        guide.nodeRoll.Insert(index, Mathf.Lerp(before, after, f));
         return index;
     }
 
@@ -288,7 +385,11 @@ public class GuideCurveManager : MonoBehaviour
         if (guide.nodesLocal.Count <= MinGuideNodes) return false;
         if (index < 0 || index >= guide.nodesLocal.Count - 1) return false;
 
+        // Same ordering rule as InsertNode: line the rolls up against the list they still match,
+        // then take the same index out of both.
+        NormaliseRoll(guide);
         guide.nodesLocal.RemoveAt(index);
+        guide.nodeRoll.RemoveAt(index);
         return true;
     }
 
@@ -385,6 +486,55 @@ public class GuideCurveManager : MonoBehaviour
         public Vector3 exitTangent;
         public Vector3 origin;
 
+        // Where each CONTROL point falls along the path, and what it is rolled to, in step.
+        //
+        // Index 0 is the contact, so nodeRoll[0] is always zero and nodeArc[0] always zero -
+        // the root of the curve, unrolled. Index k past that is nodesLocal[k - 1].
+        //
+        // Baked into the path rather than looked up from the guide at sample time because the
+        // path is what Apply is handed. It runs per row per card per guide, and a per-row hop
+        // back to the GuideCurve to re-derive arc positions that cannot have changed since
+        // BuildPath ran would be the sort of thing this file has removed twice already.
+        public float[] nodeArc;
+        public float[] nodeRoll;
+
+        // Roll at arc length s, in degrees.
+        //
+        // SMOOTHSTEP between neighbouring nodes, in arc length rather than in node index, so a
+        // node dragged further out spreads its share of the twist over the distance it actually
+        // covers instead of over "one node's worth". Linear was the alternative and reads as a
+        // crease: roll changes rate abruptly at every node, and on hair that is a visible facet
+        // running across the whole zone.
+        //
+        // PAST THE TIP it HOLDS the last node's value. A card longer than its guide keeps the
+        // roll it arrived with rather than going on winding - the position sampler runs straight
+        // out along exitTangent past the end for the same reason, and a tip that kept twisting
+        // after the guide stopped describing anything would be the one part of the strand nobody
+        // asked for and nobody could aim.
+        public float SampleRollByLength(float s)
+        {
+            if (nodeArc == null || nodeRoll == null) return 0f;
+            if (nodeArc.Length == 0 || nodeRoll.Length != nodeArc.Length) return 0f;
+
+            if (s <= 0f) return nodeRoll[0];
+
+            int last = nodeArc.Length - 1;
+            if (s >= nodeArc[last]) return nodeRoll[last];
+
+            for (int i = 1; i <= last; i++)
+            {
+                if (nodeArc[i] < s) continue;
+
+                float span = nodeArc[i] - nodeArc[i - 1];
+                if (span <= .0000001f) return nodeRoll[i];
+
+                float f = (s - nodeArc[i - 1]) / span;
+                f = f * f * (3f - 2f * f);
+                return Mathf.Lerp(nodeRoll[i - 1], nodeRoll[i], f);
+            }
+            return nodeRoll[last];
+        }
+
         public Vector3 SampleByLength(float s)
         {
             if (points == null || points.Length == 0) return origin;
@@ -437,6 +587,34 @@ public class GuideCurveManager : MonoBehaviour
         }
 
         path.totalLength = path.cumulative[samples - 1];
+
+        // Where each control point sits along what was just measured.
+        //
+        // EvaluatePoints spreads its parameter evenly over the spans in every branch it has - the
+        // two point lerp, the three point quadratic (which is a Lagrange fit passing through the
+        // middle point at exactly t = .5, not a Bezier that misses it), and the Catmull-Rom for
+        // four and up. So control k is at t = k / (n - 1), and the sample index it lands on is
+        // that times the last sample.
+        //
+        // Interpolated between the two neighbouring samples rather than rounded to one. The index
+        // is exact whenever the sample count came out as SamplesPerSpan per span, but the Clamp
+        // above has two ends: a short guide is floored at PathSamples and a twenty node one is
+        // capped at MaxPathSamples, and in both cases the control points land between samples.
+        NormaliseRoll(guide);
+        path.nodeArc = new float[control.Length];
+        path.nodeRoll = new float[control.Length];
+
+        for (int k = 0; k < control.Length; k++)
+        {
+            float position = (float)k / (control.Length - 1) * (samples - 1);
+            int low = Mathf.Clamp(Mathf.FloorToInt(position), 0, samples - 1);
+            int high = Mathf.Min(low + 1, samples - 1);
+            path.nodeArc[k] = Mathf.Lerp(path.cumulative[low], path.cumulative[high], position - low);
+
+            // Control 0 is the contact, which has no entry in nodesLocal and is never rolled.
+            if (k == 0) continue;
+            if (k - 1 < guide.nodeRoll.Count) path.nodeRoll[k] = guide.nodeRoll[k - 1];
+        }
 
         // The analytic derivative at the end for the three point case, and the last chord for
         // everything else - which is also the fallback when the points are collinear and close
@@ -1095,6 +1273,7 @@ public class GuideCurveManager : MonoBehaviour
         AddHint(controlsRoot.transform, "CTRL + SHIFT + CLICK on the curve adds a point, up to " +
                                         (MaxGuideNodes + 1));
         AddHint(controlsRoot.transform, "CTRL + SHIFT + RIGHT CLICK a point removes it (not the tip)");
+        AddHint(controlsRoot.transform, "CTRL + DRAG a point rolls the hair about the strand there");
         AddHint(controlsRoot.transform, "SPACE + CLICK moves this guide, keeping its shape");
         AddHint(controlsRoot.transform, "Card placing is OFF while a guide is selected");
         AddHint(controlsRoot.transform, "Colour tells overlapping guides apart - it is saved");
@@ -1247,6 +1426,10 @@ public static class GuideDeformation
     private static Vector3[] blendScratch = new Vector3[0];
     private static Vector3[] outScratch = new Vector3[0];
 
+    // Degrees of roll for each row, resolved in the same pass that decides where the row goes and
+    // read back in the pass that carries the cross-sections onto it.
+    private static float[] rollScratch = new float[0];
+
     // How far along the card the guide reaches full strength, as a fraction of its length, and
     // the fewest segments that fraction is allowed to be worth. See RampAlong.
     private const float RampKnee = .35f;
@@ -1277,6 +1460,7 @@ public static class GuideDeformation
         if (worldScratch.Length < rows) worldScratch = new Vector3[rows];
         if (blendScratch.Length < rows) blendScratch = new Vector3[rows];
         if (outScratch.Length < rows) outScratch = new Vector3[rows];
+        if (rollScratch.Length < rows) rollScratch = new float[rows];
 
         // Arc length along the card's OWN spine, measured in WORLD space.
         //
@@ -1352,9 +1536,15 @@ public static class GuideDeformation
         // when a modifier is raised is the one artifact nobody forgives.
         blendScratch[0] = spine[0];
 
+        // The root is never rolled, and this is where that is decided rather than merely where it
+        // happens to work out. Row 0 sits on the scalp; whatever the first node asks for, the
+        // hair arrives at it from an unrolled base.
+        rollScratch[0] = 0f;
+
         for (int i = 1; i < rows; i++)
         {
             Vector3 weightedTarget = Vector3.zero;
+            float weightedRoll = 0f;
             float weightSum = 0f;
 
             for (int g = 0; g < guides.Count; g++)
@@ -1370,12 +1560,20 @@ public static class GuideDeformation
                 // guided and clumped at once instead of having to choose.
                 Vector3 targetWorld = rootWorld + (active.path.SampleByLength(arcScratch[i]) - active.path.origin);
                 weightedTarget += card.transform.InverseTransformPoint(targetWorld) * w;
+
+                // Roll rides on the SAME weights as the position, read at the same arc length.
+                // Two guides overlapping a card blend their twist exactly as they blend their
+                // shape, so a card cannot end up following one guide's line while wearing
+                // another's roll.
+                weightedRoll += active.path.SampleRollByLength(arcScratch[i]) * w;
+
                 weightSum += w;
             }
 
             if (weightSum <= .0001f)
             {
                 blendScratch[i] = spine[i];
+                rollScratch[i] = 0f;
                 continue;
             }
 
@@ -1390,7 +1588,15 @@ public static class GuideDeformation
             // still reduces to plain Amount for the single-guide case.
             Vector3 blendedTarget = weightedTarget / weightSum;
 
-            blendScratch[i] = Vector3.Lerp(spine[i], blendedTarget, strongest * RampAlong(arcScratch[i], knee));
+            // Through the SAME ramp and the same strongest-weight rule the position uses, which
+            // is what ties the twist to the comb rather than letting it be a second effect with
+            // its own reach. A card half in the zone gets half the roll; a card at the root gets
+            // none, because the ramp is zero there; and winding Amount back to nothing takes the
+            // roll with it instead of leaving a twisted card sitting on its own line.
+            float influence = strongest * RampAlong(arcScratch[i], knee);
+
+            blendScratch[i] = Vector3.Lerp(spine[i], blendedTarget, influence);
+            rollScratch[i] = weightedRoll / weightSum * influence;
         }
 
         // -------------------------------------------------------------- and how far along it is
@@ -1564,7 +1770,23 @@ public static class GuideDeformation
             // Renormalised as it accumulates. Sixty composed quaternions is not enough drift to
             // see, but this runs per card per guided group per rebuild and costs one sqrt.
             carried = Quaternion.Normalize(step * carried);
+
+            // NODE ROLL, composed on top of the transport rather than into it.
+            //
+            // carried has to stay a pure parallel transport: it is what the NEXT row measures its
+            // own increment against, and folding the roll into it would make each row's roll the
+            // sum of every roll below it - a guide asking for 30 degrees at three nodes would
+            // deliver 90 at the tip. Kept outside, each row wears the absolute roll the curve
+            // says it should have at that arc length, and nothing accumulates.
+            //
+            // About movedDirection, which is the row's tangent AFTER the guide has aimed it - so
+            // the roll is about the strand the hair actually ends up lying along, not the one it
+            // grew as.
             Quaternion turn = carried;
+            if (Mathf.Abs(rollScratch[i]) > .0001f)
+            {
+                turn = Quaternion.AngleAxis(rollScratch[i], movedDirection) * carried;
+            }
 
             // Over the row's columns rather than three by name: under DIAMOND there is a
             // fourth point, and a cross-section carried onto the new spine with one of its
@@ -1579,9 +1801,13 @@ public static class GuideDeformation
             // holds while the ribbon leaves it without a kink.
             if (i == 1)
             {
+                // carried, NOT turn - the aiming without the roll. rollScratch[0] is zero by
+                // construction and this is what honours it: the root keeps the facing it grew
+                // with while the strand above it twists away, which is the whole meaning of
+                // rolling a guide from the base rather than rotating the hair at the scalp.
                 for (int column = 0; column < columns; column++)
                 {
-                    vertices[column] = spine[0] + turn * (vertices[column] - spine[0]);
+                    vertices[column] = spine[0] + carried * (vertices[column] - spine[0]);
                 }
             }
 

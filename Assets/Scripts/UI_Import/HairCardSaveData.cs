@@ -258,6 +258,14 @@ public class GuideCurveSaveData
 public class GuideNodeSaveData
 {
     public float x,y,z;
+
+    // Degrees of roll about the strand as it passes this node. Kept ON the node rather than in a
+    // parallel list beside them, so the two cannot arrive at different lengths - the trim in
+    // GuideCurvePersistenceBridge.FromNodes would otherwise have to remember to cut both.
+    //
+    // Absent from a guide written before roll existed, and JsonUtility leaves an absent key at
+    // its field initialiser, so such a guide loads as zero: unrolled, exactly as it was saved.
+    public float roll;
 }
 
 [Serializable] public class PostAffectorControlSaveData
