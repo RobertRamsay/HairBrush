@@ -72,6 +72,9 @@ public class UIThemeAuthority : MonoBehaviour
             // Graphic is the full-screen backdrop, so that clicking away closes the page. The
             // CLOSE button inside it is not named here and is skinned normally.
             if (goName == InputKeysDialog.DimmerName) continue;
+            // And the missing-head question's backdrop, for the same reason again. Its two
+            // answer buttons inside the card are not named here and are skinned normally.
+            if (goName == MissingModelPrompt.DimmerName) continue;
 
             if (!styledButtons.Contains(button))
             {

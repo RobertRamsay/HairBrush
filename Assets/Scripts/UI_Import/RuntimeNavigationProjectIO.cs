@@ -237,11 +237,75 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
 
         if(!string.IsNullOrEmpty(data.modelPath))
         {
-            SetField("currentModelPath",data.modelPath); GameObject old=GetField<GameObject>("loadedModel"); if(old!=null)Destroy(old);
-            GameObject model=CustomOBJImporter.Load(data.modelPath); SetField("loadedModel",model);
-            if(model!=null){model.transform.position=Vector3.zero;model.transform.eulerAngles=new Vector3(0,180,0);MeshRenderer[] rs=model.GetComponentsInChildren<MeshRenderer>();if(rs.Length>0){Bounds b=rs[0].bounds;for(int i=1;i<rs.Length;i++)b.Encapsulate(rs[i].bounds);if(viewer.cameraPivot!=null)viewer.cameraPivot.position=b.center;}}
-            else Debug.LogError("HairBrush: could not load model referenced by project - file not found at: " + data.modelPath);
+            GameObject old=GetField<GameObject>("loadedModel"); if(old!=null)Destroy(old);
+
+            // The path in the file first, then the places the same file plausibly moved to.
+            string resolved;
+            GameObject resolvedModel = TryResolveModel(data, path, out resolved);
+
+            if(resolvedModel == null)
+            {
+                // NOT AN ERROR IN THE LOG AND NOTHING ELSE - which is what this used to be. The
+                // hair would appear with no head under it, placement would silently do nothing
+                // because there was no surface to hit, and the only trace was a line in a
+                // console the user does not have.
+                //
+                // The load STOPS here, with nothing spawned, and resumes down one of the two
+                // branches below. It cannot simply carry on and fix the model afterwards:
+                // MigrateImportScale rewrites the save payload before a card exists, so the
+                // model has to be settled before the groom is built from it.
+                SetField("currentModelPath",data.modelPath);
+                Debug.LogWarning("HairBrush: the model this project was groomed on is missing - " + data.modelPath);
+
+                HairProjectSaveData pending = data;
+                string pendingPath = path;
+                MissingModelPrompt.Show(
+                    data.modelPath,
+                    chosen =>
+                    {
+                        SetField("currentModelPath", chosen);
+                        PlaceLoadedModel(CustomOBJImporter.Load(chosen));
+
+                        if(GetField<GameObject>("loadedModel") == null)
+                        {
+                            StatusToast.Show("HairBrush could not import that OBJ. The groom has been loaded without a head.", true, 6f);
+                        }
+                        else
+                        {
+                            // The path the project will save from now on, so this is asked once.
+                            pending.modelPath = chosen;
+                            lastResolvedModelFolder = Path.GetDirectoryName(chosen);
+                            StatusToast.Show("Head mesh re-sourced from " + Path.GetFileName(chosen) + ".", false, 4f);
+                        }
+
+                        CompleteProjectLoad(pending, pendingPath);
+                    },
+                    () =>
+                    {
+                        StatusToast.Show("Loaded without a head mesh. Placing needs a surface, so import the model to groom on it.", true, 7f);
+                        CompleteProjectLoad(pending, pendingPath);
+                    });
+                return;
+            }
+
+            // resolvedModel, not a second CustomOBJImporter.Load of the same path - TryResolveModel
+            // has already imported it, and importing again would parse the whole OBJ twice and
+            // strand the first copy in the scene.
+            SetField("currentModelPath",resolved);
+            if(resolved != data.modelPath) data.modelPath = resolved;
+            lastResolvedModelFolder = Path.GetDirectoryName(resolved);
+            PlaceLoadedModel(resolvedModel);
         }
+
+        CompleteProjectLoad(data, path);
+    }
+
+    // Everything from the scale reconciliation onward. Split out of LoadProjectFromPath so the
+    // load can PAUSE on the missing-model question and resume down either answer - see
+    // MissingModelPrompt for why it has to pause rather than repair afterwards.
+    void CompleteProjectLoad(HairProjectSaveData data, string path)
+    {
+        if(data == null) return;
 
         // BEFORE the sliders, the cards and the group restore, all three of which read straight
         // out of this payload. Deliberately here and not inside ApplyGlobalSliders/
@@ -278,6 +342,100 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
         StartCoroutine(SelectLoadedGroupWhenSettled(data));
         RepairAngleControls(true);
         Debug.Log("Project loaded successfully from: "+path);
+    }
+
+    // Where the last model that DID resolve came from, so a folder that has moved is only hunted
+    // for once per session however many projects are opened out of it.
+    static string lastResolvedModelFolder;
+
+    // Puts an imported model where a project load expects it and frames the camera on it. Was
+    // written out inline in the load; it has two callers now.
+    void PlaceLoadedModel(GameObject model)
+    {
+        SetField("loadedModel", model);
+        if (model == null) return;
+
+        model.transform.position = Vector3.zero;
+        model.transform.eulerAngles = new Vector3(0f, 180f, 0f);
+
+        MeshRenderer[] renderers = model.GetComponentsInChildren<MeshRenderer>();
+        if (renderers.Length == 0) return;
+
+        Bounds bounds = renderers[0].bounds;
+        for (int i = 1; i < renderers.Length; i++) bounds.Encapsulate(renderers[i].bounds);
+        if (viewer.cameraPivot != null) viewer.cameraPivot.position = bounds.center;
+    }
+
+    // The saved path, then the places the same file has most likely moved to. Returns the imported
+    // model, with the path it came from, or null when nothing plausible holds it - which is the
+    // only case that asks the user anything.
+    //
+    // WHY LOOK AT ALL rather than just asking. The overwhelmingly common way this happens is that
+    // the whole folder moved - onto another drive, another machine, out of Downloads and into a
+    // project folder - and the OBJ is still sitting right next to the .json it belongs to. Asking
+    // in that case is a question with one obvious answer, which is a question not worth asking.
+    GameObject TryResolveModel(HairProjectSaveData data, string projectPath, out string resolvedPath)
+    {
+        resolvedPath = null;
+        if (data == null || string.IsNullOrEmpty(data.modelPath)) return null;
+
+        // The recorded path, taken on its word with no geometry test. If the project says this is
+        // the file then it is the file, and an OBJ re-exported since is the existing mismatch
+        // warning's business rather than this method's.
+        if (File.Exists(data.modelPath))
+        {
+            resolvedPath = data.modelPath;
+            return CustomOBJImporter.Load(data.modelPath);
+        }
+
+        string fileName = Path.GetFileName(data.modelPath);
+        if (string.IsNullOrEmpty(fileName)) return null;
+
+        GameObject model = TryCandidate(Path.GetDirectoryName(projectPath), fileName, data, ref resolvedPath);
+        if (model != null) return model;
+
+        return TryCandidate(lastResolvedModelFolder, fileName, data, ref resolvedPath);
+    }
+
+    // A file of the right name in `folder`, accepted ONLY if it is also the right geometry.
+    //
+    // The hash test is what makes taking a file NOBODY POINTED AT defensible. A same-named OBJ
+    // beside the project is usually the model; "usually" is not good enough to place a groom onto
+    // silently, and a stale export of a different head would put the hair somewhere wrong with
+    // nothing said. When the hash disagrees this hands back nothing and the user is asked, which
+    // is the right outcome for a guess that failed.
+    //
+    // It has to import to find out - the hash is computed from parsed geometry, and there is no
+    // way to read it off the file. That is a real cost, paid once, on a load, only when the
+    // recorded path has already failed. The rejected import is destroyed rather than left in the
+    // scene, or it would sit there invisible behind whatever loads next.
+    //
+    // A project written before hashes were recorded has nothing to check and is taken on name.
+    GameObject TryCandidate(string folder, string fileName, HairProjectSaveData data, ref string resolvedPath)
+    {
+        if (string.IsNullOrEmpty(folder)) return null;
+
+        string candidate = Path.Combine(folder, fileName);
+        if (!File.Exists(candidate)) return null;
+        if (candidate == data.modelPath) return null;
+
+        GameObject model = CustomOBJImporter.Load(candidate);
+        if (model == null) return null;
+
+        int expected = data.importMetadata != null ? data.importMetadata.meshHash : 0;
+        if (expected != 0)
+        {
+            ImportedOBJMetadata metadata = model.GetComponent<ImportedOBJMetadata>();
+            if (metadata == null || metadata.meshHash != expected)
+            {
+                Destroy(model);
+                return null;
+            }
+        }
+
+        resolvedPath = candidate;
+        Debug.Log("HairBrush: found this project's head mesh beside it at " + candidate);
+        return model;
     }
 
     // What the currently loaded model was imported as, for the project file.
