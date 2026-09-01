@@ -119,9 +119,12 @@ public class HairCard : MonoBehaviour
     // HairCardSection when the DIAMOND profile arrived, because a second winding pattern was
     // one hand-written copy too many. Under TENT it emits the same four triangles, in the same
     // order, that used to be written out here.
-    public static void BuildStripTriangles(int segments, bool flipWinding, int[] triangles)
+    // `vertices` lets each quad be split on its shorter diagonal - see HairCardSection for why a
+    // fixed diagonal made a symmetric card render asymmetrically. Pass the positions that were
+    // just written; omitting them falls back to a symmetric but shape-blind rule.
+    public static void BuildStripTriangles(int segments, bool flipWinding, int[] triangles, Vector3[] vertices = null)
     {
-        HairCardSection.BuildTriangles(segments, flipWinding, triangles);
+        HairCardSection.BuildTriangles(segments, flipWinding, triangles, vertices);
     }
 
     public static float MaxRepresentableTurns(int segments)
@@ -1557,7 +1560,8 @@ public class HairCard : MonoBehaviour
                 finalULeft, finalURight, finalV);
         }
 
-        BuildStripTriangles(segments, GroupNormalFlipAuthority.IsFlipped(groupId), triangles);
+        // After the row loop, so the positions the diagonal choice reads are this rebuild's.
+        BuildStripTriangles(segments, GroupNormalFlipAuthority.IsFlipped(groupId), triangles, baseVertices);
 
         int sourceSignature = ComputeGeneratedMeshSignature(baseVertices, uvs, segments);
         generatedMeshSignature = sourceSignature;

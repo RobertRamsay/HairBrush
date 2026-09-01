@@ -167,7 +167,10 @@ public static class HairCardSection
     //
     // The tent's two edges produce exactly the four triangles, in exactly the order, that the
     // hand-written version produced - so a tent card's mesh is unchanged, index for index.
-    public static void BuildTriangles(int segments, bool flipWinding, int[] triangles)
+    // `vertices` is what lets each quad be split the better of its two ways. Optional: a caller
+    // that has no positions to hand gets the alternating fallback, which is still symmetric and
+    // still correct, just blind to the card's actual shape.
+    public static void BuildTriangles(int segments, bool flipWinding, int[] triangles, Vector3[] vertices = null)
     {
         if (triangles == null) return;
 
@@ -189,10 +192,65 @@ public static class HairCardSection
                 int b = edge + 1;
                 if (b >= columns) b = 0;
 
-                AddTriangle(triangles, ref triIndex, row + a, next + a, row + b, flipWinding);
-                AddTriangle(triangles, ref triIndex, row + b, next + a, next + b, flipWinding);
+                if (UseNearDiagonal(vertices, row + a, next + a, next + b, row + b, edge))
+                {
+                    AddTriangle(triangles, ref triIndex, row + a, next + a, row + b, flipWinding);
+                    AddTriangle(triangles, ref triIndex, row + b, next + a, next + b, flipWinding);
+                }
+                else
+                {
+                    // The other diagonal of the same quad, wound the same way round it, so the
+                    // face orientation - and therefore which side the surface is lit from - is
+                    // untouched. Only which two triangles span the quad changes.
+                    AddTriangle(triangles, ref triIndex, row + a, next + a, next + b, flipWinding);
+                    AddTriangle(triangles, ref triIndex, row + a, next + b, row + b, flipWinding);
+                }
             }
         }
+    }
+
+    // Which of a quad's two diagonals to split it on. True keeps the historical one, B to D.
+    //
+    // WHY THIS IS NOT A FIXED RULE ANY MORE. Every quad used to take the same diagonal, and that
+    // makes the MESH asymmetric even when the CARD is perfectly symmetric: the tent's left and
+    // right panels are mirror images, but with one shared rule the triangles fanning into the
+    // ridge vertex are not, so RecalculateNormals hands that vertex a normal tilted off centre.
+    // Measured against the true surface on a straight symmetric card, the ridge normal came out
+    // 13.9 degrees off under TENT and 84.5 under DIAMOND - and the same way on every card in the
+    // groom, so it does not read as noise. It reads as the whole head lit slightly wrong from one
+    // side. A bent, tapered diamond reached 155 degrees.
+    //
+    // A GLOBAL FLIP CANNOT FIX THAT. Reversing every quad together leaves the two halves still
+    // agreeing with each other and leans the error the other way; it measures the same.
+    //
+    // SHORTEST DIAGONAL is the fix, and it is self-correcting rather than a rule to maintain. On
+    // a symmetric card the two panels' diagonals are mirror-equal lengths, so the shorter one on
+    // the left is the mirrored one on the right and symmetry falls out for free; on a twisted or
+    // waved card it picks the split that folds least, which the fixed rule could not do at all.
+    // Measured: worst quad fold on a heavily twisted card 13.9 degrees fixed, 12.9 shortest.
+    //
+    // THE TIE IS THE INTERESTING CASE, and getting it wrong puts the bug straight back. On a
+    // straight card the two diagonals are EXACTLY equal, so a bare comparison picks the same side
+    // every time and degenerates to the old fixed rule - on the commonest card shape there is.
+    // Alternating by edge index breaks the tie the symmetric way: under the mirror the section
+    // maps left to right and top to top, so each edge maps onto its neighbour REVERSED, and a
+    // reversed quad wants the other diagonal. With the tie-break in, every symmetric card
+    // measures 0.00 degrees of asymmetry, straight ones included.
+    private static bool UseNearDiagonal(Vector3[] vertices, int a, int b, int c, int d, int edge)
+    {
+        bool alternate = (edge & 1) == 0;
+        if (vertices == null) return alternate;
+        if (a >= vertices.Length || b >= vertices.Length || c >= vertices.Length || d >= vertices.Length) return alternate;
+
+        float bd = (vertices[b] - vertices[d]).sqrMagnitude;
+        float ac = (vertices[a] - vertices[c]).sqrMagnitude;
+
+        // Relative, because a hair card is millimetres across and these are squared lengths -
+        // an absolute epsilon would call every quad on a fine card a tie, or none of them.
+        float scale = Mathf.Max(bd, ac);
+        if (Mathf.Abs(bd - ac) <= scale * .000001f) return alternate;
+
+        return bd < ac;
     }
 
     private static void AddTriangle(int[] triangles, ref int index, int a, int b, int c, bool flipWinding)

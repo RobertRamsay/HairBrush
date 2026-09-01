@@ -596,7 +596,12 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
                 finalULeft, finalURight, finalV);
         }
 
-        HairCard.BuildStripTriangles(segments, GroupNormalFlipAuthority.IsFlipped(card.groupId), triangles);
+        // The CLEAN positions, which is the right input even though a guide or a clump is about to
+        // move them: this triangle list is written once per evaluation and then the vertices are
+        // deformed under it, so a diagonal chosen from the deformed shape would only be right for
+        // the frame it was chosen on. The clean shape is the stable one, and the two differ by a
+        // fraction of a degree of fold.
+        HairCard.BuildStripTriangles(segments, GroupNormalFlipAuthority.IsFlipped(card.groupId), triangles, vertices);
 
         return new CleanMeshData
         {
