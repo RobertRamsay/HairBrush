@@ -44,6 +44,9 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         new List<GuideCurveManager.GuideCurve>();
     private readonly Dictionary<int, int> lastGroupSignature = new Dictionary<int, int>();
 
+    // Reused across groups and frames. Only reached when a group actually has a modifier on it.
+    private readonly List<HairCard> groupCardScratch = new List<HairCard>();
+
     // Last island each clumper (by id) successfully resolved to, so a transient raycast miss
     // reuses the previous answer instead of silently dropping that clumper for the frame.
     private readonly Dictionary<int, int> lastResolvedIsland = new Dictionary<int, int>();
@@ -85,7 +88,6 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
 
         List<GroupClumperManager.GroupClumper> clumpers = new List<GroupClumperManager.GroupClumper>();
         if (manager != null) clumpers = manager.GetAllClumpers();
-        HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
 
         // Amount == 0 means this clumper no longer owns the generated mesh. Treat zeroed
         // clumpers exactly like removed clumpers here rather than keeping their group alive
@@ -117,7 +119,7 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
 
         if (ordered.Count == 0 && activeGuides.Count == 0)
         {
-            RestoreRemovedGroups(allCards, groups);
+            RestoreRemovedGroups(HairCard.All, groups);
             lastGroupSignature.Clear();
             return;
         }
@@ -143,9 +145,18 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
             {
                 groupGuides = activeGuides.Where(g => g.groupId == groupId).ToList();
             }
-            HairCard[] groupCards = allCards
-                .Where(c => c != null && c.groupId == groupId)
-                .ToArray();
+            // Gathered with a plain loop over the registry rather than Where().ToArray(): this
+            // is per group per frame, and the LINQ form allocated two iterators and an
+            // intermediate on every one of them.
+            groupCardScratch.Clear();
+            IReadOnlyList<HairCard> registry = HairCard.All;
+            for (int c = 0; c < registry.Count; c++)
+            {
+                HairCard candidate = registry[c];
+                if (candidate == null || candidate.groupId != groupId) continue;
+                groupCardScratch.Add(candidate);
+            }
+            HairCard[] groupCards = groupCardScratch.ToArray();
 
             int signature = ComputeGroupSignature(groupId, groupClumpers, groupGuides, groupCards);
             if (lastGroupSignature.TryGetValue(groupId, out int previous) && previous == signature)
@@ -172,7 +183,11 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
             lastGroupSignature.Remove(stale);
     }
 
-    void RestoreRemovedGroups(HairCard[] allCards, HashSet<int> currentGroups)
+    // Takes the live registry rather than an array fetched by the caller. The card walk inside
+    // only happens for a group that has just LOST its last modifier - so in the steady state the
+    // outer loop is empty and no card is touched at all, which is exactly why fetching forty
+    // thousand of them up front to hand to it was the wrong shape.
+    void RestoreRemovedGroups(IReadOnlyList<HairCard> allCards, HashSet<int> currentGroups)
     {
         foreach (int oldGroup in overriddenGroups.Where(g => !currentGroups.Contains(g)).ToArray())
         {

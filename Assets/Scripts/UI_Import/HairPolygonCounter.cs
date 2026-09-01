@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -79,11 +80,31 @@ public class HairPolygonCounter : MonoBehaviour
             go.transform.SetSiblingIndex(title.GetSiblingIndex() + 1);
     }
 
+    // Cached against the two things that can change the answer. Nothing else can: a polygon
+    // count moves when a card is created or destroyed, or when a mesh is rewritten, and both of
+    // those are counters now.
+    //
+    // Without this the whole sweep ran on the timer regardless - forty thousand GetComponent
+    // calls plus two native Mesh queries each - to arrive at a number that had not moved since
+    // the last time it was asked, which while navigating is every time.
+    private long cachedTotal;
+    private int cachedRegistryVersion = -1;
+    private int cachedMeshGeneration = -1;
+
     long CountHairPolygons()
     {
+        if (cachedRegistryVersion == HairCard.RegistryVersion &&
+            cachedMeshGeneration == HairCard.MeshGeneration)
+            return cachedTotal;
+
+        cachedRegistryVersion = HairCard.RegistryVersion;
+        cachedMeshGeneration = HairCard.MeshGeneration;
+
         long total = 0;
-        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
+        IReadOnlyList<HairCard> cards = HairCard.All;
+        for (int i = 0; i < cards.Count; i++)
         {
+            HairCard card = cards[i];
             if (card == null) continue;
             MeshFilter filter = card.GetComponent<MeshFilter>();
             Mesh mesh = filter != null ? filter.sharedMesh : null;
@@ -92,6 +113,8 @@ public class HairPolygonCounter : MonoBehaviour
             for (int sub = 0; sub < mesh.subMeshCount; sub++)
                 total += (long)mesh.GetIndexCount(sub) / 3L;
         }
+
+        cachedTotal = total;
         return total;
     }
 }

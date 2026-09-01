@@ -169,12 +169,32 @@ public class SurfaceIslandCardTagAuthority : MonoBehaviour
         if (Time.unscaledTime < nextScan) return;
         nextScan = Time.unscaledTime + .15f;
 
-        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
+        // ONLY WHEN THE SET OF CARDS HAS CHANGED.
+        //
+        // A tag, once written, never becomes wrong on its own - it is resolved from the card's
+        // root against the model, and neither moves without the card being rebuilt. So the only
+        // way a new untagged card appears is for one to be created, which moves RegistryVersion.
+        //
+        // The sweep was running six times a second regardless: forty thousand GetComponent
+        // calls to re-confirm tags that were all already written. And for any card whose island
+        // could NOT be resolved it is far worse than that - TryGetCardIsland fires two
+        // Physics.Raycasts and only writes the tag on success, so an unresolvable card is
+        // retried forever. On a model with no collider, or roots that have drifted off the
+        // surface, that is eighty thousand raycasts every 0.15 seconds, permanently, and it
+        // presents as a hitch six times a second that nothing in the UI explains.
+        if (lastRegistryVersion == HairCard.RegistryVersion) return;
+        lastRegistryVersion = HairCard.RegistryVersion;
+
+        IReadOnlyList<HairCard> cards = HairCard.All;
+        for (int i = 0; i < cards.Count; i++)
         {
+            HairCard card = cards[i];
             if (card == null) continue;
             HairCardSurfaceIsland tag = card.GetComponent<HairCardSurfaceIsland>();
             if (tag != null && tag.islandId >= 0) continue;
             SurfaceIslandScope.TryGetCardIsland(card, out _);
         }
     }
+
+    private int lastRegistryVersion = -1;
 }

@@ -109,9 +109,19 @@ public class PostShapeCurveBridge : MonoBehaviour
             SavePresentedRegistryToPost(presentedPostId, presentedGroupId);
 
         Dictionary<int, List<PostAffectorManager.PostAffector>> groups = GetGroups();
-        HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
-        foreach (HairCard card in cards)
+
+        // No POSTs anywhere means there is no profile provenance to attach and none to clear,
+        // so the sweep below has nothing to do for any card. It was doing it anyway: forty
+        // thousand IsCardFrozen calls and forty thousand ClearPostShapeProfileContributions
+        // calls every frame, on top of the array. Same gate PostVarianceAffectorBridge already
+        // opens with.
+        if (groups == null || groups.Count == 0) return;
+
+        // HairCard.All, not FindObjectsByType. Same list, no 40k array allocated per frame.
+        IReadOnlyList<HairCard> cards = HairCard.All;
+        for (int i = 0; i < cards.Count; i++)
         {
+            HairCard card = cards[i];
             if (card == null) continue;
 
             // Frozen by SOLO - leave the card's existing profile provenance and mesh alone.

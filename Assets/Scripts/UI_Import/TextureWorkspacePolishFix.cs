@@ -458,11 +458,12 @@ public class TextureWorkspacePolishFix : MonoBehaviour
         }
     }
 
+    // Was a private full-scene sweep, called three times from an UNGATED LateUpdate - and the
+    // panels it looks for do not exist at all in a grooming session, so the null guard above
+    // never latched and all three ran to completion over every object in the scene, every frame.
+    // See RuntimeNamedObjectCache for what that actually cost.
     static GameObject FindInactive(string objectName)
     {
-        foreach (Transform transform in FindObjectsByType<Transform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
-            if (transform != null && transform.name == objectName)
-                return transform.gameObject;
-        return null;
+        return RuntimeNamedObjectCache.Find(objectName);
     }
 }

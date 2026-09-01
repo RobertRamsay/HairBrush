@@ -185,14 +185,33 @@ public class GroupPanelPostHintStats : MonoBehaviour
         ordered.Add(child);
     }
 
-    void UpdateGroupHeaders()
-    {
-        Dictionary<int, int> cardsByGroup = new();
-        Dictionary<int, long> polysByGroup = new();
+    // The per-group card and polygon totals, and the two counters that are the only things that
+    // can move them. Recomputing these on the timer meant forty thousand GetComponent calls and
+    // two native Mesh queries each, ten times a second - duplicating, to the line,
+    // what HairPolygonCounter was doing on its own timer for the whole-groom figure.
+    private readonly Dictionary<int, int> cardsByGroup = new();
+    private readonly Dictionary<int, long> polysByGroup = new();
+    private int statsRegistryVersion = -1;
+    private int statsMeshGeneration = -1;
 
-        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
+    // Rebuilt only when a card was created or destroyed, or a mesh was actually written.
+    void RefreshGroupStats()
+    {
+        if (statsRegistryVersion == HairCard.RegistryVersion &&
+            statsMeshGeneration == HairCard.MeshGeneration) return;
+
+        statsRegistryVersion = HairCard.RegistryVersion;
+        statsMeshGeneration = HairCard.MeshGeneration;
+
+        cardsByGroup.Clear();
+        polysByGroup.Clear();
+
+        IReadOnlyList<HairCard> cards = HairCard.All;
+        for (int i = 0; i < cards.Count; i++)
         {
+            HairCard card = cards[i];
             if (card == null) continue;
+
             int gid = card.groupId;
             cardsByGroup[gid] = cardsByGroup.TryGetValue(gid, out int count) ? count + 1 : 1;
 
@@ -205,6 +224,11 @@ public class GroupPanelPostHintStats : MonoBehaviour
 
             polysByGroup[gid] = (polysByGroup.TryGetValue(gid, out long existing) ? existing : 0L) + polys;
         }
+    }
+
+    void UpdateGroupHeaders()
+    {
+        RefreshGroupStats();
 
         Dictionary<int, string> groupNames = GetGroupNames();
 

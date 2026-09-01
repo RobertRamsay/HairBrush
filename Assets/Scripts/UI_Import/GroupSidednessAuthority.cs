@@ -131,8 +131,29 @@ public class GroupSidednessAuthority : MonoBehaviour
         // Keeps the shared single-sided clone in step with whatever the base hair
         // material currently is - textures included - after a Texture Editor change.
         HairCard.RefreshSingleSidedVariants();
+
+        // ONLY WHEN THE ANSWER COULD HAVE CHANGED.
+        //
+        // This timer is insurance, not the mechanism: every real edit - SetSingleSided, Forget,
+        // ReapplyAll, a project restore - calls ApplyAll directly. The scan existed to catch
+        // cards that appeared without one of those, and it was paying for that by re-asserting
+        // the cull state of every card in the groom ten times a second: forty thousand
+        // GetComponent calls and forty thousand native sharedMaterial reads per scan, to write
+        // back the value already there.
+        //
+        // SidednessState folds together every input the answer depends on, so the insurance
+        // still holds - a card spawned into a single-sided group moves RegistryVersion and is
+        // caught on the next scan - at the cost of one integer compare when nothing happened.
+        int state = SidednessState();
+        if (state == lastAppliedState) return;
+        lastAppliedState = state;
+
         ApplyAll();
     }
+
+    // See the guard in Update. -1 is a value SidednessState cannot return for a real scene, so
+    // the first scan always applies.
+    private int lastAppliedState = -1;
 
     void TryRestorePending()
     {
@@ -159,11 +180,34 @@ public class GroupSidednessAuthority : MonoBehaviour
 
     static void ApplyAll()
     {
-        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
+        IReadOnlyList<HairCard> cards = HairCard.All;
+        for (int i = 0; i < cards.Count; i++)
         {
+            HairCard card = cards[i];
             if (card == null) continue;
             card.SetDoubleSided(!IsSingleSided(card.groupId));
         }
+    }
+
+    // What ApplyAll's answer depends on. Every input is an int or a bool, so noticing that none
+    // of them moved costs one comparison instead of a sweep of the whole groom.
+    static int SidednessState()
+    {
+        int hash = 17;
+        unchecked
+        {
+            hash = hash * 31 + HairCard.RegistryVersion;
+            hash = hash * 31 + (HairCardSection.IsDiamond ? 1 : 0);
+            hash = hash * 31 + singleSidedByGroup.Count;
+            foreach (KeyValuePair<int, bool> entry in singleSidedByGroup)
+            {
+                // Summed rather than folded in sequence: Dictionary enumeration order is not
+                // promised, and a hash that depended on it would report a change every time the
+                // dictionary happened to rehash.
+                hash += entry.Key * 2 + (entry.Value ? 1 : 0);
+            }
+        }
+        return hash;
     }
 
     static void ApplyGroup(int groupId)

@@ -6,6 +6,7 @@ using UnityEngine;
 public class PanelTypographyScale : MonoBehaviour
 {
     private readonly Dictionary<int, float> sizes = new Dictionary<int, float>();
+    private const float ScanInterval = .25f;
     private float nextScan;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -19,8 +20,13 @@ public class PanelTypographyScale : MonoBehaviour
 
     void LateUpdate()
     {
+        // The interval was missing: `nextScan = Time.unscaledTime` sets the next scan to NOW,
+        // so the guard above was always already satisfied and the throttle never engaged once.
+        // Two GameObject.Find calls plus two GetComponentsInChildren<TextMeshProUGUI>(true)
+        // walks were running every frame, for a restyle whose answer changes only when a panel
+        // is rebuilt.
         if (Time.unscaledTime < nextScan) return;
-        nextScan = Time.unscaledTime;
+        nextScan = Time.unscaledTime + ScanInterval;
         ScalePanel(GameObject.Find("GroupManagerPanel"));
         ScalePanel(GameObject.Find("GroomingPanel"));
     }

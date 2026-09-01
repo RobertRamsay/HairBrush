@@ -988,7 +988,30 @@ public class HairCard : MonoBehaviour
 
     private void UpdateTransformOrientation(float embedDepth)
     {
-        transform.position = spawnHitPoint - (surfaceNormal * embedDepth);
+        Vector3 wantPosition = spawnHitPoint - (surfaceNormal * embedDepth);
+        Quaternion wantRotation = Quaternion.LookRotation(surfaceNormal) * MirroredEuler(storedOffsetX, storedOffsetY, storedOffsetZ);
+
+        // WRITTEN ONLY WHEN IT CHANGED, and the guard is worth far more than the two compares
+        // it costs.
+        //
+        // This is reached from ApplyEvaluatedState, which the POST authorities re-assert over
+        // every card every frame - so with no POSTs at all, and nothing moving, forty thousand
+        // cards were each having their position and rotation reassigned to the values they
+        // already held, twice per frame. A transform write is not free even when the value is
+        // identical: it dirties the transform, which forces Unity to recompute the world matrix
+        // AND the MeshRenderer's world bounds, which invalidates the culling data the camera
+        // then has to walk again. That is why it was felt hardest while merely NAVIGATING, when
+        // by rights nothing should have been happening at all.
+        //
+        // Unity's == on Vector3 and Quaternion is APPROXIMATE, not bitwise - about ten microns
+        // of distance and about a tenth of a degree of angle. That is the right behaviour here
+        // and it cannot drift, because each frame compares against the freshly derived TARGET
+        // rather than against the last thing written: a card is never more than one threshold
+        // away from where it should be, and the moment the target moves further than that it is
+        // written. An unchanged card reproduces its value bit for bit anyway, since it is the
+        // same arithmetic over the same inputs - the tolerance only matters for a move so slow
+        // it has not yet amounted to ten microns.
+        if (transform.position != wantPosition) transform.position = wantPosition;
 
         // surfaceNormal is ALREADY the mirrored normal for a mirrored card - the mirror of the
         // placement is done once, at spawn. What is left to do here is the mirror of the card's
@@ -999,7 +1022,7 @@ public class HairCard : MonoBehaviour
         // derive the same up), and Euler(ox, -oy, -oz) == S * Euler(ox, oy, oz) * S. Composing
         // the two gives M * R * S, which is exactly the proper rotation whose local X axis is
         // the reflection of the original's, i.e. a true mirror rather than a rotation.
-        transform.rotation = Quaternion.LookRotation(surfaceNormal) * MirroredEuler(storedOffsetX, storedOffsetY, storedOffsetZ);
+        if (transform.rotation != wantRotation) transform.rotation = wantRotation;
     }
 
     // Euler(x, y, z) for a normal card; Euler(x, -y, -z) for a mirrored one.
@@ -1133,22 +1156,133 @@ public class HairCard : MonoBehaviour
         get { return registryVersion; }
     }
 
+    // EVERY CARD IN THE SCENE, maintained as they are born and die.
+    //
+    // registryVersion was already here and already had the right idea; what was missing was the
+    // list itself, so a dozen authorities went on calling FindObjectsByType<HairCard> to get one.
+    // That call walks Unity's whole object registry and allocates a fresh array every time. At
+    // forty thousand cards that is a 320 KB allocation, and in the steady state - camera moving,
+    // nothing edited - five of them happened per frame plus another seven per second on timers.
+    // Roughly two megabytes of garbage per frame to re-derive a list that never changed.
+    //
+    // Readers get it as IReadOnlyList so nobody can quietly hold a mutable reference to the
+    // scene's card list, and must still null-check: Unity defers Destroy to end of frame, so a
+    // card removed this frame is null-but-present until OnDestroy runs.
+    private static readonly List<HairCard> all = new List<HairCard>();
+
+    // Where this card sits in `all`, so OnDestroy can pull it out without searching. -1 means
+    // not registered - either never Awake'd or already removed.
+    private int registryIndex = -1;
+
+    // Bumped every time ANY card writes its mesh.
+    //
+    // The polygon readouts are the reason. Two of them existed - the panel counter and the group
+    // headers - and each independently swept every card, fetched its MeshFilter and asked the
+    // Mesh for its index count, seventeen times a second between them, to recompute a number
+    // that only changes when geometry is rebuilt. While merely navigating, nothing is rebuilt
+    // and both answers were already correct.
+    //
+    // Monotonic rather than a flag, for the same reason RegistryVersion is: a reader compares
+    // the value it last saw and cannot miss a change that happened between its own scans.
+    private static int meshGeneration;
+
+    public static int MeshGeneration
+    {
+        get { return meshGeneration; }
+    }
+
+    public static IReadOnlyList<HairCard> All
+    {
+        get { return all; }
+    }
+
+    // Statics survive "Enter Play Mode -> Disable Domain Reload", which this project has on, so
+    // without this the list starts the second Play session holding forty thousand destroyed
+    // cards from the first.
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetRegistry()
+    {
+        all.Clear();
+        registryVersion = 0;
+        meshGeneration = 0;
+    }
+
     void Awake()
     {
         unchecked { registryVersion++; }
+        registryIndex = all.Count;
+        all.Add(this);
         meshFilter = GetComponent<MeshFilter>();
         mesh = new Mesh { name = "ProceduralHairCard" };
         meshFilter.mesh = mesh;
+
+        // After the mesh exists, because MarkDynamic is one of the things it sets.
+        ConfigureRenderer();
+
         SetupMaterial();
         GenerateMesh();
         UpdateVisualHighlight();
         CaptureCanonicalFromRendered();
     }
 
+    // Per-renderer settings that are wrong by DEFAULT for forty thousand of anything.
+    //
+    // Done here rather than at the three spawn sites, so a fourth one cannot be added without
+    // them. Costs one GetComponent at birth and nothing afterwards.
+    //
+    // LIGHT AND REFLECTION PROBES. Unity's default is BlendProbes, which makes it interpolate
+    // probe data per renderer per frame on the CPU - forty thousand times, every frame, whether
+    // or not the scene has any probes. This one does not have any: it is a runtime tool that
+    // loads whatever head the user hands it, so there is nothing baked to interpolate and
+    // BlendProbes falls back to the ambient probe regardless. Off produces the same pixels and
+    // skips the work. The guide and ring previews already do exactly this for their own
+    // renderers - see GuideCurvePreviewAuthority - so the pattern is the project's own.
+    //
+    // SHADOWS are deliberately NOT touched here. The hair shader has a real ShadowCaster pass
+    // and forty thousand casters against two cascades is the single largest remaining cost in
+    // the frame - but hair that neither casts onto the head nor receives from it is a visibly
+    // different groom, and that is a decision about how the tool LOOKS. It is not mine to make
+    // silently while being asked to make it faster.
+    void ConfigureRenderer()
+    {
+        MeshRenderer mr = GetComponent<MeshRenderer>();
+        if (mr == null) return;
+
+        mr.lightProbeUsage = UnityEngine.Rendering.LightProbeUsage.Off;
+        mr.reflectionProbeUsage = UnityEngine.Rendering.ReflectionProbeUsage.Off;
+
+        // The card's mesh is rewritten whenever a slider moves, a POST is dragged or a guide is
+        // combed, which is the definition of dynamic. Tells Unity to keep it in memory it can
+        // update cheaply rather than re-optimising the buffer on every write.
+        if (mesh != null) mesh.MarkDynamic();
+    }
+
     void OnValidate() { if (mesh != null) GenerateMesh(); }
     void OnDestroy()
     {
         unchecked { registryVersion++; }
+
+        // Swap the last entry into this one's slot, in constant time, using the index the card
+        // has been carrying since Awake.
+        //
+        // List.Remove would be a linear search plus a shift of everything after it, so deleting
+        // a group of ten thousand would be ten thousand scans of a shrinking forty-thousand
+        // entry list - quadratic, and felt as a hitch on exactly the operation that should be
+        // instant. Holding the index makes it one array write.
+        //
+        // Order is not meaningful here and nothing may depend on it: FindObjectsByType, which
+        // this replaces, never promised one either, and ThreeColumnClumperMeshAuthority sorts
+        // explicitly where it genuinely needs stability.
+        if (registryIndex >= 0 && registryIndex < all.Count && all[registryIndex] == this)
+        {
+            int last = all.Count - 1;
+            HairCard moved = all[last];
+            all[registryIndex] = moved;
+            if (moved != null) moved.registryIndex = registryIndex;
+            all.RemoveAt(last);
+        }
+        registryIndex = -1;
+
         if (cardMaterial != null) Destroy(cardMaterial);
     }
     public void ApplyDeformations() { GenerateMesh(); }
@@ -1611,6 +1745,10 @@ public class HairCard : MonoBehaviour
         mesh.triangles = triangles;
         mesh.RecalculateNormals();
         mesh.RecalculateBounds();
+
+        // Bumped only where the mesh is ACTUALLY written - after every early return above, so a
+        // rebuild that was skipped does not count as one. See MeshGeneration.
+        unchecked { meshGeneration++; }
     }
 
     static int ComputeGeneratedMeshSignature(Vector3[] vertices, Vector2[] uvs, int segmentCount)

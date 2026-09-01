@@ -84,11 +84,12 @@ public class TextureEditorPostExitGuard : MonoBehaviour
             roots = FindFirstObjectByType<GroomRootStateAuthority>();
     }
 
+    // Shared, throttled - see RuntimeNamedObjectCache. This ran every frame from Update, and
+    // TextureEditorPanel does not exist until the texture workspace is first opened, so in a
+    // grooming session it swept the whole scene and found nothing, forever.
     GameObject FindTexturePanel()
     {
-        foreach (Transform t in FindObjectsByType<Transform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
-            if (t != null && t.name == "TextureEditorPanel") return t.gameObject;
-        return null;
+        return RuntimeNamedObjectCache.Find("TextureEditorPanel");
     }
 
     bool HasAnyLocalEditState()

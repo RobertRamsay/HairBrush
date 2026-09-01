@@ -169,11 +169,10 @@ public class TextureUVRectWorkspace : MonoBehaviour
             previewPlane = FindInactiveGameObject("HairTexturePreviewPlane");
     }
 
+    // Shared, throttled - see RuntimeNamedObjectCache. This ran every frame from Update.
     static GameObject FindInactiveGameObject(string objectName)
     {
-        Transform found = FindObjectsByType<Transform>(FindObjectsInactive.Include, FindObjectsSortMode.None)
-            .FirstOrDefault(t => t != null && t.name == objectName);
-        return found != null ? found.gameObject : null;
+        return RuntimeNamedObjectCache.Find(objectName);
     }
 
     void EnterWorkspace()

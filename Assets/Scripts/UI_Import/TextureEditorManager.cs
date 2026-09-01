@@ -227,6 +227,12 @@ public class TextureEditorManager : MonoBehaviour
 
     private void BuildTextureEditorUI(Transform parentCanvas, System.Action onSwitchToGroom)
     {
+        // The panels below are what four separate authorities sit waiting for by name. Their
+        // lookups are throttled now rather than sweeping the scene every frame, so tell the
+        // cache the answer has just changed - otherwise binding could lag the build by up to
+        // the sweep interval, and these panels are styled and laid out the instant they appear.
+        RuntimeNamedObjectCache.Invalidate();
+
         GameObject panelGO = new GameObject("TextureEditorPanel", typeof(RectTransform), typeof(Image));
         panelGO.transform.SetParent(parentCanvas, false);
         panelGO.transform.SetAsLastSibling();

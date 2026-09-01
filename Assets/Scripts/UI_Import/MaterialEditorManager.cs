@@ -766,6 +766,9 @@ public class MaterialEditorManager : MonoBehaviour
         viewer.hairCardMaterial = materials[index].material;
     }
 
+    private int assignRegistryVersion = -1;
+    private Material lastAssignedMaterial;
+
     private void ApplyAssignments()
     {
         if (viewer == null || materials.Count == 0) return;
@@ -774,6 +777,18 @@ public class MaterialEditorManager : MonoBehaviour
         Material active = materials[index].material;
         if (active == null) return;
 
+        // ONLY WHEN THE MATERIAL OR THE CARD SET CHANGED.
+        //
+        // This is a recurring timer whose job is to make sure every card is on the current hair
+        // material. That answer moves when the user picks a different material, or when cards
+        // are created or destroyed - and nothing else. It was re-asserting it over the whole
+        // groom five times a second anyway: forty thousand GetComponent calls plus a native
+        // sharedMaterial read each, to write back what was already there.
+        //
+        // The keyword and instancing writes stay OUTSIDE the guard, here. They are properties of
+        // the Material asset rather than of the cards, and a texture-editor edit can reset them
+        // without touching either counter.
+        //
         // Hair cards are thin planes that need to render from both sides, and there can be
         // thousands of them - GPU instancing is what actually lets the SRP batcher merge their
         // draw calls instead of issuing one per card. Both are safe to force directly onto this
@@ -782,8 +797,16 @@ public class MaterialEditorManager : MonoBehaviour
         active.EnableKeyword("_DOUBLESIDED_ON");
         active.enableInstancing = true;
 
-        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
+        if (assignRegistryVersion == HairCard.RegistryVersion && lastAssignedMaterial == active) return;
+        assignRegistryVersion = HairCard.RegistryVersion;
+        lastAssignedMaterial = active;
+
+        IReadOnlyList<HairCard> cards = HairCard.All;
+        for (int i = 0; i < cards.Count; i++)
         {
+            HairCard card = cards[i];
+            if (card == null) continue;
+
             // Skip cards that currently own a per-instance material for a genuine reason
             // (an active selection highlight, or an explicit single-sided override) - this
             // runs on a recurring timer, so without this check it would silently erase both

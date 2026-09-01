@@ -735,8 +735,22 @@ public class PostAffectorManager : MonoBehaviour
     {
         bool editingPost = GetActive() != null && HasSelection();
 
-        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
+        // With no POSTs there is no base to keep warm. The cache below exists so that a POST
+        // evaluating against a card has its unaffected state to hand; ApplyAll builds an entry
+        // lazily the moment it first needs one, and PostFreeCanonicalAuthority is meanwhile
+        // actively REMOVING the entries for POST-free groups - so maintaining them here for a
+        // groom with no POSTs at all was work being undone in the same frame.
+        //
+        // The dead-key purge below still runs, because a destroyed card must not be held.
+        if (groups != null && groups.Count > 0)
         {
+        // HairCard.All rather than FindObjectsByType - see ApplyAll.
+        IReadOnlyList<HairCard> cards = HairCard.All;
+        for (int i = 0; i < cards.Count; i++)
+        {
+            HairCard card = cards[i];
+            if (card == null) continue;
+
             // Frozen by SOLO: leave the cached base exactly where it is. Canonical state on
             // the card is untouched, so the frame SOLO releases the group this resumes and
             // re-reads it. See GroupSoloVisibilityAuthority.
@@ -758,15 +772,45 @@ public class PostAffectorManager : MonoBehaviour
                 state.baseState = ReadCanonical(card);
             }
         }
+        }
 
-        foreach (HairCard dead in cardStates.Keys.Where(c => c == null).ToArray())
-            cardStates.Remove(dead);
+        // ONLY WHEN THE SCENE'S CARDS ACTUALLY CHANGED.
+        //
+        // This is a LINQ walk of the whole dictionary plus a ToArray, and it was running every
+        // frame to look for destroyed cards that are almost never there - forty thousand
+        // comparisons and an allocation, per frame, for a nearly always empty answer.
+        // HairCard.RegistryVersion moves if and only if a card was created or destroyed, which
+        // is the only way a key here can go null, so comparing one int is exactly equivalent.
+        if (lastPurgeRegistryVersion != HairCard.RegistryVersion)
+        {
+            lastPurgeRegistryVersion = HairCard.RegistryVersion;
+            foreach (HairCard dead in cardStates.Keys.Where(c => c == null).ToArray())
+                cardStates.Remove(dead);
+        }
     }
+
+    // See the purge at the end of UpdateCanonicalBases.
+    private int lastPurgeRegistryVersion = -1;
 
     void ApplyAll()
     {
-        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
+        // NOTHING TO APPLY WITH NO POSTS. Without this the whole sweep ran on every card of
+        // every groom that has never had a POST in it - writing each card's transform and
+        // re-hashing its mesh inputs, every frame, to arrive at the state it was already in.
+        // The cards still get their canonical state; they get it from
+        // PostFreeCanonicalAuthority, which is the authority for exactly that case.
+        //
+        // Same gate PostVarianceAffectorBridge and PostPredeterminedUVAuthority already open
+        // with. It was the odd one out.
+        if (groups == null || groups.Count == 0) return;
+
+        // HairCard.All rather than FindObjectsByType: the same cards without allocating a
+        // forty-thousand-entry array every frame to hold them.
+        IReadOnlyList<HairCard> cards = HairCard.All;
+        for (int i = 0; i < cards.Count; i++)
         {
+            HairCard card = cards[i];
+            if (card == null) continue;
             // This is the single biggest cost in the whole per-frame budget: every card
             // reached here gets a full procedural GenerateMesh() rebuild via
             // WriteEvaluatedCard -> ApplyEvaluatedState. Skipping the cards SOLO has hidden

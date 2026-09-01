@@ -48,8 +48,23 @@ public class TextureUVRectAutoAuthority : MonoBehaviour
     {
         if (workspace == null) workspace = FindFirstObjectByType<TextureUVRectWorkspace>();
         if (workspace == null) return;
+
+        // Once the button exists there is nothing to ensure. `buttons` below was a local, so
+        // this swept the entire scene every frame FOREVER - including after the button had
+        // been built, and including in a grooming session where UVWorkspaceSection does not
+        // exist at all and the search could only ever come back empty.
+        if (autoButton != null) return;
+
+        if (Time.unscaledTime < nextEnsure) return;
+        nextEnsure = Time.unscaledTime + EnsureInterval;
+
         EnsureButton();
     }
+
+    // Only reached while the AUTO button is genuinely missing, which is once per texture-mode
+    // session rather than once per frame.
+    private const float EnsureInterval = .2f;
+    private float nextEnsure;
 
     void EnsureButton()
     {

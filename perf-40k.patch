@@ -1,0 +1,964 @@
+diff --git a/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs b/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs
+index 45878f3..1635de3 100644
+--- a/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs
++++ b/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs
+@@ -185,14 +185,33 @@ public class GroupPanelPostHintStats : MonoBehaviour
+         ordered.Add(child);
+     }
+ 
+-    void UpdateGroupHeaders()
++    // The per-group card and polygon totals, and the two counters that are the only things that
++    // can move them. Recomputing these on the timer meant forty thousand GetComponent calls and
++    // two native Mesh queries each, ten times a second - duplicating, to the line,
++    // what HairPolygonCounter was doing on its own timer for the whole-groom figure.
++    private readonly Dictionary<int, int> cardsByGroup = new();
++    private readonly Dictionary<int, long> polysByGroup = new();
++    private int statsRegistryVersion = -1;
++    private int statsMeshGeneration = -1;
++
++    // Rebuilt only when a card was created or destroyed, or a mesh was actually written.
++    void RefreshGroupStats()
+     {
+-        Dictionary<int, int> cardsByGroup = new();
+-        Dictionary<int, long> polysByGroup = new();
++        if (statsRegistryVersion == HairCard.RegistryVersion &&
++            statsMeshGeneration == HairCard.MeshGeneration) return;
++
++        statsRegistryVersion = HairCard.RegistryVersion;
++        statsMeshGeneration = HairCard.MeshGeneration;
+ 
+-        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
++        cardsByGroup.Clear();
++        polysByGroup.Clear();
++
++        IReadOnlyList<HairCard> cards = HairCard.All;
++        for (int i = 0; i < cards.Count; i++)
+         {
++            HairCard card = cards[i];
+             if (card == null) continue;
++
+             int gid = card.groupId;
+             cardsByGroup[gid] = cardsByGroup.TryGetValue(gid, out int count) ? count + 1 : 1;
+ 
+@@ -205,6 +224,11 @@ public class GroupPanelPostHintStats : MonoBehaviour
+ 
+             polysByGroup[gid] = (polysByGroup.TryGetValue(gid, out long existing) ? existing : 0L) + polys;
+         }
++    }
++
++    void UpdateGroupHeaders()
++    {
++        RefreshGroupStats();
+ 
+         Dictionary<int, string> groupNames = GetGroupNames();
+ 
+diff --git a/Assets/Scripts/UI_Import/GroupSidednessAuthority.cs b/Assets/Scripts/UI_Import/GroupSidednessAuthority.cs
+index 99fc7bd..94cb34f 100644
+--- a/Assets/Scripts/UI_Import/GroupSidednessAuthority.cs
++++ b/Assets/Scripts/UI_Import/GroupSidednessAuthority.cs
+@@ -131,9 +131,30 @@ public class GroupSidednessAuthority : MonoBehaviour
+         // Keeps the shared single-sided clone in step with whatever the base hair
+         // material currently is - textures included - after a Texture Editor change.
+         HairCard.RefreshSingleSidedVariants();
++
++        // ONLY WHEN THE ANSWER COULD HAVE CHANGED.
++        //
++        // This timer is insurance, not the mechanism: every real edit - SetSingleSided, Forget,
++        // ReapplyAll, a project restore - calls ApplyAll directly. The scan existed to catch
++        // cards that appeared without one of those, and it was paying for that by re-asserting
++        // the cull state of every card in the groom ten times a second: forty thousand
++        // GetComponent calls and forty thousand native sharedMaterial reads per scan, to write
++        // back the value already there.
++        //
++        // SidednessState folds together every input the answer depends on, so the insurance
++        // still holds - a card spawned into a single-sided group moves RegistryVersion and is
++        // caught on the next scan - at the cost of one integer compare when nothing happened.
++        int state = SidednessState();
++        if (state == lastAppliedState) return;
++        lastAppliedState = state;
++
+         ApplyAll();
+     }
+ 
++    // See the guard in Update. -1 is a value SidednessState cannot return for a real scene, so
++    // the first scan always applies.
++    private int lastAppliedState = -1;
++
+     void TryRestorePending()
+     {
+         if (pendingRestore == null) return;
+@@ -159,13 +180,36 @@ public class GroupSidednessAuthority : MonoBehaviour
+ 
+     static void ApplyAll()
+     {
+-        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
++        IReadOnlyList<HairCard> cards = HairCard.All;
++        for (int i = 0; i < cards.Count; i++)
+         {
++            HairCard card = cards[i];
+             if (card == null) continue;
+             card.SetDoubleSided(!IsSingleSided(card.groupId));
+         }
+     }
+ 
++    // What ApplyAll's answer depends on. Every input is an int or a bool, so noticing that none
++    // of them moved costs one comparison instead of a sweep of the whole groom.
++    static int SidednessState()
++    {
++        int hash = 17;
++        unchecked
++        {
++            hash = hash * 31 + HairCard.RegistryVersion;
++            hash = hash * 31 + (HairCardSection.IsDiamond ? 1 : 0);
++            hash = hash * 31 + singleSidedByGroup.Count;
++            foreach (KeyValuePair<int, bool> entry in singleSidedByGroup)
++            {
++                // Summed rather than folded in sequence: Dictionary enumeration order is not
++                // promised, and a hash that depended on it would report a change every time the
++                // dictionary happened to rehash.
++                hash += entry.Key * 2 + (entry.Value ? 1 : 0);
++            }
++        }
++        return hash;
++    }
++
+     static void ApplyGroup(int groupId)
+     {
+         bool doubleSided = !IsSingleSided(groupId);
+diff --git a/Assets/Scripts/UI_Import/HairCard.cs b/Assets/Scripts/UI_Import/HairCard.cs
+index 99c0d5f..b8b2d66 100644
+--- a/Assets/Scripts/UI_Import/HairCard.cs
++++ b/Assets/Scripts/UI_Import/HairCard.cs
+@@ -988,7 +988,30 @@ public class HairCard : MonoBehaviour
+ 
+     private void UpdateTransformOrientation(float embedDepth)
+     {
+-        transform.position = spawnHitPoint - (surfaceNormal * embedDepth);
++        Vector3 wantPosition = spawnHitPoint - (surfaceNormal * embedDepth);
++        Quaternion wantRotation = Quaternion.LookRotation(surfaceNormal) * MirroredEuler(storedOffsetX, storedOffsetY, storedOffsetZ);
++
++        // WRITTEN ONLY WHEN IT CHANGED, and the guard is worth far more than the two compares
++        // it costs.
++        //
++        // This is reached from ApplyEvaluatedState, which the POST authorities re-assert over
++        // every card every frame - so with no POSTs at all, and nothing moving, forty thousand
++        // cards were each having their position and rotation reassigned to the values they
++        // already held, twice per frame. A transform write is not free even when the value is
++        // identical: it dirties the transform, which forces Unity to recompute the world matrix
++        // AND the MeshRenderer's world bounds, which invalidates the culling data the camera
++        // then has to walk again. That is why it was felt hardest while merely NAVIGATING, when
++        // by rights nothing should have been happening at all.
++        //
++        // Unity's == on Vector3 and Quaternion is APPROXIMATE, not bitwise - about ten microns
++        // of distance and about a tenth of a degree of angle. That is the right behaviour here
++        // and it cannot drift, because each frame compares against the freshly derived TARGET
++        // rather than against the last thing written: a card is never more than one threshold
++        // away from where it should be, and the moment the target moves further than that it is
++        // written. An unchanged card reproduces its value bit for bit anyway, since it is the
++        // same arithmetic over the same inputs - the tolerance only matters for a move so slow
++        // it has not yet amounted to ten microns.
++        if (transform.position != wantPosition) transform.position = wantPosition;
+ 
+         // surfaceNormal is ALREADY the mirrored normal for a mirrored card - the mirror of the
+         // placement is done once, at spawn. What is left to do here is the mirror of the card's
+@@ -999,7 +1022,7 @@ public class HairCard : MonoBehaviour
+         // derive the same up), and Euler(ox, -oy, -oz) == S * Euler(ox, oy, oz) * S. Composing
+         // the two gives M * R * S, which is exactly the proper rotation whose local X axis is
+         // the reflection of the original's, i.e. a true mirror rather than a rotation.
+-        transform.rotation = Quaternion.LookRotation(surfaceNormal) * MirroredEuler(storedOffsetX, storedOffsetY, storedOffsetZ);
++        if (transform.rotation != wantRotation) transform.rotation = wantRotation;
+     }
+ 
+     // Euler(x, y, z) for a normal card; Euler(x, -y, -z) for a mirrored one.
+@@ -1133,22 +1156,133 @@ public class HairCard : MonoBehaviour
+         get { return registryVersion; }
+     }
+ 
++    // EVERY CARD IN THE SCENE, maintained as they are born and die.
++    //
++    // registryVersion was already here and already had the right idea; what was missing was the
++    // list itself, so a dozen authorities went on calling FindObjectsByType<HairCard> to get one.
++    // That call walks Unity's whole object registry and allocates a fresh array every time. At
++    // forty thousand cards that is a 320 KB allocation, and in the steady state - camera moving,
++    // nothing edited - five of them happened per frame plus another seven per second on timers.
++    // Roughly two megabytes of garbage per frame to re-derive a list that never changed.
++    //
++    // Readers get it as IReadOnlyList so nobody can quietly hold a mutable reference to the
++    // scene's card list, and must still null-check: Unity defers Destroy to end of frame, so a
++    // card removed this frame is null-but-present until OnDestroy runs.
++    private static readonly List<HairCard> all = new List<HairCard>();
++
++    // Where this card sits in `all`, so OnDestroy can pull it out without searching. -1 means
++    // not registered - either never Awake'd or already removed.
++    private int registryIndex = -1;
++
++    // Bumped every time ANY card writes its mesh.
++    //
++    // The polygon readouts are the reason. Two of them existed - the panel counter and the group
++    // headers - and each independently swept every card, fetched its MeshFilter and asked the
++    // Mesh for its index count, seventeen times a second between them, to recompute a number
++    // that only changes when geometry is rebuilt. While merely navigating, nothing is rebuilt
++    // and both answers were already correct.
++    //
++    // Monotonic rather than a flag, for the same reason RegistryVersion is: a reader compares
++    // the value it last saw and cannot miss a change that happened between its own scans.
++    private static int meshGeneration;
++
++    public static int MeshGeneration
++    {
++        get { return meshGeneration; }
++    }
++
++    public static IReadOnlyList<HairCard> All
++    {
++        get { return all; }
++    }
++
++    // Statics survive "Enter Play Mode -> Disable Domain Reload", which this project has on, so
++    // without this the list starts the second Play session holding forty thousand destroyed
++    // cards from the first.
++    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
++    private static void ResetRegistry()
++    {
++        all.Clear();
++        registryVersion = 0;
++        meshGeneration = 0;
++    }
++
+     void Awake()
+     {
+         unchecked { registryVersion++; }
++        registryIndex = all.Count;
++        all.Add(this);
+         meshFilter = GetComponent<MeshFilter>();
+         mesh = new Mesh { name = "ProceduralHairCard" };
+         meshFilter.mesh = mesh;
++
++        // After the mesh exists, because MarkDynamic is one of the things it sets.
++        ConfigureRenderer();
++
+         SetupMaterial();
+         GenerateMesh();
+         UpdateVisualHighlight();
+         CaptureCanonicalFromRendered();
+     }
+ 
++    // Per-renderer settings that are wrong by DEFAULT for forty thousand of anything.
++    //
++    // Done here rather than at the three spawn sites, so a fourth one cannot be added without
++    // them. Costs one GetComponent at birth and nothing afterwards.
++    //
++    // LIGHT AND REFLECTION PROBES. Unity's default is BlendProbes, which makes it interpolate
++    // probe data per renderer per frame on the CPU - forty thousand times, every frame, whether
++    // or not the scene has any probes. This one does not have any: it is a runtime tool that
++    // loads whatever head the user hands it, so there is nothing baked to interpolate and
++    // BlendProbes falls back to the ambient probe regardless. Off produces the same pixels and
++    // skips the work. The guide and ring previews already do exactly this for their own
++    // renderers - see GuideCurvePreviewAuthority - so the pattern is the project's own.
++    //
++    // SHADOWS are deliberately NOT touched here. The hair shader has a real ShadowCaster pass
++    // and forty thousand casters against two cascades is the single largest remaining cost in
++    // the frame - but hair that neither casts onto the head nor receives from it is a visibly
++    // different groom, and that is a decision about how the tool LOOKS. It is not mine to make
++    // silently while being asked to make it faster.
++    void ConfigureRenderer()
++    {
++        MeshRenderer mr = GetComponent<MeshRenderer>();
++        if (mr == null) return;
++
++        mr.lightProbeUsage = UnityEngine.Rendering.LightProbeUsage.Off;
++        mr.reflectionProbeUsage = UnityEngine.Rendering.ReflectionProbeUsage.Off;
++
++        // The card's mesh is rewritten whenever a slider moves, a POST is dragged or a guide is
++        // combed, which is the definition of dynamic. Tells Unity to keep it in memory it can
++        // update cheaply rather than re-optimising the buffer on every write.
++        if (mesh != null) mesh.MarkDynamic();
++    }
++
+     void OnValidate() { if (mesh != null) GenerateMesh(); }
+     void OnDestroy()
+     {
+         unchecked { registryVersion++; }
++
++        // Swap the last entry into this one's slot, in constant time, using the index the card
++        // has been carrying since Awake.
++        //
++        // List.Remove would be a linear search plus a shift of everything after it, so deleting
++        // a group of ten thousand would be ten thousand scans of a shrinking forty-thousand
++        // entry list - quadratic, and felt as a hitch on exactly the operation that should be
++        // instant. Holding the index makes it one array write.
++        //
++        // Order is not meaningful here and nothing may depend on it: FindObjectsByType, which
++        // this replaces, never promised one either, and ThreeColumnClumperMeshAuthority sorts
++        // explicitly where it genuinely needs stability.
++        if (registryIndex >= 0 && registryIndex < all.Count && all[registryIndex] == this)
++        {
++            int last = all.Count - 1;
++            HairCard moved = all[last];
++            all[registryIndex] = moved;
++            if (moved != null) moved.registryIndex = registryIndex;
++            all.RemoveAt(last);
++        }
++        registryIndex = -1;
++
+         if (cardMaterial != null) Destroy(cardMaterial);
+     }
+     public void ApplyDeformations() { GenerateMesh(); }
+@@ -1611,6 +1745,10 @@ public class HairCard : MonoBehaviour
+         mesh.triangles = triangles;
+         mesh.RecalculateNormals();
+         mesh.RecalculateBounds();
++
++        // Bumped only where the mesh is ACTUALLY written - after every early return above, so a
++        // rebuild that was skipped does not count as one. See MeshGeneration.
++        unchecked { meshGeneration++; }
+     }
+ 
+     static int ComputeGeneratedMeshSignature(Vector3[] vertices, Vector2[] uvs, int segmentCount)
+diff --git a/Assets/Scripts/UI_Import/HairPolygonCounter.cs b/Assets/Scripts/UI_Import/HairPolygonCounter.cs
+index a715f30..632d04d 100644
+--- a/Assets/Scripts/UI_Import/HairPolygonCounter.cs
++++ b/Assets/Scripts/UI_Import/HairPolygonCounter.cs
+@@ -1,3 +1,4 @@
++using System.Collections.Generic;
+ using TMPro;
+ using UnityEngine;
+ using UnityEngine.UI;
+@@ -79,11 +80,31 @@ public class HairPolygonCounter : MonoBehaviour
+             go.transform.SetSiblingIndex(title.GetSiblingIndex() + 1);
+     }
+ 
++    // Cached against the two things that can change the answer. Nothing else can: a polygon
++    // count moves when a card is created or destroyed, or when a mesh is rewritten, and both of
++    // those are counters now.
++    //
++    // Without this the whole sweep ran on the timer regardless - forty thousand GetComponent
++    // calls plus two native Mesh queries each - to arrive at a number that had not moved since
++    // the last time it was asked, which while navigating is every time.
++    private long cachedTotal;
++    private int cachedRegistryVersion = -1;
++    private int cachedMeshGeneration = -1;
++
+     long CountHairPolygons()
+     {
++        if (cachedRegistryVersion == HairCard.RegistryVersion &&
++            cachedMeshGeneration == HairCard.MeshGeneration)
++            return cachedTotal;
++
++        cachedRegistryVersion = HairCard.RegistryVersion;
++        cachedMeshGeneration = HairCard.MeshGeneration;
++
+         long total = 0;
+-        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
++        IReadOnlyList<HairCard> cards = HairCard.All;
++        for (int i = 0; i < cards.Count; i++)
+         {
++            HairCard card = cards[i];
+             if (card == null) continue;
+             MeshFilter filter = card.GetComponent<MeshFilter>();
+             Mesh mesh = filter != null ? filter.sharedMesh : null;
+@@ -92,6 +113,8 @@ public class HairPolygonCounter : MonoBehaviour
+             for (int sub = 0; sub < mesh.subMeshCount; sub++)
+                 total += (long)mesh.GetIndexCount(sub) / 3L;
+         }
++
++        cachedTotal = total;
+         return total;
+     }
+ }
+diff --git a/Assets/Scripts/UI_Import/MaterialEditorManager.cs b/Assets/Scripts/UI_Import/MaterialEditorManager.cs
+index 1ce6422..47bfbbf 100644
+--- a/Assets/Scripts/UI_Import/MaterialEditorManager.cs
++++ b/Assets/Scripts/UI_Import/MaterialEditorManager.cs
+@@ -766,6 +766,9 @@ public class MaterialEditorManager : MonoBehaviour
+         viewer.hairCardMaterial = materials[index].material;
+     }
+ 
++    private int assignRegistryVersion = -1;
++    private Material lastAssignedMaterial;
++
+     private void ApplyAssignments()
+     {
+         if (viewer == null || materials.Count == 0) return;
+@@ -774,6 +777,18 @@ public class MaterialEditorManager : MonoBehaviour
+         Material active = materials[index].material;
+         if (active == null) return;
+ 
++        // ONLY WHEN THE MATERIAL OR THE CARD SET CHANGED.
++        //
++        // This is a recurring timer whose job is to make sure every card is on the current hair
++        // material. That answer moves when the user picks a different material, or when cards
++        // are created or destroyed - and nothing else. It was re-asserting it over the whole
++        // groom five times a second anyway: forty thousand GetComponent calls plus a native
++        // sharedMaterial read each, to write back what was already there.
++        //
++        // The keyword and instancing writes stay OUTSIDE the guard, here. They are properties of
++        // the Material asset rather than of the cards, and a texture-editor edit can reset them
++        // without touching either counter.
++        //
+         // Hair cards are thin planes that need to render from both sides, and there can be
+         // thousands of them - GPU instancing is what actually lets the SRP batcher merge their
+         // draw calls instead of issuing one per card. Both are safe to force directly onto this
+@@ -782,8 +797,16 @@ public class MaterialEditorManager : MonoBehaviour
+         active.EnableKeyword("_DOUBLESIDED_ON");
+         active.enableInstancing = true;
+ 
+-        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
++        if (assignRegistryVersion == HairCard.RegistryVersion && lastAssignedMaterial == active) return;
++        assignRegistryVersion = HairCard.RegistryVersion;
++        lastAssignedMaterial = active;
++
++        IReadOnlyList<HairCard> cards = HairCard.All;
++        for (int i = 0; i < cards.Count; i++)
+         {
++            HairCard card = cards[i];
++            if (card == null) continue;
++
+             // Skip cards that currently own a per-instance material for a genuine reason
+             // (an active selection highlight, or an explicit single-sided override) - this
+             // runs on a recurring timer, so without this check it would silently erase both
+diff --git a/Assets/Scripts/UI_Import/PanelTypographyScale.cs b/Assets/Scripts/UI_Import/PanelTypographyScale.cs
+index f92f288..bc65c40 100644
+--- a/Assets/Scripts/UI_Import/PanelTypographyScale.cs
++++ b/Assets/Scripts/UI_Import/PanelTypographyScale.cs
+@@ -6,6 +6,7 @@ using UnityEngine;
+ public class PanelTypographyScale : MonoBehaviour
+ {
+     private readonly Dictionary<int, float> sizes = new Dictionary<int, float>();
++    private const float ScanInterval = .25f;
+     private float nextScan;
+ 
+     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+@@ -19,8 +20,13 @@ public class PanelTypographyScale : MonoBehaviour
+ 
+     void LateUpdate()
+     {
++        // The interval was missing: `nextScan = Time.unscaledTime` sets the next scan to NOW,
++        // so the guard above was always already satisfied and the throttle never engaged once.
++        // Two GameObject.Find calls plus two GetComponentsInChildren<TextMeshProUGUI>(true)
++        // walks were running every frame, for a restyle whose answer changes only when a panel
++        // is rebuilt.
+         if (Time.unscaledTime < nextScan) return;
+-        nextScan = Time.unscaledTime;
++        nextScan = Time.unscaledTime + ScanInterval;
+         ScalePanel(GameObject.Find("GroupManagerPanel"));
+         ScalePanel(GameObject.Find("GroomingPanel"));
+     }
+diff --git a/Assets/Scripts/UI_Import/PostAffectorManager.cs b/Assets/Scripts/UI_Import/PostAffectorManager.cs
+index 0f960d4..7a0f149 100644
+--- a/Assets/Scripts/UI_Import/PostAffectorManager.cs
++++ b/Assets/Scripts/UI_Import/PostAffectorManager.cs
+@@ -735,8 +735,22 @@ public class PostAffectorManager : MonoBehaviour
+     {
+         bool editingPost = GetActive() != null && HasSelection();
+ 
+-        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
++        // With no POSTs there is no base to keep warm. The cache below exists so that a POST
++        // evaluating against a card has its unaffected state to hand; ApplyAll builds an entry
++        // lazily the moment it first needs one, and PostFreeCanonicalAuthority is meanwhile
++        // actively REMOVING the entries for POST-free groups - so maintaining them here for a
++        // groom with no POSTs at all was work being undone in the same frame.
++        //
++        // The dead-key purge below still runs, because a destroyed card must not be held.
++        if (groups != null && groups.Count > 0)
++        {
++        // HairCard.All rather than FindObjectsByType - see ApplyAll.
++        IReadOnlyList<HairCard> cards = HairCard.All;
++        for (int i = 0; i < cards.Count; i++)
+         {
++            HairCard card = cards[i];
++            if (card == null) continue;
++
+             // Frozen by SOLO: leave the cached base exactly where it is. Canonical state on
+             // the card is untouched, so the frame SOLO releases the group this resumes and
+             // re-reads it. See GroupSoloVisibilityAuthority.
+@@ -758,15 +772,45 @@ public class PostAffectorManager : MonoBehaviour
+                 state.baseState = ReadCanonical(card);
+             }
+         }
++        }
+ 
+-        foreach (HairCard dead in cardStates.Keys.Where(c => c == null).ToArray())
+-            cardStates.Remove(dead);
++        // ONLY WHEN THE SCENE'S CARDS ACTUALLY CHANGED.
++        //
++        // This is a LINQ walk of the whole dictionary plus a ToArray, and it was running every
++        // frame to look for destroyed cards that are almost never there - forty thousand
++        // comparisons and an allocation, per frame, for a nearly always empty answer.
++        // HairCard.RegistryVersion moves if and only if a card was created or destroyed, which
++        // is the only way a key here can go null, so comparing one int is exactly equivalent.
++        if (lastPurgeRegistryVersion != HairCard.RegistryVersion)
++        {
++            lastPurgeRegistryVersion = HairCard.RegistryVersion;
++            foreach (HairCard dead in cardStates.Keys.Where(c => c == null).ToArray())
++                cardStates.Remove(dead);
++        }
+     }
+ 
++    // See the purge at the end of UpdateCanonicalBases.
++    private int lastPurgeRegistryVersion = -1;
++
+     void ApplyAll()
+     {
+-        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
++        // NOTHING TO APPLY WITH NO POSTS. Without this the whole sweep ran on every card of
++        // every groom that has never had a POST in it - writing each card's transform and
++        // re-hashing its mesh inputs, every frame, to arrive at the state it was already in.
++        // The cards still get their canonical state; they get it from
++        // PostFreeCanonicalAuthority, which is the authority for exactly that case.
++        //
++        // Same gate PostVarianceAffectorBridge and PostPredeterminedUVAuthority already open
++        // with. It was the odd one out.
++        if (groups == null || groups.Count == 0) return;
++
++        // HairCard.All rather than FindObjectsByType: the same cards without allocating a
++        // forty-thousand-entry array every frame to hold them.
++        IReadOnlyList<HairCard> cards = HairCard.All;
++        for (int i = 0; i < cards.Count; i++)
+         {
++            HairCard card = cards[i];
++            if (card == null) continue;
+             // This is the single biggest cost in the whole per-frame budget: every card
+             // reached here gets a full procedural GenerateMesh() rebuild via
+             // WriteEvaluatedCard -> ApplyEvaluatedState. Skipping the cards SOLO has hidden
+diff --git a/Assets/Scripts/UI_Import/PostFreeCanonicalAuthority.cs b/Assets/Scripts/UI_Import/PostFreeCanonicalAuthority.cs
+index a4cbe3f..f336e16 100644
+--- a/Assets/Scripts/UI_Import/PostFreeCanonicalAuthority.cs
++++ b/Assets/Scripts/UI_Import/PostFreeCanonicalAuthority.cs
+@@ -48,8 +48,48 @@ public class PostFreeCanonicalAuthority : MonoBehaviour
+             }
+         }
+ 
+-        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
++        // ---- has anything happened that this pass could need to repair? -------------------
++        //
++        // This is a REPAIR sweep, not a simulation step. It exists to put a card back to its
++        // authored state after something else disturbed it - a POST torn down, a clumper
++        // released, a stray SetParameters from the legacy selection path. In a groom that has
++        // never had a POST or a clumper in it there is nothing to repair, and it was running
++        // ApplyEvaluatedState over all forty thousand cards every frame anyway to discover that.
++        //
++        // So the pass now watches the handful of things that can create work for it, and holds
++        // off only once they have ALL been still for a while. The grace window is what makes
++        // this safe: a teardown does not complete in one frame, so a single-frame edge test
++        // would let the pass go back to sleep in the middle of the very thing it is for.
++        int worldState = 17;
++        unchecked
+         {
++            worldState = worldState * 31 + groupsWithPosts.Count;
++            worldState = worldState * 31 + HairCard.RegistryVersion;
++            worldState = worldState * 31 + GroupSoloVisibilityAuthority.Epoch;
++            worldState = worldState * 31 + (cachedStates != null ? cachedStates.Count : 0);
++        }
++
++        if (worldState != lastWorldState)
++        {
++            lastWorldState = worldState;
++            settledFrames = 0;
++        }
++        else if (settledFrames < SettleFrames)
++        {
++            settledFrames++;
++        }
++
++        // The bookkeeping half below still has to run every frame even when settled - it is a
++        // dictionary probe per card and it is what the comment inside insists on. The GEOMETRY
++        // half is the one that costs, and it is the one that gets to stop.
++        bool repairGeometry = settledFrames < SettleFrames;
++
++        // HairCard.All rather than FindObjectsByType: the same cards without a forty-thousand
++        // entry array allocated every frame to hold them.
++        IReadOnlyList<HairCard> allCards = HairCard.All;
++        for (int i = 0; i < allCards.Count; i++)
++        {
++            HairCard card = allCards[i];
+             if (card == null || groupsWithPosts.Contains(card.groupId)) continue;
+ 
+             // Critical lifecycle rule: PostAffectorManager must not retain a CardState for a
+@@ -73,6 +113,11 @@ public class PostFreeCanonicalAuthority : MonoBehaviour
+             // untouched, and this same sweep rebuilds it the frame SOLO lets it go.
+             if (GroupSoloVisibilityAuthority.IsCardFrozen(card)) continue;
+ 
++            // Nothing has changed for long enough that there is nothing left to repair. The
++            // bookkeeping above still ran; this is the part that was rebuilding the world to
++            // arrive back where it started.
++            if (!repairGeometry) continue;
++
+             // Match the known-good zero-CLUMPER refresh: remove any residual per-card clump
+             // state, then explicitly rebuild from the authored upstream state.
+             card.ClearClumpModifier();
+@@ -81,6 +126,14 @@ public class PostFreeCanonicalAuthority : MonoBehaviour
+         }
+     }
+ 
++    // How many consecutive unchanged frames before the geometry repair stands down. Generous on
++    // purpose: it is paid once per change, not per frame, and the cost of being wrong is a card
++    // left holding a modifier's geometry after the modifier is gone.
++    private const int SettleFrames = 30;
++
++    private int lastWorldState = -1;
++    private int settledFrames;
++
+     void Resolve()
+     {
+         if (manager != null) return;
+diff --git a/Assets/Scripts/UI_Import/PostShapeCurveBridge.cs b/Assets/Scripts/UI_Import/PostShapeCurveBridge.cs
+index 96fa99d..d875800 100644
+--- a/Assets/Scripts/UI_Import/PostShapeCurveBridge.cs
++++ b/Assets/Scripts/UI_Import/PostShapeCurveBridge.cs
+@@ -109,9 +109,19 @@ public class PostShapeCurveBridge : MonoBehaviour
+             SavePresentedRegistryToPost(presentedPostId, presentedGroupId);
+ 
+         Dictionary<int, List<PostAffectorManager.PostAffector>> groups = GetGroups();
+-        HairCard[] cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
+-        foreach (HairCard card in cards)
++
++        // No POSTs anywhere means there is no profile provenance to attach and none to clear,
++        // so the sweep below has nothing to do for any card. It was doing it anyway: forty
++        // thousand IsCardFrozen calls and forty thousand ClearPostShapeProfileContributions
++        // calls every frame, on top of the array. Same gate PostVarianceAffectorBridge already
++        // opens with.
++        if (groups == null || groups.Count == 0) return;
++
++        // HairCard.All, not FindObjectsByType. Same list, no 40k array allocated per frame.
++        IReadOnlyList<HairCard> cards = HairCard.All;
++        for (int i = 0; i < cards.Count; i++)
+         {
++            HairCard card = cards[i];
+             if (card == null) continue;
+ 
+             // Frozen by SOLO - leave the card's existing profile provenance and mesh alone.
+diff --git a/Assets/Scripts/UI_Import/RuntimeNamedObjectCache.cs b/Assets/Scripts/UI_Import/RuntimeNamedObjectCache.cs
+new file mode 100644
+index 0000000..5e7736b
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/RuntimeNamedObjectCache.cs
+@@ -0,0 +1,111 @@
++using System.Collections.Generic;
++using UnityEngine;
++
++// One throttled, shared answer to "is there a GameObject called X in the scene, active or not".
++//
++// WHY THIS EXISTS. Four authorities each carried a private copy of this:
++//
++//     foreach (Transform t in FindObjectsByType<Transform>(FindObjectsInactive.Include, ...))
++//         if (t.name == objectName) return t.gameObject;
++//
++// and called it from an ungated Update or LateUpdate. That is a walk of Unity's entire object
++// registry, and - worse - `Transform.name` is a native marshal that allocates a fresh managed
++// string on EVERY access. At forty thousand cards the scene holds roughly a quarter of a million
++// objects, so each call allocated a quarter of a million strings, and six such calls ran per
++// frame.
++//
++// The reason it never settled down is the part worth remembering: they were all looking for
++// TEXTURE WORKSPACE panels, which are built lazily on first entry to that mode. In a pure
++// grooming session those objects do not exist, so the `if (cached == null)` guard never latched
++// and every one of them ran to completion, over every object, forever. A negative result has to
++// be cached as carefully as a positive one.
++//
++// This turns six sweeps a frame into one sweep per interval, shared, resolving every name anyone
++// has ever asked for in the same pass.
++public static class RuntimeNamedObjectCache
++{
++    // Short enough that a panel appearing is picked up within a frame or three, long enough that
++    // the sweep is 6 times a second rather than 360. Invalidate() covers the case where even
++    // that is too slow.
++    private const float SweepInterval = .15f;
++
++    // Every name anyone has asked about. Small and fixed in practice - a handful of panel names -
++    // and never cleared, because a name asked once will be asked again next frame.
++    private static readonly HashSet<string> wanted = new HashSet<string>();
++
++    // The last answer for each name, INCLUDING null. Caching the misses is the whole point.
++    private static readonly Dictionary<string, GameObject> resolved = new Dictionary<string, GameObject>();
++
++    private static float nextSweep;
++
++    // Statics survive "Enter Play Mode -> Disable Domain Reload", so without this the second
++    // Play session starts holding destroyed objects from the first.
++    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
++    private static void ResetStatics()
++    {
++        wanted.Clear();
++        resolved.Clear();
++        nextSweep = 0f;
++    }
++
++    // Call when something has just BUILT objects that a lookup is waiting for, so the next Find
++    // does not sit out the rest of the interval. Cheap - it only moves a float.
++    public static void Invalidate()
++    {
++        nextSweep = 0f;
++    }
++
++    public static GameObject Find(string objectName)
++    {
++        if (string.IsNullOrEmpty(objectName)) return null;
++
++        wanted.Add(objectName);
++
++        GameObject cached;
++        bool haveEntry = resolved.TryGetValue(objectName, out cached);
++
++        // A live hit is served without any sweep at all, and without touching .name - the
++        // reference is still the object it was. This is the steady state once a panel is up.
++        if (haveEntry && cached != null) return cached;
++
++        if (Time.unscaledTime < nextSweep)
++        {
++            // Inside the window. Serve the cached answer, miss included - that is what stops a
++            // name which is not in the scene from costing a sweep per frame forever.
++            if (haveEntry) return cached;
++            return null;
++        }
++
++        Sweep();
++
++        resolved.TryGetValue(objectName, out cached);
++        return cached;
++    }
++
++    // One pass, resolving every wanted name at once.
++    private static void Sweep()
++    {
++        nextSweep = Time.unscaledTime + SweepInterval;
++
++        // Clear every entry first so a name whose object has been destroyed goes back to null
++        // rather than keeping a stale hit. Entries, not the dictionary, so the keys stay put.
++        foreach (string name in wanted) resolved[name] = null;
++
++        Transform[] transforms = Object.FindObjectsByType<Transform>(FindObjectsInactive.Include, FindObjectsSortMode.None);
++        for (int i = 0; i < transforms.Length; i++)
++        {
++            Transform t = transforms[i];
++            if (t == null) continue;
++
++            // One .name read per object per SWEEP, where it used to be one per object per
++            // lookup per frame. Still the expensive part, which is why the sweep is throttled.
++            string name = t.name;
++            if (!wanted.Contains(name)) continue;
++
++            GameObject existing;
++            if (resolved.TryGetValue(name, out existing) && existing != null) continue;
++
++            resolved[name] = t.gameObject;
++        }
++    }
++}
+diff --git a/Assets/Scripts/UI_Import/RuntimeNamedObjectCache.cs.meta b/Assets/Scripts/UI_Import/RuntimeNamedObjectCache.cs.meta
+new file mode 100644
+index 0000000..026abde
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/RuntimeNamedObjectCache.cs.meta
+@@ -0,0 +1,2 @@
++fileFormatVersion: 2
++guid: 65c3c6ab68d449fca896a6c564f27baa
+diff --git a/Assets/Scripts/UI_Import/SurfaceIslandScope.cs b/Assets/Scripts/UI_Import/SurfaceIslandScope.cs
+index eb7c47d..88ff861 100644
+--- a/Assets/Scripts/UI_Import/SurfaceIslandScope.cs
++++ b/Assets/Scripts/UI_Import/SurfaceIslandScope.cs
+@@ -169,12 +169,32 @@ public class SurfaceIslandCardTagAuthority : MonoBehaviour
+         if (Time.unscaledTime < nextScan) return;
+         nextScan = Time.unscaledTime + .15f;
+ 
+-        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
++        // ONLY WHEN THE SET OF CARDS HAS CHANGED.
++        //
++        // A tag, once written, never becomes wrong on its own - it is resolved from the card's
++        // root against the model, and neither moves without the card being rebuilt. So the only
++        // way a new untagged card appears is for one to be created, which moves RegistryVersion.
++        //
++        // The sweep was running six times a second regardless: forty thousand GetComponent
++        // calls to re-confirm tags that were all already written. And for any card whose island
++        // could NOT be resolved it is far worse than that - TryGetCardIsland fires two
++        // Physics.Raycasts and only writes the tag on success, so an unresolvable card is
++        // retried forever. On a model with no collider, or roots that have drifted off the
++        // surface, that is eighty thousand raycasts every 0.15 seconds, permanently, and it
++        // presents as a hitch six times a second that nothing in the UI explains.
++        if (lastRegistryVersion == HairCard.RegistryVersion) return;
++        lastRegistryVersion = HairCard.RegistryVersion;
++
++        IReadOnlyList<HairCard> cards = HairCard.All;
++        for (int i = 0; i < cards.Count; i++)
+         {
++            HairCard card = cards[i];
+             if (card == null) continue;
+             HairCardSurfaceIsland tag = card.GetComponent<HairCardSurfaceIsland>();
+             if (tag != null && tag.islandId >= 0) continue;
+             SurfaceIslandScope.TryGetCardIsland(card, out _);
+         }
+     }
++
++    private int lastRegistryVersion = -1;
+ }
+diff --git a/Assets/Scripts/UI_Import/TextureEditorManager.cs b/Assets/Scripts/UI_Import/TextureEditorManager.cs
+index 5f231d8..4ffb9ff 100644
+--- a/Assets/Scripts/UI_Import/TextureEditorManager.cs
++++ b/Assets/Scripts/UI_Import/TextureEditorManager.cs
+@@ -227,6 +227,12 @@ public class TextureEditorManager : MonoBehaviour
+ 
+     private void BuildTextureEditorUI(Transform parentCanvas, System.Action onSwitchToGroom)
+     {
++        // The panels below are what four separate authorities sit waiting for by name. Their
++        // lookups are throttled now rather than sweeping the scene every frame, so tell the
++        // cache the answer has just changed - otherwise binding could lag the build by up to
++        // the sweep interval, and these panels are styled and laid out the instant they appear.
++        RuntimeNamedObjectCache.Invalidate();
++
+         GameObject panelGO = new GameObject("TextureEditorPanel", typeof(RectTransform), typeof(Image));
+         panelGO.transform.SetParent(parentCanvas, false);
+         panelGO.transform.SetAsLastSibling();
+diff --git a/Assets/Scripts/UI_Import/TextureEditorPostExitGuard.cs b/Assets/Scripts/UI_Import/TextureEditorPostExitGuard.cs
+index 7877f24..7b3fb6d 100644
+--- a/Assets/Scripts/UI_Import/TextureEditorPostExitGuard.cs
++++ b/Assets/Scripts/UI_Import/TextureEditorPostExitGuard.cs
+@@ -84,11 +84,12 @@ public class TextureEditorPostExitGuard : MonoBehaviour
+             roots = FindFirstObjectByType<GroomRootStateAuthority>();
+     }
+ 
++    // Shared, throttled - see RuntimeNamedObjectCache. This ran every frame from Update, and
++    // TextureEditorPanel does not exist until the texture workspace is first opened, so in a
++    // grooming session it swept the whole scene and found nothing, forever.
+     GameObject FindTexturePanel()
+     {
+-        foreach (Transform t in FindObjectsByType<Transform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+-            if (t != null && t.name == "TextureEditorPanel") return t.gameObject;
+-        return null;
++        return RuntimeNamedObjectCache.Find("TextureEditorPanel");
+     }
+ 
+     bool HasAnyLocalEditState()
+diff --git a/Assets/Scripts/UI_Import/TextureUVRectAutoAuthority.cs b/Assets/Scripts/UI_Import/TextureUVRectAutoAuthority.cs
+index 9323a04..1ec1c78 100644
+--- a/Assets/Scripts/UI_Import/TextureUVRectAutoAuthority.cs
++++ b/Assets/Scripts/UI_Import/TextureUVRectAutoAuthority.cs
+@@ -48,9 +48,24 @@ public class TextureUVRectAutoAuthority : MonoBehaviour
+     {
+         if (workspace == null) workspace = FindFirstObjectByType<TextureUVRectWorkspace>();
+         if (workspace == null) return;
++
++        // Once the button exists there is nothing to ensure. `buttons` below was a local, so
++        // this swept the entire scene every frame FOREVER - including after the button had
++        // been built, and including in a grooming session where UVWorkspaceSection does not
++        // exist at all and the search could only ever come back empty.
++        if (autoButton != null) return;
++
++        if (Time.unscaledTime < nextEnsure) return;
++        nextEnsure = Time.unscaledTime + EnsureInterval;
++
+         EnsureButton();
+     }
+ 
++    // Only reached while the AUTO button is genuinely missing, which is once per texture-mode
++    // session rather than once per frame.
++    private const float EnsureInterval = .2f;
++    private float nextEnsure;
++
+     void EnsureButton()
+     {
+         Transform buttons = FindObjectsByType<Transform>(FindObjectsInactive.Include, FindObjectsSortMode.None)
+diff --git a/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs b/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs
+index cfc14c7..32e94a7 100644
+--- a/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs
++++ b/Assets/Scripts/UI_Import/TextureUVRectWorkspace.cs
+@@ -169,11 +169,10 @@ public class TextureUVRectWorkspace : MonoBehaviour
+             previewPlane = FindInactiveGameObject("HairTexturePreviewPlane");
+     }
+ 
++    // Shared, throttled - see RuntimeNamedObjectCache. This ran every frame from Update.
+     static GameObject FindInactiveGameObject(string objectName)
+     {
+-        Transform found = FindObjectsByType<Transform>(FindObjectsInactive.Include, FindObjectsSortMode.None)
+-            .FirstOrDefault(t => t != null && t.name == objectName);
+-        return found != null ? found.gameObject : null;
++        return RuntimeNamedObjectCache.Find(objectName);
+     }
+ 
+     void EnterWorkspace()
+diff --git a/Assets/Scripts/UI_Import/TextureWorkspacePolishFix.cs b/Assets/Scripts/UI_Import/TextureWorkspacePolishFix.cs
+index e0d17aa..62704c3 100644
+--- a/Assets/Scripts/UI_Import/TextureWorkspacePolishFix.cs
++++ b/Assets/Scripts/UI_Import/TextureWorkspacePolishFix.cs
+@@ -458,11 +458,12 @@ public class TextureWorkspacePolishFix : MonoBehaviour
+         }
+     }
+ 
++    // Was a private full-scene sweep, called three times from an UNGATED LateUpdate - and the
++    // panels it looks for do not exist at all in a grooming session, so the null guard above
++    // never latched and all three ran to completion over every object in the scene, every frame.
++    // See RuntimeNamedObjectCache for what that actually cost.
+     static GameObject FindInactive(string objectName)
+     {
+-        foreach (Transform transform in FindObjectsByType<Transform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+-            if (transform != null && transform.name == objectName)
+-                return transform.gameObject;
+-        return null;
++        return RuntimeNamedObjectCache.Find(objectName);
+     }
+ }
+diff --git a/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs b/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
+index 8ca363d..71f506e 100644
+--- a/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
++++ b/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
+@@ -44,6 +44,9 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
+         new List<GuideCurveManager.GuideCurve>();
+     private readonly Dictionary<int, int> lastGroupSignature = new Dictionary<int, int>();
+ 
++    // Reused across groups and frames. Only reached when a group actually has a modifier on it.
++    private readonly List<HairCard> groupCardScratch = new List<HairCard>();
++
+     // Last island each clumper (by id) successfully resolved to, so a transient raycast miss
+     // reuses the previous answer instead of silently dropping that clumper for the frame.
+     private readonly Dictionary<int, int> lastResolvedIsland = new Dictionary<int, int>();
+@@ -85,7 +88,6 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
+ 
+         List<GroupClumperManager.GroupClumper> clumpers = new List<GroupClumperManager.GroupClumper>();
+         if (manager != null) clumpers = manager.GetAllClumpers();
+-        HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
+ 
+         // Amount == 0 means this clumper no longer owns the generated mesh. Treat zeroed
+         // clumpers exactly like removed clumpers here rather than keeping their group alive
+@@ -117,7 +119,7 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
+ 
+         if (ordered.Count == 0 && activeGuides.Count == 0)
+         {
+-            RestoreRemovedGroups(allCards, groups);
++            RestoreRemovedGroups(HairCard.All, groups);
+             lastGroupSignature.Clear();
+             return;
+         }
+@@ -143,9 +145,18 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
+             {
+                 groupGuides = activeGuides.Where(g => g.groupId == groupId).ToList();
+             }
+-            HairCard[] groupCards = allCards
+-                .Where(c => c != null && c.groupId == groupId)
+-                .ToArray();
++            // Gathered with a plain loop over the registry rather than Where().ToArray(): this
++            // is per group per frame, and the LINQ form allocated two iterators and an
++            // intermediate on every one of them.
++            groupCardScratch.Clear();
++            IReadOnlyList<HairCard> registry = HairCard.All;
++            for (int c = 0; c < registry.Count; c++)
++            {
++                HairCard candidate = registry[c];
++                if (candidate == null || candidate.groupId != groupId) continue;
++                groupCardScratch.Add(candidate);
++            }
++            HairCard[] groupCards = groupCardScratch.ToArray();
+ 
+             int signature = ComputeGroupSignature(groupId, groupClumpers, groupGuides, groupCards);
+             if (lastGroupSignature.TryGetValue(groupId, out int previous) && previous == signature)
+@@ -172,7 +183,11 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
+             lastGroupSignature.Remove(stale);
+     }
+ 
+-    void RestoreRemovedGroups(HairCard[] allCards, HashSet<int> currentGroups)
++    // Takes the live registry rather than an array fetched by the caller. The card walk inside
++    // only happens for a group that has just LOST its last modifier - so in the steady state the
++    // outer loop is empty and no card is touched at all, which is exactly why fetching forty
++    // thousand of them up front to hand to it was the wrong shape.
++    void RestoreRemovedGroups(IReadOnlyList<HairCard> allCards, HashSet<int> currentGroups)
+     {
+         foreach (int oldGroup in overriddenGroups.Where(g => !currentGroups.Contains(g)).ToArray())
+         {

@@ -48,8 +48,48 @@ public class PostFreeCanonicalAuthority : MonoBehaviour
             }
         }
 
-        foreach (HairCard card in FindObjectsByType<HairCard>(FindObjectsSortMode.None))
+        // ---- has anything happened that this pass could need to repair? -------------------
+        //
+        // This is a REPAIR sweep, not a simulation step. It exists to put a card back to its
+        // authored state after something else disturbed it - a POST torn down, a clumper
+        // released, a stray SetParameters from the legacy selection path. In a groom that has
+        // never had a POST or a clumper in it there is nothing to repair, and it was running
+        // ApplyEvaluatedState over all forty thousand cards every frame anyway to discover that.
+        //
+        // So the pass now watches the handful of things that can create work for it, and holds
+        // off only once they have ALL been still for a while. The grace window is what makes
+        // this safe: a teardown does not complete in one frame, so a single-frame edge test
+        // would let the pass go back to sleep in the middle of the very thing it is for.
+        int worldState = 17;
+        unchecked
         {
+            worldState = worldState * 31 + groupsWithPosts.Count;
+            worldState = worldState * 31 + HairCard.RegistryVersion;
+            worldState = worldState * 31 + GroupSoloVisibilityAuthority.Epoch;
+            worldState = worldState * 31 + (cachedStates != null ? cachedStates.Count : 0);
+        }
+
+        if (worldState != lastWorldState)
+        {
+            lastWorldState = worldState;
+            settledFrames = 0;
+        }
+        else if (settledFrames < SettleFrames)
+        {
+            settledFrames++;
+        }
+
+        // The bookkeeping half below still has to run every frame even when settled - it is a
+        // dictionary probe per card and it is what the comment inside insists on. The GEOMETRY
+        // half is the one that costs, and it is the one that gets to stop.
+        bool repairGeometry = settledFrames < SettleFrames;
+
+        // HairCard.All rather than FindObjectsByType: the same cards without a forty-thousand
+        // entry array allocated every frame to hold them.
+        IReadOnlyList<HairCard> allCards = HairCard.All;
+        for (int i = 0; i < allCards.Count; i++)
+        {
+            HairCard card = allCards[i];
             if (card == null || groupsWithPosts.Contains(card.groupId)) continue;
 
             // Critical lifecycle rule: PostAffectorManager must not retain a CardState for a
@@ -73,6 +113,11 @@ public class PostFreeCanonicalAuthority : MonoBehaviour
             // untouched, and this same sweep rebuilds it the frame SOLO lets it go.
             if (GroupSoloVisibilityAuthority.IsCardFrozen(card)) continue;
 
+            // Nothing has changed for long enough that there is nothing left to repair. The
+            // bookkeeping above still ran; this is the part that was rebuilding the world to
+            // arrive back where it started.
+            if (!repairGeometry) continue;
+
             // Match the known-good zero-CLUMPER refresh: remove any residual per-card clump
             // state, then explicitly rebuild from the authored upstream state.
             card.ClearClumpModifier();
@@ -80,6 +125,14 @@ public class PostFreeCanonicalAuthority : MonoBehaviour
             card.ApplyEvaluatedState(card.GetCanonicalState());
         }
     }
+
+    // How many consecutive unchanged frames before the geometry repair stands down. Generous on
+    // purpose: it is paid once per change, not per frame, and the cost of being wrong is a card
+    // left holding a modifier's geometry after the modifier is gone.
+    private const int SettleFrames = 30;
+
+    private int lastWorldState = -1;
+    private int settledFrames;
 
     void Resolve()
     {
