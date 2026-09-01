@@ -124,7 +124,7 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
             return;
         }
 
-        RestoreRemovedGroups(allCards, groups);
+        RestoreRemovedGroups(HairCard.All, groups);
 
         foreach (int groupId in groups)
         {
