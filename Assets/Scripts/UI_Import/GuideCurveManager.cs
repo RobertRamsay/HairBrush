@@ -1265,6 +1265,46 @@ public class GuideCurveManager : MonoBehaviour
         // swatch follows it live, and the curve and its rings repaint the same frame.
         AddSlider(controlsRoot.transform, "Colour", 0f, 1f, guide.hue, v => guide.hue = v);
 
+        // COPY / PASTE carry a comb shape from any guide onto any other, across groups. See
+        // GuideClipboardAuthority for what travels and, more to the point, what does not.
+        //
+        // Captured into a local rather than read back through GetSelectedGuide when the button
+        // fires: the panel is destroyed and rebuilt on every selection change, so the guide this
+        // row was built for is the guide it is still looking at for its whole life.
+        GuideCurve clipboardTarget = guide;
+
+        GameObject copy = AddButton(controlsRoot.transform, "COPY", 120f);
+        copy.GetComponent<Button>().onClick.AddListener(() =>
+        {
+            if (GuideClipboardAuthority.Copy(clipboardTarget))
+                StatusToast.Show("Copied GUIDE " + clipboardTarget.id + " - shape, rolls and zone. Select another guide and PASTE.", false, 4f);
+            else
+                StatusToast.Show("Nothing to copy from this guide.", true);
+        });
+
+        GameObject paste = AddButton(controlsRoot.transform, "PASTE", 120f);
+        paste.GetComponent<Button>().onClick.AddListener(() =>
+        {
+            if (!GuideClipboardAuthority.HasClip)
+            {
+                StatusToast.Show("Nothing copied yet. Select a guide and press COPY first.", true);
+                return;
+            }
+
+            if (GuideClipboardAuthority.Paste(clipboardTarget))
+            {
+                // The panel's own sliders are showing the values this just replaced, so it is
+                // rebuilt rather than left reading the guide it no longer describes.
+                DestroyControls();
+                StatusToast.Show("Pasted GUIDE " + GuideClipboardAuthority.CopiedFromId
+                    + " onto GUIDE " + clipboardTarget.id + ". Its colour is unchanged.", false, 4f);
+            }
+            else
+            {
+                StatusToast.Show("That guide could not be pasted here.", true);
+            }
+        });
+
         GameObject done = AddButton(controlsRoot.transform, "DONE", 120f);
         done.GetComponent<Button>().onClick.AddListener(ClearSelection);
 
@@ -1274,6 +1314,7 @@ public class GuideCurveManager : MonoBehaviour
                                         (MaxGuideNodes + 1));
         AddHint(controlsRoot.transform, "CTRL + SHIFT + RIGHT CLICK a point removes it (not the tip)");
         AddHint(controlsRoot.transform, "CTRL + DRAG a point rolls the hair about the strand there");
+        AddHint(controlsRoot.transform, "COPY / PASTE carries a guide's shape and zone to another");
         AddHint(controlsRoot.transform, "SPACE + CLICK moves this guide, keeping its shape");
         AddHint(controlsRoot.transform, "Card placing is OFF while a guide is selected");
         AddHint(controlsRoot.transform, "Colour tells overlapping guides apart - it is saved");
