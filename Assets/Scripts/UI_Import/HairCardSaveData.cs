@@ -463,6 +463,11 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
     // with, which is the whole point of defaulting this way round.
     public int cardSectionProfile;
 
+    // HairCardSection.Topology: 0 SYMMETRIC, 1 DYNAMIC. Absent from a project written before the
+    // toggle existed, which decodes to 0 - and SYMMETRIC is what those projects' cards were
+    // already built as, so an old file opens as itself.
+    public int cardTopology;
+
     public void OnBeforeSerialize()
     {
         ModifierPersistenceBridge bridge=UnityEngine.Object.FindFirstObjectByType<ModifierPersistenceBridge>();

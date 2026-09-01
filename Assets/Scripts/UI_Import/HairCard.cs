@@ -1437,6 +1437,10 @@ public class HairCard : MonoBehaviour
             // by itself on its next re-assertion.
             hash = hash * 31 + (int)HairCardSection.Current;
 
+            // The topology rule changes which triangles span the vertices, so a card that missed
+            // the sweep heals itself the same way a profile change does.
+            hash = hash * 31 + (int)HairCardSection.CurrentTopology;
+
             hash = hash * 31 + GroomShapeCurveRegistry.EpochFor(groupId);
             hash = hash * 31 + PostShapeCurveBridge.Epoch;
 

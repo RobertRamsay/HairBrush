@@ -1,0 +1,386 @@
+diff --git a/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs b/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs
+index 860cc77..45878f3 100644
+--- a/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs
++++ b/Assets/Scripts/UI_Import/GroupPanelPostHintStats.cs
+@@ -139,7 +139,7 @@ public class GroupPanelPostHintStats : MonoBehaviour
+     // relative to whatever already existed.
+     //
+     //   MENU  ->  POLYGONS  ->  LIGHT ANGLE  ->  INPUT KEYS  ->  SYMMETRY  ->  MAYA-NAV
+-    //         ->  GUIDES  ->  CARD  ->  Hair Groups  ->  + GROUP  ->  the group list
++    //         ->  GUIDES  ->  CARD  ->  TOPOLOGY  ->  Hair Groups  ->  + GROUP  ->  the group list
+     void MaintainPanelOrder(Transform panel)
+     {
+         if (panel == null) return;
+@@ -160,6 +160,7 @@ public class GroupPanelPostHintStats : MonoBehaviour
+         AddIfPresent(panel, MayaNavigationAuthority.ButtonName);
+         AddIfPresent(panel, GuideOverlayAuthority.ButtonName);
+         AddIfPresent(panel, HairCardProfileAuthority.ButtonName);
++        AddIfPresent(panel, HairCardTopologyAuthority.ButtonName);
+         AddIfPresent(panel, "TitleText");
+         AddIfPresent(panel, "NewGroupButton");
+         AddIfPresent(panel, "GroupScrollView");
+diff --git a/Assets/Scripts/UI_Import/HairCard.cs b/Assets/Scripts/UI_Import/HairCard.cs
+index 7a360ee..99c0d5f 100644
+--- a/Assets/Scripts/UI_Import/HairCard.cs
++++ b/Assets/Scripts/UI_Import/HairCard.cs
+@@ -1437,6 +1437,10 @@ public class HairCard : MonoBehaviour
+             // by itself on its next re-assertion.
+             hash = hash * 31 + (int)HairCardSection.Current;
+ 
++            // The topology rule changes which triangles span the vertices, so a card that missed
++            // the sweep heals itself the same way a profile change does.
++            hash = hash * 31 + (int)HairCardSection.CurrentTopology;
++
+             hash = hash * 31 + GroomShapeCurveRegistry.EpochFor(groupId);
+             hash = hash * 31 + PostShapeCurveBridge.Epoch;
+ 
+diff --git a/Assets/Scripts/UI_Import/HairCardSaveData.cs b/Assets/Scripts/UI_Import/HairCardSaveData.cs
+index c05dccb..9fbb48f 100644
+--- a/Assets/Scripts/UI_Import/HairCardSaveData.cs
++++ b/Assets/Scripts/UI_Import/HairCardSaveData.cs
+@@ -463,6 +463,11 @@ public class HairProjectSaveData : ISerializationCallbackReceiver
+     // with, which is the whole point of defaulting this way round.
+     public int cardSectionProfile;
+ 
++    // HairCardSection.Topology: 0 SYMMETRIC, 1 DYNAMIC. Absent from a project written before the
++    // toggle existed, which decodes to 0 - and SYMMETRIC is what those projects' cards were
++    // already built as, so an old file opens as itself.
++    public int cardTopology;
++
+     public void OnBeforeSerialize()
+     {
+         ModifierPersistenceBridge bridge=UnityEngine.Object.FindFirstObjectByType<ModifierPersistenceBridge>();
+diff --git a/Assets/Scripts/UI_Import/HairCardSection.cs b/Assets/Scripts/UI_Import/HairCardSection.cs
+index 3cac332..cc21a99 100644
+--- a/Assets/Scripts/UI_Import/HairCardSection.cs
++++ b/Assets/Scripts/UI_Import/HairCardSection.cs
+@@ -46,12 +46,41 @@ public static class HairCardSection
+         Diamond = 1
+     }
+ 
++    // How a quad decides which of its two diagonals to split on. See UseNearDiagonal.
++    public enum Topology
++    {
++        // Fixed. The diagonal alternates by edge index and nothing else, so a card's triangle
++        // list is a function of its segment count alone - the same card always comes out the
++        // same, whatever it has been bent, twisted or combed into.
++        Symmetric = 0,
++
++        // Per quad, by shape: the shorter diagonal wins, with the alternating rule breaking
++        // exact ties. Folds slightly less on a twisted or waved card, at the cost of a triangle
++        // list that changes as the card changes.
++        Dynamic = 1
++    }
++
+     // Global, not per group. Per group was considered and rejected: the clumper and guide
+     // reconstructions rebuild whole groups at a time and would have to carry the profile through
+     // every one of them, and a groom with both profiles in it has no consistent answer for
+     // whether double-sided should be on.
+     private static Profile current = Profile.Tent;
+ 
++    // SYMMETRIC by default, and the default is the conservative one rather than the best-measuring
++    // one on purpose.
++    //
++    // Both settings fix the bug this control was born out of - a symmetric card measures 0.00
++    // degrees of normal asymmetry under either, against 13.9 in the tent and 84.5 in the diamond
++    // under the single fixed diagonal that came before them. What DYNAMIC buys on top is a little
++    // less fold on cards that are genuinely twisted: 12.9 degrees against 13.9 on a hard case.
++    //
++    // What it costs is that the triangle list stops being a property of the card and becomes a
++    // property of the card's CURRENT SHAPE. Drag a slider and the topology can re-cut underneath
++    // the hair; export the same groom twice with a guide moved between and the two OBJs differ in
++    // their faces, not just their vertices. That is a fair trade for someone who wants it and a
++    // strange thing to hand someone who did not ask, so it is opt-in.
++    private static Topology topology = Topology.Symmetric;
++
+     // One error, not one per triangle per row per card per frame. See AddTriangle.
+     private static bool warnedUndersized;
+ 
+@@ -61,6 +90,7 @@ public static class HairCardSection
+     private static void ResetStatics()
+     {
+         current = Profile.Tent;
++        topology = Topology.Symmetric;
+         warnedUndersized = false;
+     }
+ 
+@@ -69,6 +99,27 @@ public static class HairCardSection
+         get { return current; }
+     }
+ 
++    public static Topology CurrentTopology
++    {
++        get { return topology; }
++    }
++
++    public static bool IsDynamicTopology
++    {
++        get { return topology == Topology.Dynamic; }
++    }
++
++    // Rebuilds every card, because the triangle list is a pure function of this and the card's
++    // parameters have not moved.
++    public static void SetTopology(Topology value, bool rebuild)
++    {
++        if (topology == value) return;
++        topology = value;
++
++        if (!rebuild) return;
++        RebuildAllCards();
++    }
++
+     public static bool IsDiamond
+     {
+         get { return current == Profile.Diamond; }
+@@ -239,6 +290,13 @@ public static class HairCardSection
+     private static bool UseNearDiagonal(Vector3[] vertices, int a, int b, int c, int d, int edge)
+     {
+         bool alternate = (edge & 1) == 0;
++
++        // SYMMETRIC stops here: the alternating rule alone, which is the tie-break below promoted
++        // to the whole answer. Symmetric by construction, and a card's triangle list depends on
++        // nothing but its segment count - so it cannot re-cut under a slider, and two exports of
++        // the same groom always have the same faces.
++        if (topology != Topology.Dynamic) return alternate;
++
+         if (vertices == null) return alternate;
+         if (a >= vertices.Length || b >= vertices.Length || c >= vertices.Length || d >= vertices.Length) return alternate;
+ 
+@@ -320,6 +378,7 @@ public static class HairCardSection
+     {
+         if (data == null) return;
+         data.cardSectionProfile = (int)current;
++        data.cardTopology = (int)topology;
+     }
+ 
+     // Applied immediately, not deferred like the other restore bridges.
+@@ -347,6 +406,14 @@ public static class HairCardSection
+         if (data.cardSectionProfile == (int)Profile.Diamond) profile = Profile.Diamond;
+ 
+         current = profile;
++
++        // Absent from a project written before the toggle existed, which decodes to 0 - SYMMETRIC.
++        // That is also what such a project's hair was already being built as, so an old file opens
++        // as itself.
++        Topology loaded = Topology.Symmetric;
++        if (data.cardTopology == (int)Topology.Dynamic) loaded = Topology.Dynamic;
++
++        topology = loaded;
+     }
+ 
+     public static void RebuildAllCards()
+diff --git a/Assets/Scripts/UI_Import/HairCardTopologyAuthority.cs b/Assets/Scripts/UI_Import/HairCardTopologyAuthority.cs
+new file mode 100644
+index 0000000..0b40691
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/HairCardTopologyAuthority.cs
+@@ -0,0 +1,172 @@
++using TMPro;
++using UnityEngine;
++using UnityEngine.UI;
++
++// The global TOPOLOGY: SYMMETRIC / DYNAMIC toggle, on the left panel directly under CARD.
++//
++// A quad has two ways to become two triangles, and this is how that choice gets made. It sits
++// next to CARD because the two are the same kind of decision - what shape the mesh is, globally,
++// saved with the groom - and because a diamond is where the difference is easiest to see.
++//
++// WHAT IT IS NOT is a fix for the bug that produced it. Both settings fix that. Every quad used
++// to take the SAME diagonal, which made the mesh asymmetric even when the card was not: measured
++// against the true surface on a straight symmetric card, the ridge vertex's normal came out 13.9
++// degrees off under TENT and 84.5 under DIAMOND, the same way on every card in the groom. Under
++// either setting here it measures 0.00. The toggle is about what to do with the freedom that is
++// left over.
++//
++//   SYMMETRIC  The diagonal alternates by edge index and reads nothing else. A card's triangle
++//              list is a function of its segment count alone, so it cannot re-cut underneath a
++//              slider, and two exports of the same groom always have the same faces.
++//
++//   DYNAMIC    Each quad takes its shorter diagonal, with the alternating rule breaking exact
++//              ties - which is what keeps a straight card symmetric, since its two diagonals are
++//              exactly equal and a bare comparison would pick the same side every time. Folds
++//              less on a twisted or waved card: 12.9 degrees against 13.9 on a hard case.
++//
++// SYMMETRIC IS THE DEFAULT, and deliberately not the better-measuring one. DYNAMIC makes the
++// triangle list a property of the card's CURRENT SHAPE rather than of the card, so dragging a
++// slider can re-cut the topology under the hair and a guide moved between two exports changes
++// their faces as well as their vertices. That is a fair trade for somebody who wants it and a
++// strange thing to hand somebody who did not ask for it.
++[DefaultExecutionOrder(6801)]
++public class HairCardTopologyAuthority : MonoBehaviour
++{
++    // GroupPanelPostHintStats orders the left panel and needs to know this button by name.
++    // A panel child that is not in its list gets shoved around every scan.
++    public const string ButtonName = "HairCardTopologyButton";
++
++    private const float ScanInterval = .25f;
++    private const float ButtonHeight = 32f;
++
++    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
++    private static void Spawn()
++    {
++        if (FindFirstObjectByType<HairCardTopologyAuthority>() != null) return;
++        GameObject go = new GameObject(nameof(HairCardTopologyAuthority));
++        DontDestroyOnLoad(go);
++        go.AddComponent<HairCardTopologyAuthority>();
++    }
++
++    private GameObject boundPanel;
++    private Button button;
++    private TextMeshProUGUI label;
++    private Image image;
++    private float nextScan;
++
++    private void Update()
++    {
++        if (Time.unscaledTime < nextScan) return;
++        nextScan = Time.unscaledTime + ScanInterval;
++
++        // The left panel is destroyed and rebuilt on every model and project load, so the
++        // binding is re-checked rather than established once.
++        GameObject panel = GameObject.Find("GroupManagerPanel");
++        if (panel == null)
++        {
++            boundPanel = null;
++            button = null;
++            label = null;
++            image = null;
++            return;
++        }
++
++        if (boundPanel != panel || button == null) Bind(panel);
++        Repaint();
++    }
++
++    private void Bind(GameObject panel)
++    {
++        boundPanel = panel;
++
++        Transform existing = panel.transform.Find(ButtonName);
++        if (existing != null)
++        {
++            button = existing.GetComponent<Button>();
++            label = existing.GetComponentInChildren<TextMeshProUGUI>(true);
++            image = existing.GetComponent<Image>();
++            if (button != null) return;
++
++            // A half-built husk from an interrupted rebuild - start again rather than adopt it.
++            // Deactivated and renamed with a PREFIX before the Destroy, because Destroy is
++            // deferred to the end of the frame and a scan later in this same frame would
++            // otherwise find it by name and adopt the thing being thrown away.
++            existing.gameObject.SetActive(false);
++            existing.gameObject.name = "Discarded_" + ButtonName;
++            Destroy(existing.gameObject);
++        }
++
++        BuildButton(panel.transform);
++    }
++
++    private void BuildButton(Transform parent)
++    {
++        GameObject go = new GameObject(ButtonName, typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
++        go.transform.SetParent(parent, false);
++        go.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, ButtonHeight);
++        go.GetComponent<LayoutElement>().preferredHeight = ButtonHeight;
++
++        image = go.GetComponent<Image>();
++        button = go.GetComponent<Button>();
++        button.onClick.AddListener(Toggle);
++
++        GameObject textGO = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
++        textGO.transform.SetParent(go.transform, false);
++        RectTransform textRect = textGO.GetComponent<RectTransform>();
++        textRect.anchorMin = Vector2.zero;
++        textRect.anchorMax = Vector2.one;
++        textRect.offsetMin = Vector2.zero;
++        textRect.offsetMax = Vector2.zero;
++
++        label = textGO.GetComponent<TextMeshProUGUI>();
++        label.fontSize = 13f;
++        label.fontStyle = FontStyles.Bold;
++        label.alignment = TextAlignmentOptions.Center;
++        label.color = Color.white;
++        label.raycastTarget = false;
++
++        // First guess only. GroupPanelPostHintStats.MaintainPanelOrder is the running order
++        // authority for this panel and puts this button under CARD every scan.
++        Transform above = parent.Find(HairCardProfileAuthority.ButtonName);
++        if (above == null) above = parent.Find(GuideOverlayAuthority.ButtonName);
++        if (above != null) go.transform.SetSiblingIndex(Mathf.Clamp(above.GetSiblingIndex() + 1, 0, parent.childCount - 1));
++
++        Repaint();
++    }
++
++    private void Repaint()
++    {
++        // Only write when the value actually changed - a TMP text assignment forces a mesh
++        // rebuild of the label whether or not the string differs.
++        if (label != null)
++        {
++            string text = "TOPOLOGY: SYMMETRIC";
++            if (HairCardSection.IsDynamicTopology) text = "TOPOLOGY: DYNAMIC";
++            if (label.text != text) label.text = text;
++        }
++
++        if (image != null)
++        {
++            Color colour = new Color(.28f, .28f, .28f, 1f);
++            if (HairCardSection.IsDynamicTopology) colour = new Color(.24f, .48f, .40f, 1f);
++            if (image.color != colour) image.color = colour;
++        }
++    }
++
++    private void Toggle()
++    {
++        if (HairCardSection.IsDynamicTopology)
++        {
++            HairCardSection.SetTopology(HairCardSection.Topology.Symmetric, true);
++            StatusToast.Show("TOPOLOGY: SYMMETRIC - every card splits the same way every time, whatever it is bent into.", false, 5f);
++            nextScan = 0f;
++            Repaint();
++            return;
++        }
++
++        HairCardSection.SetTopology(HairCardSection.Topology.Dynamic, true);
++        StatusToast.Show("TOPOLOGY: DYNAMIC - each quad takes its shorter diagonal. Less fold on twisted hair; the triangles re-cut as the shape changes.", false, 6f);
++        nextScan = 0f;
++        Repaint();
++    }
++}
+diff --git a/Assets/Scripts/UI_Import/HairCardTopologyAuthority.cs.meta b/Assets/Scripts/UI_Import/HairCardTopologyAuthority.cs.meta
+new file mode 100644
+index 0000000..d3a7a3e
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/HairCardTopologyAuthority.cs.meta
+@@ -0,0 +1,2 @@
++fileFormatVersion: 2
++guid: 59894f41960342a0892f8a2ac9a18ccd
+diff --git a/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs b/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
+index 067e6a4..8ca363d 100644
+--- a/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
++++ b/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
+@@ -310,6 +310,24 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
+         {
+             int hash = 17;
+             hash = Mix(hash, groupId);
++
++            // The global section settings, because this reconstruction builds the triangle list
++            // as well as the vertices.
++            //
++            // TOPOLOGY is the one that needs saying. It changes ONLY which triangles span the
++            // vertices - the positions and UVs are untouched - so it is invisible to
++            // card.GetGeneratedMeshSignature() below, which hashes exactly those. Without this
++            // line, flipping SYMMETRIC to DYNAMIC leaves every clumped or guided group hashing
++            // back to its cached value and rendering the old topology; worse, GenerateMesh's own
++            // modifier guard sees an unchanged source signature too, so nothing anywhere would
++            // rewrite it until an unrelated edit came along.
++            //
++            // The PROFILE is already covered - a diamond has a fourth column, so the vertex count
++            // and every position move with it - but it is folded in beside its partner rather
++            // than left to be re-derived by whoever reads this next.
++            hash = Mix(hash, (int)HairCardSection.CurrentTopology);
++            hash = Mix(hash, (int)HairCardSection.Current);
++
+             hash = Mix(hash, SurfaceIslandScope.IsClumperContiguous(groupId) ? 1 : 0);
+             hash = Mix(hash, clumpers != null ? clumpers.Count : 0);
+ 

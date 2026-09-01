@@ -46,11 +46,40 @@ public static class HairCardSection
         Diamond = 1
     }
 
+    // How a quad decides which of its two diagonals to split on. See UseNearDiagonal.
+    public enum Topology
+    {
+        // Fixed. The diagonal alternates by edge index and nothing else, so a card's triangle
+        // list is a function of its segment count alone - the same card always comes out the
+        // same, whatever it has been bent, twisted or combed into.
+        Symmetric = 0,
+
+        // Per quad, by shape: the shorter diagonal wins, with the alternating rule breaking
+        // exact ties. Folds slightly less on a twisted or waved card, at the cost of a triangle
+        // list that changes as the card changes.
+        Dynamic = 1
+    }
+
     // Global, not per group. Per group was considered and rejected: the clumper and guide
     // reconstructions rebuild whole groups at a time and would have to carry the profile through
     // every one of them, and a groom with both profiles in it has no consistent answer for
     // whether double-sided should be on.
     private static Profile current = Profile.Tent;
+
+    // SYMMETRIC by default, and the default is the conservative one rather than the best-measuring
+    // one on purpose.
+    //
+    // Both settings fix the bug this control was born out of - a symmetric card measures 0.00
+    // degrees of normal asymmetry under either, against 13.9 in the tent and 84.5 in the diamond
+    // under the single fixed diagonal that came before them. What DYNAMIC buys on top is a little
+    // less fold on cards that are genuinely twisted: 12.9 degrees against 13.9 on a hard case.
+    //
+    // What it costs is that the triangle list stops being a property of the card and becomes a
+    // property of the card's CURRENT SHAPE. Drag a slider and the topology can re-cut underneath
+    // the hair; export the same groom twice with a guide moved between and the two OBJs differ in
+    // their faces, not just their vertices. That is a fair trade for someone who wants it and a
+    // strange thing to hand someone who did not ask, so it is opt-in.
+    private static Topology topology = Topology.Symmetric;
 
     // One error, not one per triangle per row per card per frame. See AddTriangle.
     private static bool warnedUndersized;
@@ -61,12 +90,34 @@ public static class HairCardSection
     private static void ResetStatics()
     {
         current = Profile.Tent;
+        topology = Topology.Symmetric;
         warnedUndersized = false;
     }
 
     public static Profile Current
     {
         get { return current; }
+    }
+
+    public static Topology CurrentTopology
+    {
+        get { return topology; }
+    }
+
+    public static bool IsDynamicTopology
+    {
+        get { return topology == Topology.Dynamic; }
+    }
+
+    // Rebuilds every card, because the triangle list is a pure function of this and the card's
+    // parameters have not moved.
+    public static void SetTopology(Topology value, bool rebuild)
+    {
+        if (topology == value) return;
+        topology = value;
+
+        if (!rebuild) return;
+        RebuildAllCards();
     }
 
     public static bool IsDiamond
@@ -239,6 +290,13 @@ public static class HairCardSection
     private static bool UseNearDiagonal(Vector3[] vertices, int a, int b, int c, int d, int edge)
     {
         bool alternate = (edge & 1) == 0;
+
+        // SYMMETRIC stops here: the alternating rule alone, which is the tie-break below promoted
+        // to the whole answer. Symmetric by construction, and a card's triangle list depends on
+        // nothing but its segment count - so it cannot re-cut under a slider, and two exports of
+        // the same groom always have the same faces.
+        if (topology != Topology.Dynamic) return alternate;
+
         if (vertices == null) return alternate;
         if (a >= vertices.Length || b >= vertices.Length || c >= vertices.Length || d >= vertices.Length) return alternate;
 
@@ -320,6 +378,7 @@ public static class HairCardSection
     {
         if (data == null) return;
         data.cardSectionProfile = (int)current;
+        data.cardTopology = (int)topology;
     }
 
     // Applied immediately, not deferred like the other restore bridges.
@@ -347,6 +406,14 @@ public static class HairCardSection
         if (data.cardSectionProfile == (int)Profile.Diamond) profile = Profile.Diamond;
 
         current = profile;
+
+        // Absent from a project written before the toggle existed, which decodes to 0 - SYMMETRIC.
+        // That is also what such a project's hair was already being built as, so an old file opens
+        // as itself.
+        Topology loaded = Topology.Symmetric;
+        if (data.cardTopology == (int)Topology.Dynamic) loaded = Topology.Dynamic;
+
+        topology = loaded;
     }
 
     public static void RebuildAllCards()

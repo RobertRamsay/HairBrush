@@ -310,6 +310,24 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
         {
             int hash = 17;
             hash = Mix(hash, groupId);
+
+            // The global section settings, because this reconstruction builds the triangle list
+            // as well as the vertices.
+            //
+            // TOPOLOGY is the one that needs saying. It changes ONLY which triangles span the
+            // vertices - the positions and UVs are untouched - so it is invisible to
+            // card.GetGeneratedMeshSignature() below, which hashes exactly those. Without this
+            // line, flipping SYMMETRIC to DYNAMIC leaves every clumped or guided group hashing
+            // back to its cached value and rendering the old topology; worse, GenerateMesh's own
+            // modifier guard sees an unchanged source signature too, so nothing anywhere would
+            // rewrite it until an unrelated edit came along.
+            //
+            // The PROFILE is already covered - a diamond has a fourth column, so the vertex count
+            // and every position move with it - but it is folded in beside its partner rather
+            // than left to be re-derived by whoever reads this next.
+            hash = Mix(hash, (int)HairCardSection.CurrentTopology);
+            hash = Mix(hash, (int)HairCardSection.Current);
+
             hash = Mix(hash, SurfaceIslandScope.IsClumperContiguous(groupId) ? 1 : 0);
             hash = Mix(hash, clumpers != null ? clumpers.Count : 0);
 
