@@ -166,6 +166,56 @@ public class GuideCurveHandleAuthority : MonoBehaviour
     // out of range at the press so the first frame of every drag always reports.
     private int lastRollToast = int.MinValue;
 
+    // SHIFT + drag on the root ring: turning the whole guide about its own surface normal.
+    private bool spinning;
+    private int spinningGuideId = -1;
+    private Vector2 spinDragOrigin;
+    private int lastSpinToast = int.MinValue;
+
+    // The frame the spin was last serviced on. See the guard in LateUpdate.
+    private int spinServicedFrame = -1;
+
+    // Where every node sat, in the guide's own frame, when the spin began. The angle is solved
+    // from this snapshot every frame rather than accumulated onto the live positions - see
+    // GuideCurveManager.SpinGuide for why a per-frame delta would ratchet.
+    private Vector3[] spinSourceNodes = new Vector3[0];
+    private int spinSourceCount;
+
+    // Degrees of spin per pixel of horizontal cursor travel. A little coarser than the node roll,
+    // because a guide is usually being swung to face a new part of the head rather than nudged.
+    private const float SpinDegreesPerPixel = .6f;
+
+    // Everything a SPIN has to remember from the moment of the press.
+    void CaptureSpin(GuideCurveManager.GuideCurve guide)
+    {
+        spinSourceCount = GuideCurveManager.NodeCount(guide);
+        if (spinSourceNodes.Length < spinSourceCount) spinSourceNodes = new Vector3[spinSourceCount];
+        for (int i = 0; i < spinSourceCount; i++) spinSourceNodes[i] = guide.nodesLocal[i];
+    }
+
+    // Horizontal cursor travel from the press, straight onto the guide's spin.
+    //
+    // Solved from the origin against the captured nodes, not accumulated - a spin built from
+    // per-frame deltas would not come home when dragged back. Horizontal only, for the reason the
+    // node roll is: using both axes would make the result depend on the path the cursor took
+    // rather than where it ended up, so a small circle would wind the guide round indefinitely.
+    void DragSpinTo(GuideCurveManager.GuideCurve guide, Vector2 mouse)
+    {
+        float degrees = (mouse.x - spinDragOrigin.x) * SpinDegreesPerPixel;
+        if (!GuideCurveManager.SpinGuide(guide, degrees, spinSourceNodes, spinSourceCount)) return;
+
+        // Wrapped for the readout only. The rotation itself is unbounded and stays that way -
+        // it is baked into positions, so there is no accumulating number to cap - but
+        // "SPIN: 372" tells nobody anything that "SPIN: 12" does not.
+        int shown = Mathf.RoundToInt(Mathf.Repeat(degrees, 360f));
+        if (shown == lastSpinToast) return;
+        lastSpinToast = shown;
+
+        // Gated on the printed number changing, for the reason DragRollTo is: this runs every
+        // frame the button is held, and StatusToast.Show opens with an unconditional Debug.Log.
+        StatusToast.Show("GUIDE SPIN: " + shown + " deg", false, 1.5f);
+    }
+
     // Where every node sat in the world at the moment the ROOT was grabbed. See MoveGuideRoot for
     // why a root drag re-derives from this snapshot every frame rather than from the guide's live
     // positions. Grown on demand; a guide has at most twenty nodes.
@@ -491,6 +541,72 @@ public class GuideCurveHandleAuthority : MonoBehaviour
         }
 
         rolling = -1;
+
+        // --------------------------------------------------------------------- SHIFT: guide spin
+        //
+        // SHIFT and left, dragged sideways on the ROOT ring, turns the whole guide about the axis
+        // standing out of the surface underneath it. The shape is untouched - it simply faces a
+        // different way round the head, which was previously only reachable by dragging every node.
+        //
+        // WRITTEN TO BE INERT. A first version of this opened with
+        //
+        //     if (shiftHeld && !pointerOverUI && dragging == -1) { ... return; }
+        //
+        // so that merely HOLDING SHIFT took over the frame and returned early. Reading the code I
+        // could not find a path by which that reaches guide placement, and neither a full-codebase
+        // parse nor a diff of every compiler diagnostic found anything wrong with it - but placing
+        // a guide stopped working, and removing this file's changes fixed it. So the honest
+        // conclusion is that I do not know what it broke, and the fix is to stop it being able to
+        // break anything rather than to argue that it could not.
+        //
+        // Hence: nothing here returns, and nothing here touches shared state, unless a spin is
+        // ACTUALLY IN PROGRESS - meaning SHIFT was held and the left button was pressed while the
+        // cursor was over the root ring specifically. Every other frame falls straight through to
+        // the code below exactly as it did before this existed. SHIFT was never in modifierHeld,
+        // so a SHIFT drag on any other handle still does the ordinary shape drag it always did.
+        bool spinHeld = Keyboard.current != null &&
+                        Keyboard.current.shiftKey.isPressed &&
+                        !Keyboard.current.ctrlKey.isPressed;
+
+        // A SPIN SURVIVES ONLY A FRAME IN WHICH THIS BLOCK ACTUALLY RAN.
+        //
+        // Every early return above - ALT for the camera, an armed placement, the point editor, a
+        // suppressed viewport - skips this code entirely, and a spin left running across one of
+        // them would come back solving against a stale origin and snap the guide round by however
+        // far the cursor had travelled meanwhile. ALT is the one that matters: CTRL+ALT+LMB is
+        // Maya's own camera chord and a 500 pixel tumble would be a silent 300 degree spin.
+        //
+        // One comparison instead of a clear at each of those sites, and unlike a list of clears
+        // it cannot fall out of date when a new early return is added above it.
+        if (spinning && (spinServicedFrame != Time.frameCount - 1 || spinningGuideId != guide.id))
+            spinning = false;
+
+        if (!spinning && spinHeld && !pointerOverUI && dragging == -1 &&
+            Mouse.current.leftButton.wasPressedThisFrame &&
+            PickHandle(guide, mouse) == RootHandle)
+        {
+            spinning = true;
+            spinningGuideId = guide.id;
+            spinServicedFrame = Time.frameCount;
+            spinDragOrigin = mouse;
+            lastSpinToast = int.MinValue;
+            CaptureSpin(guide);
+        }
+
+        // The ONLY early return, and only while the button is genuinely down on a spin that
+        // genuinely started. dragging is cleared with it because SHIFT is not in modifierHeld -
+        // without that the same press would also seize the root as an ordinary drag and the two
+        // would fight over the guide for the rest of the hold.
+        if (spinning && spinHeld && Mouse.current.leftButton.isPressed)
+        {
+            dragging = -1;
+            spinServicedFrame = Time.frameCount;
+            DragSpinTo(guide, mouse);
+            DrawHandles(guide, RootHandle);
+            return;
+        }
+
+        spinning = false;
 
         // CTRL, TAB and SPACE all mean "this click belongs to another gesture". SPACE+click in
         // particular repositions the guide, and GuideCurveManager has already moved its contact by

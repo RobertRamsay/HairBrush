@@ -828,6 +828,39 @@ public class GuideCurveManager : MonoBehaviour
         return true;
     }
 
+    // Spins the whole guide about the axis standing out of the surface at its root.
+    //
+    // Local +Y IS that axis - the nodes are stored in a frame whose up is the contact normal,
+    // which is what "raycast through its root, out of the head" describes. So the spin is a
+    // rotation of every stored offset about Vector3.up, and nothing else moves: the contact
+    // stays, the frame stays, the shape stays, and the guide faces a different way round the head.
+    //
+    // BAKED INTO THE NODES rather than kept as a per-guide angle. An angle would be a new saved
+    // field, and would need something to be measured against the moment a node was also dragged
+    // by hand - "spin 40 degrees" and "this node is over here" are two descriptions of the same
+    // positions, and holding both means deciding every time which one won. Rotating the offsets
+    // leaves one description, and saves, loads, copies and pastes with no format change.
+    //
+    // `sourceNodes` is where the nodes were when the gesture STARTED, captured once at the press.
+    // Rotating live positions by a per-frame delta would ratchet - each frame's rounding becomes
+    // the next frame's input, so spinning out and back would not come home. Same snapshot rule as
+    // MoveGuideRoot, for the same reason.
+    public static bool SpinGuide(GuideCurve guide, float degrees, Vector3[] sourceNodes, int sourceCount)
+    {
+        if (guide == null || guide.nodesLocal == null || sourceNodes == null) return false;
+
+        int count = Mathf.Min(NodeCount(guide), Mathf.Min(sourceCount, sourceNodes.Length));
+        if (count <= 0) return false;
+
+        Quaternion spin = Quaternion.AngleAxis(degrees, Vector3.up);
+        for (int i = 0; i < count; i++) guide.nodesLocal[i] = spin * sourceNodes[i];
+
+        // The per-node ROLLS are untouched. A roll is measured about the strand's own tangent as
+        // the deformation carries a frame up it, so it means the same thing whichever way round
+        // the head the guide points. Spinning them too would rotate the same thing twice.
+        return true;
+    }
+
     // Minimal rotation from the old normal to the new one, applied to the frame the guide is
     // already carrying. No reference axis is involved, so there is no seam to cross.
     static void TransportFrame(GuideCurve guide, Vector3 normal)
