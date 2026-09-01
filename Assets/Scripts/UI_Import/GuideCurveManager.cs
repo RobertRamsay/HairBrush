@@ -828,6 +828,42 @@ public class GuideCurveManager : MonoBehaviour
         return true;
     }
 
+    // Spins the whole guide about the axis standing out of the surface at its root.
+    //
+    // Local +Y IS that axis - the guide's nodes are stored in a frame whose up is the contact
+    // normal, which is what "raycast through its root, out of the head" describes. So the spin is
+    // a rotation of every stored offset about Vector3.up, and nothing else has to move: the
+    // contact stays, the frame stays, the shape stays, and the guide simply faces a different way
+    // round the head.
+    //
+    // BAKED INTO THE NODES rather than kept as a per-guide angle, which is the decision worth
+    // recording. An angle would be a new saved field, and worse it would need something to be
+    // measured against the moment a node is also dragged by hand - "spin 40 degrees" and "this
+    // node is over here" are two descriptions of the same positions, and holding both means
+    // deciding every time which one won. Rotating the offsets leaves exactly one description.
+    // It also means this saves, loads, copies and pastes with no format change at all.
+    //
+    // `sourceNodes` is where the nodes were when the gesture STARTED, and the caller captures it
+    // once at the press. Rotating the live positions by a per-frame delta instead would ratchet:
+    // each frame's rounding becomes the next frame's input, so spinning out and back would not
+    // come home. Same snapshot rule as MoveGuideRoot, and for the same reason.
+    public static bool SpinGuide(GuideCurve guide, float degrees, Vector3[] sourceNodes, int sourceCount)
+    {
+        if (guide == null || guide.nodesLocal == null || sourceNodes == null) return false;
+
+        int count = Mathf.Min(NodeCount(guide), Mathf.Min(sourceCount, sourceNodes.Length));
+        if (count <= 0) return false;
+
+        Quaternion spin = Quaternion.AngleAxis(degrees, Vector3.up);
+        for (int i = 0; i < count; i++) guide.nodesLocal[i] = spin * sourceNodes[i];
+
+        // The per-node ROLLS are deliberately untouched. A roll is measured about the strand's
+        // own tangent as the deformation carries a frame up it, so it means the same thing
+        // whichever way round the head the guide is pointing. Spinning them as well would be
+        // rotating the same thing twice.
+        return true;
+    }
+
     // Minimal rotation from the old normal to the new one, applied to the frame the guide is
     // already carrying. No reference axis is involved, so there is no seam to cross.
     static void TransportFrame(GuideCurve guide, Vector3 normal)
@@ -1265,6 +1301,46 @@ public class GuideCurveManager : MonoBehaviour
         // swatch follows it live, and the curve and its rings repaint the same frame.
         AddSlider(controlsRoot.transform, "Colour", 0f, 1f, guide.hue, v => guide.hue = v);
 
+        // COPY / PASTE carry a comb shape from any guide onto any other, across groups. See
+        // GuideClipboardAuthority for what travels and, more to the point, what does not.
+        //
+        // Captured into a local rather than read back through GetSelectedGuide when the button
+        // fires: the panel is destroyed and rebuilt on every selection change, so the guide this
+        // row was built for is the guide it is still looking at for its whole life.
+        GuideCurve clipboardTarget = guide;
+
+        GameObject copy = AddButton(controlsRoot.transform, "COPY", 120f);
+        copy.GetComponent<Button>().onClick.AddListener(() =>
+        {
+            if (GuideClipboardAuthority.Copy(clipboardTarget))
+                StatusToast.Show("Copied GUIDE " + clipboardTarget.id + " - shape, rolls and zone. Select another guide and PASTE.", false, 4f);
+            else
+                StatusToast.Show("Nothing to copy from this guide.", true);
+        });
+
+        GameObject paste = AddButton(controlsRoot.transform, "PASTE", 120f);
+        paste.GetComponent<Button>().onClick.AddListener(() =>
+        {
+            if (!GuideClipboardAuthority.HasClip)
+            {
+                StatusToast.Show("Nothing copied yet. Select a guide and press COPY first.", true);
+                return;
+            }
+
+            if (GuideClipboardAuthority.Paste(clipboardTarget))
+            {
+                // The panel's own sliders are showing the values this just replaced, so it is
+                // rebuilt rather than left reading the guide it no longer describes.
+                DestroyControls();
+                StatusToast.Show("Pasted GUIDE " + GuideClipboardAuthority.CopiedFromId
+                    + " onto GUIDE " + clipboardTarget.id + ". Its colour is unchanged.", false, 4f);
+            }
+            else
+            {
+                StatusToast.Show("That guide could not be pasted here.", true);
+            }
+        });
+
         GameObject done = AddButton(controlsRoot.transform, "DONE", 120f);
         done.GetComponent<Button>().onClick.AddListener(ClearSelection);
 
@@ -1274,6 +1350,8 @@ public class GuideCurveManager : MonoBehaviour
                                         (MaxGuideNodes + 1));
         AddHint(controlsRoot.transform, "CTRL + SHIFT + RIGHT CLICK a point removes it (not the tip)");
         AddHint(controlsRoot.transform, "CTRL + DRAG a point rolls the hair about the strand there");
+        AddHint(controlsRoot.transform, "SHIFT + DRAG the ROOT ring spins the whole guide round");
+        AddHint(controlsRoot.transform, "COPY / PASTE carries a guide's shape and zone to another");
         AddHint(controlsRoot.transform, "SPACE + CLICK moves this guide, keeping its shape");
         AddHint(controlsRoot.transform, "Card placing is OFF while a guide is selected");
         AddHint(controlsRoot.transform, "Colour tells overlapping guides apart - it is saved");
