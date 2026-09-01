@@ -379,6 +379,14 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
                     hash = Mix(hash, g.amount.GetHashCode());
                     hash = Mix(hash, g.radius.GetHashCode());
                     hash = Mix(hash, g.falloff.GetHashCode());
+
+                    // SPIN, and this one is not optional. It is a stored ANGLE applied when a node
+                    // is converted to world space, so spinning a guide changes nothing in
+                    // nodesLocal below - the positions hashed there are identical before and
+                    // after. Without this line the group hashes back to its cached value, the
+                    // whole evaluation is skipped, and the slider and the drag both move a number
+                    // while the hair sits still.
+                    hash = Mix(hash, g.spin.GetHashCode());
                     hash = Mix(hash, g.contact.x.GetHashCode());
                     hash = Mix(hash, g.contact.y.GetHashCode());
                     hash = Mix(hash, g.contact.z.GetHashCode());

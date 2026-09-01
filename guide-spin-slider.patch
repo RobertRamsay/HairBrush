@@ -1,0 +1,416 @@
+diff --git a/Assets/Scripts/UI_Import/GuideClipboardAuthority.cs b/Assets/Scripts/UI_Import/GuideClipboardAuthority.cs
+index 1e24cf9..8bfad38 100644
+--- a/Assets/Scripts/UI_Import/GuideClipboardAuthority.cs
++++ b/Assets/Scripts/UI_Import/GuideClipboardAuthority.cs
+@@ -32,6 +32,11 @@ public static class GuideClipboardAuthority
+         public float radius;
+         public float falloff;
+ 
++        // Travels with the shape. A spin IS part of how the comb sits - pasting the nodes without
++        // it would deliver the same curve facing a different way round the head, which is the one
++        // thing a paste is not supposed to do.
++        public float spin;
++
+         // Only so the toast can say what was copied. Never applied.
+         public int sourceId;
+     }
+@@ -67,6 +72,7 @@ public static class GuideClipboardAuthority
+             amount = guide.amount,
+             radius = guide.radius,
+             falloff = guide.falloff,
++            spin = guide.spin,
+             sourceId = guide.id
+         };
+ 
+@@ -119,6 +125,7 @@ public static class GuideClipboardAuthority
+         guide.amount = Mathf.Clamp01(clip.amount);
+         guide.radius = Mathf.Max(.001f, clip.radius);
+         guide.falloff = Mathf.Max(0f, clip.falloff);
++        GuideCurveManager.SetSpin(guide, clip.spin);
+ 
+         // Nothing to tell the evaluator by hand: node positions, rolls, amount, radius and
+         // falloff are every one of them folded into ThreeColumnClumperMeshAuthority's group
+diff --git a/Assets/Scripts/UI_Import/GuideCurveHandleAuthority.cs b/Assets/Scripts/UI_Import/GuideCurveHandleAuthority.cs
+index fa9c9e1..b06dd2e 100644
+--- a/Assets/Scripts/UI_Import/GuideCurveHandleAuthority.cs
++++ b/Assets/Scripts/UI_Import/GuideCurveHandleAuthority.cs
+@@ -166,6 +166,59 @@ public class GuideCurveHandleAuthority : MonoBehaviour
+     // out of range at the press so the first frame of every drag always reports.
+     private int lastRollToast = int.MinValue;
+ 
++    // SHIFT + drag on the root ring: turning the whole guide about its own surface normal.
++    private bool spinning;
++    private int spinningGuideId = -1;
++    private Vector2 spinDragOrigin;
++    private int lastSpinToast = int.MinValue;
++
++    // The frame the spin was last serviced on. See the guard in LateUpdate.
++    private int spinServicedFrame = -1;
++
++    // The angle the guide held when the spin began. See CaptureSpin.
++    private float spinStartDegrees;
++
++    // Degrees of spin per pixel of horizontal cursor travel. A little coarser than the node roll,
++    // because a guide is usually being swung to face a new part of the head rather than nudged.
++    private const float SpinDegreesPerPixel = .6f;
++
++    // Everything a SPIN has to remember from the moment of the press: the angle it started at.
++    //
++    // A snapshot of the NODES is what this used to take, back when the spin was baked into them.
++    // Now that the spin is a stored angle there is one number to remember instead of twenty
++    // positions, and the same property falls out for free - the drag solves absolutely from the
++    // press, so it cannot ratchet and dragging back comes home exactly.
++    void CaptureSpin(GuideCurveManager.GuideCurve guide)
++    {
++        spinStartDegrees = guide != null ? guide.spin : 0f;
++    }
++
++    // Horizontal cursor travel from the press, straight onto the guide's spin.
++    //
++    // Solved from the origin against the captured nodes, not accumulated - a spin built from
++    // per-frame deltas would not come home when dragged back. Horizontal only, for the reason the
++    // node roll is: using both axes would make the result depend on the path the cursor took
++    // rather than where it ended up, so a small circle would wind the guide round indefinitely.
++    void DragSpinTo(GuideCurveManager.GuideCurve guide, Vector2 mouse)
++    {
++        // Solved from the angle the guide held at the press plus the travel since, so the drag is
++        // absolute rather than accumulated and dragging back returns to exactly where it started.
++        float degrees = spinStartDegrees + (mouse.x - spinDragOrigin.x) * SpinDegreesPerPixel;
++        GuideCurveManager.SetSpin(guide, degrees);
++
++        // The slider and this drag are one value. Pushing it across every frame is what makes
++        // them 1:1 rather than two controls that agree only until one of them is used.
++        GuideCurveManager.ReportSpinToSlider(guide);
++
++        int shown = Mathf.RoundToInt(guide.spin);
++        if (shown == lastSpinToast) return;
++        lastSpinToast = shown;
++
++        // Gated on the printed number changing, for the reason DragRollTo is: this runs every
++        // frame the button is held, and StatusToast.Show opens with an unconditional Debug.Log.
++        StatusToast.Show("GUIDE SPIN: " + shown + " deg", false, 1.5f);
++    }
++
+     // Where every node sat in the world at the moment the ROOT was grabbed. See MoveGuideRoot for
+     // why a root drag re-derives from this snapshot every frame rather than from the guide's live
+     // positions. Grown on demand; a guide has at most twenty nodes.
+@@ -492,6 +545,72 @@ public class GuideCurveHandleAuthority : MonoBehaviour
+ 
+         rolling = -1;
+ 
++        // --------------------------------------------------------------------- SHIFT: guide spin
++        //
++        // SHIFT and left, dragged sideways on the ROOT ring, turns the whole guide about the axis
++        // standing out of the surface underneath it. The shape is untouched - it simply faces a
++        // different way round the head, which was previously only reachable by dragging every node.
++        //
++        // WRITTEN TO BE INERT. A first version of this opened with
++        //
++        //     if (shiftHeld && !pointerOverUI && dragging == -1) { ... return; }
++        //
++        // so that merely HOLDING SHIFT took over the frame and returned early. Reading the code I
++        // could not find a path by which that reaches guide placement, and neither a full-codebase
++        // parse nor a diff of every compiler diagnostic found anything wrong with it - but placing
++        // a guide stopped working, and removing this file's changes fixed it. So the honest
++        // conclusion is that I do not know what it broke, and the fix is to stop it being able to
++        // break anything rather than to argue that it could not.
++        //
++        // Hence: nothing here returns, and nothing here touches shared state, unless a spin is
++        // ACTUALLY IN PROGRESS - meaning SHIFT was held and the left button was pressed while the
++        // cursor was over the root ring specifically. Every other frame falls straight through to
++        // the code below exactly as it did before this existed. SHIFT was never in modifierHeld,
++        // so a SHIFT drag on any other handle still does the ordinary shape drag it always did.
++        bool spinHeld = Keyboard.current != null &&
++                        Keyboard.current.shiftKey.isPressed &&
++                        !Keyboard.current.ctrlKey.isPressed;
++
++        // A SPIN SURVIVES ONLY A FRAME IN WHICH THIS BLOCK ACTUALLY RAN.
++        //
++        // Every early return above - ALT for the camera, an armed placement, the point editor, a
++        // suppressed viewport - skips this code entirely, and a spin left running across one of
++        // them would come back solving against a stale origin and snap the guide round by however
++        // far the cursor had travelled meanwhile. ALT is the one that matters: CTRL+ALT+LMB is
++        // Maya's own camera chord and a 500 pixel tumble would be a silent 300 degree spin.
++        //
++        // One comparison instead of a clear at each of those sites, and unlike a list of clears
++        // it cannot fall out of date when a new early return is added above it.
++        if (spinning && (spinServicedFrame != Time.frameCount - 1 || spinningGuideId != guide.id))
++            spinning = false;
++
++        if (!spinning && spinHeld && !pointerOverUI && dragging == -1 &&
++            Mouse.current.leftButton.wasPressedThisFrame &&
++            PickHandle(guide, mouse) == RootHandle)
++        {
++            spinning = true;
++            spinningGuideId = guide.id;
++            spinServicedFrame = Time.frameCount;
++            spinDragOrigin = mouse;
++            lastSpinToast = int.MinValue;
++            CaptureSpin(guide);
++        }
++
++        // The ONLY early return, and only while the button is genuinely down on a spin that
++        // genuinely started. dragging is cleared with it because SHIFT is not in modifierHeld -
++        // without that the same press would also seize the root as an ordinary drag and the two
++        // would fight over the guide for the rest of the hold.
++        if (spinning && spinHeld && Mouse.current.leftButton.isPressed)
++        {
++            dragging = -1;
++            spinServicedFrame = Time.frameCount;
++            DragSpinTo(guide, mouse);
++            DrawHandles(guide, RootHandle);
++            return;
++        }
++
++        spinning = false;
++
+         // CTRL, TAB and SPACE all mean "this click belongs to another gesture". SPACE+click in
+         // particular repositions the guide, and GuideCurveManager has already moved its contact by
+         // the time this LateUpdate runs - so without this test the same click would ALSO grab a
+diff --git a/Assets/Scripts/UI_Import/GuideCurveManager.cs b/Assets/Scripts/UI_Import/GuideCurveManager.cs
+index e2a9bcd..6ab9824 100644
+--- a/Assets/Scripts/UI_Import/GuideCurveManager.cs
++++ b/Assets/Scripts/UI_Import/GuideCurveManager.cs
+@@ -148,6 +148,25 @@ public class GuideCurveManager : MonoBehaviour
+         // arrives at it from an unrolled scalp.
+         public List<float> nodeRoll = new List<float> { 0f, 0f };
+ 
++        // How far the whole guide is turned about the axis standing out of the surface at its
++        // root, in degrees. Local +Y IS that axis - see nodesLocal - so this is a rotation about
++        // Vector3.up applied to every node on the way out.
++        //
++        // A STORED ANGLE, NOT BAKED INTO THE NODES, and that is the whole reason the slider can
++        // exist. Rotating the offsets themselves leaves no number to show: "spun 40 degrees" and
++        // "these nodes are here" become the same fact, and a slider would have nothing to read.
++        // Keeping it separate means nodesLocal always means "the shape, unspun", the slider always
++        // means "and turned this far", and the two never have to be reconciled.
++        //
++        // What it costs is that every conversion between the guide's frame and the world has to
++        // agree about it - WorldNode applies it, ToLocal takes it back off. Those two are the only
++        // places that convert, which is what makes this safe: drag a node and the un-spun offset
++        // is what gets stored, so the shape and the spin stay independent however they are edited.
++        //
++        // Zero on every guide made before this existed, and zero is exactly "not spun", so old
++        // projects load identically.
++        public float spin;
++
+         // Starts at zero, exactly like a new clumper: a modifier that changes nothing until it
+         // is asked to. Dropping a guide onto the model should never move hair by itself.
+         [Range(0f, 1f)] public float amount = 0f;
+@@ -242,11 +261,22 @@ public class GuideCurveManager : MonoBehaviour
+         return guide.nodesLocal.Count;
+     }
+ 
++    // ONE OF THE TWO PLACES THE SPIN IS APPLIED. Everything that asks where a node actually is
++    // comes through here - the handles, the curve tessellation, the preview - so applying it once
++    // here turns the whole guide, and nothing else has to know about it.
+     public static Vector3 WorldNode(GuideCurve guide, int index)
+     {
+         if (guide == null || guide.nodesLocal == null) return Vector3.zero;
+         if (index < 0 || index >= guide.nodesLocal.Count) return Vector3.zero;
+-        return guide.contact + guide.frame * guide.nodesLocal[index];
++        return guide.contact + guide.frame * (SpinRotation(guide) * guide.nodesLocal[index]);
++    }
++
++    // The spin as a rotation. Identity for an unspun guide, which is every guide in every project
++    // made before the slider existed - so this is exactly free for them.
++    static Quaternion SpinRotation(GuideCurve guide)
++    {
++        if (guide == null || guide.spin == 0f) return Quaternion.identity;
++        return Quaternion.AngleAxis(guide.spin, Vector3.up);
+     }
+ 
+     public static void SetNode(GuideCurve guide, int index, Vector3 local)
+@@ -406,10 +436,17 @@ public class GuideCurveManager : MonoBehaviour
+     }
+ 
+     // World point back into the guide's own frame. This is what a drag handle writes through.
++    // THE OTHER PLACE, and it must undo exactly what WorldNode did or the two disagree.
++    //
++    // This is what keeps the shape and the spin independent: drag a node on a guide spun 90
++    // degrees and the offset STORED is the un-spun one, so the node lands where the cursor is
++    // and the spin still reads 90. Without the inverse here, every node drag on a spun guide
++    // would fold the spin into the shape and then apply it a second time on the way back out.
+     public static Vector3 ToLocal(GuideCurve guide, Vector3 world)
+     {
+         if (guide == null) return Vector3.zero;
+-        return Quaternion.Inverse(guide.frame) * (world - guide.contact);
++        Vector3 unrotated = Quaternion.Inverse(guide.frame) * (world - guide.contact);
++        return Quaternion.Inverse(SpinRotation(guide)) * unrotated;
+     }
+ 
+     // The quadratic that passes through all THREE points, at t = 0, 0.5 and 1.
+@@ -828,6 +865,18 @@ public class GuideCurveManager : MonoBehaviour
+         return true;
+     }
+ 
++    // Sets the spin. See GuideCurve.spin for why it is a stored angle and not a rotation baked
++    // into the nodes - in short, so that the slider has something to read.
++    //
++    // Wrapped into 0..360 rather than left to run. The drag is unbounded travel, and a slider is
++    // the reason this is a number at all: 372 and 12 are the same guide, and only one of them is
++    // a value a 0..360 control can show.
++    public static void SetSpin(GuideCurve guide, float degrees)
++    {
++        if (guide == null) return;
++        guide.spin = Mathf.Repeat(degrees, 360f);
++    }
++
+     // Minimal rotation from the old normal to the new one, applied to the frame the guide is
+     // already carrying. No reference axis is involved, so there is no seam to cross.
+     static void TransportFrame(GuideCurve guide, Vector3 normal)
+@@ -1265,6 +1314,12 @@ public class GuideCurveManager : MonoBehaviour
+         // swatch follows it live, and the curve and its rings repaint the same frame.
+         AddSlider(controlsRoot.transform, "Colour", 0f, 1f, guide.hue, v => guide.hue = v);
+ 
++        // SPIN, and the drag on the root ring, are one value seen two ways. The slider is captured
++        // so the gesture can push into it - see ReportSpinToSlider.
++        spinSlider = AddSliderReturning(controlsRoot.transform, "Spin", 0f, 360f, guide.spin,
++            v => SetSpin(clipboardTarget, v));
++        spinSliderGuideId = guide.id;
++
+         // COPY / PASTE carry a comb shape from any guide onto any other, across groups. See
+         // GuideClipboardAuthority for what travels and, more to the point, what does not.
+         //
+@@ -1314,6 +1369,7 @@ public class GuideCurveManager : MonoBehaviour
+                                         (MaxGuideNodes + 1));
+         AddHint(controlsRoot.transform, "CTRL + SHIFT + RIGHT CLICK a point removes it (not the tip)");
+         AddHint(controlsRoot.transform, "CTRL + DRAG a point rolls the hair about the strand there");
++        AddHint(controlsRoot.transform, "SHIFT + DRAG the ROOT ring spins it - same value as the Spin slider");
+         AddHint(controlsRoot.transform, "COPY / PASTE carries a guide's shape and zone to another");
+         AddHint(controlsRoot.transform, "SPACE + CLICK moves this guide, keeping its shape");
+         AddHint(controlsRoot.transform, "Card placing is OFF while a guide is selected");
+@@ -1325,13 +1381,54 @@ public class GuideCurveManager : MonoBehaviour
+     {
+         if (controlsRoot != null) Destroy(controlsRoot);
+         controlsRoot = null;
++
++        // The SPIN slider went with the panel. Cleared explicitly rather than left to go null on
++        // its own, because Destroy is deferred to the end of the frame - a drag started in the
++        // meantime would find a live-looking Slider belonging to a panel that is already gone,
++        // and the guide id would be the one just deselected.
++        spinSlider = null;
++        spinSliderGuideId = -1;
+     }
+ 
+     void AddSlider(Transform parent, string label, float min, float max, float value, UnityEngine.Events.UnityAction<float> changed)
+     {
+-        if (createSliderMethod == null) return;
++        AddSliderReturning(parent, label, min, max, value, changed);
++    }
++
++    // The same slider, handing back the Slider component so a caller can push a value INTO it.
++    //
++    // CreateSliderUI takes its Slider as an `out` parameter, and MethodInfo.Invoke writes out
++    // parameters back into the args array - so the reference is sitting in args[6] once the call
++    // returns. AddSlider above has always thrown it away, which was fine while every slider was
++    // only ever driven by the user dragging it. SPIN is driven from two places at once.
++    Slider AddSliderReturning(Transform parent, string label, float min, float max, float value, UnityEngine.Events.UnityAction<float> changed)
++    {
++        if (createSliderMethod == null) return null;
+         object[] args = { parent, label, min, max, value, changed, null, 44f, 15 };
+         createSliderMethod.Invoke(viewer, args);
++        return args[6] as Slider;
++    }
++
++    // The SPIN slider of the guide currently on the panel, and which guide that is.
++    //
++    // Held so the SHIFT + drag gesture can move the slider as it turns the guide - the two are
++    // one value and the panel must not sit there showing a number that stopped being true the
++    // moment the user dragged instead of clicked.
++    private static Slider spinSlider;
++    private static int spinSliderGuideId = -1;
++
++    // Called by GuideCurveHandleAuthority while a spin drag is running.
++    //
++    // SetValueWithoutNotify, not `value`. Assigning value fires onValueChanged, which writes the
++    // spin straight back onto the guide - harmless this instant, since it is the number that was
++    // just written, but it means the drag and the slider each drive the other every frame, and
++    // the first time a clamp or a rounding disagreed between them they would sit there fighting.
++    // One direction of travel per gesture: the drag owns the guide, and tells the slider.
++    public static void ReportSpinToSlider(GuideCurve guide)
++    {
++        if (guide == null || spinSlider == null) return;
++        if (spinSliderGuideId != guide.id) return;
++        spinSlider.SetValueWithoutNotify(guide.spin);
+     }
+ 
+     void AddHeader(Transform parent, string text)
+diff --git a/Assets/Scripts/UI_Import/GuideCurvePersistenceBridge.cs b/Assets/Scripts/UI_Import/GuideCurvePersistenceBridge.cs
+index f8b3b37..476937a 100644
+--- a/Assets/Scripts/UI_Import/GuideCurvePersistenceBridge.cs
++++ b/Assets/Scripts/UI_Import/GuideCurvePersistenceBridge.cs
+@@ -184,6 +184,7 @@ public class GuideCurvePersistenceBridge : MonoBehaviour
+             amount = s.amount,
+             radius = s.radius,
+             falloff = s.falloff,
++            spin = s.spin,
+             hue = s.hue
+         };
+     }
+@@ -255,6 +256,7 @@ public class GuideCurvePersistenceBridge : MonoBehaviour
+             amount = guide.amount,
+             radius = guide.radius,
+             falloff = guide.falloff,
++            spin = guide.spin,
+             hue = guide.hue
+         };
+     }
+@@ -402,6 +404,10 @@ public class GuideCurvePersistenceBridge : MonoBehaviour
+             radius = Mathf.Max(.001f, saved.radius),
+             falloff = Mathf.Max(0f, saved.falloff),
+ 
++            // Wrapped, not clamped. It is an angle on a circle, so a hand-edited 400 means 40
++            // rather than "as far as it will go" - the same reasoning hue below is Repeated for.
++            spin = Mathf.Repeat(saved.spin, 360f),
++
+             // Repeat rather than Clamp01. Hue is a wheel, so a hand-edited 1.2 means the same
+             // place as .2; clamping would silently pin it to magenta instead.
+             hue = Mathf.Repeat(saved.hue, 1f)
+diff --git a/Assets/Scripts/UI_Import/HairCardSaveData.cs b/Assets/Scripts/UI_Import/HairCardSaveData.cs
+index 9fbb48f..7ecf6ed 100644
+--- a/Assets/Scripts/UI_Import/HairCardSaveData.cs
++++ b/Assets/Scripts/UI_Import/HairCardSaveData.cs
+@@ -247,6 +247,11 @@ public class GuideCurveSaveData
+     public float radius=GuideCurveManager.DefaultGuideRadius;
+     public float falloff=GuideCurveManager.DefaultGuideFalloff;
+ 
++    // Degrees the whole guide is turned about its root normal. See GuideCurveManager.GuideCurve.spin.
++    // Absent from a guide written before the spin existed, and JsonUtility leaves an absent key at
++    // its field initialiser - so such a guide decodes to 0, unspun, exactly as it was saved.
++    public float spin;
++
+     // Colour, as a hue. Defaulted rather than left at zero, and that matters: JsonUtility leaves
+     // a field at its initialiser when the key is absent, so every project saved before guides
+     // could be recoloured loads at the original purple. Zero would have loaded them all as RED.
+diff --git a/Assets/Scripts/UI_Import/InputKeysDialog.cs b/Assets/Scripts/UI_Import/InputKeysDialog.cs
+index 79ef3da..96a682e 100644
+--- a/Assets/Scripts/UI_Import/InputKeysDialog.cs
++++ b/Assets/Scripts/UI_Import/InputKeysDialog.cs
+@@ -421,6 +421,7 @@ public class InputKeysDialog : MonoBehaviour
+         Row(parent, "CTRL + SHIFT + RIGHT click", "Remove that point");
+         Row(parent, "Drag a handle", "Reshape the curve");
+         Row(parent, "CTRL + drag a point", "Roll the hair about the strand at that point");
++        Row(parent, "SHIFT + drag the ROOT", "Spin the whole guide - same value as the Spin slider");
+         Note(parent, "Roll is zero at the root and eases between points, so a guide banks from the scalp. The needle on a ring shows its angle.");
+         Row(parent, "ESC  or  empty space", "Finish editing the guide");
+ 
+diff --git a/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs b/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
+index aee4cc6..604f6cb 100644
+--- a/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
++++ b/Assets/Scripts/UI_Import/ThreeColumnClumperMeshAuthority.cs
+@@ -379,6 +379,14 @@ public class ThreeColumnClumperMeshAuthority : MonoBehaviour
+                     hash = Mix(hash, g.amount.GetHashCode());
+                     hash = Mix(hash, g.radius.GetHashCode());
+                     hash = Mix(hash, g.falloff.GetHashCode());
++
++                    // SPIN, and this one is not optional. It is a stored ANGLE applied when a node
++                    // is converted to world space, so spinning a guide changes nothing in
++                    // nodesLocal below - the positions hashed there are identical before and
++                    // after. Without this line the group hashes back to its cached value, the
++                    // whole evaluation is skipped, and the slider and the drag both move a number
++                    // while the hair sits still.
++                    hash = Mix(hash, g.spin.GetHashCode());
+                     hash = Mix(hash, g.contact.x.GetHashCode());
+                     hash = Mix(hash, g.contact.y.GetHashCode());
+                     hash = Mix(hash, g.contact.z.GetHashCode());

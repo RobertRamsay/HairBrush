@@ -421,6 +421,7 @@ public class InputKeysDialog : MonoBehaviour
         Row(parent, "CTRL + SHIFT + RIGHT click", "Remove that point");
         Row(parent, "Drag a handle", "Reshape the curve");
         Row(parent, "CTRL + drag a point", "Roll the hair about the strand at that point");
+        Row(parent, "SHIFT + drag the ROOT", "Spin the whole guide - same value as the Spin slider");
         Note(parent, "Roll is zero at the root and eases between points, so a guide banks from the scalp. The needle on a ring shows its angle.");
         Row(parent, "ESC  or  empty space", "Finish editing the guide");
 

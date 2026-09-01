@@ -184,6 +184,7 @@ public class GuideCurvePersistenceBridge : MonoBehaviour
             amount = s.amount,
             radius = s.radius,
             falloff = s.falloff,
+            spin = s.spin,
             hue = s.hue
         };
     }
@@ -255,6 +256,7 @@ public class GuideCurvePersistenceBridge : MonoBehaviour
             amount = guide.amount,
             radius = guide.radius,
             falloff = guide.falloff,
+            spin = guide.spin,
             hue = guide.hue
         };
     }
@@ -401,6 +403,10 @@ public class GuideCurvePersistenceBridge : MonoBehaviour
             amount = Mathf.Clamp01(saved.amount),
             radius = Mathf.Max(.001f, saved.radius),
             falloff = Mathf.Max(0f, saved.falloff),
+
+            // Wrapped, not clamped. It is an angle on a circle, so a hand-edited 400 means 40
+            // rather than "as far as it will go" - the same reasoning hue below is Repeated for.
+            spin = Mathf.Repeat(saved.spin, 360f),
 
             // Repeat rather than Clamp01. Hue is a wheel, so a hand-edited 1.2 means the same
             // place as .2; clamping would silently pin it to magenta instead.

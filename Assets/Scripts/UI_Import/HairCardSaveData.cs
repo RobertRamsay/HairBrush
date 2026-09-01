@@ -247,6 +247,11 @@ public class GuideCurveSaveData
     public float radius=GuideCurveManager.DefaultGuideRadius;
     public float falloff=GuideCurveManager.DefaultGuideFalloff;
 
+    // Degrees the whole guide is turned about its root normal. See GuideCurveManager.GuideCurve.spin.
+    // Absent from a guide written before the spin existed, and JsonUtility leaves an absent key at
+    // its field initialiser - so such a guide decodes to 0, unspun, exactly as it was saved.
+    public float spin;
+
     // Colour, as a hue. Defaulted rather than left at zero, and that matters: JsonUtility leaves
     // a field at its initialiser when the key is absent, so every project saved before guides
     // could be recoloured loads at the original purple. Zero would have loaded them all as RED.

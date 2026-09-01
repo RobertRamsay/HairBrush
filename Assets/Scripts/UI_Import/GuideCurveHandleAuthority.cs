@@ -175,22 +175,22 @@ public class GuideCurveHandleAuthority : MonoBehaviour
     // The frame the spin was last serviced on. See the guard in LateUpdate.
     private int spinServicedFrame = -1;
 
-    // Where every node sat, in the guide's own frame, when the spin began. The angle is solved
-    // from this snapshot every frame rather than accumulated onto the live positions - see
-    // GuideCurveManager.SpinGuide for why a per-frame delta would ratchet.
-    private Vector3[] spinSourceNodes = new Vector3[0];
-    private int spinSourceCount;
+    // The angle the guide held when the spin began. See CaptureSpin.
+    private float spinStartDegrees;
 
     // Degrees of spin per pixel of horizontal cursor travel. A little coarser than the node roll,
     // because a guide is usually being swung to face a new part of the head rather than nudged.
     private const float SpinDegreesPerPixel = .6f;
 
-    // Everything a SPIN has to remember from the moment of the press.
+    // Everything a SPIN has to remember from the moment of the press: the angle it started at.
+    //
+    // A snapshot of the NODES is what this used to take, back when the spin was baked into them.
+    // Now that the spin is a stored angle there is one number to remember instead of twenty
+    // positions, and the same property falls out for free - the drag solves absolutely from the
+    // press, so it cannot ratchet and dragging back comes home exactly.
     void CaptureSpin(GuideCurveManager.GuideCurve guide)
     {
-        spinSourceCount = GuideCurveManager.NodeCount(guide);
-        if (spinSourceNodes.Length < spinSourceCount) spinSourceNodes = new Vector3[spinSourceCount];
-        for (int i = 0; i < spinSourceCount; i++) spinSourceNodes[i] = guide.nodesLocal[i];
+        spinStartDegrees = guide != null ? guide.spin : 0f;
     }
 
     // Horizontal cursor travel from the press, straight onto the guide's spin.
@@ -201,13 +201,16 @@ public class GuideCurveHandleAuthority : MonoBehaviour
     // rather than where it ended up, so a small circle would wind the guide round indefinitely.
     void DragSpinTo(GuideCurveManager.GuideCurve guide, Vector2 mouse)
     {
-        float degrees = (mouse.x - spinDragOrigin.x) * SpinDegreesPerPixel;
-        if (!GuideCurveManager.SpinGuide(guide, degrees, spinSourceNodes, spinSourceCount)) return;
+        // Solved from the angle the guide held at the press plus the travel since, so the drag is
+        // absolute rather than accumulated and dragging back returns to exactly where it started.
+        float degrees = spinStartDegrees + (mouse.x - spinDragOrigin.x) * SpinDegreesPerPixel;
+        GuideCurveManager.SetSpin(guide, degrees);
 
-        // Wrapped for the readout only. The rotation itself is unbounded and stays that way -
-        // it is baked into positions, so there is no accumulating number to cap - but
-        // "SPIN: 372" tells nobody anything that "SPIN: 12" does not.
-        int shown = Mathf.RoundToInt(Mathf.Repeat(degrees, 360f));
+        // The slider and this drag are one value. Pushing it across every frame is what makes
+        // them 1:1 rather than two controls that agree only until one of them is used.
+        GuideCurveManager.ReportSpinToSlider(guide);
+
+        int shown = Mathf.RoundToInt(guide.spin);
         if (shown == lastSpinToast) return;
         lastSpinToast = shown;
 

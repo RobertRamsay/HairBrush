@@ -32,6 +32,11 @@ public static class GuideClipboardAuthority
         public float radius;
         public float falloff;
 
+        // Travels with the shape. A spin IS part of how the comb sits - pasting the nodes without
+        // it would deliver the same curve facing a different way round the head, which is the one
+        // thing a paste is not supposed to do.
+        public float spin;
+
         // Only so the toast can say what was copied. Never applied.
         public int sourceId;
     }
@@ -67,6 +72,7 @@ public static class GuideClipboardAuthority
             amount = guide.amount,
             radius = guide.radius,
             falloff = guide.falloff,
+            spin = guide.spin,
             sourceId = guide.id
         };
 
@@ -119,6 +125,7 @@ public static class GuideClipboardAuthority
         guide.amount = Mathf.Clamp01(clip.amount);
         guide.radius = Mathf.Max(.001f, clip.radius);
         guide.falloff = Mathf.Max(0f, clip.falloff);
+        GuideCurveManager.SetSpin(guide, clip.spin);
 
         // Nothing to tell the evaluator by hand: node positions, rolls, amount, radius and
         // falloff are every one of them folded into ThreeColumnClumperMeshAuthority's group
