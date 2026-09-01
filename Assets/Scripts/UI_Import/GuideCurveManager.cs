@@ -1317,7 +1317,7 @@ public class GuideCurveManager : MonoBehaviour
         // SPIN, and the drag on the root ring, are one value seen two ways. The slider is captured
         // so the gesture can push into it - see ReportSpinToSlider.
         spinSlider = AddSliderReturning(controlsRoot.transform, "Spin", 0f, 360f, guide.spin,
-            v => SetSpin(clipboardTarget, v));
+                        v => SetSpin(guide, v));
         spinSliderGuideId = guide.id;
 
         // COPY / PASTE carry a comb shape from any guide onto any other, across groups. See

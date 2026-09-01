@@ -52,39 +52,38 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
     // Five at most, one line each - the panel does not scroll, and anything past about eighty
     // characters is silently ellipsised.
     //
-    // 0.3.1 is a one-feature release, so the ranking question is not "which five things" but
-    // "what does somebody need to know about this one thing before they meet it".
+    // 0.3.2 is mostly GUIDES, and the ranking follows from that: three of the four things added
+    // to them are GESTURES, and a gesture nothing on screen advertises is the definition of what
+    // a release note is for. Nobody discovers CTRL + drag or SHIFT + drag by looking.
     //
-    // The first line names the BUTTON, not the feature. DIAMOND is off by default and nothing on
-    // screen leads you to it, so a note that only says the shape exists leaves the reader hunting
-    // a panel they have looked at a hundred times. CARD, under GUIDES, is the whole instruction.
+    // So the two gesture lines lead, and the COPY / PASTE line comes with them because it is the
+    // same feature area and the buttons are inside a panel you only see with a guide selected.
     //
-    // The second line is the honest one. The diamond doubles the triangle count - the POLYGONS
-    // readout on that same panel will visibly jump the moment it is switched on - and somebody who
-    // finds that out by watching the number climb will assume something is wrong. Saying it here
-    // costs a line and buys the feature its credibility. "TENT stays default" is in the same line
-    // because the reassurance only matters to the same reader.
+    // TOPOLOGY is third because it is the one thing here that changes how existing grooms LOOK.
+    // The old fixed triangulation made a symmetric card render asymmetrically - measured at 13.9
+    // degrees of normal error in the tent and 84.5 in the diamond, the same way on every card, so
+    // it read as the whole head lit slightly wrong from one side rather than as noise. Both
+    // settings fix it; the button is there for the choice left over.
     //
-    // The third is the "something you knew has changed" slot, the one 0.3.0 gave to the POST
-    // sliders. Two controls that have always worked stop responding, and although both raise a
-    // toast explaining themselves when clicked, a control that has to be clicked to explain why it
-    // is dead has already read as broken once.
+    // PERFORMANCE is fourth, not first, even though it is the largest change by volume. It is
+    // FELT rather than discovered - nobody needs telling that the thing they are dragging got
+    // smoother - so it earns a line for reassurance rather than for instruction.
     //
-    // The brush keys repeat 0.3.0's line deliberately. They were rebound ten minutes after the
-    // 0.3.0 version bump, so whether they reached the built 0.3.0 binary depends on when that
-    // build was actually cut - which the repository cannot answer. Repeating a line somebody has
-    // read costs nothing; dropping it, if the build went out before the rebind, leaves S silently
-    // meaning SYMMETRY to somebody whose fingers still expect spacing.
+    // The missing-head-mesh prompt is last and nearly did not make it: it explains itself in a
+    // dialog at the moment it matters, which is the ideal case for NOT needing a release note.
+    // It is here because the failure it replaces was silent - the groom loaded with no head and
+    // nothing said why - so somebody who hit that before is owed the news that it is fixed.
     //
-    // What did not make the cut: SS/DS no longer carrying over between play-mode runs in the
-    // editor, which no user of a built copy can observe.
+    // What did not make the cut: the guide banking fix (guides used to gimbal rather than bank
+    // from the root), and the per-node roll's own arrival. Both are inside the first line's
+    // territory, and a release note is a poor place to advertise that something was ever wrong.
     private static readonly string[] ReleaseNotes =
     {
-        "CARD: DIAMOND under GUIDES - closed hair cards, normals right from any angle.",
-        "It doubles the triangle count and saves with the project. TENT stays default.",
-        "SS/DS and N+/N- are held while DIAMOND is on - a closed card needs neither.",
-        "Brush keys: P place, D draw, B spray, F even, E erase, S symmetry.",
-        "CTRL+S saves the project, CTRL+X exports the OBJ.",
+        "Guides: CTRL + drag a point to roll the hair, SHIFT + drag the root to spin.",
+        "COPY / PASTE a guide's shape and zone onto any other guide, in any group.",
+        "TOPOLOGY under CARD: cards now split symmetrically, fixing a shading lean.",
+        "Large grooms navigate far more smoothly - 40,000 cards no longer stutter.",
+        "A project whose head mesh has moved now offers to locate it on load.",
     };
 
     // ---------------------------------------------------------------------------------
