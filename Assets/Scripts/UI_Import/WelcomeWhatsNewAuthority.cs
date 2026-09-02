@@ -52,38 +52,28 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
     // Five at most, one line each - the panel does not scroll, and anything past about eighty
     // characters is silently ellipsised.
     //
-    // 0.3.2 is mostly GUIDES, and the ranking follows from that: three of the four things added
-    // to them are GESTURES, and a gesture nothing on screen advertises is the definition of what
-    // a release note is for. Nobody discovers CTRL + drag or SHIFT + drag by looking.
+    // 0.3.3 is a small release and the list is honestly three lines rather than five. A panel
+    // padded out to its capacity with things nobody needed telling is worse than a short one.
     //
-    // So the two gesture lines lead, and the COPY / PASTE line comes with them because it is the
-    // same feature area and the buttons are inside a panel you only see with a guide selected.
+    // MESH+TRANSP leads because it is the only item here that is a NEW THING TO DO, and because
+    // what it is for is not written on the button. A translucent second pass over the groom is
+    // not a mode anyone goes looking for; it earns its line by explaining why you would press it.
     //
-    // TOPOLOGY is third because it is the one thing here that changes how existing grooms LOOK.
-    // The old fixed triangulation made a symmetric card render asymmetrically - measured at 13.9
-    // degrees of normal error in the tent and 84.5 in the diamond, the same way on every card, so
-    // it read as the whole head lit slightly wrong from one side rather than as noise. Both
-    // settings fix it; the button is there for the choice left over.
+    // DITHER is second: a control that did not exist, in a panel the user already knows, sitting
+    // exactly where the note says it does. One line is the whole of what needs saying.
     //
-    // PERFORMANCE is fourth, not first, even though it is the largest change by volume. It is
-    // FELT rather than discovered - nobody needs telling that the thing they are dragging got
-    // smoother - so it earns a line for reassurance rather than for instruction.
+    // The VAR +/- repair is last and is a repair, not a feature. It is here only because the
+    // breakage was VISIBLE - the value wrapped onto a second line and landed on top of the SEED
+    // row underneath - so anyone who saw that is owed the news that it was not their project.
     //
-    // The missing-head-mesh prompt is last and nearly did not make it: it explains itself in a
-    // dialog at the moment it matters, which is the ideal case for NOT needing a release note.
-    // It is here because the failure it replaces was silent - the groom loaded with no head and
-    // nothing said why - so somebody who hit that before is owed the news that it is fixed.
-    //
-    // What did not make the cut: the guide banking fix (guides used to gimbal rather than bank
-    // from the root), and the per-node roll's own arrival. Both are inside the first line's
-    // territory, and a release note is a poor place to advertise that something was ever wrong.
+    // What did not make the cut: the dither value now saving with the project and taking part in
+    // undo. That is what a slider is expected to do, and a release note claiming credit for it
+    // would only raise the question of what the other sliders have been doing.
     private static readonly string[] ReleaseNotes =
     {
-        "Guides: CTRL + drag a point to roll the hair, SHIFT + drag the root to spin.",
-        "COPY / PASTE a guide's shape and zone onto any other guide, in any group.",
-        "TOPOLOGY under CARD: cards now split symmetrically, fixing a shading lean.",
-        "Large grooms navigate far more smoothly - 40,000 cards no longer stutter.",
-        "A project whose head mesh has moved now offers to locate it on load.",
+        "MESH+TRANSP: draw a soft translucent copy of the groom to judge the look.",
+        "DITHER slider in the texture panel, under Smoothness and Metallic.",
+        "The VAR +/- rows read straight again - value on the right, visible track.",
     };
 
     // ---------------------------------------------------------------------------------
