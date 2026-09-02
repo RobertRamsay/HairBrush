@@ -285,8 +285,11 @@ public class GroomSessionResetCoordinator : MonoBehaviour
             if (slider != null) slider.SetValueWithoutNotify(0f);
             if (seed != null) seed.SetTextWithoutNotify("0");
 
+            // BY NAME, not by "the label whose text starts with VAR". The row now holds a fixed
+            // "VAR ±" caption as well as the number, and the old test matched the caption first -
+            // which would have written "VAR ± 0.000" into the caption and left the number alone.
             TextMeshProUGUI label = row.GetComponentsInChildren<TextMeshProUGUI>(true)
-                .FirstOrDefault(t => t != null && t.text.StartsWith("VAR", StringComparison.Ordinal));
+                .FirstOrDefault(t => t != null && t.gameObject.name == GroomVarianceController.ValueLabelName);
             if (label != null)
             {
                 // Was "index 0 and 1 are linear, the rest are angles", which was only true
@@ -294,11 +297,11 @@ public class GroomSessionResetCoordinator : MonoBehaviour
                 bool isAngle = Array.IndexOf(AngleVarianceChannels, VarianceChannels[i]) >= 0;
                 if (isAngle)
                 {
-                    label.text = "VAR ± 0.0°";
+                    label.text = "0.0°";
                 }
                 else
                 {
-                    label.text = "VAR ± 0.000";
+                    label.text = "0.000";
                 }
             }
         }

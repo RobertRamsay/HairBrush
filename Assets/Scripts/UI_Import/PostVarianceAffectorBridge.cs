@@ -384,7 +384,12 @@ public class PostVarianceAffectorBridge : MonoBehaviour
             if (row == null || v == null) continue;
             Slider slider = row.GetComponentInChildren<Slider>(true);
             TMP_InputField seed = row.GetComponentInChildren<TMP_InputField>(true);
-            TextMeshProUGUI label = row.GetComponentsInChildren<TextMeshProUGUI>(true).FirstOrDefault(t => t.gameObject.name == "Text" || t.text.StartsWith("VAR"));
+            // BY THE VALUE LABEL'S OWN NAME. This used to take "the first child called Text",
+            // which worked only while the row held exactly one label - every AddText object in
+            // that controller was called "Text". The row now has a fixed "VAR ±" caption in front
+            // of the number, so the old test would have written the amount into the caption.
+            TextMeshProUGUI label = row.GetComponentsInChildren<TextMeshProUGUI>(true)
+                .FirstOrDefault(t => t != null && t.gameObject.name == GroomVarianceController.ValueLabelName);
             if (slider != null) slider.SetValueWithoutNotify(v.amount);
             if (seed != null) seed.SetTextWithoutNotify(v.seed.ToString());
             if (label != null)
@@ -396,11 +401,11 @@ public class PostVarianceAffectorBridge : MonoBehaviour
                 bool isAngle = Array.IndexOf(AngleChannels, Channels[i]) >= 0;
                 if (isAngle)
                 {
-                    label.text = "VAR ± " + v.amount.ToString("F1") + "°";
+                    label.text = v.amount.ToString("F1") + "°";
                 }
                 else
                 {
-                    label.text = "VAR ± " + v.amount.ToString("F3");
+                    label.text = v.amount.ToString("F3");
                 }
             }
         }

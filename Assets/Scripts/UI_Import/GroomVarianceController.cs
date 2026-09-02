@@ -14,6 +14,27 @@ public class GroomVarianceController : MonoBehaviour
     // anywhere but the end silently re-randomises every card in every project ever saved.
     private enum Channel { Length, Width, Bend, Twist, AngleX, AngleY, AngleZ, CurlFrequency, CurlDiameter, WaveAmplitude, WaveFrequency, WaveDirection, Arch }
 
+    // THE VARIANCE ROW'S WIDTH BUDGET, in one place because it has to add up.
+    //
+    // CompactRightPanelAuthority narrows this panel to the left panel's width - 300px by default -
+    // and then compacts each row's children to fit. It can only compact a child that carries a
+    // LayoutElement, and none of the children here do: this row sizes them by raw RectTransform
+    // with childControlWidth off. So nothing rescues these numbers at runtime and they have to
+    // fit on their own.
+    //
+    //   300 panel - 20 root padding            = 280 inner
+    //   280 - 8 row padding (GroomVarianceSeedUIFix re-asserts 4 left / 4 right every 0.1s)
+    //       - 10 spacing (5 between three children)                        = 262 for children
+    //
+    // Caption + slider + value = 260. Two to spare.
+    private const float CaptionWidth = 42f;
+    private const float SliderWidth = 168f;
+    private const float ValueWidth = 50f;
+
+    // The name of the label carrying the variance NUMBER. Public because two other authorities
+    // write it - see BuildVarianceRow.
+    public const string ValueLabelName = "VarianceValue";
+
     [Serializable] private class VarianceSetting { public float amount; public int seed; }
     private class VarianceRow { public Slider slider; public TextMeshProUGUI valueText; public TMP_InputField seedInput; }
 
@@ -254,9 +275,32 @@ public class GroomVarianceController : MonoBehaviour
         layout.childForceExpandHeight = false;
         layout.childForceExpandWidth = false;
 
-        TextMeshProUGUI valueText = AddText(rowGO.transform, "VAR ± 0.000", 11, 82);
+        // "VAR ±" on the LEFT, the number on the RIGHT of the slider - the shape every other
+        // slider in this panel reads in.
+        //
+        // It was one label, "VAR ± 0.021", crammed into 82px on the left of the slider. That
+        // width was measured against the 11pt it is built at, and it is not laid out at 11pt:
+        // PanelTypographyScale bumps every label in this panel built at 13pt or under by two
+        // points, so the string is drawn at 13, no longer fits, and TMP wraps it onto a second
+        // line. A 20px row has no room for a second line, so it spilled DOWN over the SEED row
+        // underneath - which is the overlapping mush of "0.021" and "SEE" in the panel.
+        //
+        // Every label in this row is NoWrap for that reason. The widths here are the only thing
+        // keeping them on one line, and a label that cannot wrap fails visibly and locally
+        // rather than quietly landing on top of the row below.
+        TextMeshProUGUI captionText = AddText(rowGO.transform, "VAR ±", 11, CaptionWidth, "VarianceCaption");
+        captionText.alignment = TextAlignmentOptions.MidlineLeft;
+        captionText.textWrappingMode = TextWrappingModes.NoWrap;
+
+        Slider varianceSlider = AddCompactSlider(rowGO.transform, 0, maxVariance, 0, SliderWidth);
+
+        // Named, not just positioned. GroomSessionResetCoordinator and PostVarianceAffectorBridge
+        // both reach into these rows to write this number, and both used to find it as "the first
+        // Text child" / "the first label starting with VAR" - neither of which survives there
+        // being two labels in the row. They look it up by this name now.
+        TextMeshProUGUI valueText = AddText(rowGO.transform, "0.000", 11, ValueWidth, ValueLabelName);
         valueText.alignment = TextAlignmentOptions.MidlineLeft;
-        Slider varianceSlider = AddCompactSlider(rowGO.transform, 0, maxVariance, 0, 150);
+        valueText.textWrappingMode = TextWrappingModes.NoWrap;
 
         // Second line, its own row below the first: seed + reroll. Previously all of this lived
         // on one ~500px-wide line (label + slider + "SEED" + input + button); the panel this
@@ -279,8 +323,12 @@ public class GroomVarianceController : MonoBehaviour
         seedLayout.childForceExpandHeight = false;
         seedLayout.childForceExpandWidth = false;
 
-        TextMeshProUGUI seedLabel = AddText(seedRowGO.transform, "SEED", 10, 38);
+        // 44, not 38. Same cause as the row above: 38 was measured at the 10pt this is built
+        // with, PanelTypographyScale draws it at 12, and "SEED" then wrapped to "SEE" / "D" -
+        // the stray D sitting under the variance number in the panel.
+        TextMeshProUGUI seedLabel = AddText(seedRowGO.transform, "SEED", 10, 44);
         seedLabel.alignment = TextAlignmentOptions.Center;
+        seedLabel.textWrappingMode = TextWrappingModes.NoWrap;
         TMP_InputField seedInput = AddSeedField(seedRowGO.transform, 78);
         GameObject randomButton = AddButton(seedRowGO.transform, "RANDOMIZE", 92, 19);
 
@@ -317,7 +365,7 @@ public class GroomVarianceController : MonoBehaviour
         {
             VarianceSetting s = GetSetting(viewer.currentGroupId, channel);
             s.amount = v;
-            valueText.text = "VAR ± " + FormatVariance(channel, v);
+            valueText.text = FormatVariance(channel, v);
             ApplyChannel(channel, viewer.currentGroupId);
         });
 
@@ -381,7 +429,7 @@ public class GroomVarianceController : MonoBehaviour
             VarianceSetting s = GetSetting(id, p.Key);
             p.Value.slider.SetValueWithoutNotify(s.amount);
             p.Value.seedInput.SetTextWithoutNotify(s.seed.ToString());
-            p.Value.valueText.text = "VAR ± " + FormatVariance(p.Key, s.amount);
+            p.Value.valueText.text = FormatVariance(p.Key, s.amount);
         }
     }
 
@@ -606,9 +654,9 @@ public class GroomVarianceController : MonoBehaviour
     // Curl Frequency, a turn count, and Curl Diameter, a length-scale magnitude) is plain decimal.
     string FormatVariance(Channel c, float v) => c == Channel.Bend || c == Channel.Twist || c == Channel.AngleX || c == Channel.AngleY || c == Channel.AngleZ ? v.ToString("F1") + "°" : v.ToString("F3");
 
-    TextMeshProUGUI AddText(Transform p, string text, int size, float width)
+    TextMeshProUGUI AddText(Transform p, string text, int size, float width, string objectName = "Text")
     {
-        GameObject go = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
+        GameObject go = new GameObject(objectName, typeof(RectTransform), typeof(TextMeshProUGUI));
         go.transform.SetParent(p, false);
         go.GetComponent<RectTransform>().sizeDelta = new Vector2(width, 24);
         TextMeshProUGUI t = go.GetComponent<TextMeshProUGUI>();
@@ -616,16 +664,35 @@ public class GroomVarianceController : MonoBehaviour
         return t;
     }
 
+    // How tall the variance track line is, in pixels. Deliberately thin: this control sits under
+    // a full-size slider and must not compete with it.
+    private const float TrackHeight = 3f;
+
     Slider AddCompactSlider(Transform p, float min, float max, float value, float width)
     {
         GameObject go = new GameObject("VarianceSlider", typeof(RectTransform), typeof(Slider));
         go.transform.SetParent(p, false); go.GetComponent<RectTransform>().sizeDelta = new Vector2(width, 22);
         Slider s = go.GetComponent<Slider>(); s.minValue = min; s.maxValue = max; s.value = value;
 
+        // THE TRACK. A 3px line the notch visibly rides along, rather than a proportion of the
+        // row's height. The old version anchored 0.4-0.6 of a row whose height the layout group
+        // controls, which is both unpredictable and, at this row's size, near enough invisible
+        // against the panel - the notch read as a lone white tick floating in space.
+        //
+        // Anchored across the full width at the vertical CENTRE, with the height carried by the
+        // offsets: with anchorMin.y and anchorMax.y equal, offsetMin/offsetMax are the distance
+        // above and below that centre line, so this is exactly TrackHeight tall whatever the row
+        // does around it.
         GameObject bg = new GameObject("Background", typeof(RectTransform), typeof(Image)); bg.transform.SetParent(go.transform, false);
-        RectTransform br = bg.GetComponent<RectTransform>(); br.anchorMin = new Vector2(0, .4f); br.anchorMax = new Vector2(1, .6f); br.sizeDelta = Vector2.zero; bg.GetComponent<Image>().color = new Color(.28f, .28f, .28f);
+        RectTransform br = bg.GetComponent<RectTransform>();
+        br.anchorMin = new Vector2(0f, .5f); br.anchorMax = new Vector2(1f, .5f); br.pivot = new Vector2(.5f, .5f);
+        br.offsetMin = new Vector2(0f, -TrackHeight * .5f); br.offsetMax = new Vector2(0f, TrackHeight * .5f);
+        bg.GetComponent<Image>().color = new Color(.42f, .42f, .46f);
+
         GameObject fa = new GameObject("Fill Area", typeof(RectTransform)); fa.transform.SetParent(go.transform, false);
-        RectTransform far = fa.GetComponent<RectTransform>(); far.anchorMin = new Vector2(0, .35f); far.anchorMax = new Vector2(1, .65f); far.offsetMin = new Vector2(4, 0); far.offsetMax = new Vector2(-4, 0);
+        RectTransform far = fa.GetComponent<RectTransform>();
+        far.anchorMin = new Vector2(0f, .5f); far.anchorMax = new Vector2(1f, .5f); far.pivot = new Vector2(.5f, .5f);
+        far.offsetMin = new Vector2(4f, -TrackHeight * .5f); far.offsetMax = new Vector2(-4f, TrackHeight * .5f);
         GameObject fill = new GameObject("Fill", typeof(RectTransform), typeof(Image)); fill.transform.SetParent(fa.transform, false);
         RectTransform fr = fill.GetComponent<RectTransform>(); fr.anchorMin = Vector2.zero; fr.anchorMax = Vector2.one; fr.offsetMin = Vector2.zero; fr.offsetMax = Vector2.zero; fill.GetComponent<Image>().color = new Color(.55f, .45f, .15f); s.fillRect = fr;
         GameObject ha = new GameObject("Handle Slide Area", typeof(RectTransform)); ha.transform.SetParent(go.transform, false);
