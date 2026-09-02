@@ -184,6 +184,11 @@ public class TextureWorkspacePolishFix : MonoBehaviour
 
             Transform sliderTransform = row.Find("SmoothnessSlider");
             if (sliderTransform == null) sliderTransform = row.Find("MetallicSlider");
+
+            // DITHER, third of the set. A row whose slider is not named here keeps its own
+            // HorizontalLayoutGroup, which in this 300px column gives the slider no height at all
+            // and pushes the value off the panel - the exact failure the tint rows had.
+            if (sliderTransform == null) sliderTransform = row.Find("DitherSlider");
             if (sliderTransform == null) continue;
 
             // These material properties read much better as a compact two-line block:

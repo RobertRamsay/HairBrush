@@ -20,6 +20,7 @@ public class MaterialProjectPersistenceBridge : MonoBehaviour
     private const string OpacityProperty = "_OpacityMask";
     private const string SmoothProperty = "_Smooth";
     private const string MetalProperty = "_Metal";
+    private const string DitherProperty = "_DitheringAmt";
     private const int GlobalMaterialKey = int.MinValue;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -61,6 +62,7 @@ public class MaterialProjectPersistenceBridge : MonoBehaviour
                     opacityPath = et.GetField("opacityPath")?.GetValue(entry) as string,
                     smooth = entryMaterial != null && entryMaterial.HasProperty(SmoothProperty) ? entryMaterial.GetFloat(SmoothProperty) : 0.56f,
                     metal = entryMaterial != null && entryMaterial.HasProperty(MetalProperty) ? entryMaterial.GetFloat(MetalProperty) : 0.33f,
+                    dither = entryMaterial != null && entryMaterial.HasProperty(DitherProperty) ? entryMaterial.GetFloat(DitherProperty) : 0.2f,
                     albedoCleared = ReadBool(et, entry, "albedoCleared"),
                     normalCleared = ReadBool(et, entry, "normalCleared"),
                     opacityCleared = ReadBool(et, entry, "opacityCleared"),
@@ -150,6 +152,7 @@ public class MaterialProjectPersistenceBridge : MonoBehaviour
                 RestoreSlot(entry, OpacityProperty, "opacityPath", "opacityCleared", saved.opacityPath, saved.opacityCleared, true);
                 TryRestoreFloat(entry, SmoothProperty, saved.smooth);
                 TryRestoreFloat(entry, MetalProperty, saved.metal);
+                TryRestoreFloat(entry, DitherProperty, saved.dither);
                 RestoreTint(editor, entry, saved);
             }
             materials.Add(entry);

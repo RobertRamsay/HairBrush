@@ -156,6 +156,12 @@ public class HairMaterialSaveData
     public float smooth = 0.56f;
     public float metal = 0.33f;
 
+    // _DitheringAmt. Initialised to the shader's OWN default rather than left at zero: JsonUtility
+    // runs field initialisers first and only overwrites keys that are actually present, so a
+    // project written before this slider existed restores at 0.2 and looks exactly as it did.
+    // Left at 0 it would silently un-dither every older groom on load.
+    public float dither = 0.2f;
+
     // MASTER COLOUR (_HairTint), which the shader multiplies into the albedo. hasTint is what
     // separates "white" from "this project predates the control": absent in an older file it
     // deserializes to false, and the restore then puts the shader's OWN default back rather

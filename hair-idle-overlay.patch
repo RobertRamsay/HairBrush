@@ -1,0 +1,441 @@
+diff --git a/Assets/Scripts/UI_Import/HairCard.cs b/Assets/Scripts/UI_Import/HairCard.cs
+index b8b2d66..68ddc73 100644
+--- a/Assets/Scripts/UI_Import/HairCard.cs
++++ b/Assets/Scripts/UI_Import/HairCard.cs
+@@ -554,6 +554,28 @@ public class HairCard : MonoBehaviour
+     [Range(0f, 1f)] public float selectionWeight = 0f;
+ 
+     private MeshFilter meshFilter;
++
++    // The MeshRenderer, resolved once. HairIdleOverlayAuthority touches every card's renderer
++    // when the translucent visualisation pass goes on or off, and at forty thousand cards a
++    // GetComponent per card IS the cost of that transition. Named CardRenderer rather than
++    // Renderer so it cannot shadow the UnityEngine.Renderer type inside this class.
++    private MeshRenderer cardRenderer;
++
++    public MeshRenderer CardRenderer
++    {
++        get
++        {
++            if (cardRenderer == null) cardRenderer = GetComponent<MeshRenderer>();
++            return cardRenderer;
++        }
++    }
++
++    // Owned by HairIdleOverlayAuthority: true while this card's MeshRenderer carries the
++    // translucent overlay material in a second slot. Kept here rather than in a dictionary on
++    // that authority so a destroyed card takes its own flag with it, and so the sweep can skip
++    // an already-correct card without a single native call.
++    [System.NonSerialized] public bool idleOverlayApplied;
++
+     private Mesh mesh;
+     private Vector3[] baseVertices;
+     private Vector3 spawnHitPoint;
+diff --git a/Assets/Scripts/UI_Import/HairIdleOverlayAuthority.cs b/Assets/Scripts/UI_Import/HairIdleOverlayAuthority.cs
+new file mode 100644
+index 0000000..71f50d3
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/HairIdleOverlayAuthority.cs
+@@ -0,0 +1,382 @@
++using System.Collections.Generic;
++using UnityEngine;
++using UnityEngine.InputSystem;
++
++// THE IDLE TRANSLUCENT PASS.
++//
++// While the user is neither navigating nor editing, every hair card is drawn a SECOND time with
++// HairShader_Transp on top of its normal opaque draw. That shader is transparent and reads its
++// alpha from the opacity mask, so the second draw feathers the hard cut edges of the first and
++// the groom reads as soft hair rather than as forty thousand alpha-tested quads. The moment the
++// user touches anything the second draw goes away again, because it is not free.
++//
++// ----------------------------------------------------------------------------------------
++// How the second draw is issued
++// ----------------------------------------------------------------------------------------
++// By giving the card's existing MeshRenderer a SECOND material rather than by building a second
++// object, a second mesh, or a CommandBuffer.
++//
++// A hair card mesh has exactly one sub-mesh (HairCard.GenerateMesh writes mesh.triangles, which
++// is the single-sub-mesh path). Unity's documented behaviour for a renderer with more materials
++// than sub-meshes is to render the last sub-mesh again with each remaining material, one on top
++// of the next - which is precisely the "draw it twice" this needs.
++//
++// The alternatives were all worse at the scale this tool works at:
++//
++//   duplicate GameObjects   forty thousand more objects to create, keep in step and cull
++//   Graphics.DrawMesh       forty thousand managed calls per frame, every frame
++//   a CommandBuffer         not SRP-batched, so forty thousand un-merged draw calls
++//
++// The extra material slot keeps the SRP batcher and GPU instancing, and costs one array write
++// per card on each transition and NOTHING per frame in between.
++//
++// ----------------------------------------------------------------------------------------
++// Why the transitions are spread over several frames
++// ----------------------------------------------------------------------------------------
++// Forty thousand renderer writes in one frame is a visible hitch, and the removal hitch would
++// land exactly as the user starts dragging - the worst possible moment. So both directions are
++// budgeted per frame. Removal gets the larger budget because it is the one the user is waiting
++// on; appearing is allowed to take a few frames longer, which also reads as the pass easing in
++// rather than snapping on.
++//
++// ----------------------------------------------------------------------------------------
++// A note for the build
++// ----------------------------------------------------------------------------------------
++// The overlay material is created from Shader.Find at runtime and no .mat asset references
++// HairShader_Transp, so the shader MUST be listed in Project Settings > Graphics > Always
++// Included Shaders or the player build will strip it and Shader.Find will return null. It is
++// added to ProjectSettings/GraphicsSettings.asset in the same change as this file.
++[DefaultExecutionOrder(9400)]
++public class HairIdleOverlayAuthority : MonoBehaviour
++{
++    // Shader "HairShader_Transp" - the name declared inside the .shader file, not the filename.
++    private const string OverlayShaderName = "HairShader_Transp";
++
++    // How still things have to be before the pass comes in. Long enough that it does not flicker
++    // between two orbit drags, short enough that letting go of the mouse shows it promptly.
++    private const float IdleDelay = .35f;
++
++    // Cards touched per frame while the pass is coming in / going out. See the header.
++    private const int ApplyBudgetPerFrame = 3000;
++    private const int RemoveBudgetPerFrame = 12000;
++
++    // Below this, do the whole thing in one frame - budgeting a groom of two hundred cards just
++    // makes it take four frames to do nothing measurable.
++    private const int BudgetFreeCardCount = 4000;
++
++    private const float ViewerScanInterval = .5f;
++
++    // A single scratch array reused for every card. Renderer.sharedMaterials COPIES what it is
++    // given, so one array can serve forty thousand writes without allocating - which matters,
++    // because a fresh two-element array per card is forty thousand allocations per transition.
++    private static readonly Material[] overlayPair = new Material[2];
++    private static readonly Material[] baseOnly = new Material[1];
++
++    // Off entirely. Nothing sets this today; it is the single line a future OVERLAY toggle button
++    // would write, and having the check already in the right place is cheaper than adding it later.
++    private static bool suppressed;
++
++    private Material overlayMaterial;
++
++    private ModelViewer viewer;
++    private float nextViewerScan;
++
++    private bool overlayWanted;
++    private bool settled;
++    private int cursor;
++
++    private float lastBusyTime;
++    private int lastMeshGeneration;
++    private int lastRegistryVersion;
++
++    private Vector3 lastCameraPosition;
++    private Quaternion lastCameraRotation;
++    private float lastCameraFieldOfView;
++    private bool hasCameraSample;
++
++    // Statics survive "Enter Play Mode -> Disable Domain Reload", which this project has on.
++    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
++    private static void ResetStatics()
++    {
++        suppressed = false;
++        overlayPair[0] = null;
++        overlayPair[1] = null;
++        baseOnly[0] = null;
++    }
++
++    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
++    private static void Spawn()
++    {
++        if (FindFirstObjectByType<HairIdleOverlayAuthority>() != null) return;
++        GameObject go = new GameObject("HairIdleOverlayAuthority");
++        DontDestroyOnLoad(go);
++        go.AddComponent<HairIdleOverlayAuthority>();
++    }
++
++    // Turns the pass off and takes it back off every card. For a future toggle, and for anything
++    // that needs the plain opaque groom for a moment - a screenshot, an export preview.
++    public static void SetSuppressed(bool value)
++    {
++        suppressed = value;
++    }
++
++    public static bool IsSuppressed
++    {
++        get { return suppressed; }
++    }
++
++    private void LateUpdate()
++    {
++        ResolveViewer();
++
++        bool busy = IsUserBusy();
++        if (busy) lastBusyTime = Time.unscaledTime;
++
++        bool want = !suppressed && !busy && Time.unscaledTime - lastBusyTime >= IdleDelay;
++        if (want != overlayWanted)
++        {
++            overlayWanted = want;
++            settled = false;
++        }
++
++        if (settled) return;
++        Sweep();
++    }
++
++    // Anything that means "the user is doing something". Deliberately broad and deliberately
++    // cheap: every test here is either an input read or an integer compare.
++    //
++    // The CAMERA comparison is the important one, and it is why this does not try to ask any
++    // particular navigation authority whether it is running. Camera gestures live in
++    // ModelViewer.HandleCameraControls, MayaNavigationAuthority reroutes which chord drives
++    // them, and framing commands move the camera with no input at all. Watching where the
++    // camera actually IS covers all three and cannot be forgotten by a fourth.
++    private bool IsUserBusy()
++    {
++        Mouse mouse = Mouse.current;
++        if (mouse != null)
++        {
++            if (mouse.leftButton.isPressed) return true;
++            if (mouse.rightButton.isPressed) return true;
++            if (mouse.middleButton.isPressed) return true;
++            if (Mathf.Abs(mouse.scroll.ReadValue().y) > .01f) return true;
++        }
++
++        Keyboard keyboard = Keyboard.current;
++        if (keyboard != null && keyboard.anyKey.isPressed) return true;
++
++        // Geometry was rebuilt, or a card was born or died. Both mean the groom is still moving
++        // even if the hands have stopped - a slider released mid-drag settles over a few frames.
++        bool changed = false;
++        if (HairCard.MeshGeneration != lastMeshGeneration)
++        {
++            lastMeshGeneration = HairCard.MeshGeneration;
++            changed = true;
++        }
++        if (HairCard.RegistryVersion != lastRegistryVersion)
++        {
++            lastRegistryVersion = HairCard.RegistryVersion;
++
++            // The card set moved under the sweep, so whatever it thought it had finished is no
++            // longer true. Restart it rather than trusting the cursor.
++            cursor = 0;
++            settled = false;
++            changed = true;
++        }
++        if (changed) return true;
++
++        return CameraMoved();
++    }
++
++    private bool CameraMoved()
++    {
++        Camera camera = ResolveCamera();
++        if (camera == null) return false;
++
++        Transform cameraTransform = camera.transform;
++        Vector3 position = cameraTransform.position;
++        Quaternion rotation = cameraTransform.rotation;
++        float fieldOfView = camera.fieldOfView;
++
++        if (!hasCameraSample)
++        {
++            hasCameraSample = true;
++            lastCameraPosition = position;
++            lastCameraRotation = rotation;
++            lastCameraFieldOfView = fieldOfView;
++            return true;
++        }
++
++        bool moved = (position - lastCameraPosition).sqrMagnitude > .0000001f
++                     || Quaternion.Angle(rotation, lastCameraRotation) > .002f
++                     || Mathf.Abs(fieldOfView - lastCameraFieldOfView) > .001f;
++
++        lastCameraPosition = position;
++        lastCameraRotation = rotation;
++        lastCameraFieldOfView = fieldOfView;
++        return moved;
++    }
++
++    private Camera ResolveCamera()
++    {
++        if (viewer != null && viewer.mainCamera != null) return viewer.mainCamera;
++        return Camera.main;
++    }
++
++    private void ResolveViewer()
++    {
++        if (viewer != null) return;
++        if (Time.unscaledTime < nextViewerScan) return;
++        nextViewerScan = Time.unscaledTime + ViewerScanInterval;
++        viewer = FindFirstObjectByType<ModelViewer>();
++    }
++
++    // Walks the card registry moving cards towards the wanted state, within this frame's budget.
++    //
++    // It scans by the per-card flag rather than by remembering how far it got, so it is
++    // self-healing: a card created, destroyed or re-materialled at any point simply shows up as a
++    // mismatch on the next pass. A full pass that writes nothing is what declares it finished.
++    private void Sweep()
++    {
++        IReadOnlyList<HairCard> cards = HairCard.All;
++        if (cards.Count == 0)
++        {
++            settled = true;
++            return;
++        }
++
++        Material overlay = null;
++        if (overlayWanted)
++        {
++            overlay = ResolveOverlayMaterial();
++
++            // No shader (stripped from the build, or the asset is missing). Leave `settled`
++            // alone so this retries, but do nothing else - there is no work that can be done.
++            if (overlay == null) return;
++        }
++
++        int budget = overlayWanted ? ApplyBudgetPerFrame : RemoveBudgetPerFrame;
++        if (cards.Count <= BudgetFreeCardCount) budget = cards.Count;
++
++        int scanned = 0;
++        bool wrote = false;
++
++        while (scanned < cards.Count && budget > 0)
++        {
++            if (cursor >= cards.Count) cursor = 0;
++            HairCard card = cards[cursor];
++            cursor++;
++            scanned++;
++
++            if (card == null) continue;
++            if (card.idleOverlayApplied == overlayWanted) continue;
++
++            MeshRenderer renderer = card.CardRenderer;
++            if (renderer == null)
++            {
++                // Nothing to write to, but recording the state stops this card being rescanned
++                // as a mismatch on every future pass and preventing the sweep from ever settling.
++                card.idleOverlayApplied = overlayWanted;
++                continue;
++            }
++
++            // sharedMaterial reads the FIRST slot, which is the card's own material in both
++            // directions - so the card keeps whatever it had, highlight or single-sided variant
++            // included, and this only ever adds or removes the slot behind it.
++            Material own = renderer.sharedMaterial;
++
++            if (overlayWanted)
++            {
++                overlayPair[0] = own;
++                overlayPair[1] = overlay;
++                renderer.sharedMaterials = overlayPair;
++            }
++            else
++            {
++                baseOnly[0] = own;
++                renderer.sharedMaterials = baseOnly;
++            }
++
++            card.idleOverlayApplied = overlayWanted;
++            budget--;
++            wrote = true;
++        }
++
++        if (scanned >= cards.Count && !wrote) settled = true;
++    }
++
++    // The overlay material: one instance for the whole session, mirroring the active hair
++    // material's maps and colour so the soft pass is the same hair rather than a grey ghost.
++    private Material ResolveOverlayMaterial()
++    {
++        if (overlayMaterial == null)
++        {
++            Shader shader = Shader.Find(OverlayShaderName);
++            if (shader == null) return null;
++
++            overlayMaterial = new Material(shader) { name = "HairIdleOverlay_Runtime" };
++            overlayMaterial.enableInstancing = true;
++
++            // The overlay is a LOOK, not geometry. Letting it cast shadows would double the
++            // shadow-caster count for the whole groom - already the largest single cost in the
++            // frame - to draw shadows the opaque pass has drawn identically. The depth, motion
++            // and lightmap passes have nothing to contribute either.
++            overlayMaterial.SetShaderPassEnabled("ShadowCaster", false);
++            overlayMaterial.SetShaderPassEnabled("DepthOnly", false);
++            overlayMaterial.SetShaderPassEnabled("DepthNormalsOnly", false);
++            overlayMaterial.SetShaderPassEnabled("MotionVectors", false);
++            overlayMaterial.SetShaderPassEnabled("Meta", false);
++        }
++
++        SyncOverlayFromHairMaterial();
++        return overlayMaterial;
++    }
++
++    // Only when the hair material actually changed identity, plus once per transition into the
++    // pass - which is when the user could have edited a texture, a tint or a slider since it was
++    // last on. It is one material either way, so the copy itself costs nothing worth guarding.
++    private void SyncOverlayFromHairMaterial()
++    {
++        Material source = null;
++        if (viewer != null) source = viewer.hairCardMaterial;
++        if (source == null) return;
++
++        CopyTexture(source, "_Albedo");
++        CopyTexture(source, "_Normal");
++        CopyTexture(source, "_OpacityMask");
++        CopyFloat(source, "_Normal_Power");
++        CopyFloat(source, "_Smooth");
++        CopyFloat(source, "_Metal");
++        CopyFloat(source, "_SelfIllum");
++        CopyColor(source, MaterialEditorManager.TintProperty);
++    }
++
++    private void CopyTexture(Material source, string propertyName)
++    {
++        if (!source.HasProperty(propertyName)) return;
++        if (!overlayMaterial.HasProperty(propertyName)) return;
++        overlayMaterial.SetTexture(propertyName, source.GetTexture(propertyName));
++        overlayMaterial.SetTextureOffset(propertyName, source.GetTextureOffset(propertyName));
++        overlayMaterial.SetTextureScale(propertyName, source.GetTextureScale(propertyName));
++    }
++
++    private void CopyFloat(Material source, string propertyName)
++    {
++        if (!source.HasProperty(propertyName)) return;
++        if (!overlayMaterial.HasProperty(propertyName)) return;
++        overlayMaterial.SetFloat(propertyName, source.GetFloat(propertyName));
++    }
++
++    private void CopyColor(Material source, string propertyName)
++    {
++        if (!source.HasProperty(propertyName)) return;
++        if (!overlayMaterial.HasProperty(propertyName)) return;
++        overlayMaterial.SetColor(propertyName, source.GetColor(propertyName));
++    }
++
++    private void OnDestroy()
++    {
++        if (overlayMaterial != null) Destroy(overlayMaterial);
++        overlayMaterial = null;
++    }
++}
+diff --git a/Assets/Scripts/UI_Import/HairIdleOverlayAuthority.cs.meta b/Assets/Scripts/UI_Import/HairIdleOverlayAuthority.cs.meta
+new file mode 100644
+index 0000000..c30677e
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/HairIdleOverlayAuthority.cs.meta
+@@ -0,0 +1,2 @@
++fileFormatVersion: 2
++guid: 3f7a1c9e2b8d4a5f9c1e6d0b7a284f31
+diff --git a/ProjectSettings/GraphicsSettings.asset b/ProjectSettings/GraphicsSettings.asset
+index 1c5d6c0..9467148 100644
+--- a/ProjectSettings/GraphicsSettings.asset
++++ b/ProjectSettings/GraphicsSettings.asset
+@@ -36,6 +36,7 @@ GraphicsSettings:
+   - {fileID: 10783, guid: 0000000000000000f000000000000000, type: 0}
+   - {fileID: 4800000, guid: a490663633a4cbf40b6340e7714ba728, type: 3}
+   - {fileID: 4800000, guid: b4f5458d9a31434ba22299e40280503c, type: 3}
++  - {fileID: 4800000, guid: 89d25a053232dbf45ba410abbbe7511d, type: 3}
+   m_PreloadedShaders: []
+   m_PreloadShadersBatchTimeLimit: -1
+   m_SpritesDefaultMaterial: {fileID: 10754, guid: 0000000000000000f000000000000000, type: 0}

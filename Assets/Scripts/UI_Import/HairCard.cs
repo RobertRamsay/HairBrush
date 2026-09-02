@@ -554,6 +554,28 @@ public class HairCard : MonoBehaviour
     [Range(0f, 1f)] public float selectionWeight = 0f;
 
     private MeshFilter meshFilter;
+
+    // The MeshRenderer, resolved once. HairIdleOverlayAuthority touches every card's renderer
+    // when the translucent visualisation pass goes on or off, and at forty thousand cards a
+    // GetComponent per card IS the cost of that transition. Named CardRenderer rather than
+    // Renderer so it cannot shadow the UnityEngine.Renderer type inside this class.
+    private MeshRenderer cardRenderer;
+
+    public MeshRenderer CardRenderer
+    {
+        get
+        {
+            if (cardRenderer == null) cardRenderer = GetComponent<MeshRenderer>();
+            return cardRenderer;
+        }
+    }
+
+    // Owned by HairIdleOverlayAuthority: true while this card's MeshRenderer carries the
+    // translucent overlay material in a second slot. Kept here rather than in a dictionary on
+    // that authority so a destroyed card takes its own flag with it, and so the sweep can skip
+    // an already-correct card without a single native call.
+    [System.NonSerialized] public bool idleOverlayApplied;
+
     private Mesh mesh;
     private Vector3[] baseVertices;
     private Vector3 spawnHitPoint;

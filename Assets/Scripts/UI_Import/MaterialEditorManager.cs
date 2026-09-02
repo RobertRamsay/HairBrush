@@ -16,6 +16,11 @@ public class MaterialEditorManager : MonoBehaviour
     private const string SmoothProperty = "_Smooth";
     private const string MetalProperty = "_Metal";
 
+    // The hair shader's dither amount. HairShader_dithCut lerps the shaded colour towards a
+    // dithered value by this much, which is what softens the cut edges of the alpha mask - so it
+    // belongs beside Smoothness and Metallic rather than being a number only the shader knows.
+    private const string DitherProperty = "_DitheringAmt";
+
     // The master colour. The hair shader multiplies it straight into the albedo sample
     // (HairShader_DithCut: _HairTint * tex2D(_Albedo, uv).rgb), so white leaves the texture
     // exactly as authored and anything else tints it. With the albedo CLEARED it is the hair
@@ -255,6 +260,11 @@ public class MaterialEditorManager : MonoBehaviour
             CreateTintRow(propertiesRoot, entry);
             CreateFloatSliderRow(propertiesRoot, "Smoothness", SmoothProperty, entry);
             CreateFloatSliderRow(propertiesRoot, "Metallic", MetalProperty, entry);
+
+            // Under the two above, as asked. The row is named "DitherRow" and its slider
+            // "DitherSlider" by CreateFloatSliderRow, and TextureWorkspacePolishFix has to
+            // recognise that name or the row falls back to its own layout group and collapses.
+            CreateFloatSliderRow(propertiesRoot, "Dither", DitherProperty, entry);
         }
     }
 
