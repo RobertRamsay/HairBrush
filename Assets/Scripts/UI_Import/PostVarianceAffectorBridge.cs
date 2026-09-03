@@ -355,7 +355,10 @@ public class PostVarianceAffectorBridge : MonoBehaviour
             TMP_InputField seed = row != null ? row.GetComponentInChildren<TMP_InputField>(true) : null;
             int parsed = 0;
             if (seed != null) int.TryParse(seed.text, out parsed);
-            result.Add(new VarianceChannelSaveData { channel = Channels[i], amount = slider != null ? slider.value : 0f, seed = parsed });
+            // ValueOf, not slider.value. A curved channel's slider holds a 0-1 parameter, and
+            // this list is the POST's authored variance - captured raw it would store the
+            // parameter as the amount and scatter the hair by a fifth of a unit.
+            result.Add(new VarianceChannelSaveData { channel = Channels[i], amount = slider != null ? GroomLengthCurve.ValueOf(slider) : 0f, seed = parsed });
         }
         return result;
     }
@@ -390,7 +393,7 @@ public class PostVarianceAffectorBridge : MonoBehaviour
             // of the number, so the old test would have written the amount into the caption.
             TextMeshProUGUI label = row.GetComponentsInChildren<TextMeshProUGUI>(true)
                 .FirstOrDefault(t => t != null && t.gameObject.name == GroomVarianceController.ValueLabelName);
-            if (slider != null) slider.SetValueWithoutNotify(v.amount);
+            if (slider != null) slider.SetValueWithoutNotify(GroomLengthCurve.ToSliderFor(slider, v.amount));
             if (seed != null) seed.SetTextWithoutNotify(v.seed.ToString());
             if (label != null)
             {

@@ -677,6 +677,19 @@ public class ModelViewer : MonoBehaviour
         CreateSliderUI(panelGO.transform, "Length", 0f, 1f, GroomLengthCurve.ToSlider(currentLength),
             t => OnActualSliderLengthChanged(GroomLengthCurve.ToLength(t)), out lengthSlider, 38, 16);
         CreateSliderUI(panelGO.transform, "Width", 0.0005f, 0.05f, currentWidth, OnSliderWidthChanged, out widthSlider, 38, 16);
+
+        // EMBED DEPTH and BEND ANGLE sit here, straight after Width, rather than down among
+        // Segments and the offsets where they used to be. They are part of getting a groom to
+        // sit on the head at all - the first things reached for after length and width - and
+        // the curl and wave block below is shaping work that comes after that.
+        //
+        // The ORDER OF THESE CALLS is the panel order; nothing else decides it. Everything that
+        // inserts into this panel - the variance rows, the seed rows, the dividers, the shape
+        // profile rows - positions itself relative to a row it finds BY NAME, so moving a row
+        // moves its whole block with it and no index anywhere needs adjusting.
+        CreateSliderUI(panelGO.transform, "Embed Depth", 0.0f, 0.1f, currentEmbedDepth, OnSliderEmbedDepthChanged, out depthSlider, 38, 16);
+        CreateSliderUI(panelGO.transform, "Bend Angle", -360f, 360f, currentBend, OnSliderBendChanged, out bendSlider, 38, 16);
+
         CreateSliderUI(panelGO.transform, "Curl Frequency", -10f, 10f, currentCurlFrequency, OnSliderCurlFrequencyChanged, out curlFrequencySlider, 38, 16);
         CreateSliderUI(panelGO.transform, "Curl Diameter", 0f, 0.15f, currentCurlDiameter, OnSliderCurlDiameterChanged, out curlDiameterSlider, 38, 16);
         // Label strings here are load-bearing: CreateSliderUI names the GameObject
@@ -694,9 +707,7 @@ public class ModelViewer : MonoBehaviour
         // 0 = flat ribbon, 0.5 = the profile the tool has always had, 1 = twice the arch.
         CreateSliderUI(panelGO.transform, "Arch", 0f, 1f, currentArch, OnSliderArchChanged, out archSlider, 38, 16);
         CreateSliderUI(panelGO.transform, "Segments", 4, 60, currentSegments, OnSliderSegmentsChanged, out segmentsSlider, 38, 16);
-        CreateSliderUI(panelGO.transform, "Bend Angle", -360f, 360f, currentBend, OnSliderBendChanged, out bendSlider, 38, 16);
         CreateSliderUI(panelGO.transform, "Twist Angle", -360f, 360f, currentTwist, OnSliderTwistChanged, out twistSlider, 38, 16);
-        CreateSliderUI(panelGO.transform, "Embed Depth", 0.0f, 0.1f, currentEmbedDepth, OnSliderEmbedDepthChanged, out depthSlider, 38, 16);
         CreateSliderUI(panelGO.transform, "Offset X", -360f, 360f, currentOffsetX, OnSliderOffsetXChanged, out offsetXSlider, 38, 16);
         CreateSliderUI(panelGO.transform, "Offset Y", -360f, 360f, currentOffsetY, OnSliderOffsetYChanged, out offsetYSlider, 38, 16);
         CreateSliderUI(panelGO.transform, "Offset Z", -360f, 360f, currentOffsetZ, OnSliderOffsetZChanged, out offsetZSlider, 38, 16);

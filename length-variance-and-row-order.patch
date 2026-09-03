@@ -1,0 +1,258 @@
+diff --git a/Assets/Scripts/UI_Import/GroomLengthCurve.cs b/Assets/Scripts/UI_Import/GroomLengthCurve.cs
+index 55523aa..a44bf77 100644
+--- a/Assets/Scripts/UI_Import/GroomLengthCurve.cs
++++ b/Assets/Scripts/UI_Import/GroomLengthCurve.cs
+@@ -1,7 +1,7 @@
+ using UnityEngine;
+ using UnityEngine.UI;
+ 
+-// THE LENGTH SLIDER'S RESPONSE CURVE.
++// THE LENGTH SLIDER'S RESPONSE CURVE - and its VAR slider's.
+ //
+ // Hair lengths are not spread evenly over the slider's range and never were. A groom sits around
+ // 0.2, and the fine work happens between 0.01 and 0.001 - a tenth of a percent of a slider whose
+@@ -25,17 +25,21 @@ using UnityEngine.UI;
+ // IS the position, and the length is derived - the alternative is a handle that does not follow
+ // the cursor, which is worse than the problem being solved.
+ //
++// The VAR slider under that row is the same story with the same numbers behind it. A length
++// variance is authored in the same 0.001-0.02 territory the length itself is, out of a maximum of
++// 0.5, so it was worse off than the main slider rather than better.
++//
+ // ----------------------------------------------------------------------------------------
+-// The rule for anything that touches Length_Slider
++// The rule for anything that touches these two sliders
+ // ----------------------------------------------------------------------------------------
+-// slider.value is NOT a length. Never write a length into it and never read one out of it.
+-// Everything goes through the two functions here, and the three Slider-aware helpers below exist
+-// so that the GENERIC sites - the ones that walk every slider in the panel by name - need one
+-// guarded line rather than a special case each:
++// slider.value is NOT a length, and not a VAR amount. Never write one into these and never read
++// one out. Everything goes through the functions here, and the Slider-aware helpers exist so that
++// the GENERIC sites - the ones that walk every slider in the panel and switch on a name - need one
++// routed line rather than a special case each:
+ //
+-//   ToSliderFor / ReadAsLength   a value going into / out of any slider, converted only if it is
+-//                                this one
+-//   Displayed                    what the row's label should say
++//   ToSliderFor   a value going INTO any slider, converted only if that slider is curved
++//   ValueOf       a value coming OUT of any slider, in the units the rest of the tool speaks
++//   Displayed     what the row's label should say
+ //
+ // The dangerous sites are the ones that compile perfectly either way. A world length written raw
+ // into this slider is a legal parameter - 0.2 is a valid t - so it does not throw, it just makes
+@@ -45,6 +49,17 @@ public static class GroomLengthCurve
+ {
+     public const string SliderName = "Length_Slider";
+ 
++    // The VARIANCE slider under the Length row, which needs the curve for exactly the same
++    // reason and could not be found the same way: every channel's variance slider is called
++    // "VarianceSlider", so this one is identified by the ROW it sits in.
++    public const string VarianceRowName = "Length_VarianceRow";
++
++    // The Length channel's maximum VAR amount. Lives here rather than in
++    // GroomVarianceController's channel table so that the table and the curve cannot disagree -
++    // the table reads this constant. A curve whose maximum does not match the slider's own is
++    // not a wrong picture, it is a wrong number.
++    public const float MaxVariance = .5f;
++
+     // The shortest hair the slider can ask for. Unchanged from the linear slider's own minimum.
+     public const float MinLength = 0.0001f;
+ 
+@@ -74,31 +89,62 @@ public static class GroomLengthCurve
+         return Mathf.Pow(normalised, 1f / Gamma);
+     }
+ 
++    // Parameter -> VAR amount, and back. No MinLength floor on this pair: a variance of exactly
++    // zero is the OFF state and every reset in the tool writes it, so the bottom of this slider
++    // has to be reachable and has to mean nothing at all.
++    public static float ToVariance(float sliderValue)
++    {
++        float t = Mathf.Clamp01(sliderValue);
++        return MaxVariance * Mathf.Pow(t, Gamma);
++    }
++
++    public static float VarianceToSlider(float amount)
++    {
++        float normalised = Mathf.Clamp01(amount / MaxVariance);
++        return Mathf.Pow(normalised, 1f / Gamma);
++    }
++
+     public static bool IsLengthSlider(Slider slider)
+     {
+         if (slider == null) return false;
+         return slider.gameObject.name == SliderName;
+     }
+ 
+-    // For a generic writer holding a world value and a slider it did not build.
++    // By the ROW, because the variance sliders all share one object name.
++    public static bool IsLengthVarianceSlider(Slider slider)
++    {
++        if (slider == null) return false;
++
++        Transform row = slider.transform.parent;
++        if (row == null) return false;
++
++        return row.name == VarianceRowName;
++    }
++
++    // For a generic writer holding a world value and a slider it did not build. Anything that is
++    // not one of the two curved sliders passes straight through, so a caller can route every
++    // slider it walks through this without knowing which is which.
+     public static float ToSliderFor(Slider slider, float value)
+     {
+-        if (!IsLengthSlider(slider)) return value;
+-        return ToSlider(value);
++        if (IsLengthSlider(slider)) return ToSlider(value);
++        if (IsLengthVarianceSlider(slider)) return VarianceToSlider(value);
++        return value;
+     }
+ 
+-    // For a generic reader that wants the value in the units the rest of the tool speaks.
+-    public static float ReadAsLength(Slider slider)
++    // For a generic reader that wants the value in the units the rest of the tool speaks - a
++    // world length for the Length slider, a VAR amount for its variance slider.
++    public static float ValueOf(Slider slider)
+     {
+         if (slider == null) return 0f;
+-        if (!IsLengthSlider(slider)) return slider.value;
+-        return ToLength(slider.value);
++        if (IsLengthSlider(slider)) return ToLength(slider.value);
++        if (IsLengthVarianceSlider(slider)) return ToVariance(slider.value);
++        return slider.value;
+     }
+ 
+     // What the row's label should show. Every label in this panel is "Name: value" formatted from
+     // slider.value, so without this the Length row would read out its curve parameter.
+     public static float Displayed(Slider slider)
+     {
+-        return ReadAsLength(slider);
++        return ValueOf(slider);
+     }
+ }
+diff --git a/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs b/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs
+index 818a154..c38530d 100644
+--- a/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs
++++ b/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs
+@@ -282,7 +282,10 @@ public class GroomSessionResetCoordinator : MonoBehaviour
+             if (row == null) continue;
+             Slider slider = row.GetComponentInChildren<Slider>(true);
+             TMP_InputField seed = row.GetComponentInChildren<TMP_InputField>(true);
+-            if (slider != null) slider.SetValueWithoutNotify(0f);
++            // Routed, though zero maps to zero under every curve this tool uses. The point is
++            // that the next person to give this loop a non-zero default does not have to know
++            // which sliders are curved.
++            if (slider != null) slider.SetValueWithoutNotify(GroomLengthCurve.ToSliderFor(slider, 0f));
+             if (seed != null) seed.SetTextWithoutNotify("0");
+ 
+             // BY NAME, not by "the label whose text starts with VAR". The row now holds a fixed
+diff --git a/Assets/Scripts/UI_Import/GroomVarianceController.cs b/Assets/Scripts/UI_Import/GroomVarianceController.cs
+index 937005a..4c71d74 100644
+--- a/Assets/Scripts/UI_Import/GroomVarianceController.cs
++++ b/Assets/Scripts/UI_Import/GroomVarianceController.cs
+@@ -148,7 +148,7 @@ public class GroomVarianceController : MonoBehaviour
+ 
+         var definitions = new[]
+         {
+-            (Channel.Length,  "Length_Row",      "Length_Row",      "Length",      0.5f),
++            (Channel.Length,  "Length_Row",      "Length_Row",      "Length",      GroomLengthCurve.MaxVariance),
+             (Channel.Width,   "Width_Row",       "Width_Row",       "Width",       0.05f),
+             (Channel.Bend,    "Bend Angle_Row",  "Bend Angle_Row",  "Bend Angle",  360f),
+             (Channel.Twist,   "Twist Angle_Row", "Twist Angle_Row", "Twist Angle", 360f),
+@@ -294,6 +294,12 @@ public class GroomVarianceController : MonoBehaviour
+ 
+         Slider varianceSlider = AddCompactSlider(rowGO.transform, 0, maxVariance, 0, SliderWidth);
+ 
++        // A CURVED CHANNEL carries a 0-1 parameter rather than the amount itself, so its domain
++        // is 1 whatever the channel's maximum is. Zero still means zero in both, which is what
++        // lets every reset in the tool go on writing a plain 0 into it. The row is already named
++        // by this point, which is how the curve recognises the slider - see GroomLengthCurve.
++        if (GroomLengthCurve.IsLengthVarianceSlider(varianceSlider)) varianceSlider.maxValue = 1f;
++
+         // Named, not just positioned. GroomSessionResetCoordinator and PostVarianceAffectorBridge
+         // both reach into these rows to write this number, and both used to find it as "the first
+         // Text child" / "the first label starting with VAR" - neither of which survives there
+@@ -363,9 +369,13 @@ public class GroomVarianceController : MonoBehaviour
+ 
+         varianceSlider.onValueChanged.AddListener(v =>
+         {
++            // ValueOf, not v. On a curved channel v is the parameter and the amount is derived;
++            // on every other channel the two are the same number and this costs a name compare.
++            float amount = GroomLengthCurve.ValueOf(varianceSlider);
++
+             VarianceSetting s = GetSetting(viewer.currentGroupId, channel);
+-            s.amount = v;
+-            valueText.text = FormatVariance(channel, v);
++            s.amount = amount;
++            valueText.text = FormatVariance(channel, amount);
+             ApplyChannel(channel, viewer.currentGroupId);
+         });
+ 
+@@ -427,7 +437,7 @@ public class GroomVarianceController : MonoBehaviour
+         {
+             if (p.Value == null || p.Value.slider == null || p.Value.seedInput == null || p.Value.valueText == null) continue;
+             VarianceSetting s = GetSetting(id, p.Key);
+-            p.Value.slider.SetValueWithoutNotify(s.amount);
++            p.Value.slider.SetValueWithoutNotify(GroomLengthCurve.ToSliderFor(p.Value.slider, s.amount));
+             p.Value.seedInput.SetTextWithoutNotify(s.seed.ToString());
+             p.Value.valueText.text = FormatVariance(p.Key, s.amount);
+         }
+diff --git a/Assets/Scripts/UI_Import/ModelViewer.cs b/Assets/Scripts/UI_Import/ModelViewer.cs
+index e96911c..2008058 100644
+--- a/Assets/Scripts/UI_Import/ModelViewer.cs
++++ b/Assets/Scripts/UI_Import/ModelViewer.cs
+@@ -677,6 +677,19 @@ public class ModelViewer : MonoBehaviour
+         CreateSliderUI(panelGO.transform, "Length", 0f, 1f, GroomLengthCurve.ToSlider(currentLength),
+             t => OnActualSliderLengthChanged(GroomLengthCurve.ToLength(t)), out lengthSlider, 38, 16);
+         CreateSliderUI(panelGO.transform, "Width", 0.0005f, 0.05f, currentWidth, OnSliderWidthChanged, out widthSlider, 38, 16);
++
++        // EMBED DEPTH and BEND ANGLE sit here, straight after Width, rather than down among
++        // Segments and the offsets where they used to be. They are part of getting a groom to
++        // sit on the head at all - the first things reached for after length and width - and
++        // the curl and wave block below is shaping work that comes after that.
++        //
++        // The ORDER OF THESE CALLS is the panel order; nothing else decides it. Everything that
++        // inserts into this panel - the variance rows, the seed rows, the dividers, the shape
++        // profile rows - positions itself relative to a row it finds BY NAME, so moving a row
++        // moves its whole block with it and no index anywhere needs adjusting.
++        CreateSliderUI(panelGO.transform, "Embed Depth", 0.0f, 0.1f, currentEmbedDepth, OnSliderEmbedDepthChanged, out depthSlider, 38, 16);
++        CreateSliderUI(panelGO.transform, "Bend Angle", -360f, 360f, currentBend, OnSliderBendChanged, out bendSlider, 38, 16);
++
+         CreateSliderUI(panelGO.transform, "Curl Frequency", -10f, 10f, currentCurlFrequency, OnSliderCurlFrequencyChanged, out curlFrequencySlider, 38, 16);
+         CreateSliderUI(panelGO.transform, "Curl Diameter", 0f, 0.15f, currentCurlDiameter, OnSliderCurlDiameterChanged, out curlDiameterSlider, 38, 16);
+         // Label strings here are load-bearing: CreateSliderUI names the GameObject
+@@ -694,9 +707,7 @@ public class ModelViewer : MonoBehaviour
+         // 0 = flat ribbon, 0.5 = the profile the tool has always had, 1 = twice the arch.
+         CreateSliderUI(panelGO.transform, "Arch", 0f, 1f, currentArch, OnSliderArchChanged, out archSlider, 38, 16);
+         CreateSliderUI(panelGO.transform, "Segments", 4, 60, currentSegments, OnSliderSegmentsChanged, out segmentsSlider, 38, 16);
+-        CreateSliderUI(panelGO.transform, "Bend Angle", -360f, 360f, currentBend, OnSliderBendChanged, out bendSlider, 38, 16);
+         CreateSliderUI(panelGO.transform, "Twist Angle", -360f, 360f, currentTwist, OnSliderTwistChanged, out twistSlider, 38, 16);
+-        CreateSliderUI(panelGO.transform, "Embed Depth", 0.0f, 0.1f, currentEmbedDepth, OnSliderEmbedDepthChanged, out depthSlider, 38, 16);
+         CreateSliderUI(panelGO.transform, "Offset X", -360f, 360f, currentOffsetX, OnSliderOffsetXChanged, out offsetXSlider, 38, 16);
+         CreateSliderUI(panelGO.transform, "Offset Y", -360f, 360f, currentOffsetY, OnSliderOffsetYChanged, out offsetYSlider, 38, 16);
+         CreateSliderUI(panelGO.transform, "Offset Z", -360f, 360f, currentOffsetZ, OnSliderOffsetZChanged, out offsetZSlider, 38, 16);
+diff --git a/Assets/Scripts/UI_Import/PostVarianceAffectorBridge.cs b/Assets/Scripts/UI_Import/PostVarianceAffectorBridge.cs
+index b88b97e..b35bd21 100644
+--- a/Assets/Scripts/UI_Import/PostVarianceAffectorBridge.cs
++++ b/Assets/Scripts/UI_Import/PostVarianceAffectorBridge.cs
+@@ -355,7 +355,10 @@ public class PostVarianceAffectorBridge : MonoBehaviour
+             TMP_InputField seed = row != null ? row.GetComponentInChildren<TMP_InputField>(true) : null;
+             int parsed = 0;
+             if (seed != null) int.TryParse(seed.text, out parsed);
+-            result.Add(new VarianceChannelSaveData { channel = Channels[i], amount = slider != null ? slider.value : 0f, seed = parsed });
++            // ValueOf, not slider.value. A curved channel's slider holds a 0-1 parameter, and
++            // this list is the POST's authored variance - captured raw it would store the
++            // parameter as the amount and scatter the hair by a fifth of a unit.
++            result.Add(new VarianceChannelSaveData { channel = Channels[i], amount = slider != null ? GroomLengthCurve.ValueOf(slider) : 0f, seed = parsed });
+         }
+         return result;
+     }
+@@ -390,7 +393,7 @@ public class PostVarianceAffectorBridge : MonoBehaviour
+             // of the number, so the old test would have written the amount into the caption.
+             TextMeshProUGUI label = row.GetComponentsInChildren<TextMeshProUGUI>(true)
+                 .FirstOrDefault(t => t != null && t.gameObject.name == GroomVarianceController.ValueLabelName);
+-            if (slider != null) slider.SetValueWithoutNotify(v.amount);
++            if (slider != null) slider.SetValueWithoutNotify(GroomLengthCurve.ToSliderFor(slider, v.amount));
+             if (seed != null) seed.SetTextWithoutNotify(v.seed.ToString());
+             if (label != null)
+             {

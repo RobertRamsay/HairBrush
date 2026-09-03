@@ -282,7 +282,10 @@ public class GroomSessionResetCoordinator : MonoBehaviour
             if (row == null) continue;
             Slider slider = row.GetComponentInChildren<Slider>(true);
             TMP_InputField seed = row.GetComponentInChildren<TMP_InputField>(true);
-            if (slider != null) slider.SetValueWithoutNotify(0f);
+            // Routed, though zero maps to zero under every curve this tool uses. The point is
+            // that the next person to give this loop a non-zero default does not have to know
+            // which sliders are curved.
+            if (slider != null) slider.SetValueWithoutNotify(GroomLengthCurve.ToSliderFor(slider, 0f));
             if (seed != null) seed.SetTextWithoutNotify("0");
 
             // BY NAME, not by "the label whose text starts with VAR". The row now holds a fixed

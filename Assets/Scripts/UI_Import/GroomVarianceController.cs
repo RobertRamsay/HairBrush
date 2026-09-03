@@ -148,7 +148,7 @@ public class GroomVarianceController : MonoBehaviour
 
         var definitions = new[]
         {
-            (Channel.Length,  "Length_Row",      "Length_Row",      "Length",      0.5f),
+            (Channel.Length,  "Length_Row",      "Length_Row",      "Length",      GroomLengthCurve.MaxVariance),
             (Channel.Width,   "Width_Row",       "Width_Row",       "Width",       0.05f),
             (Channel.Bend,    "Bend Angle_Row",  "Bend Angle_Row",  "Bend Angle",  360f),
             (Channel.Twist,   "Twist Angle_Row", "Twist Angle_Row", "Twist Angle", 360f),
@@ -294,6 +294,12 @@ public class GroomVarianceController : MonoBehaviour
 
         Slider varianceSlider = AddCompactSlider(rowGO.transform, 0, maxVariance, 0, SliderWidth);
 
+        // A CURVED CHANNEL carries a 0-1 parameter rather than the amount itself, so its domain
+        // is 1 whatever the channel's maximum is. Zero still means zero in both, which is what
+        // lets every reset in the tool go on writing a plain 0 into it. The row is already named
+        // by this point, which is how the curve recognises the slider - see GroomLengthCurve.
+        if (GroomLengthCurve.IsLengthVarianceSlider(varianceSlider)) varianceSlider.maxValue = 1f;
+
         // Named, not just positioned. GroomSessionResetCoordinator and PostVarianceAffectorBridge
         // both reach into these rows to write this number, and both used to find it as "the first
         // Text child" / "the first label starting with VAR" - neither of which survives there
@@ -363,9 +369,13 @@ public class GroomVarianceController : MonoBehaviour
 
         varianceSlider.onValueChanged.AddListener(v =>
         {
+            // ValueOf, not v. On a curved channel v is the parameter and the amount is derived;
+            // on every other channel the two are the same number and this costs a name compare.
+            float amount = GroomLengthCurve.ValueOf(varianceSlider);
+
             VarianceSetting s = GetSetting(viewer.currentGroupId, channel);
-            s.amount = v;
-            valueText.text = FormatVariance(channel, v);
+            s.amount = amount;
+            valueText.text = FormatVariance(channel, amount);
             ApplyChannel(channel, viewer.currentGroupId);
         });
 
@@ -427,7 +437,7 @@ public class GroomVarianceController : MonoBehaviour
         {
             if (p.Value == null || p.Value.slider == null || p.Value.seedInput == null || p.Value.valueText == null) continue;
             VarianceSetting s = GetSetting(id, p.Key);
-            p.Value.slider.SetValueWithoutNotify(s.amount);
+            p.Value.slider.SetValueWithoutNotify(GroomLengthCurve.ToSliderFor(p.Value.slider, s.amount));
             p.Value.seedInput.SetTextWithoutNotify(s.seed.ToString());
             p.Value.valueText.text = FormatVariance(p.Key, s.amount);
         }
