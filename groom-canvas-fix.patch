@@ -1,0 +1,122 @@
+diff --git a/Assets/Scripts/UI_Import/ModelViewer.cs b/Assets/Scripts/UI_Import/ModelViewer.cs
+index 79b91d6..71cf932 100644
+--- a/Assets/Scripts/UI_Import/ModelViewer.cs
++++ b/Assets/Scripts/UI_Import/ModelViewer.cs
+@@ -557,7 +557,10 @@ public class ModelViewer : MonoBehaviour
+     {
+         isTextureEditorMode = textureMode;
+         if (groomingSliderPanelGO != null) groomingSliderPanelGO.SetActive(!textureMode);
+-        Transform canvasTransform = groomingSliderPanelGO != null ? groomingSliderPanelGO.transform.parent : FindObjectsByType<Canvas>(FindObjectsSortMode.None).FirstOrDefault()?.transform;
++        // Through the one resolver - see ResolveGroomCanvas. The texture workspace has to be
++        // built on the same canvas as the groom panel it replaces, and "the first canvas that
++        // happens to be active" was not a way of guaranteeing that.
++        Transform canvasTransform = ResolveGroomCanvas().transform;
+         if (canvasTransform != null) textureEditorManager.SetPanelActive(textureMode, canvasTransform, () => SwitchEditorMode(false));
+         if (loadedModel != null) loadedModel.SetActive(!textureMode);
+         HairCard[] allCards = FindObjectsByType<HairCard>(FindObjectsSortMode.None);
+@@ -567,18 +570,84 @@ public class ModelViewer : MonoBehaviour
+         }
+     }
+ 
+-    public void BuildRuntimeGroomingUI()
++    // The canvas the groom UI lives on. One answer, asked the same way from every site that
++    // builds one of these panels.
++    private const string GroomCanvasName = "GroomingCanvas";
++
++    // WHY THIS IS NOT "THE FIRST CANVAS IN THE SCENE", which is what three sites here used to do:
++    //
++    //     FindObjectsByType<Canvas>(FindObjectsSortMode.None).FirstOrDefault()
++    //
++    // That call excludes INACTIVE objects and promises no order at all, and both halves bite.
++    //
++    // uiContainer IS the scene's Canvas object - not a child of it - so `uiContainer.SetActive
++    // (false)`, which is how the start menu is dismissed, deactivates the whole scene canvas.
++    // Every one of these panels is built on the line after that, so the scene canvas is never a
++    // candidate anyway: FirstOrDefault has been returning null and the fallback below has been
++    // doing the real work since the beginning.
++    //
++    // Which is fine until some OTHER canvas is active at that instant, and then the groom UI is
++    // silently adopted by it. That is a live bug, not a theoretical one: loading a project whose
++    // head mesh is missing raises a StatusToast on the line before the load completes, and
++    // StatusToastAuthority's canvas is a full-screen overlay that switches ITSELF OFF when the
++    // message expires. The groom panels went onto it, and seven seconds later the entire
++    // interface vanished with the toast.
++    //
++    // So: an existing panel's canvas, else the groom's own canvas by name, else build it. Never
++    // "whatever happens to be active".
++    private Canvas ResolveGroomCanvas()
+     {
+-        Canvas canvas = FindObjectsByType<Canvas>(FindObjectsSortMode.None).FirstOrDefault();
+-        if (canvas == null)
++        // From the panel's PARENT upwards, never from the panel itself. Anything in this project
++        // may put a nested Canvas on a UI object to control its draw order - see
++        // GroomingPanelFrozenHeaderAuthority.LiftAbovePanel, which does exactly that to the rows
++        // inside this panel. A search that started at the panel would one day find such a canvas
++        // ON the panel and answer "the groom canvas is the groom panel", which would then be
++        // handed the group panel as a child.
++        Canvas owner = OwningCanvasOf(groomingSliderPanelGO);
++        if (owner != null) return owner;
++
++        owner = OwningCanvasOf(activeSliderPanel);
++        if (owner != null) return owner;
++
++        // INACTIVE INCLUDED. A canvas left over from an earlier load in this run is the one to
++        // reuse, and the old lookup could not see it - which is also why every load could leave
++        // another empty GroomingCanvas behind.
++        Canvas[] canvases = FindObjectsByType<Canvas>(FindObjectsInactive.Include, FindObjectsSortMode.None);
++        for (int i = 0; i < canvases.Length; i++)
+         {
+-            GameObject canvasGO = new GameObject("GroomingCanvas", typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+-            canvas = canvasGO.GetComponent<Canvas>();
+-            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+-            CanvasScaler scaler = canvasGO.GetComponent<CanvasScaler>();
+-            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+-            scaler.referenceResolution = new Vector2(1920, 1080);
++            if (canvases[i] == null) continue;
++            if (canvases[i].gameObject.name != GroomCanvasName) continue;
++
++            // Nothing switches this off today. It is re-asserted because the failure being fixed
++            // here is exactly "the panels were on a canvas that turned itself off".
++            if (!canvases[i].gameObject.activeSelf) canvases[i].gameObject.SetActive(true);
++            return canvases[i];
+         }
++
++        GameObject built = new GameObject(GroomCanvasName, typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
++        Canvas created = built.GetComponent<Canvas>();
++        created.renderMode = RenderMode.ScreenSpaceOverlay;
++        CanvasScaler builtScaler = built.GetComponent<CanvasScaler>();
++        builtScaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
++        builtScaler.referenceResolution = new Vector2(1920, 1080);
++        return created;
++    }
++
++    // The canvas a built panel is sitting UNDER. Null for a panel that is missing, already
++    // destroyed, or not parented to anything.
++    private static Canvas OwningCanvasOf(GameObject panel)
++    {
++        if (panel == null) return null;
++
++        Transform parent = panel.transform.parent;
++        if (parent == null) return null;
++
++        return parent.GetComponentInParent<Canvas>(true);
++    }
++
++    public void BuildRuntimeGroomingUI()
++    {
++        Canvas canvas = ResolveGroomCanvas();
+         if (FindObjectsByType<EventSystem>(FindObjectsSortMode.None).Length == 0) new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule));
+         GameObject panelGO = new GameObject("GroomingPanel", typeof(RectTransform), typeof(Image), typeof(GraphicRaycaster));
+         panelGO.transform.SetParent(canvas.transform, false);
+@@ -632,7 +701,10 @@ public class ModelViewer : MonoBehaviour
+ 
+     void BuildGroupManagementUI()
+     {
+-        Transform canvasTransform = activeSliderPanel != null ? activeSliderPanel.transform.parent : FindObjectsByType<Canvas>(FindObjectsSortMode.None).FirstOrDefault()?.transform;
++        // Same resolver, so the group panel and the slider panel are always siblings on one
++        // canvas. They were not guaranteed to be: this site and BuildRuntimeGroomingUI each ran
++        // their own "first canvas" lookup, at different moments, with different things active.
++        Transform canvasTransform = ResolveGroomCanvas().transform;
+         if (canvasTransform == null) return;
+         GameObject existing = GameObject.Find("GroupManagerPanel");
+         if (existing != null) Destroy(existing);
