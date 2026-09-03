@@ -397,7 +397,10 @@ public class ModelViewer : MonoBehaviour
         groupVScales[currentGroupId] = currentVScale;
         groupUOffsets[currentGroupId] = currentUOffset;
         groupVOffsets[currentGroupId] = currentVOffset;
-        if (lengthSlider != null) lengthSlider.value = currentLength;
+        // Still a notifying write - the whole bank below relies on the callbacks to apply the
+        // reset - but the number is a curve parameter now. Written raw, 0.2 would be a perfectly
+        // legal parameter and would silently reset the hair to 0.008 instead.
+        if (lengthSlider != null) lengthSlider.value = GroomLengthCurve.ToSlider(currentLength);
         if (widthSlider != null) widthSlider.value = currentWidth;
         if (curlFrequencySlider != null) curlFrequencySlider.value = currentCurlFrequency;
         if (curlDiameterSlider != null) curlDiameterSlider.value = currentCurlDiameter;
@@ -668,7 +671,11 @@ public class ModelViewer : MonoBehaviour
         activeSliderPanel = panelGO;
         CreatePanelTabSwitcher(panelGO.transform);
         CreateModeToggleButton(panelGO.transform);
-        CreateSliderUI(panelGO.transform, "Length", 0.0001f, 1.0f, currentLength, OnActualSliderLengthChanged, out lengthSlider, 38, 16);
+        // 0-1 rather than 0.0001-1.0: this slider carries a curve PARAMETER now, not a length.
+        // OnActualSliderLengthChanged still takes a world length, so the conversion happens here,
+        // at the one place the two meet. See GroomLengthCurve.
+        CreateSliderUI(panelGO.transform, "Length", 0f, 1f, GroomLengthCurve.ToSlider(currentLength),
+            t => OnActualSliderLengthChanged(GroomLengthCurve.ToLength(t)), out lengthSlider, 38, 16);
         CreateSliderUI(panelGO.transform, "Width", 0.0005f, 0.05f, currentWidth, OnSliderWidthChanged, out widthSlider, 38, 16);
         CreateSliderUI(panelGO.transform, "Curl Frequency", -10f, 10f, currentCurlFrequency, OnSliderCurlFrequencyChanged, out curlFrequencySlider, 38, 16);
         CreateSliderUI(panelGO.transform, "Curl Diameter", 0f, 0.15f, currentCurlDiameter, OnSliderCurlDiameterChanged, out curlDiameterSlider, 38, 16);
@@ -941,7 +948,7 @@ public class ModelViewer : MonoBehaviour
     // and firing the change callbacks would write the values straight back out over the group.
     void PushAllGroomSliders()
     {
-        if (lengthSlider != null) lengthSlider.SetValueWithoutNotify(currentLength);
+        if (lengthSlider != null) lengthSlider.SetValueWithoutNotify(GroomLengthCurve.ToSlider(currentLength));
         if (widthSlider != null) widthSlider.SetValueWithoutNotify(currentWidth);
         if (segmentsSlider != null) segmentsSlider.SetValueWithoutNotify(currentSegments);
         if (bendSlider != null) bendSlider.SetValueWithoutNotify(currentBend);
@@ -1416,6 +1423,12 @@ public class ModelViewer : MonoBehaviour
         slider.minValue = min;
         slider.maxValue = max;
         slider.value = defaultValue;
+
+        // Re-stated now the slider exists, so a curve-mapped row opens showing its length rather
+        // than its parameter. The line above set it from defaultValue, which for Length is a
+        // parameter, and SliderLabelSyncAuthority would not correct it until the next frame.
+        tmp.text = labelText + ": " + GroomLengthCurve.Displayed(slider).ToString("F3");
+
         GameObject backgroundGO = new GameObject("Background", typeof(RectTransform), typeof(Image));
         backgroundGO.transform.SetParent(sliderGO.transform, false);
         backgroundGO.GetComponent<Image>().color = new Color(0.3f, 0.3f, 0.3f);
@@ -1447,7 +1460,9 @@ public class ModelViewer : MonoBehaviour
         handleGO.GetComponent<Image>().color = Color.white;
         slider.handleRect = handleGO.GetComponent<RectTransform>();
         slider.handleRect.sizeDelta = new Vector2(20, 0);
-        slider.onValueChanged.AddListener((val) => { tmp.text = labelText + ": " + val.ToString("F3"); onValueChanged.Invoke(val); });
+        // Displayed, not val: the Length row's slider holds a curve parameter and its label has
+        // to go on showing a length. Every other slider passes through unchanged.
+        slider.onValueChanged.AddListener((val) => { tmp.text = labelText + ": " + GroomLengthCurve.Displayed(slider).ToString("F3"); onValueChanged.Invoke(val); });
         createdSlider = slider;
         return rowGO;
     }
@@ -1660,7 +1675,7 @@ public class ModelViewer : MonoBehaviour
                 currentWaveDirection = avgWaveDirection / totalWeight;
                 currentArch = avgArch / totalWeight;
                 currentSegments = Mathf.RoundToInt((float)accumulatedSegments / nearestCards.Count);
-                if (lengthSlider != null) lengthSlider.SetValueWithoutNotify(currentLength);
+                if (lengthSlider != null) lengthSlider.SetValueWithoutNotify(GroomLengthCurve.ToSlider(currentLength));
                 if (widthSlider != null) widthSlider.SetValueWithoutNotify(currentWidth);
                 if (bendSlider != null) bendSlider.SetValueWithoutNotify(currentBend);
                 if (twistSlider != null) twistSlider.SetValueWithoutNotify(currentTwist);

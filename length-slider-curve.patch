@@ -1,0 +1,275 @@
+diff --git a/Assets/Scripts/UI_Import/GroomLengthCurve.cs b/Assets/Scripts/UI_Import/GroomLengthCurve.cs
+new file mode 100644
+index 0000000..55523aa
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/GroomLengthCurve.cs
+@@ -0,0 +1,104 @@
++using UnityEngine;
++using UnityEngine.UI;
++
++// THE LENGTH SLIDER'S RESPONSE CURVE.
++//
++// Hair lengths are not spread evenly over the slider's range and never were. A groom sits around
++// 0.2, and the fine work happens between 0.01 and 0.001 - a tenth of a percent of a slider whose
++// range runs to 1.0. On a 250px control that decade was about two pixels wide, so getting from
++// 0.010 to 0.003 meant nudging a single pixel and hoping.
++//
++// So the slider no longer carries the length. It carries a 0-1 PARAMETER, and the length is
++//
++//     length = MaxLength * t^Gamma
++//
++// which spends the travel where the work is. At Gamma 3 the 0.001-0.010 decade gets 11.5% of the
++// slider - about thirty pixels instead of two - while 0.2 still lands at t = 0.58 and the top of
++// the range is still 1.0. Nothing about the achievable lengths changed; only where they sit.
++//
++// ----------------------------------------------------------------------------------------
++// Why the slider's own domain had to change, rather than something cleverer
++// ----------------------------------------------------------------------------------------
++// A Unity Slider draws its handle at (value - min) / (max - min) and sets its value from the
++// pointer by the same formula, and both live in private methods. There is no hook that makes the
++// handle sit anywhere other than where the value says. So a non-linear response means the value
++// IS the position, and the length is derived - the alternative is a handle that does not follow
++// the cursor, which is worse than the problem being solved.
++//
++// ----------------------------------------------------------------------------------------
++// The rule for anything that touches Length_Slider
++// ----------------------------------------------------------------------------------------
++// slider.value is NOT a length. Never write a length into it and never read one out of it.
++// Everything goes through the two functions here, and the three Slider-aware helpers below exist
++// so that the GENERIC sites - the ones that walk every slider in the panel by name - need one
++// guarded line rather than a special case each:
++//
++//   ToSliderFor / ReadAsLength   a value going into / out of any slider, converted only if it is
++//                                this one
++//   Displayed                    what the row's label should say
++//
++// The dangerous sites are the ones that compile perfectly either way. A world length written raw
++// into this slider is a legal parameter - 0.2 is a valid t - so it does not throw, it just makes
++// the hair the wrong length. Both notifying writers (ModelViewer.ResetAllSliders and
++// SliderRightClickReset's ALT+right-click default) are exactly that shape.
++public static class GroomLengthCurve
++{
++    public const string SliderName = "Length_Slider";
++
++    // The shortest hair the slider can ask for. Unchanged from the linear slider's own minimum.
++    public const float MinLength = 0.0001f;
++
++    // The longest. Unchanged, and still reached at t = 1.
++    public const float MaxLength = 1f;
++
++    // How hard the travel is biased towards short hair. 1 is the old linear slider; higher gives
++    // the small end more room and takes it from the top. 3 is the setting that makes 0.001-0.010
++    // comfortable without making 0.2-1.0 feel cramped - raise it if the fine end still wants more.
++    public const float Gamma = 3f;
++
++    // Parameter -> length. Clamped at MinLength rather than allowed to reach zero: a zero-length
++    // card is degenerate geometry, and the apply path guards against it anyway.
++    public static float ToLength(float sliderValue)
++    {
++        float t = Mathf.Clamp01(sliderValue);
++        return Mathf.Max(MinLength, MaxLength * Mathf.Pow(t, Gamma));
++    }
++
++    // Length -> parameter. The exact inverse of ToLength above MinLength, so a push to the slider
++    // followed by the callback it raises returns the same length it started with. That round trip
++    // happens on every reset and every group change, so an approximate inverse would let the
++    // length creep a little further wrong every time.
++    public static float ToSlider(float length)
++    {
++        float normalised = Mathf.Clamp01(length / MaxLength);
++        return Mathf.Pow(normalised, 1f / Gamma);
++    }
++
++    public static bool IsLengthSlider(Slider slider)
++    {
++        if (slider == null) return false;
++        return slider.gameObject.name == SliderName;
++    }
++
++    // For a generic writer holding a world value and a slider it did not build.
++    public static float ToSliderFor(Slider slider, float value)
++    {
++        if (!IsLengthSlider(slider)) return value;
++        return ToSlider(value);
++    }
++
++    // For a generic reader that wants the value in the units the rest of the tool speaks.
++    public static float ReadAsLength(Slider slider)
++    {
++        if (slider == null) return 0f;
++        if (!IsLengthSlider(slider)) return slider.value;
++        return ToLength(slider.value);
++    }
++
++    // What the row's label should show. Every label in this panel is "Name: value" formatted from
++    // slider.value, so without this the Length row would read out its curve parameter.
++    public static float Displayed(Slider slider)
++    {
++        return ReadAsLength(slider);
++    }
++}
+diff --git a/Assets/Scripts/UI_Import/GroomLengthCurve.cs.meta b/Assets/Scripts/UI_Import/GroomLengthCurve.cs.meta
+new file mode 100644
+index 0000000..0ffd932
+--- /dev/null
++++ b/Assets/Scripts/UI_Import/GroomLengthCurve.cs.meta
+@@ -0,0 +1,2 @@
++fileFormatVersion: 2
++guid: 7b41d9c26e8a4f13ab5027d6e91c3f84
+diff --git a/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs b/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs
+index 7eddddd..818a154 100644
+--- a/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs
++++ b/Assets/Scripts/UI_Import/GroomSessionResetCoordinator.cs
+@@ -480,7 +480,11 @@ public class GroomSessionResetCoordinator : MonoBehaviour
+         Slider slider = viewer.groomingSliderPanelGO.GetComponentsInChildren<Slider>(true)
+             .FirstOrDefault(candidate => candidate != null && names.Contains(candidate.gameObject.name));
+         if (slider == null) return;
+-        slider.SetValueWithoutNotify(value);
++
++        // ToSliderFor, not the raw value. This is a generic writer - it is handed a world value
++        // and a slider it found by name - and the Length slider carries a curve parameter rather
++        // than a length. The LABEL still gets the world value, because that is what it says.
++        slider.SetValueWithoutNotify(GroomLengthCurve.ToSliderFor(slider, value));
+ 
+         Transform row = slider.transform.parent;
+         TextMeshProUGUI label = row != null ? row.GetComponentInChildren<TextMeshProUGUI>(true) : null;
+@@ -642,7 +646,7 @@ public class GroomSessionResetCoordinator : MonoBehaviour
+         {
+             if (slider == null) continue;
+             string n = slider.gameObject.name;
+-            if (n == "Length_Slider") slider.SetValueWithoutNotify(.2f);
++            if (n == "Length_Slider") slider.SetValueWithoutNotify(GroomLengthCurve.ToSlider(.2f));
+             else if (n == "Width_Slider") slider.SetValueWithoutNotify(.01f);
+             else if (n == "Segments_Slider") slider.SetValueWithoutNotify(12f);
+             else if (n == "Bend Angle_Slider") slider.SetValueWithoutNotify(0f);
+diff --git a/Assets/Scripts/UI_Import/ModelViewer.cs b/Assets/Scripts/UI_Import/ModelViewer.cs
+index 71cf932..e96911c 100644
+--- a/Assets/Scripts/UI_Import/ModelViewer.cs
++++ b/Assets/Scripts/UI_Import/ModelViewer.cs
+@@ -397,7 +397,10 @@ public class ModelViewer : MonoBehaviour
+         groupVScales[currentGroupId] = currentVScale;
+         groupUOffsets[currentGroupId] = currentUOffset;
+         groupVOffsets[currentGroupId] = currentVOffset;
+-        if (lengthSlider != null) lengthSlider.value = currentLength;
++        // Still a notifying write - the whole bank below relies on the callbacks to apply the
++        // reset - but the number is a curve parameter now. Written raw, 0.2 would be a perfectly
++        // legal parameter and would silently reset the hair to 0.008 instead.
++        if (lengthSlider != null) lengthSlider.value = GroomLengthCurve.ToSlider(currentLength);
+         if (widthSlider != null) widthSlider.value = currentWidth;
+         if (curlFrequencySlider != null) curlFrequencySlider.value = currentCurlFrequency;
+         if (curlDiameterSlider != null) curlDiameterSlider.value = currentCurlDiameter;
+@@ -668,7 +671,11 @@ public class ModelViewer : MonoBehaviour
+         activeSliderPanel = panelGO;
+         CreatePanelTabSwitcher(panelGO.transform);
+         CreateModeToggleButton(panelGO.transform);
+-        CreateSliderUI(panelGO.transform, "Length", 0.0001f, 1.0f, currentLength, OnActualSliderLengthChanged, out lengthSlider, 38, 16);
++        // 0-1 rather than 0.0001-1.0: this slider carries a curve PARAMETER now, not a length.
++        // OnActualSliderLengthChanged still takes a world length, so the conversion happens here,
++        // at the one place the two meet. See GroomLengthCurve.
++        CreateSliderUI(panelGO.transform, "Length", 0f, 1f, GroomLengthCurve.ToSlider(currentLength),
++            t => OnActualSliderLengthChanged(GroomLengthCurve.ToLength(t)), out lengthSlider, 38, 16);
+         CreateSliderUI(panelGO.transform, "Width", 0.0005f, 0.05f, currentWidth, OnSliderWidthChanged, out widthSlider, 38, 16);
+         CreateSliderUI(panelGO.transform, "Curl Frequency", -10f, 10f, currentCurlFrequency, OnSliderCurlFrequencyChanged, out curlFrequencySlider, 38, 16);
+         CreateSliderUI(panelGO.transform, "Curl Diameter", 0f, 0.15f, currentCurlDiameter, OnSliderCurlDiameterChanged, out curlDiameterSlider, 38, 16);
+@@ -941,7 +948,7 @@ public class ModelViewer : MonoBehaviour
+     // and firing the change callbacks would write the values straight back out over the group.
+     void PushAllGroomSliders()
+     {
+-        if (lengthSlider != null) lengthSlider.SetValueWithoutNotify(currentLength);
++        if (lengthSlider != null) lengthSlider.SetValueWithoutNotify(GroomLengthCurve.ToSlider(currentLength));
+         if (widthSlider != null) widthSlider.SetValueWithoutNotify(currentWidth);
+         if (segmentsSlider != null) segmentsSlider.SetValueWithoutNotify(currentSegments);
+         if (bendSlider != null) bendSlider.SetValueWithoutNotify(currentBend);
+@@ -1416,6 +1423,12 @@ public class ModelViewer : MonoBehaviour
+         slider.minValue = min;
+         slider.maxValue = max;
+         slider.value = defaultValue;
++
++        // Re-stated now the slider exists, so a curve-mapped row opens showing its length rather
++        // than its parameter. The line above set it from defaultValue, which for Length is a
++        // parameter, and SliderLabelSyncAuthority would not correct it until the next frame.
++        tmp.text = labelText + ": " + GroomLengthCurve.Displayed(slider).ToString("F3");
++
+         GameObject backgroundGO = new GameObject("Background", typeof(RectTransform), typeof(Image));
+         backgroundGO.transform.SetParent(sliderGO.transform, false);
+         backgroundGO.GetComponent<Image>().color = new Color(0.3f, 0.3f, 0.3f);
+@@ -1447,7 +1460,9 @@ public class ModelViewer : MonoBehaviour
+         handleGO.GetComponent<Image>().color = Color.white;
+         slider.handleRect = handleGO.GetComponent<RectTransform>();
+         slider.handleRect.sizeDelta = new Vector2(20, 0);
+-        slider.onValueChanged.AddListener((val) => { tmp.text = labelText + ": " + val.ToString("F3"); onValueChanged.Invoke(val); });
++        // Displayed, not val: the Length row's slider holds a curve parameter and its label has
++        // to go on showing a length. Every other slider passes through unchanged.
++        slider.onValueChanged.AddListener((val) => { tmp.text = labelText + ": " + GroomLengthCurve.Displayed(slider).ToString("F3"); onValueChanged.Invoke(val); });
+         createdSlider = slider;
+         return rowGO;
+     }
+@@ -1660,7 +1675,7 @@ public class ModelViewer : MonoBehaviour
+                 currentWaveDirection = avgWaveDirection / totalWeight;
+                 currentArch = avgArch / totalWeight;
+                 currentSegments = Mathf.RoundToInt((float)accumulatedSegments / nearestCards.Count);
+-                if (lengthSlider != null) lengthSlider.SetValueWithoutNotify(currentLength);
++                if (lengthSlider != null) lengthSlider.SetValueWithoutNotify(GroomLengthCurve.ToSlider(currentLength));
+                 if (widthSlider != null) widthSlider.SetValueWithoutNotify(currentWidth);
+                 if (bendSlider != null) bendSlider.SetValueWithoutNotify(currentBend);
+                 if (twistSlider != null) twistSlider.SetValueWithoutNotify(currentTwist);
+diff --git a/Assets/Scripts/UI_Import/PostAffectorManager.cs b/Assets/Scripts/UI_Import/PostAffectorManager.cs
+index 7a0f149..ea5920b 100644
+--- a/Assets/Scripts/UI_Import/PostAffectorManager.cs
++++ b/Assets/Scripts/UI_Import/PostAffectorManager.cs
+@@ -1129,7 +1129,7 @@ public class PostAffectorManager : MonoBehaviour
+             if (slider == null) continue;
+             switch (slider.gameObject.name)
+             {
+-                case "Length_Slider": slider.SetValueWithoutNotify(viewer.currentLength); break;
++                case "Length_Slider": slider.SetValueWithoutNotify(GroomLengthCurve.ToSlider(viewer.currentLength)); break;
+                 case "Width_Slider": slider.SetValueWithoutNotify(viewer.currentWidth); break;
+                 case "Segments_Slider": slider.SetValueWithoutNotify(viewer.currentSegments); break;
+                 case "Bend Angle_Slider": slider.SetValueWithoutNotify(viewer.currentBend); break;
+diff --git a/Assets/Scripts/UI_Import/PostRootContextRestore.cs b/Assets/Scripts/UI_Import/PostRootContextRestore.cs
+index 46c7483..9f30679 100644
+--- a/Assets/Scripts/UI_Import/PostRootContextRestore.cs
++++ b/Assets/Scripts/UI_Import/PostRootContextRestore.cs
+@@ -64,7 +64,8 @@ public class PostRootContextRestore : MonoBehaviour
+             switch (slider.gameObject.name)
+             {
+                 case "Length_Slider":
+-                    slider.SetValueWithoutNotify(viewer.currentLength);
++                    // Through the curve - this slider holds a parameter, not a length.
++                    slider.SetValueWithoutNotify(GroomLengthCurve.ToSlider(viewer.currentLength));
+                     break;
+                 case "Width_Slider":
+                     slider.SetValueWithoutNotify(viewer.currentWidth);
+diff --git a/Assets/Scripts/UI_Import/SliderLabelSyncAuthority.cs b/Assets/Scripts/UI_Import/SliderLabelSyncAuthority.cs
+index ba1ab28..a7f6d65 100644
+--- a/Assets/Scripts/UI_Import/SliderLabelSyncAuthority.cs
++++ b/Assets/Scripts/UI_Import/SliderLabelSyncAuthority.cs
+@@ -48,7 +48,11 @@ public class SliderLabelSyncAuthority : MonoBehaviour
+ 
+         // Matches CreateSliderUI's own "Label: value" formatting exactly, including the F3
+         // precision it already uses uniformly (even for integer-valued sliders like Segments).
+-        string expected = label + ": " + slider.value.ToString("F3");
++        // Displayed, not slider.value. This authority is the LAST word on every label in the
++        // panel - it overwrites anything that disagrees, every frame - so a slider whose value is
++        // not the number the row is about has to be resolved here or nowhere. Today that is the
++        // Length row, whose slider carries a response-curve parameter; see GroomLengthCurve.
++        string expected = label + ": " + GroomLengthCurve.Displayed(slider).ToString("F3");
+         if (text.text != expected) text.text = expected;
+     }
+ }
+diff --git a/Assets/Scripts/UI_Import/SliderRightClickReset.cs b/Assets/Scripts/UI_Import/SliderRightClickReset.cs
+index c63a417..f32c173 100644
+--- a/Assets/Scripts/UI_Import/SliderRightClickReset.cs
++++ b/Assets/Scripts/UI_Import/SliderRightClickReset.cs
+@@ -92,7 +92,10 @@ public class SliderRightClickResetInstaller : MonoBehaviour
+ 
+         switch (n)
+         {
+-            case "Length_Slider": value = .2f; return true;
++            // The DEFAULT LENGTH, expressed as this slider's curve parameter. The assignment
++            // below is a notifying `slider.value =`, so a raw 0.2 here would not be clamped or
++            // rejected - it is a legal parameter - it would simply reset the hair to 0.008.
++            case "Length_Slider": value = GroomLengthCurve.ToSlider(.2f); return true;
+             case "Width_Slider": value = .01f; return true;
+             case "Segments_Slider": value = 12f; return true;
+             case "Bend Angle_Slider": value = 0f; return true;

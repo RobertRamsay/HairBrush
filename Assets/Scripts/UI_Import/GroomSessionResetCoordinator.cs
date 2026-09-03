@@ -480,7 +480,11 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         Slider slider = viewer.groomingSliderPanelGO.GetComponentsInChildren<Slider>(true)
             .FirstOrDefault(candidate => candidate != null && names.Contains(candidate.gameObject.name));
         if (slider == null) return;
-        slider.SetValueWithoutNotify(value);
+
+        // ToSliderFor, not the raw value. This is a generic writer - it is handed a world value
+        // and a slider it found by name - and the Length slider carries a curve parameter rather
+        // than a length. The LABEL still gets the world value, because that is what it says.
+        slider.SetValueWithoutNotify(GroomLengthCurve.ToSliderFor(slider, value));
 
         Transform row = slider.transform.parent;
         TextMeshProUGUI label = row != null ? row.GetComponentInChildren<TextMeshProUGUI>(true) : null;
@@ -642,7 +646,7 @@ public class GroomSessionResetCoordinator : MonoBehaviour
         {
             if (slider == null) continue;
             string n = slider.gameObject.name;
-            if (n == "Length_Slider") slider.SetValueWithoutNotify(.2f);
+            if (n == "Length_Slider") slider.SetValueWithoutNotify(GroomLengthCurve.ToSlider(.2f));
             else if (n == "Width_Slider") slider.SetValueWithoutNotify(.01f);
             else if (n == "Segments_Slider") slider.SetValueWithoutNotify(12f);
             else if (n == "Bend Angle_Slider") slider.SetValueWithoutNotify(0f);

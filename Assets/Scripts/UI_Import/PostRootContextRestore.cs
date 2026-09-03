@@ -64,7 +64,8 @@ public class PostRootContextRestore : MonoBehaviour
             switch (slider.gameObject.name)
             {
                 case "Length_Slider":
-                    slider.SetValueWithoutNotify(viewer.currentLength);
+                    // Through the curve - this slider holds a parameter, not a length.
+                    slider.SetValueWithoutNotify(GroomLengthCurve.ToSlider(viewer.currentLength));
                     break;
                 case "Width_Slider":
                     slider.SetValueWithoutNotify(viewer.currentWidth);

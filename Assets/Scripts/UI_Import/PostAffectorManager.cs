@@ -1129,7 +1129,7 @@ public class PostAffectorManager : MonoBehaviour
             if (slider == null) continue;
             switch (slider.gameObject.name)
             {
-                case "Length_Slider": slider.SetValueWithoutNotify(viewer.currentLength); break;
+                case "Length_Slider": slider.SetValueWithoutNotify(GroomLengthCurve.ToSlider(viewer.currentLength)); break;
                 case "Width_Slider": slider.SetValueWithoutNotify(viewer.currentWidth); break;
                 case "Segments_Slider": slider.SetValueWithoutNotify(viewer.currentSegments); break;
                 case "Bend Angle_Slider": slider.SetValueWithoutNotify(viewer.currentBend); break;

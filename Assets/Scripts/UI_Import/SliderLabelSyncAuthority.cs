@@ -48,7 +48,11 @@ public class SliderLabelSyncAuthority : MonoBehaviour
 
         // Matches CreateSliderUI's own "Label: value" formatting exactly, including the F3
         // precision it already uses uniformly (even for integer-valued sliders like Segments).
-        string expected = label + ": " + slider.value.ToString("F3");
+        // Displayed, not slider.value. This authority is the LAST word on every label in the
+        // panel - it overwrites anything that disagrees, every frame - so a slider whose value is
+        // not the number the row is about has to be resolved here or nowhere. Today that is the
+        // Length row, whose slider carries a response-curve parameter; see GroomLengthCurve.
+        string expected = label + ": " + GroomLengthCurve.Displayed(slider).ToString("F3");
         if (text.text != expected) text.text = expected;
     }
 }

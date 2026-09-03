@@ -92,7 +92,10 @@ public class SliderRightClickResetInstaller : MonoBehaviour
 
         switch (n)
         {
-            case "Length_Slider": value = .2f; return true;
+            // The DEFAULT LENGTH, expressed as this slider's curve parameter. The assignment
+            // below is a notifying `slider.value =`, so a raw 0.2 here would not be clamped or
+            // rejected - it is a legal parameter - it would simply reset the hair to 0.008.
+            case "Length_Slider": value = GroomLengthCurve.ToSlider(.2f); return true;
             case "Width_Slider": value = .01f; return true;
             case "Segments_Slider": value = 12f; return true;
             case "Bend Angle_Slider": value = 0f; return true;
