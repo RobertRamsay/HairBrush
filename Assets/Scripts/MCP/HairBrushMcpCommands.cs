@@ -873,6 +873,17 @@ public partial class HairBrushMcpCommands : MonoBehaviour
         int gid = ResolveGroup(a);
         if (!viewer.CanDeleteGroup(gid)) throw new CommandException("HairBrush will not delete group " + gid + " (the last remaining group cannot be deleted).");
         ModifierContextExit.LeaveEverything(viewer);
+
+        // Group ids are recycled (the next + GROUP takes the lowest free id), and the POST,
+        // guide and clumper registries are keyed by id. Cleared here, explicitly, so a group
+        // created straight afterwards can never inherit this one's modifiers.
+        Posts().ImportGroup(gid, new List<PostAffectorSaveData>());
+        GuideCurveManager gm = FindFirstObjectByType<GuideCurveManager>();
+        if (gm != null) foreach (GuideCurveManager.GuideCurve g in gm.GetGroupGuides(gid).ToList()) gm.RemoveGuide(g);
+        GroupClumperManager cm = FindFirstObjectByType<GroupClumperManager>();
+        MethodInfo removeClumper = typeof(GroupClumperManager).GetMethod("RemoveClumper", Private);
+        if (cm != null && removeClumper != null) foreach (GroupClumperManager.GroupClumper c in cm.GetGroupClumpers(gid).ToList()) removeClumper.Invoke(cm, new object[] { c });
+
         viewer.DeleteGroupAndCardsConfirmed(gid);
         return new Dictionary<string, object> { { "deleted", gid }, { "current_group_id", viewer.currentGroupId } };
     }
@@ -1421,7 +1432,9 @@ public partial class HairBrushMcpCommands : MonoBehaviour
     // POST ids are unique across all groups, as CreateAffector issues them.
     int NextPostId()
     {
-        int id = 1;
+        // Also respect the manager's own counter: it has issued ids for POSTs this listing
+        // cannot see, and a reused id made later edits act on the wrong POST.
+        int id = typeof(PostAffectorManager).GetField("nextId", Private)?.GetValue(Posts()) is int n ? n : 1;
         foreach (int gid in GroupIds)
             foreach (PostAffectorSaveData p in Posts().ExportGroup(gid)) id = Mathf.Max(id, p.id + 1);
         return id;

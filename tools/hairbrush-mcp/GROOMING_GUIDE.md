@@ -45,6 +45,18 @@ The method for building a good groom through the `hb_*` tools. It combines the H
   - Keep short hair almost square, e.g. `[[0,1],[1,0.9]]`, and let the texture's alpha make the edge.
 - **Embed depth:** 0.0005–0.001 sinks the root so it never floats.
 
+## Quiffs and lift (tested)
+
+Lift for a quiff, pompadour or any hair that stands up comes from the **cards' own angle and bend**, applied regionally with a POST. Guides cannot provide it.
+
+- **Guides don't give lift.** Guides at full amount scale the cards' own bend and angles away, and a guide arc only eases the root third of each card. So making the guide curves dramatically taller barely changes the silhouette.
+- **What works:** a front POST with `angle_x` -50 to -60, `bend` -40 to -50 and length +0.02–0.03 (radius ~0.045, falloff ~0.04) rises off the hairline and rolls back over the head. Turn the front guides down to amount ~0.3 so they only steer direction.
+- **Sign reference** (front hairline, cards standing out of the surface):
+  - Negative `angle_x` tilts up.
+  - Positive bend curls the tips forward and down (a fringe).
+  - `angle_x` -40 with no bend makes vertical spikes.
+  - `angle_x` -30 with bend +90 makes bangs falling over the face.
+
 ## Placement
 
 - **`hb_fill_region`** is the EVEN brush over an az/el region: cards are kept at least `spacing` apart, including from existing cards and from symmetry mirrors.
