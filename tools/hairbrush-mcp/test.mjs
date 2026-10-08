@@ -92,3 +92,20 @@ test('reports a missing app and a bad token as tool errors', async () => {
   assert.equal(gone.out[0].result.isError, true);
   assert.match(gone.out[0].result.content[0].text, /not running|Could not reach|closed/);
 });
+
+test('images nested anywhere (batch, contact sheet) become image content', async () => {
+  const { toContent } = await import('./server.mjs');
+  const content = toContent({ results: [{ step: 0, result: { png_base64: 'AAA', width: 1 } }, { step: 1, result: { placed: 3 } }] });
+  assert.equal(content[0].type, 'image');
+  assert.equal(content[0].data, 'AAA');
+  const text = JSON.parse(content.at(-1).text);
+  assert.equal(text.results[0].result.image, 'image 1');
+  assert.equal(text.results[1].result.placed, 3);
+});
+
+test('hb_grooming_guide is served locally without the app', async () => {
+  const { out, mcp } = harness(1);
+  await mcp.handle({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'hb_grooming_guide', arguments: {} } });
+  assert.equal(out[0].result.isError, false);
+  assert.match(out[0].result.content[0].text, /grooming guide/i);
+});

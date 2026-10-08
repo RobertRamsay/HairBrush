@@ -47,16 +47,20 @@ Points on the scalp are given as `az`/`el` degrees, measured from the centre of 
 
 | Area | Tools |
 |---|---|
-| Inspect | `hb_status`, `hb_head_info`, `hb_probe_points`, `hb_list_groups`, `hb_get_group` |
-| Files | `hb_load_model`, `hb_load_project`, `hb_save_project`, `hb_export_obj` |
+| Method | `hb_grooming_guide` (served locally from GROOMING_GUIDE.md; works with the app closed) |
+| Inspect | `hb_status`, `hb_head_info`, `hb_probe_points`, `hb_list_groups`, `hb_get_group`, `hb_sample_cards` |
+| Look | `hb_screenshot` (overlay, studio lighting, scalp check), `hb_turnaround` (contact sheet), `hb_preview_uv_rects` (atlas with numbered strips), `hb_set_view` |
+| Files | `hb_load_model`, `hb_load_project`, `hb_save_project`, `hb_export_obj`, `hb_load_autosave` |
 | Groups | `hb_create_group`, `hb_select_group`, `hb_rename_group`, `hb_delete_group`, `hb_set_group_flags` |
-| Cards | `hb_place_cards`, `hb_fill_region`, `hb_erase_cards`, `hb_set_group_params`, `hb_set_variance`, `hb_set_shape_curve` |
-| Modifiers | `hb_add_guide`, `hb_edit_guide`, `hb_remove_guide`, `hb_add_clumper`, `hb_edit_clumper`, `hb_remove_clumper` |
+| Cards | `hb_place_cards`, `hb_fill_region` (hairline edge, jitter, edge thinning), `hb_erase_cards`, `hb_set_group_params`, `hb_set_variance`, `hb_set_shape_curve`, `hb_set_card_style` |
+| Modifiers | `hb_add_guide` (flow over the skull, mirror), `hb_edit_guide`, `hb_remove_guide`, `hb_add_clumper` (scope, mirror), `hb_edit_clumper`, `hb_remove_clumper` |
+| POSTs | `hb_add_post` (mirror), `hb_edit_post`, `hb_remove_post` |
 | Material and UVs | `hb_set_hair_material`, `hb_get_uv_rects`, `hb_set_uv_rects`, `hb_set_group_uv` |
-| POSTs | `hb_add_post`, `hb_edit_post`, `hb_remove_post` |
-| View and history | `hb_set_symmetry`, `hb_set_view`, `hb_screenshot`, `hb_undo`, `hb_redo` |
+| Workflow | `hb_batch` (several calls, one undo step), `hb_set_symmetry`, `hb_undo`, `hb_redo` |
 
 Not yet exposed: per-group materials, texture loading, POST-local shape curves, and remap.
+
+An autosave is written to Application.persistentDataPath/mcp_autosave.json when Play mode stops (or the player quits) and every 45 s of MCP editing; `hb_status` reports it.
 
 ## Notes
 

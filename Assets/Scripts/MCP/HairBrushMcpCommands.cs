@@ -28,7 +28,7 @@ using UnityEngine;
 //
 // Every mutating command ends with UndoHistoryAuthority.NotifyEdit(), so each tool call becomes
 // its own undo step instead of being folded into whatever the user does next.
-public class HairBrushMcpCommands : MonoBehaviour
+public partial class HairBrushMcpCommands : MonoBehaviour
 {
     public class CommandException : Exception
     {
@@ -94,6 +94,12 @@ public class HairBrushMcpCommands : MonoBehaviour
             case "set_symmetry": ok(SetSymmetry(a)); yield break;
             case "set_view": ok(SetView(a)); yield break;
             case "screenshot": yield return Screenshot(a, ok); yield break;
+            case "turnaround": yield return Turnaround(a, ok); yield break;
+            case "preview_uv_rects": ok(PreviewUVRects(a)); yield break;
+            case "sample_cards": ok(SampleCards(a)); yield break;
+            case "set_card_style": ok(Edit(SetCardStyle(a))); yield break;
+            case "batch": yield return Batch(a, ok); yield break;
+            case "load_autosave": yield return LoadAutosave(a, ok); yield break;
             case "undo": yield return UndoRedo(true, ok); yield break;
             case "redo": yield return UndoRedo(false, ok); yield break;
         }
@@ -365,7 +371,8 @@ public class HairBrushMcpCommands : MonoBehaviour
             { "current_group_id", viewer.currentGroupId },
             { "symmetry", GroomSymmetryAuthority.Enabled },
             { "total_cards", cards.Length },
-            { "groups", GroupSummaries(cards) }
+            { "groups", GroupSummaries(cards) },
+            { "autosave", AutosaveInfo() }
         };
     }
 
@@ -633,6 +640,14 @@ public class HairBrushMcpCommands : MonoBehaviour
         HeadFrame f = Frame();
         int gid = ResolveGroup(a);
         Region region = Region.From(a);
+        // A hairline: the lower boundary as [az, el] points (interpolated by az, mirrored to the
+        // other side automatically when only one side is given), roughened by edge_jitter
+        // degrees of smooth noise, with cards thinning out over the last edge_falloff degrees.
+        List<Vector2> lowerEdge = a.Has("lower_edge") ? a.List("lower_edge").Select(p => { Vector3 v = Args.ToVec2(p); return new Vector2(v.x, v.y); }).OrderBy(p => p.x).ToList() : null;
+        float edgeJitter = Mathf.Max(0f, a.Float("edge_jitter", 0f));
+        float edgeFalloff = Mathf.Max(0f, a.Float("edge_falloff", 0f));
+        float edgeSpacingScale = Mathf.Max(1f, a.Float("edge_spacing_scale", 2.2f));
+        int edgeSeed = a.Int("seed", 1);
         List<Region> excludes = a.Has("exclude") ? a.Objects("exclude").Select(e => Region.From(new Args(e))).ToList() : new List<Region>();
         float spacing = Mathf.Max(.002f, a.Float("spacing", .01f));
         int maxCards = Mathf.Clamp(a.Int("max_cards", 3000), 1, 30000);
@@ -658,6 +673,7 @@ public class HairBrushMcpCommands : MonoBehaviour
             AzEl(f, dir, out float az, out float el);
             if (!region.Contains(az, el)) continue;
             if (excludes.Any(x => x.Contains(az, el))) continue;
+            if (EdgeDistance(az, el, lowerEdge, edgeJitter, edgeSeed) < 0f) continue;
             candidates.Add(dir);
         }
         for (int i = candidates.Count - 1; i > 0; i--)
@@ -677,11 +693,18 @@ public class HairBrushMcpCommands : MonoBehaviour
         {
             if (accepted >= maxCards) break;
             if (!CastToSurface(f, dir, out RaycastHit hit)) continue;
-            if (occupied.AnyWithin(hit.point, spacing)) continue;
+            float local = spacing;
+            if (edgeFalloff > 0f)
+            {
+                AzEl(f, dir, out float caz, out float cel);
+                float d = Mathf.Min(EdgeDistance(caz, cel, lowerEdge, edgeJitter, edgeSeed), cel - region.elMin);
+                if (d < edgeFalloff) local = spacing * Mathf.Lerp(edgeSpacingScale, 1f, Mathf.SmoothStep(0f, 1f, d / edgeFalloff));
+            }
+            if (occupied.AnyWithin(hit.point, local)) continue;
 
             Vector3 mirrored = default;
             bool hasMirror = mirroring && GroomSymmetryAuthority.TryMirrorPoint(hit.point, out mirrored);
-            if (hasMirror && occupied.AnyWithin(mirrored, spacing)) continue;
+            if (hasMirror && occupied.AnyWithin(mirrored, local)) continue;
 
             Pin(hit.point, hit.normal, mirror);
             occupied.Add(hit.point);
@@ -696,6 +719,35 @@ public class HairBrushMcpCommands : MonoBehaviour
             { "group_id", gid }, { "placed", placed }, { "primary_points", accepted },
             { "hit_max_cards", accepted >= maxCards }, { "symmetry_mirrored", mirroring }
         };
+    }
+
+    // Signed distance in degrees of elevation above the (jittered) lower edge; positive = inside.
+    // No edge given means everything is inside.
+    static float EdgeDistance(float az, float el, List<Vector2> edge, float jitter, int seed)
+    {
+        if (edge == null || edge.Count == 0) return float.MaxValue;
+        float a = Mathf.Abs(WrapAz(az));
+        // One-sided edges (all az >= 0) are mirrored by using |az|; a full edge uses az as-is.
+        bool oneSided = edge.All(p => p.x >= 0f);
+        float x = oneSided ? a : WrapAz(az);
+        float lower;
+        if (x <= edge[0].x) lower = edge[0].y;
+        else if (x >= edge[edge.Count - 1].x) lower = edge[edge.Count - 1].y;
+        else
+        {
+            int i = 1;
+            while (edge[i].x < x) i++;
+            lower = Mathf.Lerp(edge[i - 1].y, edge[i].y, Mathf.InverseLerp(edge[i - 1].x, edge[i].x, x));
+        }
+        if (jitter > 0f)
+        {
+            // Sum of incommensurate sines: smooth, irregular, repeatable by seed, and the same on
+            // both sides of a one-sided edge so symmetry keeps the hairline symmetric.
+            float s = seed * 1.618f;
+            float n = .5f * Mathf.Sin(x * .21f + s) + .3f * Mathf.Sin(x * .53f + s * 2.1f) + .2f * Mathf.Sin(x * 1.37f + s * 3.7f);
+            lower += n * jitter;
+        }
+        return el - lower;
     }
 
     class SpatialHash
@@ -714,9 +766,10 @@ public class HairBrushMcpCommands : MonoBehaviour
         {
             Vector3Int k = Key(p);
             float d2 = d * d;
-            for (int x = -1; x <= 1; x++)
-                for (int y = -1; y <= 1; y++)
-                    for (int z = -1; z <= 1; z++)
+            int r = Mathf.Max(1, Mathf.CeilToInt(d / cell));
+            for (int x = -r; x <= r; x++)
+                for (int y = -r; y <= r; y++)
+                    for (int z = -r; z <= r; z++)
                         if (cells.TryGetValue(new Vector3Int(k.x + x, k.y + y, k.z + z), out List<Vector3> list))
                             foreach (Vector3 q in list) if ((q - p).sqrMagnitude < d2) return true;
             return false;
@@ -913,6 +966,10 @@ public class HairBrushMcpCommands : MonoBehaviour
         {
             world = a.List("nodes_world").Select(Args.ToVec).ToList();
         }
+        else if (a.Has("flow"))
+        {
+            world = BuildFlowNodes(f, g.contact, a.Obj("flow"));
+        }
         else if (a.Has("direction") || a.Has("length"))
         {
             Vector3 dir = ReadDirection(f, a, "direction", -f.up);
@@ -957,7 +1014,9 @@ public class HairBrushMcpCommands : MonoBehaviour
         // CreateGuide selects the new guide, and a selected guide holds the grooming input lock -
         // the user's next click on the head would be swallowed. Leave it unselected.
         gm.ClearSelection();
-        return DescribeGuide(g, f);
+        object primary = DescribeGuide(g, f);
+        if (!a.Bool("mirror", false)) return primary;
+        return new Dictionary<string, object> { { "guide", primary }, { "mirror", MirrorGuide(f, g) } };
     }
 
     object EditGuide(Args a)
@@ -1033,6 +1092,14 @@ public class HairBrushMcpCommands : MonoBehaviour
         if (a.Has("seed")) c.seed = a.Int("seed", 1);
         if (a.Has("radius")) c.radius = Mathf.Max(.001f, a.Float("radius", c.radius));
         if (a.Has("falloff")) c.falloff = Mathf.Max(0f, a.Float("falloff", c.falloff));
+        // SCOPE is per group in HairBrush: CONTIG keeps clumps on the surface island they sit on,
+        // so scalp hair never clumps with ear or beard hair.
+        if (a.Has("scope"))
+        {
+            string scope = a.Str("scope", "all").ToLowerInvariant();
+            if (scope != "all" && scope != "contig") throw new CommandException("scope must be all or contig.");
+            SurfaceIslandScope.SetClumperContiguous(c.groupId, scope == "contig");
+        }
         Clumpers().Invalidate(c);
     }
 
@@ -1047,7 +1114,9 @@ public class HairBrushMcpCommands : MonoBehaviour
         if (!a.Has("amount")) c.amount = .6f;
         ApplyClumperSettings(c, a);
         cm.ClearSelection();
-        return DescribeClumper(c, f);
+        object primary = DescribeClumper(c, f);
+        if (!a.Bool("mirror", false)) return primary;
+        return new Dictionary<string, object> { { "clumper", primary }, { "mirror", MirrorClumper(f, c) } };
     }
 
     object EditClumper(Args a)
@@ -1355,7 +1424,9 @@ public class HairBrushMcpCommands : MonoBehaviour
         ApplyPostSettings(p, a);
         list.Add(p);
         pm.ImportGroup(gid, list);
-        return DescribePost(p, f);
+        object primary = DescribePost(p, f);
+        if (!a.Bool("mirror", false)) return primary;
+        return new Dictionary<string, object> { { "post", primary }, { "mirror", MirrorPost(f, gid, p) } };
     }
 
     (int gid, List<PostAffectorSaveData> list, PostAffectorSaveData post) FindPost(int id)
@@ -1569,64 +1640,6 @@ public class HairBrushMcpCommands : MonoBehaviour
         return new Dictionary<string, object> { { "pivot", target }, { "distance", distance } };
     }
 
-    IEnumerator Screenshot(Args a, Action<object> ok)
-    {
-        int width = Mathf.Clamp(a.Int("width", 768), 64, 2048);
-        int height = Mathf.Clamp(a.Int("height", 768), 64, 2048);
-        Camera cam = viewer.mainCamera;
-        if (cam == null) throw new CommandException("No main camera.");
-
-        // Mesh deformation (guides, clumpers, POSTs) is applied in LateUpdate, so render after it.
-        yield return new WaitForEndOfFrame();
-
-        Texture2D shot;
-        if (a.Bool("include_ui", false))
-        {
-            // The user's actual window, panels and all - for "look at this slider" conversations.
-            shot = ScreenCapture.CaptureScreenshotAsTexture();
-        }
-        else
-        {
-            Transform t = cam.transform;
-            Vector3 savedPos = t.position;
-            Quaternion savedRot = t.rotation;
-            RenderTexture savedTarget = cam.targetTexture;
-            RenderTexture rt = RenderTexture.GetTemporary(width, height, 24, RenderTextureFormat.ARGB32);
-            rt.antiAliasing = 4;
-            try
-            {
-                bool currentView = a.Str("view", null) == "current" && !a.Has("az") && !a.Has("el");
-                if (!currentView && LoadedModel != null)
-                {
-                    ViewPose(a, Frame(), width / (float)height, cam, out Vector3 pos, out Quaternion rot, out _, out _);
-                    t.SetPositionAndRotation(pos, rot);
-                }
-                cam.targetTexture = rt;
-                cam.aspect = width / (float)height;
-                cam.Render();
-
-                RenderTexture prev = RenderTexture.active;
-                RenderTexture.active = rt;
-                shot = new Texture2D(width, height, TextureFormat.RGB24, false);
-                shot.ReadPixels(new Rect(0, 0, width, height), 0, 0);
-                shot.Apply();
-                RenderTexture.active = prev;
-            }
-            finally
-            {
-                cam.targetTexture = savedTarget;
-                cam.ResetAspect();
-                t.SetPositionAndRotation(savedPos, savedRot);
-                RenderTexture.ReleaseTemporary(rt);
-            }
-        }
-
-        byte[] png = shot.EncodeToPNG();
-        int w = shot.width, h = shot.height;
-        Destroy(shot);
-        ok(new Dictionary<string, object> { { "png_base64", Convert.ToBase64String(png) }, { "width", w }, { "height", h } });
-    }
-
     // ---------------------------------------------------------------------------------
     // Argument access
     // ---------------------------------------------------------------------------------
@@ -1672,6 +1685,12 @@ public class HairBrushMcpCommands : MonoBehaviour
         {
             if (v is double d && !double.IsNaN(d) && !double.IsInfinity(d)) return (float)d;
             throw new CommandException(k + " must be a number.");
+        }
+        // [a, b] pairs, returned in x/y.
+        public static Vector3 ToVec2(object v)
+        {
+            if (v is List<object> l && l.Count == 2) return new Vector3(ToFloat(l[0]), ToFloat(l[1]), 0f);
+            throw new CommandException("Expected an [az, el] pair.");
         }
         public static Vector3 ToVec(object v)
         {

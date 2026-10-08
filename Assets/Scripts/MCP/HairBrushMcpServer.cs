@@ -74,6 +74,7 @@ public class HairBrushMcpServer : MonoBehaviour
     // Unity API call - even Application.version - throws and silently drops the connection.
     string appVersion;
     bool isEditor;
+    float lastAutosave;
 
     public static bool IsListening => instance != null && instance.listener != null;
     public static int ConnectedClients
@@ -197,7 +198,13 @@ public class HairBrushMcpServer : MonoBehaviour
         if (instance == this) instance = null;
     }
 
-    void OnApplicationQuit() { OnDestroy(); }
+    // Leaving Play mode in the editor arrives here too, while every groom object still exists -
+    // the last moment the session can be written before a recompile throws it away.
+    void OnApplicationQuit()
+    {
+        if (listener != null) HairBrushMcpCommands.WriteAutosave();
+        OnDestroy();
+    }
 
     // ---------------------------------------------------------------------------------
     // Socket threads
@@ -368,6 +375,13 @@ public class HairBrushMcpServer : MonoBehaviour
             HairBrushMcpCommands.EditPending = false;
             yield return new WaitForSecondsRealtime(.45f);
             yield return null;
+
+            // Rolling autosave, at most every 45s of MCP editing, on top of the one at quit.
+            if (Time.realtimeSinceStartup - lastAutosave > 45f)
+            {
+                lastAutosave = Time.realtimeSinceStartup;
+                HairBrushMcpCommands.WriteAutosave();
+            }
         }
         busy = false;
     }

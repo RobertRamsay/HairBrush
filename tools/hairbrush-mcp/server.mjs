@@ -121,17 +121,35 @@ export class AppLink {
   close() { this.socket?.destroy(); }
 }
 
-/** Shape an app result into MCP tool content. Screenshots become image content. */
+/** Shape an app result into MCP tool content. Every png_base64 anywhere in the result (a
+ * screenshot, a contact sheet, screenshots inside a batch) becomes image content, and the text
+ * part says which image is which. */
 export function toContent(result) {
-  if (isObject(result) && typeof result.png_base64 === 'string') {
-    const { png_base64, ...rest } = result;
-    return [
-      { type: 'image', data: png_base64, mimeType: 'image/png' },
-      { type: 'text', text: JSON.stringify(rest) },
-    ];
-  }
-  return [{ type: 'text', text: JSON.stringify(result, null, 1) }];
+  const images = [];
+  const strip = value => {
+    if (Array.isArray(value)) return value.map(strip);
+    if (!isObject(value)) return value;
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (k === 'png_base64' && typeof v === 'string') {
+        images.push(v);
+        out.image = `image ${images.length}`;
+      } else out[k] = strip(v);
+    }
+    return out;
+  };
+  const text = strip(result);
+  return [
+    ...images.map(data => ({ type: 'image', data, mimeType: 'image/png' })),
+    { type: 'text', text: JSON.stringify(text, null, images.length ? 0 : 1) },
+  ];
 }
+
+const GUIDE_PATH = new URL('./GROOMING_GUIDE.md', import.meta.url);
+const readGuide = () => {
+  try { return readFileSync(GUIDE_PATH, 'utf8'); }
+  catch { return 'GROOMING_GUIDE.md is missing next to server.mjs.'; }
+};
 
 export class McpServer {
   constructor(link, write) {
@@ -157,22 +175,26 @@ export class McpServer {
           protocolVersion: PROTOCOLS.includes(asked) ? asked : PROTOCOLS[0],
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: 'hairbrush', version: VERSION },
-          instructions: 'Controls a running HairBrush hair-card groom. Start with hb_status, then hb_head_info. '
-            + 'Work in groups (fringe, crown, sides, back...). Place hair with hb_fill_region / hb_place_cards, shape it with hb_set_group_params, '
-            + 'direct it with guides (hb_add_guide), and check results with hb_screenshot after each significant change. '
-            + 'Every tool call is one undo step in HairBrush. Save with hb_save_project when the user is happy.',
+          instructions: 'Controls a running HairBrush hair-card groom. Before grooming, read hb_grooming_guide once - it is the method '
+            + '(few groups, POSTs for regional shape, predetermined UV strips, flow guides, studio turnarounds to review). '
+            + 'Start a session with hb_status. Every tool call is one undo step; hb_batch makes several calls one step. '
+            + 'Save checkpoints with hb_save_project; an autosave is also kept (hb_load_autosave).',
         });
         return;
       }
       case 'ping': this.reply(id, {}); return;
       case 'tools/list':
-        this.reply(id, { tools: TOOLS.map(({ timeout, ...t }) => t) });
+        this.reply(id, { tools: TOOLS.map(({ timeout, local, ...t }) => t) });
         return;
       case 'tools/call': {
         const tool = this.byName.get(params?.name);
         if (!tool) { this.error(id, -32602, `Unknown tool: ${params?.name}`); return; }
         const args = params.arguments ?? {};
         if (!isObject(args)) { this.error(id, -32602, 'arguments must be an object'); return; }
+        if (tool.local === 'guide') {
+          this.reply(id, { content: [{ type: 'text', text: readGuide() }], isError: false });
+          return;
+        }
         try {
           const result = await this.link.request(tool.name.slice(3), args, tool.timeout ?? DEFAULT_TIMEOUT);
           this.reply(id, { content: toContent(result), isError: false });
@@ -192,15 +214,19 @@ async function cli(argv) {
   const [name, json = '{}'] = argv.slice(argv.indexOf('--call') + 1);
   const tool = TOOLS.find(t => t.name === name);
   if (!tool) throw new Error(`Unknown tool ${name}. Tools: ${TOOLS.map(t => t.name).join(', ')}`);
+  if (tool.local === 'guide') { process.stdout.write(readGuide()); return; }
   const link = new AppLink(loadConfig());
   try {
     const result = await link.request(name.slice(3), JSON.parse(json), tool.timeout ?? DEFAULT_TIMEOUT);
     const outAt = argv.indexOf('--out');
-    if (typeof result.png_base64 === 'string' && outAt >= 0) {
-      writeFileSync(argv[outAt + 1], Buffer.from(result.png_base64, 'base64'));
-      delete result.png_base64;
+    const content = toContent(result);
+    const images = content.filter(c => c.type === 'image');
+    if (outAt >= 0 && images.length) {
+      // shot.png, or shot-1.png, shot-2.png ... when a batch returns several.
+      const out = argv[outAt + 1];
+      images.forEach((img, i) => writeFileSync(images.length === 1 ? out : out.replace(/(\.png)?$/i, `-${i + 1}.png`), Buffer.from(img.data, 'base64')));
     }
-    process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    process.stdout.write(content.find(c => c.type === 'text').text + '\n');
   } finally { link.close(); }
 }
 

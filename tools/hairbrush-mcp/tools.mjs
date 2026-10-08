@@ -66,22 +66,46 @@ const VIEWS = ['current', 'front', 'back', 'left', 'right', 'top', 'three_quarte
 const SHAPE_CHANNELS = ['Bend', 'X', 'Y', 'Z', 'CurlFrequency', 'CurlDiameter', 'SegmentDensity', 'Width', 'WaveAmplitude', 'WaveFrequency', 'WaveDirection'];
 const VARIANCE_CHANNELS = ['Length', 'Width', 'Bend', 'Twist', 'AngleX', 'AngleY', 'AngleZ', 'CurlFrequency', 'CurlDiameter', 'WaveAmplitude', 'WaveFrequency', 'WaveDirection', 'Arch'];
 
+const renderOptions = {
+  overlay: bool('Draw modifiers over the render: guide curves (magenta, G<id>), POST rings (cyan, P<id>, inner = radius, faint = falloff), clumper rings (yellow, C<id>). Returns overlay_legend with pixel positions.'),
+  overlay_cards: bool('Mark every card root (green crosses) - shows density and gaps.'),
+  overlay_group: int('Only overlay this group.'),
+  lighting: str('scene = the app\'s own light; studio = temporary warm key / cool fill / rim set so form and strand texture read. Prefer studio for judging the look.', { enum: ['scene', 'studio'] }),
+  scalp_check: bool('Render the head flat magenta so every coverage gap shows.'),
+};
+
 const obj = (properties = {}, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
 const ro = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const rw = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
 const destructive = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false };
 
 const guideShape = {
-  nodes_world: { type: 'array', items: vec3('Node'), minItems: 2, maxItems: 20, description: 'Explicit guide nodes in world space, root to tip (root excluded). Overrides direction/length.' },
+  nodes_world: { type: 'array', items: vec3('Node'), minItems: 2, maxItems: 20, description: 'Explicit guide nodes in world space, root to tip (root excluded). Overrides flow and direction/length.' },
+  flow: {
+    type: 'object', additionalProperties: false,
+    description: 'PREFERRED way to shape a guide: traced over the actual skull. The curve leaves the root, travels along the scalp toward direction for length (arc length), lifted off the surface by a height profile that rises to lift at peak_at and settles to lift*tail at the tip.',
+    properties: {
+      direction: { description: 'Travel direction: back/front/down/up/left/right (head frame) or a world vector. "back" = swept back over the head.', anyOf: [{ type: 'string', enum: ['down', 'up', 'front', 'back', 'left', 'right'] }, vec3('Vector')] },
+      length: num('Arc length along the scalp (world units). Make it at least the card length, or long cards carry straight on past the end.'),
+      lift: num('Peak height off the scalp in world units (0.004 lies flat, 0.02 soft volume, 0.04+ quiff/pompadour).', { minimum: 0 }),
+      peak_at: num('Where along the guide the height peaks, 0-1 (0.1 = lift right at the root, 0.4 = rolled further back).'),
+      tail: num('Tip height as a fraction of lift (0 = tips settle onto the scalp).'),
+      up_bias: num('0 = lift along the head\'s radial direction; 1 = straight up. Use 0.5-0.8 at the front hairline so hair rises instead of jutting forward.'),
+      node_count: int('Nodes generated (2-20, default 6).', { minimum: 2, maximum: 20 }),
+    },
+  },
+  mirror: bool('Also create the mirror-image copy on the other side of the head (skipped on the midline).'),
   direction: { description: 'Flow direction: down/up/front/back/left/right (head frame, character\'s left/right) or an [x,y,z] world vector.', anyOf: [{ type: 'string', enum: ['down', 'up', 'front', 'back', 'left', 'right'] }, vec3('Vector')] },
   length: num('Guide length in world units.', { minimum: 0.01 }),
   lift: num('How far the strand rises off the scalp before turning, as a fraction of length (default 0.15).', { minimum: 0, maximum: 1 }),
   node_count: int('Number of nodes generated from direction/length (2-20, default 4).', { minimum: 2, maximum: 20 }),
-  amount: num('Combing strength 0-1 (default 0.8 on creation). 0 = no effect.', { minimum: 0, maximum: 1 }),
+  amount: num('Combing strength 0-1 (default 0.8 on creation). NOTE: bend, angles and profile curves of the combed cards are scaled down by amount (at 1 the guide fully owns the shape; at 0.5 half the bend/angle survives).', { minimum: 0, maximum: 1 }),
   radius: num('Full-strength radius of influence (0.001-0.25).'),
   falloff: num('Falloff distance beyond the radius (0-0.25).'),
   spin: num('Spin of the cards about the guide in degrees.'),
 };
+
+const withoutMirror = ({ mirror, ...rest }) => rest;
 
 const clumperProps = {
   mode: str('Clump mode.', { enum: ['Singular', 'DispersedEvenly', 'FromPoint'] }),
@@ -90,9 +114,12 @@ const clumperProps = {
   seed: int('Random seed.'),
   radius: num('Full-strength radius.'),
   falloff: num('Falloff distance.'),
+  scope: str('all = clumps can gather any card in the group; contig = only cards on the same connected surface (keeps scalp hair from clumping with ear/beard hair). Per group.', { enum: ['all', 'contig'] }),
 };
 
 export const TOOLS = [
+  { name: 'hb_grooming_guide', description: 'The HairBrush grooming method: workflow, what each feature is for, values that work, and the review loop. Read once before grooming. Does not need the app running.',
+    inputSchema: obj(), annotations: ro, local: 'guide' },
   { name: 'hb_status', description: 'Connection and session overview: is a head loaded, groups with card/guide/clumper counts, current group, symmetry. Call this first.',
     inputSchema: obj(), annotations: ro, timeout: 15000 },
   { name: 'hb_head_info', description: 'The head frame (centre, size, front/right/up axes) and surface landmarks (crown, hairline, temples, sides, back, nape) as az/el plus world positions. Use it to plan where hair goes.',
@@ -136,6 +163,10 @@ export const TOOLS = [
       max_cards: int('Upper limit on primary cards placed (default 3000).', { minimum: 1, maximum: 30000 }),
       seed: int('Random seed for the scatter.'), mirror: bool('Honour symmetry (default true).'),
       avoid_existing: bool('Keep spacing from cards already in the group (default true).'), params: cardParams,
+      lower_edge: { type: 'array', items: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 }, minItems: 1, description: 'Hairline: [[az, el], ...] lower boundary interpolated by azimuth. Give only az >= 0 and it is mirrored to the other side. e.g. [[0,48],[25,50],[45,56],[60,52]] for a temple recession.' },
+      edge_jitter: num('Roughen the lower edge by this many degrees of smooth noise (2-4 looks natural).', { minimum: 0 }),
+      edge_falloff: num('Thin cards out over this many degrees above the lower edge, so the hairline is sparse and soft rather than a hard line.', { minimum: 0 }),
+      edge_spacing_scale: num('Spacing multiplier right at the edge (default 2.2).', { minimum: 1 }),
     }), annotations: rw, timeout: 300000 },
   { name: 'hb_erase_cards', description: 'Erase cards of a group: all of them, or those whose roots lie within radius of a point (mirrored when symmetry is on).',
     inputSchema: obj({ group_id: groupId, all: bool('Erase every card in the group.'), point, radius: num('Erase radius in world units (default 0.03).'), mirror: bool('Also erase at the mirrored point (default true).') }),
@@ -149,13 +180,13 @@ export const TOOLS = [
     inputSchema: obj({ group_id: groupId, channel: str('Channel.', { enum: SHAPE_CHANNELS }), keys: { type: 'array', items: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 }, minItems: 2, description: '[[t, value], ...]' }, reset: bool('Reset the channel to default instead.') }, ['channel']),
     annotations: rw },
 
-  { name: 'hb_add_guide', description: 'Add a GUIDE that combs nearby cards of the group along its curve. Root at az/el or position; shape from nodes_world, or from direction + length (e.g. direction "back", length 0.25 sweeps hair backwards).',
+  { name: 'hb_add_guide', description: 'Add a GUIDE that combs nearby cards of the group along its curve, parallel (unlike a clumper). Roots stay planted; roughly the bottom third of each card eases onto the curve; length never changes; cards longer than the guide carry straight on. Shape it with flow (preferred - follows the skull), nodes_world, or the simple direction+length. Use mirror for the other side.',
     inputSchema: obj({ group_id: groupId, ...point.properties, ...guideShape }), annotations: rw },
   { name: 'hb_edit_guide', description: 'Change a guide: move its root (az/el/position), reshape it, or change amount/radius/falloff/spin.',
-    inputSchema: obj({ guide_id: int('Guide id.'), ...point.properties, ...guideShape }, ['guide_id']), annotations: rw },
+    inputSchema: obj({ guide_id: int('Guide id.'), ...point.properties, ...withoutMirror(guideShape) }, ['guide_id']), annotations: rw },
   { name: 'hb_remove_guide', description: 'Remove a guide.', inputSchema: obj({ guide_id: int('Guide id.') }, ['guide_id']), annotations: destructive },
-  { name: 'hb_add_clumper', description: 'Add a CLUMPER that gathers cards of the group into clumps around a scalp point.',
-    inputSchema: obj({ group_id: groupId, ...point.properties, ...clumperProps }), annotations: rw },
+  { name: 'hb_add_clumper', description: 'Add a CLUMPER that gathers cards of the group into strands (wet/styled look). Singular = one clump at the point; DispersedEvenly = count clumps spread through the group; FromPoint = count clumps around the point.',
+    inputSchema: obj({ group_id: groupId, ...point.properties, ...clumperProps, mirror: bool('Also create the mirrored clumper.') }), annotations: rw },
   { name: 'hb_edit_clumper', description: 'Change a clumper.', inputSchema: obj({ clumper_id: int('Clumper id.'), ...point.properties, ...clumperProps }, ['clumper_id']), annotations: rw },
   { name: 'hb_remove_clumper', description: 'Remove a clumper.', inputSchema: obj({ clumper_id: int('Clumper id.') }, ['clumper_id']), annotations: destructive },
 
@@ -171,7 +202,7 @@ export const TOOLS = [
     inputSchema: obj({ group_id: groupId, predetermined: bool('Use predetermined rects (true) or the manual U/V sliders (false).'), min_id: int('Lowest rect id.', { minimum: 1 }), max_id: int('Highest rect id.', { minimum: 1 }), seed: int('Assignment seed.'), flip_v: bool('Flip every rect for this group.') }),
     annotations: rw },
   { name: 'hb_add_post', description: 'Add a POST (localized manipulator) to a group: a soft sphere on the scalp (radius + falloff) that offsets the group\'s card parameters inside it. RELATIVE (default) adds delta to each card; absolute=true overrides to baseline+delta. Use POSTs for regional shaping (lift at the front, shorter at the temples, longer at the crown) instead of extra groups.',
-    inputSchema: obj({ group_id: groupId, ...point.properties, radius: num('Full-strength radius (world units).'), falloff: num('Blend distance beyond the radius.'), weight: num('0-1', { minimum: 0, maximum: 1 }), absolute: bool('Override instead of offset.'), label: str('Up to 6 characters.'), delta: deltaParams }),
+    inputSchema: obj({ group_id: groupId, ...point.properties, radius: num('Full-strength radius (world units).'), falloff: num('Blend distance beyond the radius.'), weight: num('0-1', { minimum: 0, maximum: 1 }), absolute: bool('Override instead of offset.'), label: str('Up to 6 characters.'), delta: deltaParams, mirror: bool('Also create the mirrored POST (angle_y, angle_z and twist deltas are negated so the lean mirrors too).') }),
     annotations: rw },
   { name: 'hb_edit_post', description: 'Change a POST: move it (az/el/position), resize, re-weight, or set delta channels (reset_delta clears them first).',
     inputSchema: obj({ post_id: int('POST id.'), ...point.properties, radius: num('Radius.'), falloff: num('Falloff.'), weight: num('0-1', { minimum: 0, maximum: 1 }), absolute: bool('Override instead of offset.'), label: str('Up to 6 characters.'), reset_delta: bool('Zero all deltas before applying delta.'), delta: deltaParams }, ['post_id']),
@@ -183,8 +214,22 @@ export const TOOLS = [
     inputSchema: obj({ view: str('Preset view.', { enum: VIEWS.filter(v => v !== 'current') }), az: num('Camera azimuth (head frame).'), el: num('Camera elevation.'), zoom: num('Zoom factor (default 1, >1 closer).'), fit: str('Frame the whole groom or just the head.', { enum: ['groom', 'head'] }), target: vec3('World point to look at.') }),
     annotations: rw },
   { name: 'hb_screenshot', description: 'Render the groom and return an image, from a preset view, an az/el, or the user\'s current view. The user\'s camera is not moved. include_ui=true captures the actual app window instead (panels included).',
-    inputSchema: obj({ view: str('Preset view (default three_quarter_right).', { enum: VIEWS }), az: num('Camera azimuth.'), el: num('Camera elevation.'), zoom: num('Zoom factor (default 1).'), fit: str('Frame the groom or just the head.', { enum: ['groom', 'head'] }), target: vec3('World point to look at.'), width: int('Pixels (64-2048, default 768).'), height: int('Pixels (64-2048, default 768).'), include_ui: bool('Capture the real window with UI.') }),
+    inputSchema: obj({ view: str('Preset view (default three_quarter_right).', { enum: VIEWS }), az: num('Camera azimuth.'), el: num('Camera elevation.'), zoom: num('Zoom factor (default 1).'), fit: str('Frame the groom or just the head.', { enum: ['groom', 'head'] }), target: vec3('World point to look at.'), width: int('Pixels (64-2048, default 768).'), height: int('Pixels (64-2048, default 768).'), include_ui: bool('Capture the real window with UI.'), ...renderOptions }),
     annotations: ro, timeout: 60000 },
+  { name: 'hb_turnaround', description: 'Render several views into ONE contact-sheet image (default: front, 3/4 right, right, back 3/4, back, top) with shared framing. The standard way to review a change from all sides.',
+    inputSchema: obj({ views: { type: 'array', maxItems: 12, items: { anyOf: [{ type: 'string', enum: VIEWS.filter(v => v !== 'current') }, obj({ az: num('Azimuth.'), el: num('Elevation.') })] } }, tile: int('Tile size in pixels (128-768, default 384).'), columns: int('Tiles per row (default 3).'), zoom: num('Zoom factor.'), fit: str('Frame the groom or just the head.', { enum: ['groom', 'head'] }), target: vec3('World point to look at.'), ...renderOptions }),
+    annotations: ro, timeout: 120000 },
+  { name: 'hb_preview_uv_rects', description: 'Show the hair texture atlas with every UV rect outlined and numbered (green edge = root end), plus per-rect stats: coverage, root-to-tip coverage profile (tapered vs blunt), separate strands across the middle, brightness. Use it to choose which strips each group should use.',
+    inputSchema: obj({ size: int('Atlas preview size in pixels (256-2048, default 1024).') }), annotations: ro, timeout: 60000 },
+  { name: 'hb_sample_cards', description: 'Sample cards of a group (optionally within an az/el region) and report each one\'s position and rendered vs base parameters. Use to check variance spread, POST effects and UV assignment.',
+    inputSchema: obj({ group_id: groupId, count: int('Cards to sample (1-200, default 12).'), seed: int('Sampling seed.'), ...regionProps }), annotations: ro },
+  { name: 'hb_set_card_style', description: 'Global card cross-section and topology (applies to every card).',
+    inputSchema: obj({ profile: str('Cross-section shape.', { enum: ['Tent', 'Diamond'] }), topology: str('Mesh topology.', { enum: ['Symmetric', 'Dynamic'] }) }), annotations: rw, timeout: 120000 },
+  { name: 'hb_batch', description: 'Run several hb_* tools in order as ONE call and ONE undo step (e.g. create a group, fill it, set params, add POSTs). Each step is {tool, args}; results come back per step. Stops at the first error unless stop_on_error=false. Cannot nest.',
+    inputSchema: obj({ steps: { type: 'array', minItems: 1, maxItems: 200, items: obj({ tool: str('Tool name, e.g. hb_fill_region.'), args: { type: 'object', description: 'That tool\'s arguments.' } }, ['tool']) }, stop_on_error: bool('Default true.') }, ['steps']),
+    annotations: destructive, timeout: 600000 },
+  { name: 'hb_load_autosave', description: 'Reload the automatic save (written when Play mode stops and every 45s of MCP editing). Use after a restart/recompile; hb_status shows whether one exists.',
+    inputSchema: obj({ discard_groom: bool('Replace the current groom.') }), annotations: destructive, timeout: 180000 },
   { name: 'hb_undo', description: 'Undo the last step (same as Ctrl+Z in HairBrush).', inputSchema: obj(), annotations: destructive, timeout: 60000 },
   { name: 'hb_redo', description: 'Redo.', inputSchema: obj(), annotations: rw, timeout: 60000 },
 ];
