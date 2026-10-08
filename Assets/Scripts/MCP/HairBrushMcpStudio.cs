@@ -175,7 +175,9 @@ public partial class HairBrushMcpCommands
         RenderTexture.active = rt;
         GL.PushMatrix();
         OverlayMaterial().SetPass(0);
-        GL.LoadProjectionMatrix(GL.GetGPUProjectionMatrix(cam.projectionMatrix, true));
+        // GL already handles the render-texture flip for the active target; asking for it again
+        // here drew the 3D overlay upside down while the pixel-space labels were correct.
+        GL.LoadProjectionMatrix(GL.GetGPUProjectionMatrix(cam.projectionMatrix, false));
         GL.modelview = cam.worldToCameraMatrix;
         GL.Begin(GL.LINES);
 
@@ -490,6 +492,8 @@ public partial class HairBrushMcpCommands
             }
 
         List<UVRectSaveData> rects = Workspace().ExportDefinitions().OrderBy(r => r.id).ToList();
+        // Rects cut from the same strip share a corner; nudge later labels down so ids never merge.
+        List<Vector2> usedLabels = new List<Vector2>();
         List<object> stats = new List<object>();
         foreach (UVRectSaveData r in rects)
         {
@@ -539,7 +543,10 @@ public partial class HairBrushMcpCommands
             Color32 rootMark = new Color32(60, 255, 120, 255);
             int ry = r.flipV ? y0 : y1;
             for (int x = x0; x <= x1; x++) { SetPx(img, size, x, ry, rootMark); SetPx(img, size, x, ry + (r.flipV ? 1 : -1), rootMark); }
-            DrawLabel(img, size, r.id.ToString(), x0 + 4, y1 - 22, 18, new Color32(255, 220, 40, 255));
+            Vector2 at = new Vector2(x0 + 4, y1 - 22);
+            while (usedLabels.Any(u => Mathf.Abs(u.x - at.x) < 40 && Mathf.Abs(u.y - at.y) < 24)) at.y -= 26;
+            usedLabels.Add(at);
+            DrawLabel(img, size, r.id.ToString(), at.x, at.y, 18, new Color32(255, 220, 40, 255));
         }
 
         Texture2D tex = new Texture2D(size, size, TextureFormat.RGBA32, false);
