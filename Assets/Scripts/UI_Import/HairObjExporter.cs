@@ -106,6 +106,28 @@ public static class HairObjExporter
         }
     }
 
+    // The dialog-free route, for the MCP channel. Same demo lock, same space choice and same
+    // writer as ExportInteractive; returns null on success or the reason it did not write.
+    public static string ExportToPath(string path, out int cardCount)
+    {
+        cardCount = 0;
+        if (BuildEdition.IsDemo) return "OBJ export is not available in the demo edition.";
+
+        HairCard[] cards = FindExportCards();
+        if (cards.Length == 0) return "There are no hair cards to export.";
+
+        ModelViewer viewer = UnityEngine.Object.FindFirstObjectByType<ModelViewer>();
+        GameObject modelRoot = GetLoadedModel(viewer);
+        ImportedOBJMetadata metadata = modelRoot != null ? modelRoot.GetComponent<ImportedOBJMetadata>() : null;
+        ExportSpace space = (modelRoot != null && metadata != null)
+            ? ExportSpace.OriginalImportedOBJSpace
+            : ExportSpace.CurrentEditorSpace;
+
+        WriteOBJ(path, cards, space, modelRoot, metadata);
+        cardCount = cards.Length;
+        return null;
+    }
+
     static HairCard[] FindExportCards()
     {
         return UnityEngine.Object.FindObjectsByType<HairCard>(FindObjectsSortMode.None)

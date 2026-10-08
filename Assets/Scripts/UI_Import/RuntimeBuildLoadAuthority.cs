@@ -91,7 +91,10 @@ public class RuntimeBuildLoadAuthority : MonoBehaviour
         }
     }
 
-    public void LoadModelAtPath(string path)
+    // promptForAlbedo is false only for the MCP channel (HairBrushMcpCommands.LoadModel), which
+    // takes the albedo as an argument instead - a native MessageBox would block the whole app
+    // with nobody at the keyboard to answer it.
+    public void LoadModelAtPath(string path, bool promptForAlbedo = true)
     {
         currentModelPathField?.SetValue(viewer, path);
         GameObject oldModel = loadedModelField?.GetValue(viewer) as GameObject;
@@ -114,7 +117,7 @@ public class RuntimeBuildLoadAuthority : MonoBehaviour
         // The model is fully installed with its grey material before this coroutine starts.
         // Waiting one frame lets the user actually see the successful import before a second
         // native dialog appears.
-        StartCoroutine(PromptForOptionalAlbedo(model));
+        if (promptForAlbedo) StartCoroutine(PromptForOptionalAlbedo(model));
     }
 
     IEnumerator PromptForOptionalAlbedo(GameObject model)

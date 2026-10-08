@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "hairbrush": {
+      "command": "node",
+      "args": ["tools/hairbrush-mcp/server.mjs"]
+    }
+  }
+}
