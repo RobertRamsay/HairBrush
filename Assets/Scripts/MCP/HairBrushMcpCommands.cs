@@ -83,6 +83,14 @@ public class HairBrushMcpCommands : MonoBehaviour
             case "edit_clumper": ok(Edit(EditClumper(a))); yield break;
             case "remove_clumper": yield return RemoveClumper(a, ok); yield break;
 
+            case "set_hair_material": ok(Edit(SetHairMaterial(a))); yield break;
+            case "get_uv_rects": ok(GetUVRects()); yield break;
+            case "set_uv_rects": yield return SetUVRects(a, ok); yield break;
+            case "set_group_uv": ok(Edit(SetGroupUV(a))); yield break;
+
+            case "add_post": ok(Edit(AddPost(a))); yield break;
+            case "edit_post": ok(Edit(EditPost(a))); yield break;
+            case "remove_post": ok(Edit(RemovePost(a))); yield break;
             case "set_symmetry": ok(SetSymmetry(a)); yield break;
             case "set_view": ok(SetView(a)); yield break;
             case "screenshot": yield return Screenshot(a, ok); yield break;
@@ -442,7 +450,9 @@ public class HairBrushMcpCommands : MonoBehaviour
             { "single_sided", GroupSidednessAuthority.IsSingleSided(gid) },
             { "normals_flipped", GroupNormalFlipAuthority.IsFlipped(gid) },
             { "guides", guideList },
-            { "clumpers", clumperList }
+            { "clumpers", clumperList },
+            { "posts", Posts().ExportGroup(gid).Select(p => DescribePost(p, frame)).ToList() },
+            { "uv", DescribeGroupUV(gid) }
         };
     }
 
@@ -826,7 +836,7 @@ public class HairBrushMcpCommands : MonoBehaviour
             if (channel == null) throw new CommandException("Unknown variance channel '" + e.Str("channel", "") + "'. Valid: " + string.Join(", ", VarianceChannels));
             VarianceChannelSaveData existing = settings.FirstOrDefault(s => s.channel == channel);
             if (existing == null) settings.Add(existing = new VarianceChannelSaveData { channel = channel, seed = 1 });
-            existing.amount = Mathf.Clamp01(e.Float("amount", existing.amount));
+            existing.amount = Mathf.Max(0f, e.Float("amount", existing.amount));
             existing.seed = e.Int("seed", existing.seed);
         }
         vc.ImportGroupSettings(gid, settings);
@@ -1072,6 +1082,320 @@ public class HairBrushMcpCommands : MonoBehaviour
     }
 
     // ---------------------------------------------------------------------------------
+    // Material
+    // ---------------------------------------------------------------------------------
+
+    // The global hair material - the one every group uses unless the texture workspace assigned
+    // it another. Tint goes through MaterialEditorManager.SetTint, the swatch's own path, so the
+    // viewer's material and every card are re-pointed at it. The float properties are written on
+    // the entry's material directly, which is exactly where MaterialProjectPersistenceBridge reads
+    // them back from on save.
+    object SetHairMaterial(Args a)
+    {
+        MaterialEditorManager mem = FindFirstObjectByType<MaterialEditorManager>();
+        if (mem == null) throw new CommandException("The material editor is not running - load a model first.");
+        Type t = typeof(MaterialEditorManager);
+        System.Collections.IList entries = t.GetField("materials", Private)?.GetValue(mem) as System.Collections.IList;
+        MethodInfo globalIndex = t.GetMethod("GetGlobalMaterialIndex", Private);
+        MethodInfo setTint = t.GetMethod("SetTint", Private);
+        MethodInfo apply = t.GetMethod("ApplyAssignments", Private);
+        if (entries == null || globalIndex == null || setTint == null || apply == null)
+            throw new CommandException("HairBrush internals changed: MaterialEditorManager material API is missing.");
+        int index = (int)globalIndex.Invoke(mem, null);
+        if (index < 0 || index >= entries.Count) throw new CommandException("There is no hair material yet.");
+        object entry = entries[index];
+        Material mat = entry.GetType().GetField("material")?.GetValue(entry) as Material;
+        if (mat == null) throw new CommandException("The hair material is missing.");
+
+        void SetFloat(string key, string property)
+        {
+            if (!a.Has(key)) return;
+            if (!mat.HasProperty(property)) throw new CommandException("This hair shader has no " + property + ".");
+            mat.SetFloat(property, Mathf.Clamp01(a.Float(key, 0f)));
+        }
+        SetFloat("smoothness", "_Smooth");
+        SetFloat("metallic", "_Metal");
+        SetFloat("dither", "_DitheringAmt");
+
+        if (a.Has("tint"))
+        {
+            List<object> c = a.List("tint");
+            if (c == null || c.Count != 3) throw new CommandException("tint must be [r, g, b] with components 0-1.");
+            Color colour = new Color(Mathf.Clamp01(Args.ToFloat(c[0])), Mathf.Clamp01(Args.ToFloat(c[1])), Mathf.Clamp01(Args.ToFloat(c[2])), 1f);
+            setTint.Invoke(mem, new object[] { entry, colour, null });
+        }
+        apply.Invoke(mem, null);
+
+        Color tint = mat.HasProperty(MaterialEditorManager.TintProperty) ? mat.GetColor(MaterialEditorManager.TintProperty) : Color.white;
+        return new Dictionary<string, object>
+        {
+            { "tint", new List<object> { tint.r, tint.g, tint.b } },
+            { "smoothness", mat.HasProperty("_Smooth") ? mat.GetFloat("_Smooth") : (object)null },
+            { "metallic", mat.HasProperty("_Metal") ? mat.GetFloat("_Metal") : (object)null },
+            { "dither", mat.HasProperty("_DitheringAmt") ? mat.GetFloat("_DitheringAmt") : (object)null }
+        };
+    }
+
+    // ---------------------------------------------------------------------------------
+    // UV rectangles and predetermined UVs
+    // ---------------------------------------------------------------------------------
+
+    // The rectangles are the strips cut out of the active hair material's atlas. They live in the
+    // texture workspace; MaterialUVRectAuthority notices the change and files them under the
+    // material, which is where the project save reads them from.
+    TextureUVRectWorkspace Workspace()
+    {
+        TextureUVRectWorkspace ws = FindFirstObjectByType<TextureUVRectWorkspace>();
+        if (ws == null) throw new CommandException("The UV rectangle workspace is not running.");
+        return ws;
+    }
+
+    static object DescribeRect(UVRectSaveData r) => new Dictionary<string, object>
+    {
+        { "id", r.id }, { "u_min", r.uMin }, { "v_min", r.vMin }, { "u_max", r.uMax }, { "v_max", r.vMax }, { "flip_v", r.flipV }
+    };
+
+    object GetUVRects() => new Dictionary<string, object>
+    {
+        { "rects", Workspace().ExportDefinitions().OrderBy(r => r.id).Select(DescribeRect).ToList() },
+        { "note", "Rect ids are what hb_set_group_uv's min_id/max_id select between. V runs bottom (0) to top (1); a card's ROOT lands at v_max unless flip_v." }
+    };
+
+    IEnumerator SetUVRects(Args a, Action<object> ok)
+    {
+        TextureUVRectWorkspace ws = Workspace();
+        if (a.Bool("auto_detect", false))
+        {
+            TextureUVRectAutoAuthority auto = FindFirstObjectByType<TextureUVRectAutoAuthority>();
+            MethodInfo detect = typeof(TextureUVRectAutoAuthority).GetMethod("AutoDetectRectangles", Private);
+            if (auto == null || detect == null) throw new CommandException("UV auto-detect is not available.");
+            detect.Invoke(auto, null);
+        }
+        else
+        {
+            List<UVRectSaveData> rects = new List<UVRectSaveData>();
+            foreach (Dictionary<string, object> d in a.Objects("rects"))
+            {
+                Args r = new Args(d);
+                rects.Add(new UVRectSaveData
+                {
+                    id = r.Int("id", 0),
+                    uMin = r.Float("u_min", 0f), vMin = r.Float("v_min", 0f),
+                    uMax = r.Float("u_max", 1f), vMax = r.Float("v_max", 1f),
+                    flipV = r.Bool("flip_v", false)
+                });
+            }
+            ws.ImportDefinitions(rects);
+        }
+        // Let MaterialUVRectAuthority pick the new set up before anything reads it back.
+        yield return null;
+        yield return null;
+        MarkEdited();
+        if (ws.ExportDefinitions().Count == 0) throw new CommandException("No UV rectangles were defined (auto-detect needs the material's base-colour texture).");
+        ok(GetUVRects());
+    }
+
+    GroupPredeterminedUVController UVController()
+    {
+        GroupPredeterminedUVController c = FindFirstObjectByType<GroupPredeterminedUVController>();
+        if (c == null) throw new CommandException("The predetermined-UV controller is not running.");
+        return c;
+    }
+
+    // GroupUVSettings is a private nested class; its fields are reached by name.
+    object GroupUVSettingsOf(int gid)
+    {
+        MethodInfo get = typeof(GroupPredeterminedUVController).GetMethod("GetSettings", Private);
+        if (get == null) throw new CommandException("HairBrush internals changed: GroupPredeterminedUVController.GetSettings is missing.");
+        return get.Invoke(UVController(), new object[] { gid });
+    }
+
+    Dictionary<string, object> DescribeGroupUV(int gid)
+    {
+        object s = GroupUVSettingsOf(gid);
+        Type t = s.GetType();
+        return new Dictionary<string, object>
+        {
+            { "predetermined", t.GetField("predetermined").GetValue(s) },
+            { "min_id", t.GetField("minId").GetValue(s) },
+            { "max_id", t.GetField("maxId").GetValue(s) },
+            { "seed", t.GetField("seed").GetValue(s) },
+            { "flip_v", t.GetField("flipV").GetValue(s) }
+        };
+    }
+
+    object SetGroupUV(Args a)
+    {
+        int gid = ResolveGroup(a);
+        object s = GroupUVSettingsOf(gid);
+        Type t = s.GetType();
+        if (a.Has("predetermined")) t.GetField("predetermined").SetValue(s, a.Bool("predetermined", true));
+        if (a.Has("min_id")) t.GetField("minId").SetValue(s, Mathf.Max(1, a.Int("min_id", 1)));
+        if (a.Has("max_id")) t.GetField("maxId").SetValue(s, Mathf.Max(1, a.Int("max_id", 1)));
+        if (a.Has("seed")) t.GetField("seed").SetValue(s, a.Int("seed", 0));
+        if (a.Has("flip_v")) t.GetField("flipV").SetValue(s, a.Bool("flip_v", false));
+
+        // Same steps the panel's own inputs take: tidy the range, forget which cards were already
+        // assigned so every card is re-rolled, apply now, and repaint the PRE row.
+        Type ct = typeof(GroupPredeterminedUVController);
+        GroupPredeterminedUVController c = UVController();
+        ct.GetMethod("SanitizeRange", BindingFlags.Static | BindingFlags.NonPublic)?.Invoke(null, new[] { s });
+        (ct.GetField("appliedSignatureByCard", Private)?.GetValue(c) as System.Collections.IDictionary)?.Clear();
+        ct.GetMethod("ForceApplyGroup", Private)?.Invoke(c, new object[] { gid });
+        ct.GetMethod("MaintainRightPanelUI", Private)?.Invoke(c, null);
+        return new Dictionary<string, object> { { "group_id", gid }, { "uv", DescribeGroupUV(gid) } };
+    }
+
+    // ---------------------------------------------------------------------------------
+    // POSTs - localized manipulators
+    // ---------------------------------------------------------------------------------
+
+    // A POST is a soft sphere on the scalp that offsets (RELATIVE) or overrides (ABSOLUTE) the
+    // card parameters of its group inside radius + falloff. The group's whole POST list is
+    // exported, changed and imported back - the same round trip a project load makes - so the
+    // evaluator, the rows and the save all see the POST exactly as if it had been loaded.
+    PostAffectorManager Posts()
+    {
+        PostAffectorManager pm = PostAffectorManager.Instance != null ? PostAffectorManager.Instance : FindFirstObjectByType<PostAffectorManager>();
+        if (pm == null) throw new CommandException("The POST manager is not running.");
+        return pm;
+    }
+
+    // Tool-facing name -> PostAffectorControlSaveData field.
+    static readonly (string key, string field)[] PostChannels =
+    {
+        ("length", "length"), ("width", "width"), ("segments", "segments"), ("bend", "bend"), ("twist", "twist"),
+        ("embed_depth", "depth"), ("angle_x", "x"), ("angle_y", "y"), ("angle_z", "z"),
+        ("u_scale", "uScale"), ("v_scale", "vScale"), ("u_offset", "uOffset"), ("v_offset", "vOffset"),
+        ("curl_frequency", "curlFrequency"), ("curl_diameter", "curlDiameter"),
+        ("wave_amplitude", "waveAmplitude"), ("wave_frequency", "waveFrequency"), ("wave_direction", "waveDirection"), ("arch", "arch"),
+    };
+
+    static Dictionary<string, object> ControlToDict(PostAffectorControlSaveData c)
+    {
+        Dictionary<string, object> d = new Dictionary<string, object>();
+        if (c == null) return d;
+        foreach (var (key, field) in PostChannels)
+        {
+            float v = (float)typeof(PostAffectorControlSaveData).GetField(field).GetValue(c);
+            if (Mathf.Abs(v) > 1e-6f) d[key] = v;
+        }
+        return d;
+    }
+
+    static void WriteControl(PostAffectorControlSaveData c, Args values)
+    {
+        foreach (string key in values.Keys)
+        {
+            var match = PostChannels.FirstOrDefault(p => p.key == key);
+            if (match.key == null) throw new CommandException("Unknown POST channel '" + key + "'.");
+            typeof(PostAffectorControlSaveData).GetField(match.field).SetValue(c, values.Float(key, 0f));
+        }
+    }
+
+    // The group's root controls, so an ABSOLUTE POST starts from what the group actually is.
+    PostAffectorControlSaveData RootBaseline(int gid)
+    {
+        PostAffectorControlSaveData b = new PostAffectorControlSaveData();
+        Dictionary<string, object> group = GetGroup(new Args(new Dictionary<string, object> { { "group_id", (double)gid } })) as Dictionary<string, object>;
+        if (!(group?["params"] is Dictionary<string, object> p)) return b;
+        foreach (var (key, field) in PostChannels)
+            if (p.TryGetValue(key, out object v) && v != null)
+                typeof(PostAffectorControlSaveData).GetField(field).SetValue(b, Convert.ToSingle(v));
+        return b;
+    }
+
+    object DescribePost(PostAffectorSaveData p, HeadFrame? frame)
+    {
+        Vector3 c = new Vector3(p.centerX, p.centerY, p.centerZ);
+        Dictionary<string, object> d = new Dictionary<string, object>
+        {
+            { "id", p.id }, { "label", p.label }, { "center", c }, { "radius", p.radius }, { "falloff", p.falloff },
+            { "weight", p.weight }, { "absolute", p.absolute }, { "delta", ControlToDict(p.delta) }
+        };
+        if (frame.HasValue) { AzEl(frame.Value, c - frame.Value.center, out float az, out float el); d["az"] = az; d["el"] = el; }
+        return d;
+    }
+
+    static void ApplyPostSettings(PostAffectorSaveData p, Args a)
+    {
+        if (a.Has("radius")) p.radius = Mathf.Max(.001f, a.Float("radius", p.radius));
+        if (a.Has("falloff")) p.falloff = Mathf.Max(0f, a.Float("falloff", p.falloff));
+        if (a.Has("weight")) p.weight = Mathf.Clamp01(a.Float("weight", 1f));
+        if (a.Has("absolute")) p.absolute = a.Bool("absolute", false);
+        if (a.Has("label")) { string l = a.Str("label", ""); p.label = l.Length > 6 ? l.Substring(0, 6) : l; }
+        if (p.delta == null) p.delta = new PostAffectorControlSaveData();
+        if (a.Has("delta")) WriteControl(p.delta, a.Obj("delta"));
+    }
+
+    // POST ids are unique across all groups, as CreateAffector issues them.
+    int NextPostId()
+    {
+        int id = 1;
+        foreach (int gid in GroupIds)
+            foreach (PostAffectorSaveData p in Posts().ExportGroup(gid)) id = Mathf.Max(id, p.id + 1);
+        return id;
+    }
+
+    object AddPost(Args a)
+    {
+        HeadFrame f = Frame();
+        int gid = ResolveGroup(a);
+        if (!ResolvePoint(f, a.Dict, out Vector3 point, out Vector3 normal)) throw new CommandException("The POST centre does not land on the head.");
+        ModifierContextExit.LeaveEverything(viewer);
+        PostAffectorManager pm = Posts();
+        List<PostAffectorSaveData> list = pm.ExportGroup(gid);
+        PostAffectorSaveData p = new PostAffectorSaveData
+        {
+            id = NextPostId(),
+            centerX = point.x, centerY = point.y, centerZ = point.z,
+            normalX = normal.x, normalY = normal.y, normalZ = normal.z,
+            baseline = RootBaseline(gid), delta = new PostAffectorControlSaveData()
+        };
+        ApplyPostSettings(p, a);
+        list.Add(p);
+        pm.ImportGroup(gid, list);
+        return DescribePost(p, f);
+    }
+
+    (int gid, List<PostAffectorSaveData> list, PostAffectorSaveData post) FindPost(int id)
+    {
+        foreach (int gid in GroupIds)
+        {
+            List<PostAffectorSaveData> list = Posts().ExportGroup(gid);
+            PostAffectorSaveData p = list.FirstOrDefault(x => x.id == id);
+            if (p != null) return (gid, list, p);
+        }
+        throw new CommandException("No POST with id " + id + ". Use hb_get_group to list them.");
+    }
+
+    object EditPost(Args a)
+    {
+        HeadFrame f = Frame();
+        var (gid, list, p) = FindPost(a.Int("post_id", -1));
+        if (a.Has("az") || a.Has("el") || a.Has("position"))
+        {
+            if (!ResolvePoint(f, a.Dict, out Vector3 point, out Vector3 normal)) throw new CommandException("The new centre does not land on the head.");
+            p.centerX = point.x; p.centerY = point.y; p.centerZ = point.z;
+            p.normalX = normal.x; p.normalY = normal.y; p.normalZ = normal.z;
+        }
+        if (a.Bool("reset_delta", false)) p.delta = new PostAffectorControlSaveData();
+        ApplyPostSettings(p, a);
+        ModifierContextExit.LeaveEverything(viewer);
+        Posts().ImportGroup(gid, list);
+        return DescribePost(p, f);
+    }
+
+    object RemovePost(Args a)
+    {
+        var (gid, list, p) = FindPost(a.Int("post_id", -1));
+        list.Remove(p);
+        ModifierContextExit.LeaveEverything(viewer);
+        Posts().ImportGroup(gid, list);
+        return new Dictionary<string, object> { { "removed", p.id }, { "group_id", gid } };
+    }
+
+    // ---------------------------------------------------------------------------------
     // Symmetry, files, undo
     // ---------------------------------------------------------------------------------
 
@@ -1111,6 +1435,7 @@ public class HairBrushMcpCommands : MonoBehaviour
         UndoHistoryAuthority.NotifySessionReplaced();
         if (io != null) io.CleanupEditorUIAndCards();
 
+        WelcomeWhatsNewAuthority.DismissIfOpen();
         build.LoadModelAtPath(path, false);
         yield return null;
         yield return null;
@@ -1133,6 +1458,7 @@ public class HairBrushMcpCommands : MonoBehaviour
         if (AllCards().Length > 0 && !a.Bool("discard_groom", false))
             throw new CommandException("There is a groom in the scene. Save it first, or pass discard_groom=true to replace it.");
 
+        WelcomeWhatsNewAuthority.DismissIfOpen();
         io.LoadProjectFromPath(path);
 
         // A load settles over several frames: each persistence bridge takes its copy and the

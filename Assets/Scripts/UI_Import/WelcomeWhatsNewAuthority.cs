@@ -616,6 +616,18 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         panel = null;
     }
 
+    // For the MCP channel, which loads a head or project with nobody at the keyboard to press
+    // START GROOMING. Goes through Close so the menu buttons come back before the load hides the
+    // menu in its own way - and so a ticked "don't show again" is still honoured. Marking it
+    // evaluated stops a panel that has not been built yet from appearing over the groom later.
+    public static void DismissIfOpen()
+    {
+        WelcomeWhatsNewAuthority live = FindFirstObjectByType<WelcomeWhatsNewAuthority>();
+        if (live == null) return;
+        live.evaluated = true;
+        if (live.panel != null) live.Close();
+    }
+
     // ------------------------------------------------------------------------- UI helpers
 
     static void Stretch(RectTransform rect)

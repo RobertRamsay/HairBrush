@@ -47,6 +47,14 @@ const cardParams = {
   additionalProperties: false,
 };
 
+// POST deltas: same channels, but offsets may be negative, so no range limits.
+const deltaParams = {
+  type: "object",
+  description: "Per-channel offsets added to the card values (same names/units as card params; angles in degrees, lengths in world units). Negative values allowed.",
+  properties: Object.fromEntries(Object.entries(cardParams.properties).map(([k, v]) => [k, { type: v.type, description: v.description }])),
+  additionalProperties: false,
+};
+
 const regionProps = {
   az_min: num('Start azimuth (degrees). If az_min > az_max the range wraps through the back, e.g. 120..-120.'),
   az_max: num('End azimuth (degrees).'),
@@ -134,8 +142,8 @@ export const TOOLS = [
     annotations: destructive },
   { name: 'hb_set_group_params', description: 'Set card parameters for every card in a group (exactly like moving the grooming sliders with the group selected). Values are absolute.',
     inputSchema: obj({ group_id: groupId, params: cardParams }, ['params']), annotations: rw, timeout: 120000 },
-  { name: 'hb_set_variance', description: 'Per-card random variation for a group. amount 0-1 per channel.',
-    inputSchema: obj({ group_id: groupId, channels: { type: 'array', minItems: 1, items: obj({ channel: str('Channel.', { enum: VARIANCE_CHANNELS }), amount: num('0-1', { minimum: 0, maximum: 1 }), seed: int('Seed.') }, ['channel']) } }, ['channels']),
+  { name: 'hb_set_variance', description: 'Per-card random variation for a group: each card gets base +/- a random share of amount, in the channel\'s own units (Length/Width/CurlDiameter/WaveAmplitude: world units, e.g. Length 0.01 = +/-1cm; Bend/Twist/AngleX/Y/Z: degrees, e.g. AngleY 15). amount 0 turns a channel off.',
+    inputSchema: obj({ group_id: groupId, channels: { type: 'array', minItems: 1, items: obj({ channel: str('Channel.', { enum: VARIANCE_CHANNELS }), amount: num('Variation in the channel\'s units (see description).', { minimum: 0 }), seed: int('Seed.') }, ['channel']) } }, ['channels']),
     annotations: rw, timeout: 120000 },
   { name: 'hb_set_shape_curve', description: 'Set a group\'s shape curve: a multiplier profile along the hair from root (t=0) to tip (t=1), e.g. Width [[0,1],[1,0.3]] tapers the tips, Bend [[0,0],[1,1]] concentrates bend toward the tip.',
     inputSchema: obj({ group_id: groupId, channel: str('Channel.', { enum: SHAPE_CHANNELS }), keys: { type: 'array', items: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 }, minItems: 2, description: '[[t, value], ...]' }, reset: bool('Reset the channel to default instead.') }, ['channel']),
@@ -151,6 +159,24 @@ export const TOOLS = [
   { name: 'hb_edit_clumper', description: 'Change a clumper.', inputSchema: obj({ clumper_id: int('Clumper id.'), ...point.properties, ...clumperProps }, ['clumper_id']), annotations: rw },
   { name: 'hb_remove_clumper', description: 'Remove a clumper.', inputSchema: obj({ clumper_id: int('Clumper id.') }, ['clumper_id']), annotations: destructive },
 
+  { name: 'hb_set_hair_material', description: 'Set the global hair material: tint (multiplies the strand texture; white = texture as authored), smoothness, metallic, dither. Saved with the project.',
+    inputSchema: obj({ tint: vec3('[r, g, b], 0-1 each. e.g. [0.32, 0.22, 0.15] for mid brown.'), smoothness: num('0-1', { minimum: 0, maximum: 1 }), metallic: num('0-1', { minimum: 0, maximum: 1 }), dither: num('0-1', { minimum: 0, maximum: 1 }) }),
+    annotations: rw },
+  { name: 'hb_get_uv_rects', description: 'List the UV rectangles (preset card strips) cut from the active hair material\'s atlas. Their ids are what predetermined UVs pick between.',
+    inputSchema: obj(), annotations: ro },
+  { name: 'hb_set_uv_rects', description: 'Define the UV rectangles on the hair atlas, or auto_detect them from the texture alpha (the texture panel\'s AUTO). Replaces the current set.',
+    inputSchema: obj({ auto_detect: bool('Detect strips from the base-colour texture.'), rects: { type: 'array', items: obj({ id: int('Rect id (1+).'), u_min: num('0-1'), v_min: num('0-1'), u_max: num('0-1'), v_max: num('0-1'), flip_v: bool('Root at v_min instead of v_max.') }, ['u_min', 'v_min', 'u_max', 'v_max']) } }),
+    annotations: destructive, timeout: 60000 },
+  { name: 'hb_set_group_uv', description: 'Predetermined UVs for a group: each card is randomly (by seed) assigned one of the UV rects with id min_id..max_id. This is the intended way to texture cards - vary the strip per card instead of hand-setting u/v scale/offset.',
+    inputSchema: obj({ group_id: groupId, predetermined: bool('Use predetermined rects (true) or the manual U/V sliders (false).'), min_id: int('Lowest rect id.', { minimum: 1 }), max_id: int('Highest rect id.', { minimum: 1 }), seed: int('Assignment seed.'), flip_v: bool('Flip every rect for this group.') }),
+    annotations: rw },
+  { name: 'hb_add_post', description: 'Add a POST (localized manipulator) to a group: a soft sphere on the scalp (radius + falloff) that offsets the group\'s card parameters inside it. RELATIVE (default) adds delta to each card; absolute=true overrides to baseline+delta. Use POSTs for regional shaping (lift at the front, shorter at the temples, longer at the crown) instead of extra groups.',
+    inputSchema: obj({ group_id: groupId, ...point.properties, radius: num('Full-strength radius (world units).'), falloff: num('Blend distance beyond the radius.'), weight: num('0-1', { minimum: 0, maximum: 1 }), absolute: bool('Override instead of offset.'), label: str('Up to 6 characters.'), delta: deltaParams }),
+    annotations: rw },
+  { name: 'hb_edit_post', description: 'Change a POST: move it (az/el/position), resize, re-weight, or set delta channels (reset_delta clears them first).',
+    inputSchema: obj({ post_id: int('POST id.'), ...point.properties, radius: num('Radius.'), falloff: num('Falloff.'), weight: num('0-1', { minimum: 0, maximum: 1 }), absolute: bool('Override instead of offset.'), label: str('Up to 6 characters.'), reset_delta: bool('Zero all deltas before applying delta.'), delta: deltaParams }, ['post_id']),
+    annotations: rw },
+  { name: 'hb_remove_post', description: 'Remove a POST.', inputSchema: obj({ post_id: int('POST id.') }, ['post_id']), annotations: destructive },
   { name: 'hb_set_symmetry', description: 'Turn left/right symmetry on or off. When on, placement and erasing mirror across the head\'s midline.',
     inputSchema: obj({ enabled: bool('Symmetry on/off.') }, ['enabled']), annotations: rw },
   { name: 'hb_set_view', description: 'Move the user\'s viewport camera to a preset or az/el view of the groom.',

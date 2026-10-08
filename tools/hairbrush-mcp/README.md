@@ -52,9 +52,11 @@ Points on the scalp are given as `az`/`el` degrees, measured from the centre of 
 | Groups | `hb_create_group`, `hb_select_group`, `hb_rename_group`, `hb_delete_group`, `hb_set_group_flags` |
 | Cards | `hb_place_cards`, `hb_fill_region`, `hb_erase_cards`, `hb_set_group_params`, `hb_set_variance`, `hb_set_shape_curve` |
 | Modifiers | `hb_add_guide`, `hb_edit_guide`, `hb_remove_guide`, `hb_add_clumper`, `hb_edit_clumper`, `hb_remove_clumper` |
+| Material and UVs | `hb_set_hair_material`, `hb_get_uv_rects`, `hb_set_uv_rects`, `hb_set_group_uv` |
+| POSTs | `hb_add_post`, `hb_edit_post`, `hb_remove_post` |
 | View and history | `hb_set_symmetry`, `hb_set_view`, `hb_screenshot`, `hb_undo`, `hb_redo` |
 
-Not yet exposed: POSTs (local overrides), materials and textures, UV rectangles, and remap.
+Not yet exposed: per-group materials, texture loading, POST-local shape curves, and remap.
 
 ## Notes
 
