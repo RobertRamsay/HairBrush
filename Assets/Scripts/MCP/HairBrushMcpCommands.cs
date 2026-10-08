@@ -541,6 +541,26 @@ public partial class HairBrushMcpCommands : MonoBehaviour
         if (p.Has("u_offset")) viewer.currentUOffset = p.Float("u_offset", 0f);
         if (p.Has("v_offset")) viewer.currentVOffset = p.Float("v_offset", 0f);
         CallNoArgs("PushAllGroomSliders");
+        SyncRootState(viewer.currentGroupId);
+    }
+
+    // GroomRootStateAuthority keeps each group's "root" slider values and, a frame later, either
+    // captures the viewer's values or - once the group has a POST or clumper - pushes its stored
+    // root BACK into the viewer. The variance controller also builds on that stored root. Values
+    // written here land in the viewer immediately, so without this the authority could still be
+    // holding a new group's 0.2 defaults: a batch that placed 0.085 cards and then set Length
+    // variance or added a POST rebuilt them all around 0.2. Writing the root (and recording it as
+    // last pushed, so it is not mistaken for a user slider move) keeps every system in step.
+    void SyncRootState(int gid)
+    {
+        GroomRootStateAuthority ra = FindFirstObjectByType<GroomRootStateAuthority>();
+        if (ra == null) return;
+        Type t = typeof(GroomRootStateAuthority);
+        MethodInfo read = t.GetMethod("ReadViewer", Private);
+        if (read == null) throw new CommandException("HairBrush internals changed: GroomRootStateAuthority.ReadViewer is missing.");
+        object state = read.Invoke(ra, null);
+        foreach (string field in new[] { "roots", "lastPushed" })
+            if (t.GetField(field, Private)?.GetValue(ra) is System.Collections.IDictionary d) d[gid] = state;
     }
 
     object SetGroupParams(Args a)
@@ -571,6 +591,7 @@ public partial class HairBrushMcpCommands : MonoBehaviour
         finally { SetField("isRelativeMode", relative); }
 
         CallNoArgs("PushAllGroomSliders");
+        SyncRootState(viewer.currentGroupId);
         return new Dictionary<string, object> { { "group_id", gid }, { "params", CurrentParams() } };
     }
 
@@ -1538,8 +1559,9 @@ public partial class HairBrushMcpCommands : MonoBehaviour
         int frames = 0;
         do { yield return null; frames++; }
         while (frames < 600 && (CanonicalProjectStateBridge.ProjectRestorePending() || (bridge != null && bridge.HasPendingRestore)));
-        yield return null;
-        yield return null;
+        // The restore is done, but card meshes are regenerated over the next few LateUpdates;
+        // a screenshot taken straight after showed a bald head. Let them land first.
+        for (int i = 0; i < 6; i++) yield return null;
 
         if (LoadedModel == null)
             throw new CommandException("The project's head model could not be found, and HairBrush is showing its missing-model prompt. Ask the user to resolve it in the app.");

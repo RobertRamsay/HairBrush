@@ -336,6 +336,10 @@ public partial class HairBrushMcpCommands
         if (cam == null) throw new CommandException("No main camera.");
         RenderOptions o = ReadRenderOptions(a);
 
+        // A couple of frames first: after a delete or load the evaluators rebuild card meshes over
+        // the next LateUpdates, and a render taken in that window came out bald.
+        yield return null;
+        yield return null;
         // Mesh deformation (guides, clumpers, POSTs) is applied in LateUpdate, so render after it.
         yield return new WaitForEndOfFrame();
 
@@ -405,6 +409,8 @@ public partial class HairBrushMcpCommands
                 if (a.Has(k) && !v.Has(k)) v.Dict[k] = a.Raw(k);
         }
 
+        yield return null;
+        yield return null;
         yield return new WaitForEndOfFrame();
 
         int cols = Mathf.Min(views.Count, a.Int("columns", 3));

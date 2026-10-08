@@ -209,6 +209,10 @@ public partial class HairBrushMcpCommands
                 yield return y;
             }
 
+            // Destroy() only takes effect at the end of the frame. Without this, a save or count
+            // straight after a delete/erase in the same batch still saw the destroyed cards.
+            yield return null;
+
             Dictionary<string, object> entry = new Dictionary<string, object> { { "step", i }, { "tool", "hb_" + method } };
             if (error != null) { entry["ok"] = false; entry["error"] = error; }
             else { entry["ok"] = true; entry["result"] = result; }
@@ -289,16 +293,18 @@ public partial class HairBrushMcpCommands
 
     // Called by the server on quit (which includes leaving Play mode in the editor) and
     // periodically after edits. A groom is never lost to a recompile again.
-    public static void WriteAutosave()
+    public static void WriteAutosave(string reason)
     {
         try
         {
-            if (FindObjectsByType<HairCard>(FindObjectsSortMode.None).Length == 0) return;
+            int cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None).Length;
+            if (cards == 0) { Debug.Log("HairBrush MCP: autosave skipped (" + reason + ") - no cards."); return; }
             RuntimeNavigationProjectIO io = FindFirstObjectByType<RuntimeNavigationProjectIO>();
-            if (io == null) return;
+            if (io == null) { Debug.Log("HairBrush MCP: autosave skipped (" + reason + ") - project IO not running."); return; }
             System.IO.File.WriteAllText(AutosavePath, JsonUtility.ToJson(io.BuildSaveData(), true));
+            Debug.Log("HairBrush MCP: autosaved " + cards + " cards (" + reason + ") to " + AutosavePath);
         }
-        catch (Exception ex) { Debug.LogWarning("HairBrush MCP: autosave failed - " + ex.Message); }
+        catch (Exception ex) { Debug.LogWarning("HairBrush MCP: autosave failed (" + reason + ") - " + ex.Message); }
     }
 
     object AutosaveInfo()

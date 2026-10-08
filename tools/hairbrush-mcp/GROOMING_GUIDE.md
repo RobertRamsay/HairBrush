@@ -126,4 +126,5 @@ The method for building a good groom through the `hb_*` tools. It combines the H
 | Scales or feathers on short hair | Whole long strips squashed onto short cards | Use short-hair rects cut from the root end of strips, and arch 0.8–1 |
 | Ledge between the top and sides | Missing parietal tuck | Shorten the top there with a POST and add positive bend |
 | Bowl cut | Hairline set too low (el about 37 instead of about 48 on the demo head) | Measure the hairline first |
+| A group's cards jump to length 0.2 | The root-state authority still held the new group's slider defaults (fixed in the tools; check with `hb_sample_cards` if lengths look wrong) | `hb_set_group_params` with the intended values |
 | Lost work after a recompile | Leaving Play mode wipes the scene | `hb_load_autosave` |

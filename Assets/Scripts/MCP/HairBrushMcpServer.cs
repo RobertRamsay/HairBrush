@@ -198,13 +198,27 @@ public class HairBrushMcpServer : MonoBehaviour
         if (instance == this) instance = null;
     }
 
-    // Leaving Play mode in the editor arrives here too, while every groom object still exists -
-    // the last moment the session can be written before a recompile throws it away.
+    // A built player quitting. In the editor, ExitingPlayMode below is the dependable hook; this
+    // one stays for players, and a second write in the editor is harmless.
     void OnApplicationQuit()
     {
-        if (listener != null) HairBrushMcpCommands.WriteAutosave();
+        if (listener != null) HairBrushMcpCommands.WriteAutosave("quit");
         OnDestroy();
     }
+
+#if UNITY_EDITOR
+    // ExitingPlayMode fires while the play-mode scene is still fully alive - before any
+    // OnDisable/OnDestroy and before the domain reload a recompile brings - which makes it the
+    // last reliable moment to write the session.
+    void OnEnable() { UnityEditor.EditorApplication.playModeStateChanged += OnPlayModeChanged; }
+    void OnDisable() { UnityEditor.EditorApplication.playModeStateChanged -= OnPlayModeChanged; }
+
+    void OnPlayModeChanged(UnityEditor.PlayModeStateChange change)
+    {
+        if (change == UnityEditor.PlayModeStateChange.ExitingPlayMode && listener != null)
+            HairBrushMcpCommands.WriteAutosave("exiting play mode");
+    }
+#endif
 
     // ---------------------------------------------------------------------------------
     // Socket threads
@@ -380,7 +394,7 @@ public class HairBrushMcpServer : MonoBehaviour
             if (Time.realtimeSinceStartup - lastAutosave > 45f)
             {
                 lastAutosave = Time.realtimeSinceStartup;
-                HairBrushMcpCommands.WriteAutosave();
+                HairBrushMcpCommands.WriteAutosave("rolling");
             }
         }
         busy = false;
