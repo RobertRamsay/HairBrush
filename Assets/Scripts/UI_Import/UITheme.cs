@@ -14,20 +14,42 @@ using UnityEngine.UI;
 public static class UITheme
 {
     // --- Palette -----------------------------------------------------------------------
-    public static readonly Color PanelDark = new Color(.11f, .13f, .15f, 1f);
-    public static readonly Color ButtonNormal = new Color(.10f, .18f, .20f, 1f);
-    public static readonly Color ButtonHighlight = new Color(.28f, .58f, .61f, 1f);
-    public static readonly Color ButtonPressed = new Color(.36f, .74f, .78f, 1f);
+    //
+    // Brushed steel and gold, sampled from HairBrush_Logo.png: the wordmark's chrome for the
+    // steel, the brush's gold for accents (pressed, primary action, brand title, a modifier
+    // owning the panel). The sprites carry the real shading; these flat colours are the
+    // fallback when the sprites are missing, and the tints the code applies over them.
+    public static readonly Color PanelDark = new Color(.14f, .16f, .19f, 1f);
+    public static readonly Color ButtonNormal = new Color(.27f, .33f, .40f, 1f);
+    public static readonly Color ButtonHighlight = new Color(.40f, .48f, .57f, 1f);
+    public static readonly Color ButtonPressed = new Color(.88f, .69f, .22f, 1f);
     public static readonly Color ButtonDisabled = new Color(.16f, .18f, .19f, .65f);
     public static readonly Color ButtonMuted = new Color(.32f, .34f, .36f, 1f);
-    public static readonly Color TextBright = new Color(.94f, .99f, 1f, 1f);
-    public static readonly Color TextMuted = new Color(.62f, .68f, .70f, 1f);
+    public static readonly Color TextBright = new Color(.94f, .97f, 1f, 1f);
+    public static readonly Color TextMuted = new Color(.62f, .67f, .72f, 1f);
     public static readonly Color TrackDark = new Color(.12f, .14f, .16f, 1f);
-    public static readonly Color FillCyan = new Color(.20f, .60f, .68f, 1f);
+    // The wordmark's steel blue (sampled 101,133,162 / 131,164,199). Still named for its old
+    // colour so the code that reads it keeps working; it is steel now, not cyan.
+    public static readonly Color FillCyan = new Color(.45f, .58f, .72f, 1f);
+
+    public static readonly Color GoldBright = new Color(1f, .89f, .50f, 1f);
+    public static readonly Color Gold = new Color(.94f, .76f, .26f, 1f);
+    public static readonly Color GoldDeep = new Color(.72f, .50f, .10f, 1f);
+    public static readonly Color TextOnGold = new Color(.12f, .08f, .02f, 1f);
+
+    // Panels wear HB_PanelSteel, which has its colour baked in, so their Image tint is white;
+    // the alpha keeps the slight see-through the old flat grey had.
+    public static readonly Color PanelTint = new Color(1f, 1f, 1f, .94f);
+    // A panel taken over by a modifier (POST): the gold, multiplied over the steel.
+    public static readonly Color PanelModifierTint = new Color(1f, .80f, .42f, .96f);
+    // The panel sprite's colour just under its top sheen, for anything that has to paint a flat
+    // patch matching the panel (GroomingPanelFrozenHeaderAuthority's backdrop).
+    public static readonly Color PanelBody = new Color(36f / 255f, 41f / 255f, 48f / 255f, 1f);
 
     private const string ResourcesFolder = "UI_GFX/";
 
     private static Sprite normalSprite, hoverSprite, clickSprite, fineEdgeSprite, fineGlowSprite, dividerSprite;
+    private static Sprite goldSprite, goldHoverSprite, panelSprite;
     private static bool loaded;
     private static bool warned;
 
@@ -37,6 +59,9 @@ public static class UITheme
     public static Sprite FineEdgeSprite => Ensure() ? fineEdgeSprite : null;
     public static Sprite FineGlowSprite => Ensure() ? fineGlowSprite : null;
     public static Sprite DividerSprite => Ensure() ? dividerSprite : null;
+    public static Sprite GoldSprite => Ensure() ? goldSprite : null;
+    public static Sprite GoldHoverSprite => Ensure() ? goldHoverSprite : null;
+    public static Sprite PanelSprite => Ensure() ? panelSprite : null;
 
     private static bool Ensure()
     {
@@ -49,6 +74,9 @@ public static class UITheme
         fineEdgeSprite = Resources.Load<Sprite>(ResourcesFolder + "HB_9slice_FineEdge");
         fineGlowSprite = Resources.Load<Sprite>(ResourcesFolder + "HB_9slice_FineGlow");
         dividerSprite = Resources.Load<Sprite>(ResourcesFolder + "Divider");
+        goldSprite = Resources.Load<Sprite>(ResourcesFolder + "HB_9sliceGold");
+        goldHoverSprite = Resources.Load<Sprite>(ResourcesFolder + "HB_9sliceGoldHov");
+        panelSprite = Resources.Load<Sprite>(ResourcesFolder + "HB_PanelSteel");
 
         if (normalSprite == null && !warned)
         {
@@ -113,6 +141,126 @@ public static class UITheme
         TidyLabel(button.GetComponentInChildren<TextMeshProUGUI>(true));
     }
 
+    // --- Toggles ---------------------------------------------------------------------------
+    //
+    // Tints over the steel button sprite. They used to be flat fills (grey .28 off, teal on),
+    // which multiplied over the steel turned every OFF button near-black. Now: OFF is the plain
+    // steel, ON is the logo's gold, a two-way mode's second state is a cool steel, and a state
+    // the code has forced (e.g. under DIAMOND) is dimmed.
+    public static readonly Color ToggleOffTint = Color.white;
+    public static readonly Color ToggleOnTint = new Color(1f, .78f, .32f, 1f);
+    public static readonly Color ToggleAltTint = new Color(.72f, .86f, 1f, 1f);
+    public static readonly Color ToggleWarnTint = new Color(1f, .55f, .25f, 1f);
+    public static readonly Color ToggleForcedTint = new Color(.50f, .52f, .56f, 1f);
+
+    // Group list rows are flat fills (no sprite): dark steel, and gold for the selected group -
+    // selection is the same accent as an ON toggle.
+    public static readonly Color GroupRowColour = new Color(.19f, .22f, .26f, 1f);
+    public static readonly Color GroupRowSelectedColour = new Color(.42f, .33f, .12f, 1f);
+
+    public enum ToggleLook { Off, On, Alt, Warning }
+
+    // For the full-width toggles (SYMMETRY, GUIDES ON TOP, MAYA-NAV, CARD, TOPOLOGY): ON swaps
+    // to the gold sprite with a dark label rather than tinting, so it reads as lit, not stained.
+    // Writes only what changed - callers repaint on a poll.
+    public static void PaintToggle(Image image, TextMeshProUGUI label, ToggleLook look)
+    {
+        if (image == null) return;
+        bool gold = (look == ToggleLook.On || look == ToggleLook.Warning) && GoldSprite != null;
+
+        Sprite sprite = gold ? GoldSprite : ButtonNormalSprite;
+        Color colour = look == ToggleLook.Alt ? ToggleAltTint
+                     : look == ToggleLook.Warning ? (gold ? new Color(1f, .80f, .62f, 1f) : ToggleWarnTint)
+                     : look == ToggleLook.On && !gold ? ToggleOnTint
+                     : Color.white;
+
+        if (sprite != null && image.sprite != sprite)
+        {
+            image.sprite = sprite;
+            image.type = Image.Type.Sliced;
+            Button button = image.GetComponent<Button>();
+            if (button != null && button.transition == Selectable.Transition.SpriteSwap)
+            {
+                SpriteState state = button.spriteState;
+                state.highlightedSprite = gold ? (GoldHoverSprite != null ? GoldHoverSprite : GoldSprite) : ButtonHoverSprite;
+                state.selectedSprite = state.highlightedSprite;
+                state.disabledSprite = sprite;
+                button.spriteState = state;
+            }
+        }
+        if (image.color != colour) image.color = colour;
+
+        if (label != null)
+        {
+            Color text = gold ? TextOnGold : TextBright;
+            if (label.color != text) label.color = text;
+            // Dark type on gold needs the weight to read; white on steel already has it.
+            if (gold && (label.fontStyle & FontStyles.Bold) == 0) label.fontStyle |= FontStyles.Bold;
+        }
+    }
+
+    // The primary action of a screen (START GROOMING): gold at rest, brighter gold on hover, dark
+    // label. Skin only - unlike StyleButton it never touches the button's size, for callers that
+    // lay their button out themselves.
+    public static void StylePrimaryButton(Button button)
+    {
+        if (button == null) return;
+        Image image = button.GetComponent<Image>();
+        if (image == null) return;
+        button.targetGraphic = image;
+
+        if (GoldSprite == null)
+        {
+            image.sprite = null;
+            image.type = Image.Type.Simple;
+            image.color = Gold;
+            button.transition = Selectable.Transition.ColorTint;
+        }
+        else
+        {
+            image.sprite = GoldSprite;
+            image.type = Image.Type.Sliced;
+            image.color = Color.white;
+            button.transition = Selectable.Transition.SpriteSwap;
+            SpriteState state = button.spriteState;
+            state.highlightedSprite = GoldHoverSprite != null ? GoldHoverSprite : GoldSprite;
+            state.pressedSprite = ButtonClickSprite;
+            state.selectedSprite = state.highlightedSprite;
+            state.disabledSprite = GoldSprite;
+            button.spriteState = state;
+        }
+
+        foreach (TextMeshProUGUI label in button.GetComponentsInChildren<TextMeshProUGUI>(true))
+            label.color = TextOnGold;
+    }
+
+    // The steel panel skin. tint is the panel's state colour (PanelTint normally,
+    // PanelModifierTint for a modifier); it multiplies the sprite, so pass white-ish values.
+    public static void ApplyPanelSkin(Image image, Color tint)
+    {
+        if (image == null) return;
+        if (PanelSprite == null)
+        {
+            // No sprites: a flat colour close to the old panels.
+            image.color = new Color(PanelBody.r * tint.r, PanelBody.g * tint.g, PanelBody.b * tint.b, tint.a);
+            return;
+        }
+        image.sprite = PanelSprite;
+        image.type = Image.Type.Sliced;
+        image.color = tint;
+    }
+
+    public static void ApplyPanelSkin(Image image) => ApplyPanelSkin(image, PanelTint);
+
+    // A brand title in the logo's gold, shaded top to bottom like the brush.
+    public static void StyleGoldTitle(TextMeshProUGUI label)
+    {
+        if (label == null) return;
+        label.color = Color.white;
+        label.enableVertexGradient = true;
+        label.colorGradient = new VertexGradient(GoldBright, GoldBright, GoldDeep, GoldDeep);
+    }
+
     // SpriteSwap transition has no built-in disabled dimming (Unity only auto-dims under
     // ColorTint), so this keeps a visible disabled cue by hand. Cheap - safe to call every poll.
     // THE single style for every seed-reroll button (variance rows, Group UV row, POST UV row).
@@ -129,7 +277,7 @@ public static class UITheme
 
         image.sprite = ButtonNormalSprite;
         image.type = Image.Type.Sliced;
-        image.color = new Color(.62f, 1f, .96f, 1f);
+        image.color = Color.white;
         button.transition = Selectable.Transition.SpriteSwap;
         SpriteState state = button.spriteState;
         state.highlightedSprite = ButtonHoverSprite;
@@ -141,12 +289,16 @@ public static class UITheme
         {
             label.text = "RANDOMIZE";
             label.fontStyle = FontStyles.Bold;
-            label.enableAutoSizing = false;
-            label.fontSize = 11f;
+            // Shrink-to-fit, capped at the old fixed 11pt: these buttons are short strips, and
+            // with the rounded skin's wider slice border the fixed size spilled over the edges.
+            label.enableAutoSizing = true;
+            label.fontSizeMin = 6f;
+            label.fontSizeMax = 10f;
+            label.fontSize = 10f;
             label.alignment = TextAlignmentOptions.Center;
             label.textWrappingMode = TextWrappingModes.NoWrap;
             label.overflowMode = TextOverflowModes.Overflow;
-            label.margin = Vector4.zero;
+            label.margin = new Vector4(3f, 0f, 3f, 0f);
             label.color = TextBright;
             label.raycastTarget = false;
 
@@ -190,6 +342,9 @@ public static class UITheme
         rect.sizeDelta = new Vector2(rect.sizeDelta.x, h);
     }
 
+    private const float LargeLabelThreshold = 12f;
+    private const float LargeLabelScale = 1.12f;
+
     public static void TidyLabel(TextMeshProUGUI label)
     {
         if (label == null) return;
@@ -200,6 +355,14 @@ public static class UITheme
         // on wrapping to stay readable at a fixed narrow width, and forcing wrap off pushed them
         // straight into the ellipsis fallback below instead of the two-line layout they need.
         float original = label.fontSize;
+
+        // The full-width buttons (SYMMETRY, SAVE PROJ, PLACEMENT, MENU... all 13-15pt) read a
+        // size up; the small row buttons (9-11pt) keep theirs, they are sized to their slots.
+        // Auto-sizing below still shrinks a label that would not fit, so this cannot overflow.
+        if (original >= LargeLabelThreshold)
+            original = Mathf.Round(original * LargeLabelScale * 2f) / 2f;
+        label.fontSize = original;
+
         label.enableAutoSizing = true;
         label.fontSizeMin = Mathf.Min(9f, original);
         label.fontSizeMax = original;

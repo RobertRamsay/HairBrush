@@ -661,7 +661,7 @@ public class ModelViewer : MonoBehaviour
         panelRect.sizeDelta = new Vector2(560, 0);
         panelRect.anchoredPosition = new Vector2(-10, 0);
         activePanelImage = panelGO.GetComponent<Image>();
-        activePanelImage.color = GroomPanelIdleColour;
+        UITheme.ApplyPanelSkin(activePanelImage, GroomPanelIdleColour);
         VerticalLayoutGroup layout = panelGO.AddComponent<VerticalLayoutGroup>();
         layout.padding = new RectOffset(15, 15, 12, 12);
         layout.spacing = 4;
@@ -745,7 +745,7 @@ public class ModelViewer : MonoBehaviour
         // onto the grooming panel AND the texture editor, so every 10px here is 30px of viewport.
         panelRect.sizeDelta = new Vector2(360, 0);
         panelRect.anchoredPosition = new Vector2(15, 0);
-        groupPanelGO.GetComponent<Image>().color = new Color(0.15f, 0.15f, 0.15f, 0.85f);
+        UITheme.ApplyPanelSkin(groupPanelGO.GetComponent<Image>());
         VerticalLayoutGroup vLayout = groupPanelGO.AddComponent<VerticalLayoutGroup>();
         vLayout.padding = new RectOffset(10, 10, 10, 10);
         vLayout.spacing = 8;
@@ -1099,8 +1099,8 @@ public class ModelViewer : MonoBehaviour
         Image bg = item.GetComponent<Image>();
         if (bg != null)
         {
-            Color rowColour = new Color(0.25f, 0.25f, 0.25f, 1f);
-            if (id == currentGroupId) rowColour = new Color(0.3f, 0.6f, 0.3f, 1f);
+            Color rowColour = UITheme.GroupRowColour;
+            if (id == currentGroupId) rowColour = UITheme.GroupRowSelectedColour;
             bg.color = rowColour;
         }
 
@@ -1126,8 +1126,8 @@ public class ModelViewer : MonoBehaviour
         Image soloImage = solo != null ? solo.GetComponent<Image>() : null;
         if (soloImage != null)
         {
-            Color soloColor = new Color(0.35f, 0.35f, 0.35f);
-            if (GroupSoloVisibilityAuthority.IsSoloed(id)) soloColor = new Color(0.9f, 0.5f, 0.1f);
+            Color soloColor = UITheme.ToggleOffTint;
+            if (GroupSoloVisibilityAuthority.IsSoloed(id)) soloColor = UITheme.ToggleOnTint;
             soloImage.color = soloColor;
         }
     }
@@ -1142,7 +1142,7 @@ public class ModelViewer : MonoBehaviour
         GameObject itemGO = new GameObject("GroupItem_" + gid, typeof(RectTransform), typeof(Image), typeof(HorizontalLayoutGroup));
         itemGO.transform.SetParent(groupListContentTransform, false);
         itemGO.GetComponent<RectTransform>().sizeDelta = new Vector2(0, 48);
-        itemGO.GetComponent<Image>().color = (gid == currentGroupId) ? new Color(0.3f, 0.6f, 0.3f, 1f) : new Color(0.25f, 0.25f, 0.25f, 1f);
+        itemGO.GetComponent<Image>().color = (gid == currentGroupId) ? UITheme.GroupRowSelectedColour : UITheme.GroupRowColour;
         HorizontalLayoutGroup rowLayout = itemGO.GetComponent<HorizontalLayoutGroup>();
         rowLayout.padding = new RectOffset(8, 8, 4, 4);
         rowLayout.spacing = 8;
@@ -1185,8 +1185,8 @@ public class ModelViewer : MonoBehaviour
         soloBtnGO.transform.SetParent(itemGO.transform, false);
         soloBtnGO.GetComponent<RectTransform>().sizeDelta = new Vector2(65, 36);
         bool isSoloed = GroupSoloVisibilityAuthority.IsSoloed(gid);
-        Color soloIdleColor = new Color(0.35f, 0.35f, 0.35f);
-        if (isSoloed) soloIdleColor = new Color(0.9f, 0.5f, 0.1f);
+        Color soloIdleColor = UITheme.ToggleOffTint;
+        if (isSoloed) soloIdleColor = UITheme.ToggleOnTint;
         soloBtnGO.GetComponent<Image>().color = soloIdleColor;
         Button soloBtn = soloBtnGO.GetComponent<Button>();
         GameObject soloTxtGO = new GameObject("Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
@@ -1710,8 +1710,10 @@ public class ModelViewer : MonoBehaviour
     // The groom panel's two backgrounds. They were three separate literals - here, in
     // EnterSelectionMode and in the panel's own construction - which is how the panel came to be
     // painted yellow by ONE of the routes into POST editing and left grey by the others.
-    public static readonly Color GroomPanelIdleColour = new Color(0.15f, 0.15f, 0.15f, 0.85f);
-    public static readonly Color GroomPanelModifierColour = new Color(0.35f, 0.32f, 0.1f, 0.9f);
+    // Tints over the steel panel sprite (UITheme.ApplyPanelSkin), not flat fills: white for idle,
+    // the logo's gold while a modifier owns the panel.
+    public static readonly Color GroomPanelIdleColour = UITheme.PanelTint;
+    public static readonly Color GroomPanelModifierColour = UITheme.PanelModifierTint;
 
     // Yellow while a modifier owns the panel, grey while the group root does.
     //

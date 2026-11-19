@@ -153,7 +153,7 @@ public class MissingModelPrompt : MonoBehaviour
         panelRect.anchorMax = new Vector2(.5f, .5f);
         panelRect.pivot = new Vector2(.5f, .5f);
         panelRect.sizeDelta = new Vector2(820f, 330f);
-        panel.GetComponent<Image>().color = new Color(.13f, .15f, .18f, .99f);
+        UITheme.ApplyPanelSkin(panel.GetComponent<Image>(), Color.white);
 
         VerticalLayoutGroup layout = panel.GetComponent<VerticalLayoutGroup>();
         layout.padding = new RectOffset(30, 30, 24, 24);

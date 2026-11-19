@@ -211,7 +211,7 @@ public class ModelImportRouter : MonoBehaviour
         panelRect.anchorMax = new Vector2(.5f, .5f);
         panelRect.pivot = new Vector2(.5f, .5f);
         panelRect.sizeDelta = new Vector2(560f, 300f);
-        panel.GetComponent<Image>().color = new Color(.14f, .16f, .19f, .98f);
+        UITheme.ApplyPanelSkin(panel.GetComponent<Image>(), Color.white);
         VerticalLayoutGroup layout = panel.GetComponent<VerticalLayoutGroup>();
         layout.padding = new RectOffset(24, 24, 22, 22);
         layout.spacing = 12f;

@@ -110,7 +110,7 @@ public class GroupRootUVModeAuthority : MonoBehaviour
             if (text != null) text.text = predetermined ? "UV: PRE" : "UV: ADJ";
             Image image = button != null ? button.GetComponent<Image>() : null;
             if (image != null)
-                image.color = predetermined ? new Color(.20f, .50f, .80f, 1f) : new Color(.28f, .28f, .28f, 1f);
+                image.color = predetermined ? UITheme.ToggleAltTint : UITheme.ToggleOffTint;
 
             // Keep the utility button before SOLO so the group row reads Name | UV | SOLO.
             if (existing == null)

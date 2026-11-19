@@ -194,7 +194,7 @@ public class MaterialEditorManager : MonoBehaviour
         RectTransform rect = panelGO.GetComponent<RectTransform>();
         rect.anchorMin = new Vector2(0f, 0f); rect.anchorMax = new Vector2(0f, 1f);
         rect.pivot = new Vector2(0f, .5f); rect.sizeDelta = new Vector2(440f, 0f); rect.anchoredPosition = new Vector2(10f, 0f);
-        panelGO.GetComponent<Image>().color = new Color(.12f, .12f, .12f, .96f);
+        UITheme.ApplyPanelSkin(panelGO.GetComponent<Image>());
 
         VerticalLayoutGroup layout = panelGO.AddComponent<VerticalLayoutGroup>();
         layout.padding = new RectOffset(10, 10, 10, 10);

@@ -62,7 +62,7 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
     {
         GameObject panel = GameObject.Find("GroupManagerPanel");
         if (panel == null || panel.transform.Find("MenuButton_Runtime") != null) return;
-        GameObject menu = MakeButton(panel.transform, "MenuButton_Runtime", "MENU", new Color(.24f,.30f,.38f), 36f);
+        GameObject menu = MakeButton(panel.transform, "MenuButton_Runtime", "MENU", UITheme.ToggleOffTint, 36f);
         menu.transform.SetSiblingIndex(0);
         menu.GetComponent<Button>().onClick.AddListener(ReturnToMenu);
     }

@@ -825,20 +825,20 @@ public class GroupAddRowUIAuthority : MonoBehaviour
 
         PaintButton(row, "AddPostButton",
             armedHere && GroupAddButtonPlacementAuthority.ArmedKind == GroupAddButtonPlacementAuthority.AddKind.Post,
-            new Color(.18f, .26f, .38f, 1f));
+            new Color(.74f, .92f, 1f, 1f));
 
         PaintButton(row, "AddClumperButton",
             armedHere && GroupAddButtonPlacementAuthority.ArmedKind == GroupAddButtonPlacementAuthority.AddKind.Clumper,
-            new Color(.15f, .30f, .21f, 1f));
+            new Color(.88f, 1f, .78f, 1f));
 
         PaintButton(row, "AddGuideButton",
             armedHere && GroupAddButtonPlacementAuthority.ArmedKind == GroupAddButtonPlacementAuthority.AddKind.Guide,
-            new Color(.26f, .20f, .34f, 1f));
+            new Color(.95f, .80f, 1f, 1f));
 
         // COPY is always available. PASTE lights only once something has been copied, and stays
         // lit for the rest of the session or until COPY is pressed again, so the button itself
         // answers "do I have anything to paste" without the user having to remember.
-        PaintButton(row, CopyButtonName, false, new Color(.30f, .28f, .20f, 1f));
+        PaintButton(row, CopyButtonName, false, UITheme.ToggleOffTint);
         PaintPasteButton(row);
     }
 
@@ -851,7 +851,7 @@ public class GroupAddRowUIAuthority : MonoBehaviour
 
         Image image = child.GetComponent<Image>();
         if (image != null)
-            image.color = ready ? new Color(.44f, .38f, .16f, 1f) : new Color(.17f, .17f, .18f, 1f);
+            image.color = ready ? UITheme.ToggleOnTint : UITheme.ToggleForcedTint;
 
         // The label greys with it. The button is deliberately left clickable so that pressing it
         // with an empty clipboard says why, rather than doing nothing at all.
@@ -869,7 +869,7 @@ public class GroupAddRowUIAuthority : MonoBehaviour
 
         if (armed)
         {
-            image.color = new Color(.85f, .60f, .12f, 1f);
+            image.color = UITheme.ToggleOnTint;
             return;
         }
         image.color = idle;

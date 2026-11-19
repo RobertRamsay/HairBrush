@@ -287,8 +287,7 @@ public class GroupPredeterminedUVController : MonoBehaviour
 
         if (flipButtonImage != null)
         {
-            Color colour = new Color(.25f, .25f, .25f, 1f);
-            if (on) colour = new Color(.20f, .58f, .45f, 1f);
+            Color colour = on ? UITheme.ToggleOnTint : UITheme.ToggleOffTint;
             if (flipButtonImage.color != colour) flipButtonImage.color = colour;
         }
 

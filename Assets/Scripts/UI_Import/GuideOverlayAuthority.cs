@@ -200,9 +200,7 @@ public class GuideOverlayAuthority : MonoBehaviour
 
         if (image != null)
         {
-            Color colour = new Color(.28f, .28f, .28f, 1f);
-            if (Enabled) colour = new Color(.20f, .58f, .45f, 1f);
-            if (image.color != colour) image.color = colour;
+            UITheme.PaintToggle(image, label, Enabled ? UITheme.ToggleLook.On : UITheme.ToggleLook.Off);
         }
     }
 

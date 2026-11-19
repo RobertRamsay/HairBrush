@@ -147,9 +147,8 @@ public class HairCardTopologyAuthority : MonoBehaviour
 
         if (image != null)
         {
-            Color colour = new Color(.28f, .28f, .28f, 1f);
-            if (HairCardSection.IsDynamicTopology) colour = new Color(.24f, .48f, .40f, 1f);
-            if (image.color != colour) image.color = colour;
+            // A two-way mode, not on/off: SYMMETRIC is plain steel, DYNAMIC the cool alternate.
+            UITheme.PaintToggle(image, label, HairCardSection.IsDynamicTopology ? UITheme.ToggleLook.Alt : UITheme.ToggleLook.Off);
         }
     }
 

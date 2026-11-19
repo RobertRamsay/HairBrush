@@ -136,9 +136,8 @@ public class HairCardProfileAuthority : MonoBehaviour
 
         if (image != null)
         {
-            Color colour = new Color(.28f, .28f, .28f, 1f);
-            if (HairCardSection.IsDiamond) colour = new Color(.32f, .34f, .62f, 1f);
-            if (image.color != colour) image.color = colour;
+            // A two-way mode, not on/off: TENT is plain steel, DIAMOND the cool alternate.
+            UITheme.PaintToggle(image, label, HairCardSection.IsDiamond ? UITheme.ToggleLook.Alt : UITheme.ToggleLook.Off);
         }
     }
 

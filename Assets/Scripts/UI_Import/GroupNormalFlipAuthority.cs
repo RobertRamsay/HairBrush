@@ -214,9 +214,9 @@ public class GroupNormalFlipAuthority : MonoBehaviour
                 Image image = button.GetComponent<Image>();
                 if (image != null)
                 {
-                    Color colour = new Color(.28f, .28f, .28f, 1f);
-                    if (flipped) colour = new Color(.24f, .52f, .46f, 1f);
-                    if (forced) colour = new Color(.20f, .20f, .20f, 1f);
+                    Color colour = UITheme.ToggleOffTint;
+                    if (flipped) colour = UITheme.ToggleOnTint;
+                    if (forced) colour = UITheme.ToggleForcedTint;
                     if (image.color != colour) image.color = colour;
                 }
             }

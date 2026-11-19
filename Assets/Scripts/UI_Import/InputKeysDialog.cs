@@ -235,7 +235,7 @@ public class InputKeysDialog : MonoBehaviour
         panelRect.anchorMax = new Vector2(.5f, .5f);
         panelRect.pivot = new Vector2(.5f, .5f);
         panelRect.sizeDelta = new Vector2(900f, 760f);
-        panel.GetComponent<Image>().color = new Color(.13f, .15f, .18f, .99f);
+        UITheme.ApplyPanelSkin(panel.GetComponent<Image>(), Color.white);
 
         VerticalLayoutGroup panelLayout = panel.GetComponent<VerticalLayoutGroup>();
         panelLayout.padding = new RectOffset(26, 26, 20, 20);

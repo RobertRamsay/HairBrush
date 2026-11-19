@@ -295,9 +295,9 @@ public class GroupSidednessAuthority : MonoBehaviour
                 Image image = button.GetComponent<Image>();
                 if (image != null)
                 {
-                    Color colour = new Color(.28f, .28f, .28f, 1f);
-                    if (single) colour = new Color(.62f, .38f, .18f, 1f);
-                    if (forced) colour = new Color(.20f, .20f, .20f, 1f);
+                    Color colour = UITheme.ToggleOffTint;
+                    if (single) colour = UITheme.ToggleOnTint;
+                    if (forced) colour = UITheme.ToggleForcedTint;
                     if (image.color != colour) image.color = colour;
                 }
             }

@@ -369,16 +369,11 @@ public class GroomSymmetryAuthority : MonoBehaviour
 
         if (image != null)
         {
-            Color colour = new Color(.28f, .28f, .28f, 1f);
-            if (symmetryOn)
-            {
-                colour = new Color(.20f, .58f, .45f, 1f);
-                // Amber rather than green when the plane could not be trusted, so an
-                // unreliable mirror is visible at a glance and not just in a toast that has
-                // already faded.
-                if (!PlaneIsReliable) colour = new Color(.72f, .48f, .12f, 1f);
-            }
-            if (image.color != colour) image.color = colour;
+            // Gold when on; amber when the plane could not be trusted, so an unreliable mirror
+            // is visible at a glance and not just in a toast that has already faded.
+            UITheme.ToggleLook look = UITheme.ToggleLook.Off;
+            if (symmetryOn) look = PlaneIsReliable ? UITheme.ToggleLook.On : UITheme.ToggleLook.Warning;
+            UITheme.PaintToggle(image, label, look);
         }
     }
 

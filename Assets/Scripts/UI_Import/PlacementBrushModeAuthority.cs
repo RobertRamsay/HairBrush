@@ -1083,11 +1083,12 @@ public class PlacementBrushModeAuthority : MonoBehaviour
     {
         switch (value)
         {
-            case PlacementMode.Paint: return new Color(.18f, .48f, .30f);
-            case PlacementMode.Spray: return new Color(.58f, .40f, .15f);
-            case PlacementMode.Even: return new Color(.24f, .46f, .46f);
-            case PlacementMode.Erase: return new Color(.62f, .20f, .20f);
-            default: return new Color(.20f, .42f, .68f);
+            // Light tints over the steel banner sprite: the hue says which mode, the steel stays.
+            case PlacementMode.Paint: return new Color(.70f, 1f, .76f);
+            case PlacementMode.Spray: return new Color(1f, .84f, .55f);
+            case PlacementMode.Even: return new Color(.70f, .96f, .96f);
+            case PlacementMode.Erase: return new Color(1f, .55f, .50f);
+            default: return new Color(.74f, .86f, 1f);
         }
     }
 

@@ -218,7 +218,7 @@ public class GroomingPanelWheelScroll : MonoBehaviour, IScrollHandler
         handleRect.offsetMin = Vector2.zero;
         handleRect.offsetMax = Vector2.zero;
         Image handleImage = handleGO.GetComponent<Image>();
-        handleImage.color = new Color(.30f, .65f, .70f, .9f);
+        handleImage.color = new Color(.45f, .56f, .68f, .9f);
 
         scrollbar = barGO.GetComponent<Scrollbar>();
         scrollbar.handleRect = handleRect;

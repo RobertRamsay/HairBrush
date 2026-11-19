@@ -277,8 +277,10 @@ public class GroomingPanelFrozenHeaderAuthority : MonoBehaviour
             // Match the panel, but fully opaque - content sliding underneath must not
             // ghost through the header.
             Image panelImage = panel.GetComponent<Image>();
-            Color colour = new Color(.15f, .15f, .15f, 1f);
-            if (panelImage != null) colour = new Color(panelImage.color.r, panelImage.color.g, panelImage.color.b, 1f);
+            // The panel is the steel sprite under a tint (UITheme.ApplyPanelSkin), so the flat
+            // match is the sprite's body colour under that same tint.
+            Color tint = panelImage != null ? panelImage.color : Color.white;
+            Color colour = new Color(UITheme.PanelBody.r * tint.r, UITheme.PanelBody.g * tint.g, UITheme.PanelBody.b * tint.b, 1f);
             if (image.color != colour) image.color = colour;
             image.raycastTarget = false;
         }
@@ -304,7 +306,7 @@ public class GroomingPanelFrozenHeaderAuthority : MonoBehaviour
                 go.transform.SetParent(panel, false);
                 go.GetComponent<LayoutElement>().ignoreLayout = true;
                 Image line = go.GetComponent<Image>();
-                line.color = new Color(.30f, .65f, .70f, .55f);
+                line.color = new Color(.50f, .62f, .76f, .55f);
                 line.raycastTarget = false;
                 separator = go.GetComponent<RectTransform>();
             }

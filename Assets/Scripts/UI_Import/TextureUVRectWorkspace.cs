@@ -1341,12 +1341,11 @@ public class TextureUVRectWorkspace : MonoBehaviour
         return image;
     }
 
-    // Shared so the build and the in-place repaint cannot disagree. Same teal the other
+    // Shared so the build and the in-place repaint cannot disagree. Same gold-on / steel-off the other
     // on/off toggles in this tool use.
     public static Color FlipButtonColour(bool flipped)
     {
-        if (flipped) return new Color(.20f, .58f, .45f, 1f);
-        return new Color(.28f, .28f, .28f, 1f);
+        return flipped ? UITheme.ToggleOnTint : UITheme.ToggleOffTint;
     }
 
     // Called by UVRectSummaryRow.OnDrop. Moves the dragged rectangle into the dropped-on

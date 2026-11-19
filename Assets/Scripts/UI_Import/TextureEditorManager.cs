@@ -245,7 +245,7 @@ public class TextureEditorManager : MonoBehaviour
         panelRect.anchoredPosition = new Vector2(-10, 0);
 
         Image panelImage = panelGO.GetComponent<Image>();
-        panelImage.color = new Color(0.15f, 0.15f, 0.15f, 0.85f);
+        UITheme.ApplyPanelSkin(panelImage);
         panelImage.raycastTarget = false;
 
         VerticalLayoutGroup layout = panelGO.AddComponent<VerticalLayoutGroup>();

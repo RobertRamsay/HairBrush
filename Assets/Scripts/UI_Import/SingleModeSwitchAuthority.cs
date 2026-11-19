@@ -67,12 +67,12 @@ public class SingleModeSwitchAuthority : MonoBehaviour
             layout.spacing = 8f;
         }
 
-        StyleDestinationButton(textureTab, "TEXTURE MODE", new Color(.20f, .50f, .82f, 1f), CompactButtonWidth);
+        StyleDestinationButton(textureTab, "TEXTURE MODE", UITheme.ToggleAltTint, CompactButtonWidth);
 
         if (menuButton != null)
         {
             menuButton.gameObject.SetActive(true);
-            StyleDestinationButton(menuButton, "MENU", new Color(.24f, .30f, .38f, 1f), CompactButtonWidth);
+            StyleDestinationButton(menuButton, "MENU", UITheme.ToggleOffTint, CompactButtonWidth);
 
             // MENU is immediately to the left of TEXTURE MODE.
             int textureIndex = textureTab.GetSiblingIndex();
@@ -108,6 +108,7 @@ public class SingleModeSwitchAuthority : MonoBehaviour
         // against "ALPHA") - and the build stamp is where the real version lives.
         AddBrandText(header.transform, "BrandTitle", "HAIRBRUSH - BETA", 15f, FontStyles.Bold,
             new Color(.96f, .96f, .96f, 1f), new Vector2(0f, .45f), new Vector2(1f, 1f));
+        UITheme.StyleGoldTitle(header.transform.Find("BrandTitle")?.GetComponent<TextMeshProUGUI>());
         AddBrandText(header.transform, "BrandSubtitle", "by POLYTRICITY LTD 2026", 10f, FontStyles.Normal,
             new Color(.72f, .76f, .82f, 1f), new Vector2(0f, 0f), new Vector2(1f, .46f));
 

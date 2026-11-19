@@ -345,7 +345,7 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
         cardRect.pivot = new Vector2(.5f, 1f);
         cardRect.anchoredPosition = Vector2.zero;
         cardRect.sizeDelta = new Vector2(0f, CardHeight);
-        ApplyNineSlice(card.GetComponent<Image>(), UITheme.FineEdgeSprite, UITheme.PanelDark);
+        UITheme.ApplyPanelSkin(card.GetComponent<Image>(), Color.white);
 
         TextMeshProUGUI title = AddBand(card.transform, "Title", TitleTop, TitleHeight);
         // The suffix lands on both lines in a demo build, and this is the larger of the two.
@@ -457,10 +457,12 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
 
         Button button = buttonGO.GetComponent<Button>();
         button.onClick.AddListener(Close);
-        ApplyButtonSkin(button);
-
         TextMeshProUGUI label = AddStretchedText(buttonGO.transform, "Text");
         StyleLine(label, "START GROOMING", ButtonFont, FontStyles.Bold, UITheme.TextBright);
+
+        // The screen's one primary action, so it wears the logo's gold. After the label exists:
+        // StylePrimaryButton also sets the label dark for contrast on the gold.
+        UITheme.StylePrimaryButton(button);
         label.alignment = TextAlignmentOptions.Center;
 
         // As wide as the words need, no wider.

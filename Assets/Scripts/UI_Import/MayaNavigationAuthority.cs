@@ -273,12 +273,10 @@ public class MayaNavigationAuthority : MonoBehaviour
 
         if (image != null)
         {
-            // The same off-grey and on-teal SYMMETRY uses. There is no amber third state here:
+            // The same steel-off and gold-on SYMMETRY uses. There is no amber third state here:
             // SYMMETRY needs one because a mirror can be unreliable on an asymmetric model,
             // and a navigation scheme is either the one you picked or it is not.
-            Color colour = new Color(.28f, .28f, .28f, 1f);
-            if (Enabled) colour = new Color(.20f, .58f, .45f, 1f);
-            if (image.color != colour) image.color = colour;
+            UITheme.PaintToggle(image, label, Enabled ? UITheme.ToggleLook.On : UITheme.ToggleLook.Off);
         }
     }
 
