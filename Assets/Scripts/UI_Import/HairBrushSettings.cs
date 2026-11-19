@@ -85,7 +85,7 @@ public static class HairBrushSettings
 
         try
         {
-            File.WriteAllText(SettingsPath(), builder.ToString());
+            SafeFileWrite.WriteAllText(SettingsPath(), builder.ToString());
         }
         catch (Exception error)
         {

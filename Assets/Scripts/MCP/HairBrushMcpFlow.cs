@@ -301,7 +301,8 @@ public partial class HairBrushMcpCommands
             if (cards == 0) { Debug.Log("HairBrush MCP: autosave skipped (" + reason + ") - no cards."); return; }
             RuntimeNavigationProjectIO io = FindFirstObjectByType<RuntimeNavigationProjectIO>();
             if (io == null) { Debug.Log("HairBrush MCP: autosave skipped (" + reason + ") - project IO not running."); return; }
-            System.IO.File.WriteAllText(AutosavePath, JsonUtility.ToJson(io.BuildSaveData(), true));
+            // Kept as .bak too: a crash during the write is exactly when the autosave is needed.
+            SafeFileWrite.WriteAllText(AutosavePath, JsonUtility.ToJson(io.BuildSaveData(), true), keepBackup: true);
             Debug.Log("HairBrush MCP: autosaved " + cards + " cards (" + reason + ") to " + AutosavePath);
         }
         catch (Exception ex) { Debug.LogWarning("HairBrush MCP: autosave failed (" + reason + ") - " + ex.Message); }

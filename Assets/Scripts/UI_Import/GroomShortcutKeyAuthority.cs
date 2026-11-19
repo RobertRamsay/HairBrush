@@ -202,7 +202,9 @@ public class GroomShortcutKeyAuthority : MonoBehaviour
     }
 
     // True while any text field could be receiving these letters.
-    private static bool IsTyping()
+    // Shared with HairCardSidednessHotkeyAuthority, so every bare-key shortcut asks the same
+    // question about text entry.
+    internal static bool IsTyping()
     {
         if (GroupNameInlineEditAuthority.IsEnteringText) return true;
 

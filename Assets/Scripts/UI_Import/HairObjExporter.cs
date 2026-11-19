@@ -238,7 +238,7 @@ public static class HairObjExporter
             if (hasNormals) normalBase += normals.Length;
         }
 
-        File.WriteAllText(path, sb.ToString(), new UTF8Encoding(false));
+        SafeFileWrite.WriteAllText(path, sb.ToString(), encoding: new UTF8Encoding(false));
     }
 
     static void AppendFaceVertex(StringBuilder sb, int localIndex, int vertexBase, int uvBase, int normalBase, bool hasUV, bool hasNormals)

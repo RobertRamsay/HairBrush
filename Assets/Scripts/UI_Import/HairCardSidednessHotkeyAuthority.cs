@@ -26,15 +26,20 @@ public class HairCardSidednessHotkeyAuthority : MonoBehaviour
     {
         if (Keyboard.current == null) return;
 
-        // The 1/2 hotkeys must not fire while the user is typing into a UI text field -
-        // for example the inline group-name editor, where "1" and "2" are just characters
-        // in a name.
-        if (GroupNameInlineEditAuthority.IsEnteringText) return;
+        // The 1/2 hotkeys must not fire while the user is typing into ANY UI text field - the
+        // inline group-name editor, a variance SEED box, the UV MIN/MAX/SEED boxes - where "1"
+        // and "2" are just characters. Same test as the other bare-key shortcuts.
+        if (GroomShortcutKeyAuthority.IsTyping()) return;
 
         // Nor underneath the demo's buy card. This one flips EVERY card in the scene, so a
         // stray keypress while reading a modal is an edit to the whole groom with nothing on
         // screen to connect the two. Always false in a PRO build.
         if (DemoUpgradePrompt.IsOpen) return;
+
+        // Nor while the INPUT KEYS page is up (someone reading what 1/2 do), or while something
+        // holds the grooming lock on purpose - a REMAP session, whose preview is not the groom.
+        if (InputKeysDialog.IsOpen) return;
+        if (GroomingInputLock.AnyHold) return;
 
         bool wantSingleSided = Keyboard.current.digit1Key.wasPressedThisFrame || Keyboard.current.numpad1Key.wasPressedThisFrame;
         bool wantDoubleSided = Keyboard.current.digit2Key.wasPressedThisFrame || Keyboard.current.numpad2Key.wasPressedThisFrame;

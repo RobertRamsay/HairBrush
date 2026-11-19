@@ -275,14 +275,15 @@ public class TextureEditorManager : MonoBehaviour
 
         GameObject saveButton = CreateUtilityButton(topRow.transform, "SAVE PROJ", 250f, new Color(0.20f, 0.50f, 0.30f, 1f));
         saveButton.GetComponent<Button>().onClick.AddListener(InvokeSaveProject);
+        saveButton.AddComponent<SaveProjectFocusGuard>();
     }
 
+    // The same save the groom panel's SAVE PROJ does. This used to reflect into
+    // ModelViewer.SaveProject, whose body is editor-only: in a built player the click did
+    // nothing at all, and in the editor it wrote a legacy save without group modifiers.
     private void InvokeSaveProject()
     {
-        ModelViewer viewer = FindFirstObjectByType<ModelViewer>();
-        if (viewer == null) return;
-        MethodInfo save = typeof(ModelViewer).GetMethod("SaveProject", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-        save?.Invoke(viewer, null);
+        RuntimeNavigationProjectIO.SaveFromAnyButton();
     }
 
     private void ExitToGroom(System.Action callback)

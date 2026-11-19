@@ -141,6 +141,19 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
         viewer.groomingSliderPanelGO = null;
     }
 
+    // For SAVE PROJ buttons other than the groom panel's (texture workspace, mode row), so every
+    // save button in the app runs this one save path.
+    public static void SaveFromAnyButton()
+    {
+        RuntimeNavigationProjectIO io = FindFirstObjectByType<RuntimeNavigationProjectIO>();
+        if (io == null)
+        {
+            StatusToast.Show("SAVE PROJ is not available right now.", true);
+            return;
+        }
+        io.SaveProjectEnhanced();
+    }
+
     public void SaveProjectEnhanced()
     {
         string path;
@@ -150,9 +163,22 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
         path = RuntimeFileDialog.SaveFile("Save Hair Project", "HairBrush Projects\0*.json\0All Files\0*.*\0\0", "HairProject", "json");
 #endif
         if (string.IsNullOrEmpty(path)) return;
-        HairProjectSaveData data = BuildSaveData();
-        File.WriteAllText(path, JsonUtility.ToJson(data,true));
-        Debug.Log("Project saved successfully to: "+path);
+
+        // Written to a temp file and swapped in, keeping the previous version as .bak, so a crash
+        // or full disk mid-save can never destroy the file being overwritten. A failure is shown
+        // on screen: the console is not something a player-build user has.
+        try
+        {
+            HairProjectSaveData data = BuildSaveData();
+            SafeFileWrite.WriteAllText(path, JsonUtility.ToJson(data,true), keepBackup: true);
+            Debug.Log("Project saved successfully to: "+path);
+            StatusToast.Show("Project saved to " + Path.GetFileName(path) + ".");
+        }
+        catch (Exception error)
+        {
+            Debug.LogException(error);
+            StatusToast.Show("Could not save the project: " + error.Message + " The previous file, if any, is unchanged.", true, 7f);
+        }
     }
 
     // The whole session as a save payload, with no file involved. Split out of
@@ -231,17 +257,90 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
     public void LoadProjectFromPath(string path)
     {
         if(string.IsNullOrEmpty(path))return;
-        HairProjectSaveData data=JsonUtility.FromJson<HairProjectSaveData>(File.ReadAllText(path)); if(data==null)return;
+
+        // EVERYTHING THAT CAN FAIL HAPPENS BEFORE THE CURRENT SESSION IS TOUCHED.
+        //
+        // This used to tear the session down first and then parse and import, so a truncated
+        // file, a locked file or an OBJ that would not import left the user with nothing - their
+        // groom gone, and the new one never arriving. Now: read, check, import the head, and only
+        // once all of that has worked is the old session replaced.
+        //
+        // The check is a header-only parse, NOT a FromJson<HairProjectSaveData>. That one is not
+        // side-effect free: HairProjectSaveData.OnAfterDeserialize queues a restore in a dozen
+        // authorities, and GuideCurvePersistenceBridge.QueueRestore clears the live guides on the
+        // spot. So the real parse must not run until the load is committed.
+        string json;
+        try
+        {
+            json = File.ReadAllText(path);
+        }
+        catch (Exception error)
+        {
+            Debug.LogException(error);
+            StatusToast.Show("Could not open " + Path.GetFileName(path) + ": " + error.Message + " Your current work is unchanged.", true, 7f);
+            return;
+        }
+
+        ProjectFileHeader header;
+        try
+        {
+            // JsonUtility writes every field, so a real project always has these keys. That
+            // catches "valid JSON, but not a HairBrush project" as well as broken JSON.
+            if (string.IsNullOrWhiteSpace(json) || !json.Contains("\"hairCards\"") || !json.Contains("\"formatVersion\""))
+                throw new FormatException("it is not a HairBrush project file.");
+            header = JsonUtility.FromJson<ProjectFileHeader>(json);
+            if (header == null) throw new FormatException("the file is empty.");
+        }
+        catch (Exception error)
+        {
+            Debug.LogException(error);
+            StatusToast.Show("Could not load " + Path.GetFileName(path) + " - " + ProjectLoadReason(error) + " Your current work is unchanged.", true, 7f);
+            return;
+        }
+
+        // Import the head BEFORE the old one goes. A stand-in payload carries only what model
+        // resolution reads (the path and the hash), so the real parse can still wait.
+        GameObject resolvedModel = null;
+        string resolved = null;
+        if(!string.IsNullOrEmpty(header.modelPath))
+        {
+            HairProjectSaveData probe = new HairProjectSaveData { modelPath = header.modelPath, importMetadata = header.importMetadata ?? new ImportMetadataSaveData() };
+            try
+            {
+                // The path in the file first, then the places the same file plausibly moved to.
+                resolvedModel = TryResolveModel(probe, path, out resolved);
+            }
+            catch (Exception error)
+            {
+                Debug.LogException(error);
+                StatusToast.Show("Could not import the head mesh " + Path.GetFileName(header.modelPath) + ": " + error.Message + " Your current work is unchanged.", true, 7f);
+                return;
+            }
+        }
+
+        // Committed. From here the real parse runs, with its restore side effects.
+        HairProjectSaveData data;
+        try
+        {
+            data = JsonUtility.FromJson<HairProjectSaveData>(json);
+            if (data == null) throw new FormatException("the file is empty.");
+        }
+        catch (Exception error)
+        {
+            // The header parsed, so this should not happen - but if it does, nothing has been torn
+            // down yet, and the head imported for it must not be left sitting in the scene.
+            if (resolvedModel != null) Destroy(resolvedModel);
+            Debug.LogException(error);
+            StatusToast.Show("Could not load " + Path.GetFileName(path) + " - " + ProjectLoadReason(error) + " Your current work is unchanged.", true, 7f);
+            return;
+        }
+
         UndoHistoryAuthority.NotifySessionReplaced();
         CleanupEditorUIAndCards();
 
         if(!string.IsNullOrEmpty(data.modelPath))
         {
             GameObject old=GetField<GameObject>("loadedModel"); if(old!=null)Destroy(old);
-
-            // The path in the file first, then the places the same file plausibly moved to.
-            string resolved;
-            GameObject resolvedModel = TryResolveModel(data, path, out resolved);
 
             if(resolvedModel == null)
             {
@@ -264,7 +363,14 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
                     chosen =>
                     {
                         SetField("currentModelPath", chosen);
-                        PlaceLoadedModel(CustomOBJImporter.Load(chosen));
+
+                        // A throwing import must not escape this callback: the session is already
+                        // replaced, so the load has to finish down the "no head" path rather than
+                        // stop here with every restore still queued and nothing built.
+                        GameObject chosenModel = null;
+                        try { chosenModel = CustomOBJImporter.Load(chosen); }
+                        catch (Exception error) { Debug.LogException(error); }
+                        PlaceLoadedModel(chosenModel);
 
                         if(GetField<GameObject>("loadedModel") == null)
                         {
@@ -300,6 +406,15 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
         CompleteProjectLoad(data, path);
     }
 
+    // A user-facing reason for a project that would not parse. JsonUtility's own message for bad
+    // JSON is "JSON parse error: ..." which means nothing to someone whose file was cut short.
+    static string ProjectLoadReason(Exception error)
+    {
+        if (error is FormatException) return error.Message;
+        if (error is ArgumentException) return "the file is damaged or incomplete (it may have been cut short).";
+        return error.Message;
+    }
+
     // Everything from the scale reconciliation onward. Split out of LoadProjectFromPath so the
     // load can PAUSE on the missing-model question and resume down either answer - see
     // MissingModelPrompt for why it has to pause rather than repair afterwards.
@@ -307,6 +422,22 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
     {
         if(data == null) return;
 
+        // Past the point of no return - the old session is gone - so a failure here cannot be
+        // rolled back. It can at least be SAID, rather than leaving a half-built groom and a line
+        // in a console the user does not have.
+        try
+        {
+            CompleteProjectLoadCore(data, path);
+        }
+        catch (Exception error)
+        {
+            Debug.LogException(error);
+            StatusToast.Show("Loading " + Path.GetFileName(path) + " failed partway: " + error.Message + " The groom may be incomplete - reload the file, or its .bak copy.", true, 9f);
+        }
+    }
+
+    void CompleteProjectLoadCore(HairProjectSaveData data, string path)
+    {
         // BEFORE the sliders, the cards and the group restore, all three of which read straight
         // out of this payload. Deliberately here and not inside ApplyGlobalSliders/
         // SpawnSavedCards: UndoHistoryAuthority replays a snapshot through those without ever
@@ -668,3 +799,14 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
 
 public class EnhancedSaveMarker:MonoBehaviour{}
 public class AngleBindingMarker:MonoBehaviour{}
+
+// The few fields of a project file LoadProjectFromPath needs before it commits to the load.
+// Deliberately NOT HairProjectSaveData and NOT an ISerializationCallbackReceiver: parsing into
+// this validates the JSON and reads the head path without queuing a single restore.
+[Serializable]
+public class ProjectFileHeader
+{
+    public int formatVersion;
+    public string modelPath;
+    public ImportMetadataSaveData importMetadata;
+}

@@ -1587,8 +1587,7 @@ public partial class HairBrushMcpCommands : MonoBehaviour
         if (File.Exists(path) && !a.Bool("overwrite", false)) throw new CommandException("File exists. Pass overwrite=true to replace it.");
         RuntimeNavigationProjectIO io = FindFirstObjectByType<RuntimeNavigationProjectIO>();
         if (io == null) throw new CommandException("RuntimeNavigationProjectIO is not running.");
-        Directory.CreateDirectory(Path.GetDirectoryName(path));
-        File.WriteAllText(path, JsonUtility.ToJson(io.BuildSaveData(), true));
+        SafeFileWrite.WriteAllText(path, JsonUtility.ToJson(io.BuildSaveData(), true), keepBackup: true);
         StatusToast.Show("Claude saved the project to " + Path.GetFileName(path));
         return new Dictionary<string, object> { { "saved", path }, { "cards", AllCards().Length } };
     }

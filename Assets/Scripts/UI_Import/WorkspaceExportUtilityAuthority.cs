@@ -1,4 +1,3 @@
-using System.Reflection;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -10,7 +9,6 @@ using UnityEngine.UI;
 public class WorkspaceExportUtilityAuthority : MonoBehaviour
 {
     private ModelViewer viewer;
-    private MethodInfo saveProjectMethod;
     private float nextScan;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -27,12 +25,7 @@ public class WorkspaceExportUtilityAuthority : MonoBehaviour
         if (Time.unscaledTime < nextScan) return;
         nextScan = Time.unscaledTime + .1f;
 
-        if (viewer == null)
-        {
-            viewer = FindFirstObjectByType<ModelViewer>();
-            if (viewer != null)
-                saveProjectMethod = typeof(ModelViewer).GetMethod("SaveProject", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-        }
+        if (viewer == null) viewer = FindFirstObjectByType<ModelViewer>();
         if (viewer == null) return;
 
         EnsureGroomAndClumperUtilities();
@@ -52,6 +45,7 @@ public class WorkspaceExportUtilityAuthority : MonoBehaviour
         {
             GameObject button = CreateButton(top, "SaveProjectButton", "SAVE PROJ", new Color(.20f, .50f, .30f));
             button.GetComponent<Button>().onClick.AddListener(InvokeSaveProject);
+            button.AddComponent<SaveProjectFocusGuard>();
         }
         else if (!save.gameObject.activeSelf) save.gameObject.SetActive(true);
 
@@ -87,6 +81,7 @@ public class WorkspaceExportUtilityAuthority : MonoBehaviour
         {
             GameObject button = CreateButton(row, "SAVEPROJButton", "SAVE PROJ", new Color(.20f, .50f, .30f), true);
             button.GetComponent<Button>().onClick.AddListener(InvokeSaveProject);
+            button.AddComponent<SaveProjectFocusGuard>();
         }
 
         // BY NAME FIRST, label only as a fallback, and the demo label has to be in that
@@ -133,13 +128,12 @@ public class WorkspaceExportUtilityAuthority : MonoBehaviour
         }
     }
 
+    // The same save the groom panel's SAVE PROJ does. This used to reflect into
+    // ModelViewer.SaveProject, whose body is editor-only, so these buttons did nothing in a
+    // built player.
     void InvokeSaveProject()
     {
-        if (viewer == null) viewer = FindFirstObjectByType<ModelViewer>();
-        if (viewer == null) return;
-        if (saveProjectMethod == null)
-            saveProjectMethod = typeof(ModelViewer).GetMethod("SaveProject", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-        saveProjectMethod?.Invoke(viewer, null);
+        RuntimeNavigationProjectIO.SaveFromAnyButton();
     }
 
     static GameObject CreateButton(Transform parent, string name, string label, Color color, bool addLayoutElement = false)

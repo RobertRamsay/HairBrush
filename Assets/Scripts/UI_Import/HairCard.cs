@@ -1306,6 +1306,19 @@ public class HairCard : MonoBehaviour
         registryIndex = -1;
 
         if (cardMaterial != null) Destroy(cardMaterial);
+
+        // The procedural Mesh made in Awake is a runtime asset: destroying the GameObject does
+        // NOT free it. Undo/redo and project loads destroy and respawn every card, so without
+        // this each step leaked one Mesh per card for the rest of the session. If a stray
+        // MeshFilter.mesh read ever swapped the filter onto a duplicate (see GetLiveMesh), that
+        // duplicate is ours too and goes with it.
+        if (meshFilter != null)
+        {
+            Mesh onFilter = meshFilter.sharedMesh;
+            if (onFilter != null && onFilter != mesh) Destroy(onFilter);
+        }
+        if (mesh != null) Destroy(mesh);
+        mesh = null;
     }
     public void ApplyDeformations() { GenerateMesh(); }
 

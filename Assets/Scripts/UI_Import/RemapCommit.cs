@@ -76,7 +76,7 @@ public static class RemapCommit
 
         try
         {
-            File.WriteAllText(savePath, JsonUtility.ToJson(data, true));
+            SafeFileWrite.WriteAllText(savePath, JsonUtility.ToJson(data, true), keepBackup: true);
         }
         catch (System.Exception exception)
         {
