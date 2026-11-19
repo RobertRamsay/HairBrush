@@ -1,0 +1,24 @@
+{
+  "name": "Grey",
+  "kind": "colour",
+  "order": 80,
+  "description": "Neutral salt-and-pepper grey. Tuned for the default strand texture; a custom albedo will shift it.",
+  "swatch": [
+    0.42,
+    0.42,
+    0.42
+  ],
+  "steps": [
+    {
+      "tool": "set_hair_material",
+      "args": {
+        "tint": [
+          0.646,
+          0.719,
+          0.761
+        ],
+        "smoothness": 0.42
+      }
+    }
+  ]
+}

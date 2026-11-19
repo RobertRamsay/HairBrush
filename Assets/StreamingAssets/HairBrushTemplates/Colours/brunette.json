@@ -1,0 +1,24 @@
+{
+  "name": "Brunette",
+  "kind": "colour",
+  "order": 30,
+  "description": "Medium chestnut brown. Tuned for the default strand texture; a custom albedo will shift it.",
+  "swatch": [
+    0.33,
+    0.22,
+    0.14
+  ],
+  "steps": [
+    {
+      "tool": "set_hair_material",
+      "args": {
+        "tint": [
+          0.508,
+          0.377,
+          0.254
+        ],
+        "smoothness": 0.52
+      }
+    }
+  ]
+}

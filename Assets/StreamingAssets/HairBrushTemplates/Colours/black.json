@@ -1,0 +1,24 @@
+{
+  "name": "Black",
+  "kind": "colour",
+  "order": 10,
+  "description": "Soft blue-black, glossy. Tuned for the default strand texture; a custom albedo will shift it.",
+  "swatch": [
+    0.045,
+    0.042,
+    0.045
+  ],
+  "steps": [
+    {
+      "tool": "set_hair_material",
+      "args": {
+        "tint": [
+          0.069,
+          0.072,
+          0.082
+        ],
+        "smoothness": 0.58
+      }
+    }
+  ]
+}

@@ -489,11 +489,89 @@ public class MaterialEditorManager : MonoBehaviour
         // would leave the row reading a value it no longer has.
         CreateSmallButton(header.transform, "WHITE", () => { SetTint(entry, Color.white, swatch); RefreshPanel(); }, 62f, 20f);
 
+        CreateColourPresetRows(parent, entry);
+
         // R/G/B rather than Red/Green/Blue: under a heading that already says MASTER COLOUR the
         // words earn nothing, and the letter leaves the slider the width it needs.
         CreateTintChannelRow(parent, entry, swatch, 0, "R");
         CreateTintChannelRow(parent, entry, swatch, 1, "G");
         CreateTintChannelRow(parent, entry, swatch, 2, "B");
+    }
+
+    // One-click colour presets: the "colour" templates (StreamingAssets/HairBrushTemplates and
+    // the user's Templates folder), as swatches under MASTER COLOUR, eight to a row.
+    //
+    // Applied HERE, to the material being edited, rather than through HairBrushTemplates.Apply:
+    // the template's set_hair_material always writes the global hair material, which is not
+    // necessarily the one this panel is showing. Same path as WHITE, so it is one undo step.
+    //
+    // NOT named "...TintRow": TextureWorkspacePolishFix lays those out by hand as R/G/B slider
+    // rows. A row of its own name keeps this layout group.
+    private const int ColourPresetsPerRow = 8;
+
+    private void CreateColourPresetRows(Transform parent, HairMaterialEntry entry)
+    {
+        List<HairBrushTemplates.Template> presets = HairBrushTemplates.List(HairBrushTemplates.KindColour);
+        Transform row = null;
+        int inRow = 0;
+
+        foreach (HairBrushTemplates.Template preset in presets)
+        {
+            if (!HairBrushTemplates.TryGetMaterialSettings(preset, out Color tint, out float? smoothness)) continue;
+
+            if (row == null || inRow == ColourPresetsPerRow)
+            {
+                row = CreateColourPresetRow(parent);
+                inRow = 0;
+            }
+
+            GameObject go = new GameObject(preset.name + "Preset", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
+            go.transform.SetParent(row, false);
+            LayoutElement le = go.GetComponent<LayoutElement>();
+            le.preferredWidth = 30f; le.minWidth = 30f; le.preferredHeight = 20f; le.minHeight = 20f;
+
+            // The swatch shows the colour the hair should END UP, not the multiplier: a tint of
+            // near-white reads as "white" on a button but means "the texture's own colour".
+            Color shown = preset.swatch ?? tint;
+            go.GetComponent<Image>().color = new Color(shown.r, shown.g, shown.b, 1f);
+
+            string presetName = preset.name;
+            go.GetComponent<Button>().onClick.AddListener(() => ApplyColourPreset(entry, presetName, tint, smoothness));
+            inRow++;
+        }
+    }
+
+    private Transform CreateColourPresetRow(Transform parent)
+    {
+        GameObject row = new GameObject("ColourPresetRow", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
+        row.transform.SetParent(parent, false);
+        LayoutElement rowLayout = row.GetComponent<LayoutElement>();
+        rowLayout.preferredHeight = 22f;
+        rowLayout.minHeight = 22f;
+        RectTransform rect = row.GetComponent<RectTransform>();
+        rect.sizeDelta = new Vector2(rect.sizeDelta.x, 22f);
+        HorizontalLayoutGroup layout = row.GetComponent<HorizontalLayoutGroup>();
+        layout.spacing = 4f;
+        layout.childControlWidth = false;
+        layout.childControlHeight = true;
+        layout.childForceExpandWidth = false;
+        layout.childForceExpandHeight = false;
+        layout.childAlignment = TextAnchor.MiddleLeft;
+        return row.transform;
+    }
+
+    private void ApplyColourPreset(HairMaterialEntry entry, string presetName, Color tint, float? smoothness)
+    {
+        if (entry == null || entry.material == null) return;
+
+        // Smoothness before the tint: SetTint is what arms the undo step and pushes the global
+        // material to the cards, so both changes land in that one step.
+        if (smoothness.HasValue && entry.material.HasProperty(SmoothProperty))
+            entry.material.SetFloat(SmoothProperty, smoothness.Value);
+
+        SetTint(entry, tint, null);
+        RefreshPanel();
+        StatusToast.Show(presetName + " applied to " + entry.name + ". CTRL+Z to undo.", false, 3f);
     }
 
     private void CreateTintChannelRow(Transform parent, HairMaterialEntry entry, Image swatch, int channel, string label)

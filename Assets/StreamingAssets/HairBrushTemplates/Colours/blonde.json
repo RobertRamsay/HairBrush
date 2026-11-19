@@ -1,0 +1,24 @@
+{
+  "name": "Blonde",
+  "kind": "colour",
+  "order": 60,
+  "description": "Warm golden blonde. Tuned for the default strand texture; a custom albedo will shift it.",
+  "swatch": [
+    0.64,
+    0.52,
+    0.33
+  ],
+  "steps": [
+    {
+      "tool": "set_hair_material",
+      "args": {
+        "tint": [
+          0.985,
+          0.89,
+          0.598
+        ],
+        "smoothness": 0.46
+      }
+    }
+  ]
+}

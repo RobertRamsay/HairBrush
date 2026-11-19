@@ -1,0 +1,24 @@
+{
+  "name": "Dark Brown",
+  "kind": "colour",
+  "order": 20,
+  "description": "Deep espresso brown. Tuned for the default strand texture; a custom albedo will shift it.",
+  "swatch": [
+    0.17,
+    0.11,
+    0.075
+  ],
+  "steps": [
+    {
+      "tool": "set_hair_material",
+      "args": {
+        "tint": [
+          0.262,
+          0.188,
+          0.136
+        ],
+        "smoothness": 0.54
+      }
+    }
+  ]
+}

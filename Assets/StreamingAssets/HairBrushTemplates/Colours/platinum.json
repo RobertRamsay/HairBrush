@@ -1,0 +1,24 @@
+{
+  "name": "Platinum",
+  "kind": "colour",
+  "order": 70,
+  "description": "Cool, near-white blonde. Tuned for the default strand texture; a custom albedo will shift it.",
+  "swatch": [
+    0.62,
+    0.6,
+    0.56
+  ],
+  "steps": [
+    {
+      "tool": "set_hair_material",
+      "args": {
+        "tint": [
+          0.954,
+          1.0,
+          1.0
+        ],
+        "smoothness": 0.44
+      }
+    }
+  ]
+}
