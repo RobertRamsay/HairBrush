@@ -116,6 +116,12 @@ public class UndoHistoryAuthority : MonoBehaviour
     // everything this step has just restored to it.
     public static bool Restoring { get; private set; }
 
+    // Bumped whenever the session's content really changes: a committed step (whose hash
+    // differs from the last) or an undo/redo applied. Never reset, so a reader just compares it
+    // with the value it last saw. AutosaveAuthority uses it to write only when there is
+    // something new, and it is the hook an "unsaved changes" prompt would read.
+    public static int EditGeneration { get; private set; }
+
     // Set by an edit that MaintainCapture's input watching cannot see for itself. It arms on the
     // left button, on any key, and on the right button only while CTRL+SHIFT is held - so a plain right
     // click that changes something saved, like deleting a UV rectangle, would otherwise leave no
@@ -526,6 +532,7 @@ public class UndoHistoryAuthority : MonoBehaviour
         undoSteps.Add(baseline);
         historyBytes += baseline.payload.Length;
         baseline = current;
+        unchecked { EditGeneration++; }
 
         // A new action invalidates the forward history, the same as every other editor.
         foreach (Step step in redoSteps) historyBytes -= step.payload.Length;
@@ -656,6 +663,7 @@ public class UndoHistoryAuthority : MonoBehaviour
         restoring = true;
         Restoring = true;
         armed = false;
+        unchecked { EditGeneration++; }
 
         // Told before the work starts, not after. The settle can take several frames, and a
         // confirmation that arrives at the end reads as lag on an action the user has already

@@ -228,7 +228,7 @@ export const TOOLS = [
   { name: 'hb_batch', description: 'Run several hb_* tools in order as ONE call and ONE undo step (e.g. create a group, fill it, set params, add POSTs). Each step is {tool, args}; results come back per step. Stops at the first error unless stop_on_error=false. Cannot nest.',
     inputSchema: obj({ steps: { type: 'array', minItems: 1, maxItems: 200, items: obj({ tool: str('Tool name, e.g. hb_fill_region.'), args: { type: 'object', description: 'That tool\'s arguments.' } }, ['tool']) }, stop_on_error: bool('Default true.') }, ['steps']),
     annotations: destructive, timeout: 600000 },
-  { name: 'hb_load_autosave', description: 'Reload the automatic save (written when Play mode stops and every 45s of MCP editing). Use after a restart/recompile; hb_status shows whether one exists.',
+  { name: 'hb_load_autosave', description: 'Reload the automatic save (written every 2 min of changes, when Play mode stops or the app quits, and every 45s of MCP editing). Use after a restart/recompile; hb_status shows whether one exists.',
     inputSchema: obj({ discard_groom: bool('Replace the current groom.') }), annotations: destructive, timeout: 180000 },
   { name: 'hb_undo', description: 'Undo the last step (same as Ctrl+Z in HairBrush).', inputSchema: obj(), annotations: destructive, timeout: 60000 },
   { name: 'hb_redo', description: 'Redo.', inputSchema: obj(), annotations: rw, timeout: 60000 },

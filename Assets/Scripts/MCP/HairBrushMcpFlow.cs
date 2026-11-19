@@ -289,23 +289,17 @@ public partial class HairBrushMcpCommands
     // Autosave
     // ---------------------------------------------------------------------------------
 
-    public static string AutosavePath => System.IO.Path.Combine(Application.persistentDataPath, "mcp_autosave.json");
+    // The app's own autosave (AutosaveAuthority), which now runs for every session. The MCP
+    // server used to keep a separate mcp_autosave.json; one file means hb_load_autosave and the
+    // menu's RECOVER can never disagree about what the last session was.
+    public static string AutosavePath => AutosaveAuthority.AutosavePath;
 
     // Called by the server on quit (which includes leaving Play mode in the editor) and
-    // periodically after edits. A groom is never lost to a recompile again.
+    // periodically after MCP edits, as extra checkpoints on top of the app's own rolling
+    // autosave. Forced: an agent's checkpoint is written even if the rolling one just ran.
     public static void WriteAutosave(string reason)
     {
-        try
-        {
-            int cards = FindObjectsByType<HairCard>(FindObjectsSortMode.None).Length;
-            if (cards == 0) { Debug.Log("HairBrush MCP: autosave skipped (" + reason + ") - no cards."); return; }
-            RuntimeNavigationProjectIO io = FindFirstObjectByType<RuntimeNavigationProjectIO>();
-            if (io == null) { Debug.Log("HairBrush MCP: autosave skipped (" + reason + ") - project IO not running."); return; }
-            // Kept as .bak too: a crash during the write is exactly when the autosave is needed.
-            SafeFileWrite.WriteAllText(AutosavePath, JsonUtility.ToJson(io.BuildSaveData(), true), keepBackup: true);
-            Debug.Log("HairBrush MCP: autosaved " + cards + " cards (" + reason + ") to " + AutosavePath);
-        }
-        catch (Exception ex) { Debug.LogWarning("HairBrush MCP: autosave failed (" + reason + ") - " + ex.Message); }
+        AutosaveAuthority.WriteNow("MCP " + reason, force: true);
     }
 
     object AutosaveInfo()

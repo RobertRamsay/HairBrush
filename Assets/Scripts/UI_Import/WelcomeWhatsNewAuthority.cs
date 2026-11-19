@@ -620,6 +620,18 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
     // START GROOMING. Goes through Close so the menu buttons come back before the load hides the
     // menu in its own way - and so a ticked "don't show again" is still honoured. Marking it
     // evaluated stops a panel that has not been built yet from appearing over the groom later.
+    // True while the welcome card is on screen. It hides the menu buttons for as long as it is
+    // up, and anything that adds a menu button of its own (AutosaveAuthority's RECOVER) has to
+    // stay hidden with them.
+    public static bool IsOpen
+    {
+        get
+        {
+            WelcomeWhatsNewAuthority live = FindFirstObjectByType<WelcomeWhatsNewAuthority>();
+            return live != null && live.panel != null;
+        }
+    }
+
     public static void DismissIfOpen()
     {
         WelcomeWhatsNewAuthority live = FindFirstObjectByType<WelcomeWhatsNewAuthority>();

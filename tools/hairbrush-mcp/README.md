@@ -60,7 +60,7 @@ Points on the scalp are given as `az`/`el` degrees, measured from the centre of 
 
 Not yet exposed: per-group materials, texture loading, POST-local shape curves, and remap.
 
-An autosave is written to Application.persistentDataPath/mcp_autosave.json when Play mode stops (or the player quits) and every 45 s of MCP editing; `hb_status` reports it.
+The app autosaves every session (with or without MCP) to Application.persistentDataPath/autosave.json: every 2 minutes while there are changes, when Play mode stops or the player quits, and every 45 s of MCP editing. `hb_status` reports it. At startup the previous run's autosave is copied to autosave_last_session.json, which the start menu's RECOVER button loads.
 
 ## Notes
 
