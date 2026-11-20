@@ -58,7 +58,7 @@ public static class HairBrushTemplates
         "add_guide", "edit_guide", "remove_guide",
         "add_clumper", "edit_clumper", "remove_clumper",
         "add_post", "edit_post", "remove_post",
-        "set_hair_material", "set_group_uv", "set_uv_rects",
+        "set_hair_material", "set_hair_textures", "set_group_uv", "set_uv_rects",
         "set_symmetry", "set_card_style",
     };
 

@@ -673,40 +673,11 @@ public class MaterialEditorManager : MonoBehaviour
 #endif
         if (string.IsNullOrEmpty(path)) return;
 
-        byte[] bytes;
-        try { bytes = File.ReadAllBytes(path); }
-        catch (Exception ex)
+        if (!TryLoadTextureFile(entry, propertyName, path, linear, out string error))
         {
-            Debug.LogError("Could not read texture file: " + ex.Message);
-            StatusToast.Show("Couldn't read that file: " + ex.Message, true);
+            StatusToast.Show(error, true);
             return;
         }
-
-        Texture2D texture = new Texture2D(2, 2, TextureFormat.RGBA32, true, linear);
-        texture.name = Path.GetFileNameWithoutExtension(path);
-        if (!texture.LoadImage(bytes, false))
-        {
-            Destroy(texture);
-            Debug.LogError("Could not decode texture: " + path);
-            StatusToast.Show("Couldn't decode that image (unsupported format or corrupt file): " + Path.GetFileName(path), true);
-            return;
-        }
-
-        texture.wrapMode = TextureWrapMode.Clamp;
-        texture.filterMode = FilterMode.Bilinear;
-
-        if (entry.material == null || !entry.material.HasProperty(propertyName))
-        {
-            Destroy(texture);
-            Debug.LogError("Selected hair shader has no texture property " + propertyName);
-            StatusToast.Show("Current shader has no " + propertyName + " texture slot.", true);
-            return;
-        }
-
-        entry.material.SetTexture(propertyName, texture);
-        SetSlotPath(entry, propertyName, path);
-        SetSlotCleared(entry, propertyName, false);
-
         StatusToast.Show("Loaded " + Path.GetFileName(path));
 
         // The panel's buttons are ordinary left clicks, which the undo authority already arms
@@ -724,6 +695,70 @@ public class MaterialEditorManager : MonoBehaviour
         // Always preview the material currently being edited, even before applying it globally.
         UpdatePreviewForSelectedMaterial();
         RefreshPanel();
+    }
+
+    // The read-decode-assign half of a texture load, shared by the LOAD button and by
+    // LoadGlobalHairTextures (templates / MCP). False with a user-facing reason on failure; the
+    // material is untouched in that case.
+    private bool TryLoadTextureFile(HairMaterialEntry entry, string propertyName, string path, bool linear, out string error)
+    {
+        error = null;
+        if (entry == null || entry.material == null || !entry.material.HasProperty(propertyName))
+        {
+            error = "Current shader has no " + propertyName + " texture slot.";
+            Debug.LogError("Hair shader has no texture property " + propertyName);
+            return false;
+        }
+
+        byte[] bytes;
+        try { bytes = File.ReadAllBytes(path); }
+        catch (Exception ex)
+        {
+            Debug.LogError("Could not read texture file: " + ex.Message);
+            error = "Couldn't read " + Path.GetFileName(path) + ": " + ex.Message;
+            return false;
+        }
+
+        Texture2D texture = new Texture2D(2, 2, TextureFormat.RGBA32, true, linear);
+        texture.name = Path.GetFileNameWithoutExtension(path);
+        if (!texture.LoadImage(bytes, false))
+        {
+            Destroy(texture);
+            Debug.LogError("Could not decode texture: " + path);
+            error = "Couldn't decode that image (unsupported format or corrupt file): " + Path.GetFileName(path);
+            return false;
+        }
+
+        texture.wrapMode = TextureWrapMode.Clamp;
+        texture.filterMode = FilterMode.Bilinear;
+
+        entry.material.SetTexture(propertyName, texture);
+        SetSlotPath(entry, propertyName, path);
+        SetSlotCleared(entry, propertyName, false);
+        return true;
+    }
+
+    // Loads strand maps into the GLOBAL hair material from files - the hb_set_hair_textures
+    // command, which is what a hairstyle template uses to bring its texture set. Any of the three
+    // paths may be null to leave that slot alone. Returns null on success, else the first error
+    // (slots loaded before it stay loaded).
+    public string LoadGlobalHairTextures(string albedoPath, string normalPath, string opacityPath)
+    {
+        int index = GetGlobalMaterialIndex();
+        if (index < 0 || index >= materials.Count) return "There is no hair material yet - load a model first.";
+        HairMaterialEntry entry = materials[index];
+
+        string error;
+        if (!string.IsNullOrEmpty(albedoPath) && !TryLoadTextureFile(entry, AlbedoProperty, albedoPath, false, out error)) return error;
+        if (!string.IsNullOrEmpty(normalPath) && !TryLoadTextureFile(entry, NormalProperty, normalPath, true, out error)) return error;
+        if (!string.IsNullOrEmpty(opacityPath) && !TryLoadTextureFile(entry, OpacityProperty, opacityPath, true, out error)) return error;
+
+        UndoHistoryAuthority.NotifyEdit();
+        viewer.hairCardMaterial = entry.material;
+        ApplyAssignments();
+        if (selectedMaterialIndex == index) UpdatePreviewForSelectedMaterial();
+        if (panelGO != null && panelGO.activeInHierarchy) RefreshPanel();
+        return null;
     }
 
     // Empties one texture slot: the shader falls back to its declared default, which for all

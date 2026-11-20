@@ -154,30 +154,50 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
         io.SaveProjectEnhanced();
     }
 
+    // A session with a project file saves straight back to it. Without one - or with SHIFT held,
+    // which is SAVE AS - it asks where.
     public void SaveProjectEnhanced()
     {
-        string path;
-#if UNITY_EDITOR
-        path = EditorUtility.SaveFilePanel("Save Hair Project", "", "HairProject", "json");
-#else
-        path = RuntimeFileDialog.SaveFile("Save Hair Project", "HairBrush Projects\0*.json\0All Files\0*.*\0\0", "HairProject", "json");
-#endif
-        if (string.IsNullOrEmpty(path)) return;
+        UnityEngine.InputSystem.Keyboard keyboard = UnityEngine.InputSystem.Keyboard.current;
+        bool saveAs = keyboard != null && (keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed);
 
-        // Written to a temp file and swapped in, keeping the previous version as .bak, so a crash
-        // or full disk mid-save can never destroy the file being overwritten. A failure is shown
-        // on screen: the console is not something a player-build user has.
+        string path;
+        if (ProjectSession.HasPath && !saveAs)
+        {
+            path = ProjectSession.CurrentPath;
+        }
+        else
+        {
+            string suggested = ProjectSession.HasPath ? ProjectSession.DisplayName : "HairProject";
+#if UNITY_EDITOR
+            path = EditorUtility.SaveFilePanel("Save Hair Project", "", suggested, "json");
+#else
+            path = RuntimeFileDialog.SaveFile("Save Hair Project", "HairBrush Projects\0*.json\0All Files\0*.*\0\0", suggested, "json");
+#endif
+        }
+        if (string.IsNullOrEmpty(path)) return;
+        SaveProjectTo(path, announce: true);
+    }
+
+    // Written to a temp file and swapped in, keeping the previous version as .bak, so a crash
+    // or full disk mid-save can never destroy the file being overwritten. A failure is shown
+    // on screen: the console is not something a player-build user has.
+    public bool SaveProjectTo(string path, bool announce)
+    {
         try
         {
             HairProjectSaveData data = BuildSaveData();
             SafeFileWrite.WriteAllText(path, JsonUtility.ToJson(data,true), keepBackup: true);
+            ProjectSession.MarkSaved(path);
             Debug.Log("Project saved successfully to: "+path);
-            StatusToast.Show("Project saved to " + Path.GetFileName(path) + ".");
+            if (announce) StatusToast.Show("Project saved to " + Path.GetFileName(path) + ".");
+            return true;
         }
         catch (Exception error)
         {
             Debug.LogException(error);
             StatusToast.Show("Could not save the project: " + error.Message + " The previous file, if any, is unchanged.", true, 7f);
+            return false;
         }
     }
 
@@ -472,6 +492,7 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
         foreach(GroupSaveData g in data.groups)modifiers?.RestoreGroup(g);
         StartCoroutine(SelectLoadedGroupWhenSettled(data));
         RepairAngleControls(true);
+        ProjectSession.MarkLoaded(path);
         Debug.Log("Project loaded successfully from: "+path);
     }
 
@@ -524,6 +545,14 @@ public class RuntimeNavigationProjectIO : MonoBehaviour
 
         GameObject model = TryCandidate(Path.GetDirectoryName(projectPath), fileName, data, ref resolvedPath);
         if (model != null) return model;
+
+        // A project started from NEW PROJECT points at the default head inside the install it was
+        // made with. Moved or updated installs still ship that head.
+        if (ProjectSession.IsDefaultHead(data.modelPath))
+        {
+            model = TryCandidate(ProjectSession.DefaultHeadFolder, fileName, data, ref resolvedPath);
+            if (model != null) return model;
+        }
 
         return TryCandidate(lastResolvedModelFolder, fileName, data, ref resolvedPath);
     }

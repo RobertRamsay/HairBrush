@@ -84,6 +84,7 @@ public partial class HairBrushMcpCommands : MonoBehaviour
             case "remove_clumper": yield return RemoveClumper(a, ok); yield break;
 
             case "set_hair_material": ok(Edit(SetHairMaterial(a))); yield break;
+            case "set_hair_textures": ok(Edit(SetHairTextures(a))); yield break;
             case "get_uv_rects": ok(GetUVRects()); yield break;
             case "set_uv_rects": yield return SetUVRects(a, ok); yield break;
             case "set_group_uv": ok(Edit(SetGroupUV(a))); yield break;
@@ -99,6 +100,8 @@ public partial class HairBrushMcpCommands : MonoBehaviour
             case "sample_cards": ok(SampleCards(a)); yield break;
             case "set_card_style": ok(Edit(SetCardStyle(a))); yield break;
             case "batch": yield return Batch(a, ok); yield break;
+            case "apply_template": yield return ApplyTemplate(a, ok); yield break;
+            case "list_templates": ok(ListTemplates(a)); yield break;
             case "load_autosave": yield return LoadAutosave(a, ok); yield break;
             case "undo": yield return UndoRedo(true, ok); yield break;
             case "redo": yield return UndoRedo(false, ok); yield break;
@@ -1191,6 +1194,118 @@ public partial class HairBrushMcpCommands : MonoBehaviour
     // viewer's material and every card are re-pointed at it. The float properties are written on
     // the entry's material directly, which is exactly where MaterialProjectPersistenceBridge reads
     // them back from on save.
+    // A template file (HairBrushTemplates) run as one batch. path is absolute, or a template's
+    // file name / name as listed by list_templates. The template's own allow-list is enforced
+    // by TryRead before anything runs.
+    IEnumerator ApplyTemplate(Args a, Action<object> ok)
+    {
+        string key = a.Str("path", a.Str("name", null));
+        if (string.IsNullOrEmpty(key)) throw new CommandException("path (or name) is required.");
+
+        HairBrushTemplates.Template template = null;
+        if (Path.IsPathRooted(key))
+        {
+            template = HairBrushTemplates.TryRead(key, out string problem);
+            if (template == null) throw new CommandException("Template rejected: " + problem);
+        }
+        else
+        {
+            foreach (HairBrushTemplates.Template t in HairBrushTemplates.List())
+            {
+                if (string.Equals(t.name, key, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(Path.GetFileNameWithoutExtension(t.path), Path.GetFileNameWithoutExtension(key), StringComparison.OrdinalIgnoreCase))
+                {
+                    template = t;
+                    break;
+                }
+            }
+            if (template == null) throw new CommandException("No template called '" + key + "'. See list_templates.");
+        }
+
+        Dictionary<string, object> batchArgs = new Dictionary<string, object>
+        {
+            { "steps", template.steps }, { "stop_on_error", true }
+        };
+        object result = null;
+        yield return Batch(new Args(batchArgs), r => result = r);
+
+        // A summary, not the batch's full per-step results: a hairstyle is dozens of steps and
+        // every guide reports all its nodes, which buries the one thing a caller needs - did
+        // every step work, and if not, which and why.
+        int ran = 0;
+        List<object> failed = new List<object>();
+        Dictionary<string, int> cards = new Dictionary<string, int>();
+        if (result is Dictionary<string, object> r0 && r0.TryGetValue("results", out object list) && list is List<object> steps)
+        {
+            foreach (object s in steps)
+            {
+                if (!(s is Dictionary<string, object> step)) continue;
+                ran++;
+                if (step.TryGetValue("ok", out object okv) && okv is bool b && !b) failed.Add(step);
+                if (step.TryGetValue("result", out object res) && res is Dictionary<string, object> rd &&
+                    rd.TryGetValue("placed", out object placed) && rd.TryGetValue("group_id", out object g))
+                    cards["group " + g] = (cards.TryGetValue("group " + g, out int c) ? c : 0) + Convert.ToInt32(placed);
+            }
+        }
+        ok(new Dictionary<string, object>
+        {
+            { "template", template.name }, { "path", template.path },
+            { "steps", template.steps.Count }, { "ran", ran }, { "failed", failed },
+            { "cards_placed", cards }, { "total_cards", AllCards().Length }
+        });
+    }
+
+    object ListTemplates(Args a)
+    {
+        List<object> list = new List<object>();
+        foreach (HairBrushTemplates.Template t in HairBrushTemplates.List(a.Str("kind", null)))
+            list.Add(new Dictionary<string, object>
+            {
+                { "name", t.name }, { "kind", t.kind }, { "description", t.description },
+                { "file", Path.GetFileName(t.path) }, { "steps", t.steps.Count }
+            });
+        return new Dictionary<string, object> { { "templates", list } };
+    }
+
+    // Strand maps for the global hair material: albedo / normal / opacity, each optional. A
+    // relative path is looked up under the shipped templates folder, then the user's - which is
+    // how a hairstyle template brings its bundled texture set ("Textures/<set>/<set>_Color.png").
+    object SetHairTextures(Args a)
+    {
+        MaterialEditorManager mem = FindFirstObjectByType<MaterialEditorManager>();
+        if (mem == null) throw new CommandException("The material editor is not running - load a model first.");
+
+        string albedo = ResolveTexturePath(a.Str("albedo", null), "albedo");
+        string normal = ResolveTexturePath(a.Str("normal", null), "normal");
+        string opacity = ResolveTexturePath(a.Str("opacity", null), "opacity");
+        if (albedo == null && normal == null && opacity == null)
+            throw new CommandException("Give at least one of albedo, normal, opacity.");
+
+        string error = mem.LoadGlobalHairTextures(albedo, normal, opacity);
+        if (error != null) throw new CommandException(error);
+
+        return new Dictionary<string, object>
+        {
+            { "albedo", albedo }, { "normal", normal }, { "opacity", opacity }
+        };
+    }
+
+    static string ResolveTexturePath(string path, string slot)
+    {
+        if (string.IsNullOrEmpty(path)) return null;
+        if (Path.IsPathRooted(path))
+        {
+            if (!File.Exists(path)) throw new CommandException(slot + " file not found: " + path);
+            return path;
+        }
+        foreach (string root in new[] { HairBrushTemplates.BuiltInFolder, HairBrushTemplates.UserFolder })
+        {
+            string candidate = Path.GetFullPath(Path.Combine(root, path));
+            if (File.Exists(candidate)) return candidate;
+        }
+        throw new CommandException(slot + " file not found in the template folders: " + path);
+    }
+
     object SetHairMaterial(Args a)
     {
         MaterialEditorManager mem = FindFirstObjectByType<MaterialEditorManager>();

@@ -1523,6 +1523,21 @@ public class ModelViewer : MonoBehaviour
 
     void Update() { HandleCameraControls(); HandleGrooming(); }
 
+    // World units covered by one screen pixel at the camera pivot's depth. 0 if it cannot be
+    // worked out (no camera, pivot behind it), in which case the caller falls back.
+    float PanWorldPerPixel()
+    {
+        if (mainCamera == null || cameraPivot == null) return 0f;
+        float pixels = mainCamera.pixelHeight;
+        if (pixels <= 0f) return 0f;
+        if (mainCamera.orthographic) return 2f * mainCamera.orthographicSize / pixels;
+
+        Transform cam = mainCamera.transform;
+        float depth = Vector3.Dot(cameraPivot.position - cam.position, cam.forward);
+        if (depth <= 1e-4f) return 0f;
+        return 2f * depth * Mathf.Tan(mainCamera.fieldOfView * .5f * Mathf.Deg2Rad) / pixels;
+    }
+
     void OnDrawGizmos() { if (!hasSelectionHotspot) return; Gizmos.color = Color.yellow; Gizmos.DrawLine(selectionHitPoint, selectionHitPoint + (selectionHitNormal * 2.0f)); }
 
     public void ToggleGroomingMode(bool state) { isGroomingMode = state; }
@@ -1929,10 +1944,22 @@ public class ModelViewer : MonoBehaviour
         }
         if (panning)
         {
-            float mouseX = Mouse.current.delta.x.ReadValue() * 0.1f;
-            float mouseY = Mouse.current.delta.y.ReadValue() * 0.1f;
-            cameraPivot.Translate(Vector3.left * mouseX * panSpeed, Space.Self);
-            cameraPivot.Translate(Vector3.down * mouseY * panSpeed, Space.Self);
+            // One pixel of mouse travel moves the view by exactly one pixel's worth of world at
+            // the pivot's depth, so whatever sits at the orbit centre stays under the cursor.
+            // The old fixed step (panSpeed per pixel) ignored distance, field of view and window
+            // size, and ran ahead of the mouse on a large screen or close in.
+            Vector2 delta = Mouse.current.delta.ReadValue();
+            float worldPerPixel = PanWorldPerPixel();
+            if (worldPerPixel > 0f && mainCamera != null)
+            {
+                Transform cam = mainCamera.transform;
+                cameraPivot.position -= (cam.right * delta.x + cam.up * delta.y) * worldPerPixel;
+            }
+            else
+            {
+                cameraPivot.Translate(Vector3.left * delta.x * 0.1f * panSpeed, Space.Self);
+                cameraPivot.Translate(Vector3.down * delta.y * 0.1f * panSpeed, Space.Self);
+            }
         }
         if (dollying)
         {

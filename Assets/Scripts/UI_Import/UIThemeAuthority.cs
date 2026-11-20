@@ -62,6 +62,10 @@ public class UIThemeAuthority : MonoBehaviour
             // would blow up into a giant square on the start screen's 5.43x canvas.
             if (goName == "RANDOMIZEButton" || goName == "RButton" || goName == "GroupUVRandomSeedButton") continue;
             if (goName == WelcomeWhatsNewAuthority.StartButtonName) continue;
+            // Buttons that wear their own skin (NEW PROJECT and the project dialogs' gold
+            // buttons) carry this marker. Restyled here they turned steel with dark gold-button
+            // text, which reads as disabled.
+            if (button.GetComponent<KeepOwnButtonSkin>() != null) continue;
             // The demo buy card's backdrop is a Button so that clicking away dismisses it, but
             // the Graphic it points at is the full-screen dimmer. Skinning that would repaint the
             // whole screen white with a button sprite on it, and ClampButtonSize would drag the

@@ -96,6 +96,8 @@ public class RuntimeBuildLoadAuthority : MonoBehaviour
     // with nobody at the keyboard to answer it.
     public void LoadModelAtPath(string path, bool promptForAlbedo = true)
     {
+        // A bare head is a new, unsaved session. NEW PROJECT gives it a file straight after.
+        ProjectSession.Clear();
         currentModelPathField?.SetValue(viewer, path);
         GameObject oldModel = loadedModelField?.GetValue(viewer) as GameObject;
         if (oldModel != null) Destroy(oldModel);

@@ -52,28 +52,18 @@ public class WelcomeWhatsNewAuthority : MonoBehaviour
     // Five at most, one line each - the panel does not scroll, and anything past about eighty
     // characters is silently ellipsised.
     //
-    // 0.3.3 is a small release and the list is honestly three lines rather than five. A panel
-    // padded out to its capacity with things nobody needed telling is worse than a short one.
-    //
-    // MESH+TRANSP leads because it is the only item here that is a NEW THING TO DO, and because
-    // what it is for is not written on the button. A translucent second pass over the groom is
-    // not a mode anyone goes looking for; it earns its line by explaining why you would press it.
-    //
-    // DITHER is second: a control that did not exist, in a panel the user already knows, sitting
-    // exactly where the note says it does. One line is the whole of what needs saying.
-    //
-    // The VAR +/- repair is last and is a repair, not a feature. It is here only because the
-    // breakage was VISIBLE - the value wrapped onto a second line and landed on top of the SEED
-    // row underneath - so anyone who saw that is owed the news that it was not their project.
-    //
-    // What did not make the cut: the dither value now saving with the project and taking part in
-    // undo. That is what a slider is expected to do, and a release note claiming credit for it
-    // would only raise the question of what the other sliders have been doing.
+    // 0.3.4 is about not losing work and starting faster. NEW PROJECT leads because it is the
+    // new way in; the save line follows because SAVE PROJ no longer asks where once a project
+    // has a file, which would surprise anyone who has not been told. Autosave/RECOVER and the
+    // reminder share a line - they are the same promise. Window behaviour and the pan fix are
+    // felt rather than discovered, so they come last.
     private static readonly string[] ReleaseNotes =
     {
-        "MESH+TRANSP: draw a soft translucent copy of the groom to judge the look.",
-        "DITHER slider in the texture panel, under Smoothness and Metallic.",
-        "The VAR +/- rows read straight again - value on the right, visible track.",
+        "NEW PROJECT: start on the default head, named and saved from the outset.",
+        "SAVE PROJ saves straight to your project. SHIFT + SAVE PROJ is Save As.",
+        "Autosave with RECOVER on the start menu, and a save reminder every 5 min.",
+        "Opens full screen at native res (4K ready). F11 toggles a resizable window.",
+        "Panning tracks the mouse exactly. New steel and gold look. Colour presets.",
     };
 
     // ---------------------------------------------------------------------------------
